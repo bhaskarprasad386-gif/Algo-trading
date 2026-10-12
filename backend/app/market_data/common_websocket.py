@@ -51,6 +51,9 @@ class CommonWebSocketManager:
         # Serialize broker connect admission across all worker threads. Keep this
         # lock held until a synchronous 429 has installed its cooldown.
         self._broker_admission_lock = RLock()
+        # Failure callbacks must publish cooldown without waiting for admission:
+        # otherwise a queued connect worker can win the admission lock first.
+        self._broker_cooldown_state_lock = Lock()
         self._broker_cooldown_until = 0.0
         self._broker_cooldown_seconds = 60.0
         self._delivery_errors = 0
@@ -324,7 +327,7 @@ class CommonWebSocketManager:
         """Atomically pause new Angel socket connects after a connection-limit error."""
         if not self._is_broker_connection_limit_error(reason):
             return False
-        with self._broker_admission_lock:
+        with self._broker_cooldown_state_lock:
             until = time.monotonic() + self._broker_cooldown_seconds
             self._broker_cooldown_until = max(self._broker_cooldown_until, until)
             remaining = max(0.0, self._broker_cooldown_until - time.monotonic())
@@ -333,6 +336,10 @@ class CommonWebSocketManager:
             remaining, reason,
         )
         return True
+
+    def _broker_cooldown_remaining(self) -> float:
+        with self._broker_cooldown_state_lock:
+            return max(0.0, self._broker_cooldown_until - time.monotonic())
 
     def _handle_socket_failure(
         self, group: SocketGroup, socket: Any, generation: int, reason: Any
@@ -374,7 +381,8 @@ class CommonWebSocketManager:
                 # lock so another worker cannot slip through the race window.
                 while True:
                     with self._broker_admission_lock:
-                        remaining = self._broker_cooldown_until - time.monotonic()
+                        with self._broker_cooldown_state_lock:
+                            remaining = self._broker_cooldown_until - time.monotonic()
                         if remaining <= 0:
                             try:
                                 socket.connect(**connect_kwargs)
@@ -981,9 +989,7 @@ class CommonWebSocketManager:
                     if not bool(getattr(socket, "connected", False))
                 ],
                 "connect_failures": self._connect_failures,
-                "broker_cooldown_remaining_seconds": max(
-                    0.0, self._broker_cooldown_until - time.monotonic()
-                ),
+                "broker_cooldown_remaining_seconds": self._broker_cooldown_remaining(),
                 "last_connect_failure": dict(self._last_connect_failure) if self._last_connect_failure else None,
                 "socket_failure_events": self._socket_failure_events,
                 "last_socket_failure": dict(self._last_socket_failure) if self._last_socket_failure else None,
