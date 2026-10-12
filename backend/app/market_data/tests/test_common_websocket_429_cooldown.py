@@ -2,7 +2,12 @@
 from threading import Event, Thread
 import time
 
-from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.common_websocket import (
+    CommonWebSocketManager,
+    apply_shared_broker_cooldown,
+    connect_with_shared_broker_admission,
+    shared_broker_cooldown_remaining,
+)
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
 
@@ -122,3 +127,36 @@ def test_queued_shard_rechecks_429_cooldown_after_connect_admission():
         manager.close()
         CooldownOnFirstConnectSocket.manager = None
 
+
+
+
+def test_direct_collector_connect_waits_for_shared_429_cooldown():
+    class DirectSocket:
+        def __init__(self):
+            self.calls = 0
+
+        def connect(self, **kwargs):
+            self.calls += 1
+
+    socket = DirectSocket()
+    assert apply_shared_broker_cooldown("429 Connection Limit Exceeded", 0.12)
+    started = time.monotonic()
+    assert connect_with_shared_broker_admission(socket, {}, should_stop=lambda: False)
+    elapsed = time.monotonic() - started
+    assert socket.calls == 1
+    assert elapsed >= 0.08
+    assert shared_broker_cooldown_remaining() == 0.0
+
+
+def test_direct_collector_connect_failure_publishes_shared_429_cooldown():
+    class FailingSocket:
+        def connect(self, **kwargs):
+            raise RuntimeError("429 Too Many Connections")
+
+    try:
+        connect_with_shared_broker_admission(FailingSocket(), {})
+    except RuntimeError as exc:
+        assert "429" in str(exc)
+    else:
+        raise AssertionError("connect failure should propagate")
+    assert shared_broker_cooldown_remaining() > 0
