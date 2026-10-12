@@ -82,6 +82,23 @@ class MarketDataWebSocket:
             raise TradingAppException("WebSocketAuthError", "JWT token or feed token is missing.", 401)
         socket = SmartWebSocketV2(auth_token, self.auth.api_key, self.auth.client_id, feed_token)
 
+        # SmartWebSocketV2 has its own blocking retry/reconnect loop. The common
+        # feed already owns recovery, and the SDK's fallback callback replaces
+        # the actual transport error with ("Max retry attempt reached",
+        # "Connection closed"). Bypass that nested loop so each failure reaches
+        # our supervisor once with its original exception (TLS/DNS/HTTP close,
+        # etc.) instead of spawning competing SDK reconnects.
+        def handle_sdk_transport_error(wsapp, error):
+            app_logger.error(f"Angel One SDK transport error: {error!r}")
+            callback = getattr(socket, "on_error", None)
+            if callable(callback):
+                callback(wsapp, error)
+
+        if hasattr(socket, "_on_error"):
+            socket._on_error = handle_sdk_transport_error
+        if hasattr(socket, "MAX_RETRY_ATTEMPT"):
+            socket.MAX_RETRY_ATTEMPT = 0
+
         def handle_open(wsapp):
             with self._lock:
                 self._connected = True
