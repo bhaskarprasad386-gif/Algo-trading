@@ -103,12 +103,30 @@ class CommonWebSocketManager:
         self._recovery_thread: Thread | None = None
         self._closed = False
         self._recovery_interval_seconds = 5.0
+        # Rate-limit Angel session creation after an explicit broker 429.
+        self._broker_cooldown_seconds = 60.0
+        self._broker_cooldown_until = 0.0
         self._connect_failures = 0
         self._last_connect_failure = None
         self._socket_failure_events = 0
         self._last_socket_failure = None
         self._recovery_attempts = 0
         self._last_recovery_at = None
+
+    def _apply_broker_cooldown(self, reason: object) -> None:
+        detail = str(reason).lower()
+        if "429" not in detail and "connection limit exceeded" not in detail:
+            return
+        with self._lock:
+            self._broker_cooldown_until = max(
+                self._broker_cooldown_until,
+                time.monotonic() + self._broker_cooldown_seconds,
+            )
+        app_logger.warning("Angel connection limit: recovery paused for 60 seconds")
+
+    def _broker_cooldown_active(self) -> bool:
+        with self._lock:
+            return time.monotonic() < self._broker_cooldown_until
 
     def _create_socket(self) -> Any:
         """Create a socket whose reconnect policy is owned by this manager."""
@@ -197,6 +215,9 @@ class CommonWebSocketManager:
     def _reconcile(self) -> None:
         """Pack subscriptions while keeping broker I/O outside the state lock."""
         with self._reconcile_lock:
+            if self._broker_cooldown_active():
+                app_logger.warning("Skipping Angel socket reconciliation during connection-limit cooldown")
+                return
             with self._lock:
                 if self._closed:
                     raise RuntimeError("CommonWebSocketManager is closed")
@@ -332,6 +353,19 @@ class CommonWebSocketManager:
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
+                # Another shard may have reported a 429 while this worker waited.
+                if self._broker_cooldown_active():
+                    app_logger.warning("Skipping pending Angel connect during connection-limit cooldown")
+                    with self._lock:
+                        if (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                        ):
+                            self._sockets.pop(group, None)
+                            self._socket_tokens.pop(group, None)
+                            self._socket_created_at.pop(group, None)
+                    self._close_socket_bounded(socket)
+                    return
                 socket.connect(**connect_kwargs)
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
@@ -341,9 +375,15 @@ class CommonWebSocketManager:
                         self._sockets.get(group) is socket
                         and self._socket_generation.get(group) == generation
                     )
-                if not is_current_after_connect:
+                    cooldown_after_connect = time.monotonic() < self._broker_cooldown_until
+                    if cooldown_after_connect and is_current_after_connect:
+                        self._sockets.pop(group, None)
+                        self._socket_tokens.pop(group, None)
+                        self._socket_created_at.pop(group, None)
+                if not is_current_after_connect or cooldown_after_connect:
                     self._close_socket_bounded(socket)
             except Exception as exc:
+                self._apply_broker_cooldown(exc)
                 failure["exception"] = exc
                 # Keep this exception path non-blocking: _start_socket_connect
                 # waits briefly for immediate failures, so waiting here for the
@@ -408,6 +448,7 @@ class CommonWebSocketManager:
         self, group: SocketGroup, socket: Any, generation: int, reason: str
     ) -> None:
         """Invalidate a failed current socket and recover off the SDK callback thread."""
+        self._apply_broker_cooldown(reason)
         # A failure callback can arrive while _reconcile() is holding a
         # snapshot of the current sockets. Serialize invalidation with that
         # snapshot so reconcile cannot accidentally keep operating on a failed
@@ -578,7 +619,7 @@ class CommonWebSocketManager:
         """Serialize recovery against reconciliation so concurrent passes cannot race."""
         with self._reconcile_lock:
             with self._lock:
-                if self._closed:
+                if self._closed or time.monotonic() < self._broker_cooldown_until:
                     return 0
             return self._recover_disconnected_serialized(
                 min_age_seconds=min_age_seconds,
