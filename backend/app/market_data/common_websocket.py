@@ -356,6 +356,15 @@ class CommonWebSocketManager:
                 # Another shard may have reported a 429 while this worker waited.
                 if self._broker_cooldown_active():
                     app_logger.warning("Skipping pending Angel connect during connection-limit cooldown")
+                    with self._lock:
+                        if (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                        ):
+                            self._sockets.pop(group, None)
+                            self._socket_tokens.pop(group, None)
+                            self._socket_created_at.pop(group, None)
+                    self._close_socket_bounded(socket)
                     return
                 socket.connect(**connect_kwargs)
                 # A timed-out connect worker can finish after recovery has
@@ -366,7 +375,12 @@ class CommonWebSocketManager:
                         self._sockets.get(group) is socket
                         and self._socket_generation.get(group) == generation
                     )
-                if not is_current_after_connect:
+                    cooldown_after_connect = time.monotonic() < self._broker_cooldown_until
+                    if cooldown_after_connect and is_current_after_connect:
+                        self._sockets.pop(group, None)
+                        self._socket_tokens.pop(group, None)
+                        self._socket_created_at.pop(group, None)
+                if not is_current_after_connect or cooldown_after_connect:
                     self._close_socket_bounded(socket)
             except Exception as exc:
                 self._apply_broker_cooldown(exc)
