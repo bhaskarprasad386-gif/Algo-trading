@@ -98,6 +98,9 @@ class CommonWebSocketManager:
         # One connect worker per current socket generation. Recovery and the
         # periodic supervisor can race to request the same generation.
         self._connect_started_generation: dict[SocketGroup, int] = {}
+        # A socket object must never receive two connect() calls, even if
+        # concurrent recovery paths race while its group generation changes.
+        self._connect_started_socket_ids: set[int] = set()
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -371,9 +374,14 @@ class CommonWebSocketManager:
                 or self._socket_generation.get(group) != generation
             ):
                 return
-            if self._connect_started_generation.get(group) == generation:
+            socket_id = id(socket)
+            if (
+                self._connect_started_generation.get(group) == generation
+                or socket_id in self._connect_started_socket_ids
+            ):
                 return
             self._connect_started_generation[group] = generation
+            self._connect_started_socket_ids.add(socket_id)
 
         completed = Event()
         failure: dict[str, Exception] = {}
