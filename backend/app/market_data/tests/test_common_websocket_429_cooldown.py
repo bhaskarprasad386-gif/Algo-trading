@@ -154,7 +154,7 @@ def test_direct_collector_connect_failure_publishes_shared_429_cooldown():
             raise RuntimeError("429 Too Many Connections")
 
     try:
-        connect_with_shared_broker_admission(FailingSocket(), {})
+        connect_with_shared_broker_admission(FailingSocket(), {}, cooldown_seconds=0.12)
     except RuntimeError as exc:
         assert "429" in str(exc)
     else:
