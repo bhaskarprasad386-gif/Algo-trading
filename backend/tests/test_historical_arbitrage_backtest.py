@@ -28,7 +28,7 @@ def test_unified_box_replay_persists_trade_and_graph_ready_payoff():
         {"timestamp_ns": 2, "data_resolution": "s", "low": _option(2, 100, 1, 2, 1, 2),
          "high": _option(2, 110, 1, 2, 1, 2)},
         {"timestamp_ns": 3, "data_resolution": "s", "low": _option(3, 100, 15, 16, 10, 11),
-         "high": _option(3, 110, 1, 2, 0.5, 1)},
+         "high": _option(3, 110, 1, 2, 20, 21)},
     ]
     result = run_historical_arbitrage(ledger, spec, events, payoff_prices=(90, 100, 110, 120))
     assert result.completed_trades == 1
