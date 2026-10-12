@@ -273,8 +273,8 @@ class LiveCashFutureOneSecondCollector:
 
         queue = _LatestMessageBuffer(max_entries=max(1000, len(token_meta) * 4))
         self.auth.login()
-        nse_socket = MarketDataWebSocket(auth=self.auth)
-        nfo_socket = MarketDataWebSocket(auth=self.auth)
+        nse_socket = MarketDataWebSocket(auth=self.auth, auto_reconnect=False)
+        nfo_socket = MarketDataWebSocket(auth=self.auth, auto_reconnect=False)
         self._sockets = [nse_socket, nfo_socket]
 
         def receive(message: Any) -> None:
@@ -290,8 +290,8 @@ class LiveCashFutureOneSecondCollector:
                     mode=3,
                     correlation_id="cf-live-nse",
                     on_data=receive,
-                    reconnect_attempts=3,
-                    reconnect_delay_seconds=2,
+                    reconnect_attempts=0,
+                    reconnect_delay_seconds=0.0,
                 ),
                 daemon=True,
                 name="cf-live-nse",
@@ -303,8 +303,8 @@ class LiveCashFutureOneSecondCollector:
                     mode=3,
                     correlation_id="cf-live-nfo",
                     on_data=receive,
-                    reconnect_attempts=3,
-                    reconnect_delay_seconds=2,
+                    reconnect_attempts=0,
+                    reconnect_delay_seconds=0.0,
                 ),
                 daemon=True,
                 name="cf-live-nfo",
