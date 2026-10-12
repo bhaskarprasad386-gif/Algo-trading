@@ -2,6 +2,8 @@
 from threading import Event, Thread
 import time
 
+import pytest
+import app.market_data.common_websocket as common_websocket_module
 from app.market_data.common_websocket import (
     CommonWebSocketManager,
     apply_shared_broker_cooldown,
@@ -10,6 +12,17 @@ from app.market_data.common_websocket import (
 )
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+
+
+@pytest.fixture(autouse=True)
+def reset_shared_broker_cooldown_between_tests():
+    # The production gate is intentionally process-wide; isolate test cases.
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+    yield
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+
 
 
 class CooldownSocket:
