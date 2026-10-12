@@ -13,6 +13,7 @@ on:
       - "backend/tests/test_live_cash_future_common.py"
       - "backend/app/market_data/websocket.py"
       - "backend/app/market_data/tests/test_common_websocket.py"
+      - "backend/app/market_data/tests/test_common_websocket_429_cooldown.py"
       - "backend/app/market_data/tests/test_websocket.py"
       - "backend/app/market_data/tests/test_batch_pq.py"
       - ".github/workflows/targeted-common-feed-tests.yml"
@@ -53,6 +54,7 @@ jobs:
         run: |
           python -m pytest -q \
             app/market_data/tests/test_common_websocket.py \
+            app/market_data/tests/test_common_websocket_429_cooldown.py \
             app/market_data/tests/test_websocket.py \
             app/market_data/tests/test_batch_pq.py \
             app/market_data/tests/test_batch_k.py \
