@@ -366,9 +366,9 @@ class BlockingFirstSocket(FakeSocket):
     release_first_connect = Event()
 
     def connect(self, **kwargs):
-        self.connect_calls.append(kwargs)
         type(self).attempts += 1
         if type(self).attempts == 1:
+            self.connect_calls.append(kwargs)
             self.connecting = True
             type(self).release_first_connect.wait(timeout=5.0)
             return
