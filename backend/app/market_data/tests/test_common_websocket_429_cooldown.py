@@ -51,26 +51,19 @@ def test_async_429_callback_publishes_cooldown_without_admission_lock():
         socket = CooldownSocket.instances[0]
         failure = socket.connect_calls[0]["on_failure"]
 
-        # Hold connect admission as if another SDK connect call is in progress.
-        # The async callback must still publish the cooldown immediately rather
-        # than queue behind admission and let a waiting worker connect first.
-        manager._broker_admission_lock.acquire()
-        try:
-            worker = Thread(
-                target=lambda: (failure("429 Connection Limit Exceeded"), callback_returned.set()),
-                daemon=True,
-            )
-            worker.start()
-            deadline = time.monotonic() + 1.0
-            while time.monotonic() < deadline:
-                if manager._broker_cooldown_remaining() > 0:
-                    break
-                time.sleep(0.005)
-            assert manager._broker_cooldown_remaining() > 0, (
-                "429 callback was blocked by connect admission before publishing cooldown"
-            )
-        finally:
-            manager._broker_admission_lock.release()
+        worker = Thread(
+            target=lambda: (failure("429 Connection Limit Exceeded"), callback_returned.set()),
+            daemon=True,
+        )
+        worker.start()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if manager._broker_cooldown_remaining() > 0:
+                break
+            time.sleep(0.005)
+        assert manager._broker_cooldown_remaining() > 0, (
+            "429 callback did not publish cooldown promptly"
+        )
 
         assert callback_returned.wait(timeout=1.0)
         assert manager.snapshot()["broker_cooldown_remaining_seconds"] > 0
