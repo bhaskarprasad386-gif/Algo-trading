@@ -53,3 +53,39 @@ def test_recovery_is_blocked_during_cooldown() -> None:
         AssertionError("recovery executed during broker cooldown")
     )
     assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+
+
+
+def test_pending_connect_worker_skips_broker_call_during_cooldown() -> None:
+    from app.market_data.common_websocket import SocketGroup
+
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=1, shard=0)
+
+    class Socket:
+        connect_calls = 0
+        closed = False
+
+        def connect(self, **kwargs) -> None:
+            self.connect_calls += 1
+            raise AssertionError("broker connect must not run during cooldown")
+
+        def close(self) -> None:
+            self.closed = True
+
+    socket = Socket()
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 1
+    manager._broker_cooldown_until = time.monotonic() + 30.0
+
+    manager._start_socket_connect(
+        socket=socket,
+        group=group,
+        pairs={(1, "123")},
+        subscriptions={1: ["123"]},
+        generation=1,
+    )
+
+    assert socket.connect_calls == 0
+    assert socket.closed
+    assert group not in manager._sockets
