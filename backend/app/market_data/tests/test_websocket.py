@@ -234,3 +234,19 @@ def test_websocket_rejects_missing_auth_tokens_before_opening_socket(monkeypatch
 
     assert FakeSocket.instances == []
 
+
+
+def test_sdk_transport_error_preserves_original_error_and_skips_nested_retry(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    socket = client._build_socket()
+    socket.on_error = lambda wsapp, error: failures.append(error)
+
+    # Model the SDK's internal transport callback, which normally retries
+    # internally and later replaces this exception with "Connection closed".
+    client_error = OSError("remote closed websocket with code 1006")
+    socket._on_error(socket, client_error)
+
+    assert failures == [client_error]
+    assert socket.MAX_RETRY_ATTEMPT == 0
