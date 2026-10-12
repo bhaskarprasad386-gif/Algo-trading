@@ -54,6 +54,7 @@ def connect_with_shared_broker_admission(
     socket: Any,
     connect_kwargs: dict[str, Any],
     should_stop: Callable[[], bool] | None = None,
+    cooldown_seconds: float = 60.0,
 ) -> bool:
     """Run a direct Angel connect only after the broker-wide 429 cooldown."""
     while should_stop is None or not should_stop():
@@ -71,7 +72,7 @@ def connect_with_shared_broker_admission(
             try:
                 socket.connect(**connect_kwargs)
             except Exception as exc:
-                apply_shared_broker_cooldown(exc)
+                apply_shared_broker_cooldown(exc, cooldown_seconds)
                 raise
             return True
     return False
