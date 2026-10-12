@@ -170,7 +170,7 @@ def test_catalog_to_ledger_e2e_box_spread(tmp_path):
     low_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25000, "call_bid": 20, "call_ask": 30, "put_bid": 20, "put_ask": 30, "lot_size": 1}
     high_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25100, "call_bid": 10, "call_ask": 20, "put_bid": 10, "put_ask": 20, "lot_size": 1}
     low_2 = {**low_1, "timestamp_ns": 2, "call_bid": 60, "call_ask": 61, "put_bid": 60, "put_ask": 61}
-    high_2 = {**high_1, "timestamp_ns": 2, "call_bid": 3, "call_ask": 3.5, "put_bid": 3, "put_ask": 3.5}
+    high_2 = {**high_1, "timestamp_ns": 2, "call_bid": 3, "call_ask": 3.5, "put_bid": 110, "put_ask": 110.5}
     catalog.ingest([HistoricalRecord("angel", "ABC-LOW", "1m", 1, low_1), HistoricalRecord("angel", "ABC-LOW", "1m", 2, low_2), HistoricalRecord("angel", "ABC-HIGH", "1m", 1, high_1), HistoricalRecord("angel", "ABC-HIGH", "1m", 2, high_2)])
     ledger, writer = _writer(tmp_path, "catalog-box", "box-spread")
     result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("box-spread", catalog, (CatalogReplayLeg("low", "angel", "ABC-LOW", "1m"), CatalogReplayLeg("high", "angel", "ABC-HIGH", "1m")), payoff_prices=(24900, 25000, 25100))
