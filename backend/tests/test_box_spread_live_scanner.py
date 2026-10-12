@@ -7,15 +7,14 @@ def q(ts,strike,cb,ca,pb,pa):
     return OptionQuote(ts,"ABC",20261231,strike,cb,ca,pb,pa,10)
 
 def test_box_live_scanner_uses_real_bid_ask_for_both_directions():
-    quotes=[q(1,100,10,11,1,2),q(1,110,8,9,2,3)]
+    quotes=[q(1,100,100,100.1,99.1,99.2),q(1,110,98.1,98.2,102,102.1)]
     result=scan_box_snapshot(
         quotes,atm_strike=100,instrument_class="STOCK",
         config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"}), max_option_spread_pct=5.0),
         policy=ScanPolicy(stock_box_distances=(1,)),
     )
-    # LONG debit = (low call ask - high call bid) +
-    #              (high put ask - low put bid) = (11 - 8) + (3 - 1) = 5.
-    # Width = 10, so executable edge = 5. SHORT is not profitable.
+    # LONG debit = (100.1 - 98.1) + (102.1 - 99.1) = 5.
+    # Narrow spreads satisfy the 5% liquidity guard. Width 10 => executable edge 5.
     assert len(result) == 1
     assert result[0].direction == "LONG"
     assert result[0].executable_edge == 5
