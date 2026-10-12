@@ -48,6 +48,11 @@ class CommonWebSocketManager:
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._reconcile_lock = RLock()
+        # Serialize broker connect admission across all worker threads. Keep this
+        # lock held until a synchronous 429 has installed its cooldown.
+        self._broker_admission_lock = RLock()
+        self._broker_cooldown_until = 0.0
+        self._broker_cooldown_seconds = 60.0
         self._delivery_errors = 0
         self._missing_callback_routes = 0
         self._missing_descriptor_records = 0
@@ -305,6 +310,38 @@ class CommonWebSocketManager:
                     with self._lock:
                         self._socket_tokens[group] = set(pairs)
 
+    @staticmethod
+    def _is_broker_connection_limit_error(reason: Any) -> bool:
+        text = str(reason).strip().lower()
+        return (
+            "429" in text
+            or "connection limit exceeded" in text
+            or "too many connections" in text
+            or "maximum connection" in text
+        )
+
+    def _apply_broker_cooldown(self, reason: Any) -> bool:
+        """Atomically pause new Angel socket connects after a connection-limit error."""
+        if not self._is_broker_connection_limit_error(reason):
+            return False
+        with self._broker_admission_lock:
+            until = time.monotonic() + self._broker_cooldown_seconds
+            self._broker_cooldown_until = max(self._broker_cooldown_until, until)
+            remaining = max(0.0, self._broker_cooldown_until - time.monotonic())
+        app_logger.warning(
+            "Angel connection-limit cooldown activated for %.1fs reason=%s",
+            remaining, reason,
+        )
+        return True
+
+    def _handle_socket_failure(
+        self, group: SocketGroup, socket: Any, generation: int, reason: Any
+    ) -> None:
+        # Callback failures may be asynchronous; set cooldown before scheduling
+        # invalidation/recovery so recovery cannot immediately reconnect.
+        self._apply_broker_cooldown(reason)
+        self._schedule_socket_failure_recovery(group, socket, generation, str(reason))
+
     def _start_socket_connect(
         self,
         *,
@@ -325,14 +362,41 @@ class CommonWebSocketManager:
                     "subscriptions": subscriptions,
                     "correlation_id": f"common-{group.mode}-{group.shard}",
                     "on_data": lambda message: self._on_data(group, message, generation),
-                    "on_failure": lambda reason: self._schedule_socket_failure_recovery(group, socket, generation, reason),
+                    "on_failure": lambda reason: self._handle_socket_failure(group, socket, generation, reason),
                 }
                 if isinstance(socket, MarketDataWebSocket):
                     # The manager owns reconnect policy. Do not let the wrapper
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
-                socket.connect(**connect_kwargs)
+                # Admission is serialized across all connect workers. If connect()
+                # raises a synchronous 429, install cooldown before releasing the
+                # lock so another worker cannot slip through the race window.
+                while True:
+                    with self._broker_admission_lock:
+                        remaining = self._broker_cooldown_until - time.monotonic()
+                        if remaining <= 0:
+                            try:
+                                socket.connect(**connect_kwargs)
+                            except Exception as connect_exc:
+                                self._apply_broker_cooldown(connect_exc)
+                                raise
+                            break
+                    app_logger.warning(
+                        "Skipping Angel connect during connection-limit cooldown group=%s remaining=%.1fs",
+                        group, remaining,
+                    )
+                    # Wait outside the lock, then re-check in case cooldown extended.
+                    time.sleep(min(max(remaining, 0.05), 1.0))
+                    with self._lock:
+                        still_current = (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                            and not self._closed
+                        )
+                    if not still_current:
+                        self._close_socket_bounded(socket)
+                        return
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
                 # successfully connected socket alive as an orphan session.
@@ -917,6 +981,9 @@ class CommonWebSocketManager:
                     if not bool(getattr(socket, "connected", False))
                 ],
                 "connect_failures": self._connect_failures,
+                "broker_cooldown_remaining_seconds": max(
+                    0.0, self._broker_cooldown_until - time.monotonic()
+                ),
                 "last_connect_failure": dict(self._last_connect_failure) if self._last_connect_failure else None,
                 "socket_failure_events": self._socket_failure_events,
                 "last_socket_failure": dict(self._last_socket_failure) if self._last_socket_failure else None,
