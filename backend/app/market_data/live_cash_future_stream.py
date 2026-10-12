@@ -20,6 +20,7 @@ from app.core.logger import app_logger
 from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.common_websocket import apply_shared_broker_cooldown, connect_with_shared_broker_admission
 from app.market_data.shared_cache import get_shared_market_data_cache
 from app.market_data.bounded_buffer import BufferPriority
 from app.market_data.ingestion import BoundedMarketDataIngestor
@@ -284,27 +285,37 @@ class LiveCashFutureOneSecondCollector:
 
         threads = [
             threading.Thread(
-                target=lambda: nse_socket.connect(
-                    exchange_type=1,
-                    tokens=[item["token"] for item in cash],
-                    mode=3,
-                    correlation_id="cf-live-nse",
-                    on_data=receive,
-                    reconnect_attempts=0,
-                    reconnect_delay_seconds=0.0,
+                target=lambda: connect_with_shared_broker_admission(
+                    nse_socket,
+                    {
+                        "exchange_type": 1,
+                        "tokens": [item["token"] for item in cash],
+                        "mode": 3,
+                        "correlation_id": "cf-live-nse",
+                        "on_data": receive,
+                        "on_failure": apply_shared_broker_cooldown,
+                        "reconnect_attempts": 0,
+                        "reconnect_delay_seconds": 0.0,
+                    },
+                    should_stop=self.stop_event.is_set,
                 ),
                 daemon=True,
                 name="cf-live-nse",
             ),
             threading.Thread(
-                target=lambda: nfo_socket.connect(
-                    exchange_type=2,
-                    tokens=[str(item["token"]) for item in futures],
-                    mode=3,
-                    correlation_id="cf-live-nfo",
-                    on_data=receive,
-                    reconnect_attempts=0,
-                    reconnect_delay_seconds=0.0,
+                target=lambda: connect_with_shared_broker_admission(
+                    nfo_socket,
+                    {
+                        "exchange_type": 2,
+                        "tokens": [str(item["token"]) for item in futures],
+                        "mode": 3,
+                        "correlation_id": "cf-live-nfo",
+                        "on_data": receive,
+                        "on_failure": apply_shared_broker_cooldown,
+                        "reconnect_attempts": 0,
+                        "reconnect_delay_seconds": 0.0,
+                    },
+                    should_stop=self.stop_event.is_set,
                 ),
                 daemon=True,
                 name="cf-live-nfo",
