@@ -48,9 +48,6 @@ class CommonWebSocketManager:
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._reconcile_lock = RLock()
-        # Serialize broker connect admission across all worker threads. Keep this
-        # lock held until a synchronous 429 has installed its cooldown.
-        self._broker_admission_lock = RLock()
         # Failure callbacks must publish cooldown without waiting for admission:
         # otherwise a queued connect worker can win the admission lock first.
         self._broker_cooldown_state_lock = Lock()
@@ -376,25 +373,18 @@ class CommonWebSocketManager:
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
-                # Admission is serialized across all connect workers. If connect()
-                # raises a synchronous 429, install cooldown before releasing the
-                # lock so another worker cannot slip through the race window.
+                # Check cooldown atomically, but never hold a global lock while
+                # socket.connect() blocks. A stalled shard must not prevent recovery
+                # of another shard. A synchronous 429 publishes cooldown immediately.
                 while True:
-                    with self._broker_admission_lock:
-                        with self._broker_cooldown_state_lock:
-                            remaining = self._broker_cooldown_until - time.monotonic()
-                        if remaining <= 0:
-                            try:
-                                socket.connect(**connect_kwargs)
-                            except Exception as connect_exc:
-                                self._apply_broker_cooldown(connect_exc)
-                                raise
-                            break
+                    with self._broker_cooldown_state_lock:
+                        remaining = self._broker_cooldown_until - time.monotonic()
+                    if remaining <= 0:
+                        break
                     app_logger.warning(
                         "Skipping Angel connect during connection-limit cooldown group=%s remaining=%.1fs",
                         group, remaining,
                     )
-                    # Wait outside the lock, then re-check in case cooldown extended.
                     time.sleep(min(max(remaining, 0.05), 1.0))
                     with self._lock:
                         still_current = (
@@ -405,6 +395,11 @@ class CommonWebSocketManager:
                     if not still_current:
                         self._close_socket_bounded(socket)
                         return
+                try:
+                    socket.connect(**connect_kwargs)
+                except Exception as connect_exc:
+                    self._apply_broker_cooldown(connect_exc)
+                    raise
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
                 # successfully connected socket alive as an orphan session.
