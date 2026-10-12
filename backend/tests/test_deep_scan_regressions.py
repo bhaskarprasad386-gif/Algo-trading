@@ -13,7 +13,7 @@ from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 def test_short_box_uses_high_put_bid_and_ask():
     low = OptionQuote(1, "NIFTY", 20260924, 100, 12, 13, 10, 11, 1, "INDEX")
-    high = OptionQuote(1, "NIFTY", 20260924, 110, 1, 2, 1, 2, 1, "INDEX")
+    high = OptionQuote(1, "NIFTY", 20260924, 110, 1, 2, 19, 20, 1, "INDEX")
     result = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
     assert result is not None
     assert result.executable_edge == 8
