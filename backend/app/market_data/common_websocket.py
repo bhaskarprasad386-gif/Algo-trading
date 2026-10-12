@@ -50,6 +50,33 @@ def apply_shared_broker_cooldown(reason: Any, seconds: float = 60.0) -> bool:
     return True
 
 
+def connect_with_shared_broker_admission(
+    socket: Any,
+    connect_kwargs: dict[str, Any],
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
+    """Run a direct Angel connect only after the broker-wide 429 cooldown."""
+    while should_stop is None or not should_stop():
+        remaining = shared_broker_cooldown_remaining()
+        if remaining > 0:
+            time.sleep(min(max(remaining, 0.05), 1.0))
+            continue
+        with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
+            if should_stop is not None and should_stop():
+                return False
+            # Re-check inside admission: another component may have received 429.
+            remaining = shared_broker_cooldown_remaining()
+            if remaining > 0:
+                continue
+            try:
+                socket.connect(**connect_kwargs)
+            except Exception as exc:
+                apply_shared_broker_cooldown(exc)
+                raise
+            return True
+    return False
+
+
 class CommonWebSocketManager:
     """Maintain at most three shared Angel sessions and fan out ticks."""
 
