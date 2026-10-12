@@ -27,6 +27,29 @@ class SocketGroup:
     shard: int = 0
 
 
+# Broker-wide cooldown/admission also covers direct collectors.
+_SHARED_BROKER_COOLDOWN_STATE_LOCK = Lock()
+_SHARED_BROKER_CONNECT_ADMISSION_LOCK = Lock()
+_SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+
+
+def shared_broker_cooldown_remaining() -> float:
+    with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        return max(0.0, _SHARED_BROKER_COOLDOWN_UNTIL - time.monotonic())
+
+
+def apply_shared_broker_cooldown(reason: Any, seconds: float = 60.0) -> bool:
+    global _SHARED_BROKER_COOLDOWN_UNTIL
+    text = str(reason).strip().lower()
+    if not any(term in text for term in ("429", "connection limit exceeded", "too many connections", "maximum connection")):
+        return False
+    with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        _SHARED_BROKER_COOLDOWN_UNTIL = max(_SHARED_BROKER_COOLDOWN_UNTIL, time.monotonic() + max(0.0, seconds))
+        remaining = max(0.0, _SHARED_BROKER_COOLDOWN_UNTIL - time.monotonic())
+    app_logger.warning("Angel shared connection-limit cooldown activated for %.1fs reason=%s", remaining, reason)
+    return True
+
+
 class CommonWebSocketManager:
     """Maintain at most three shared Angel sessions and fan out ticks."""
 
@@ -48,15 +71,7 @@ class CommonWebSocketManager:
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._reconcile_lock = RLock()
-        # Failure callbacks must publish cooldown without waiting for admission:
-        # otherwise a queued connect worker can win the admission lock first.
-        self._broker_cooldown_state_lock = Lock()
-        # Serialize actual broker handshakes across shards. This lock is never
-        # acquired by reconciliation or failure callbacks, so a blocked SDK call
-        # cannot hold the manager's recovery locks. Waiters re-check cooldown and
-        # socket generation after admission to close the check/connect race.
-        self._broker_connect_admission_lock = Lock()
-        self._broker_cooldown_until = 0.0
+        # State and admission are shared across all Angel WebSocket components.
         self._broker_cooldown_seconds = 60.0
         self._delivery_errors = 0
         self._missing_callback_routes = 0
@@ -335,19 +350,10 @@ class CommonWebSocketManager:
         """Atomically pause new Angel socket connects after a connection-limit error."""
         if not self._is_broker_connection_limit_error(reason):
             return False
-        with self._broker_cooldown_state_lock:
-            until = time.monotonic() + self._broker_cooldown_seconds
-            self._broker_cooldown_until = max(self._broker_cooldown_until, until)
-            remaining = max(0.0, self._broker_cooldown_until - time.monotonic())
-        app_logger.warning(
-            "Angel connection-limit cooldown activated for %.1fs reason=%s",
-            remaining, reason,
-        )
-        return True
+        return apply_shared_broker_cooldown(reason, self._broker_cooldown_seconds)
 
     def _broker_cooldown_remaining(self) -> float:
-        with self._broker_cooldown_state_lock:
-            return max(0.0, self._broker_cooldown_until - time.monotonic())
+        return shared_broker_cooldown_remaining()
 
     def _handle_socket_failure(
         self, group: SocketGroup, socket: Any, generation: int, reason: Any
@@ -405,8 +411,8 @@ class CommonWebSocketManager:
                 # published. Serialize broker handshakes, but never take either
                 # manager/reconcile lock across the blocking SDK call.
                 while True:
-                    with self._broker_cooldown_state_lock:
-                        remaining = self._broker_cooldown_until - time.monotonic()
+                    with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
+                        remaining = _SHARED_BROKER_COOLDOWN_UNTIL - time.monotonic()
                     if remaining > 0:
                         app_logger.warning(
                             "Skipping Angel connect during connection-limit cooldown group=%s remaining=%.1fs",
@@ -424,11 +430,11 @@ class CommonWebSocketManager:
                             return
                         continue
 
-                    with self._broker_connect_admission_lock:
+                    with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
                         # Re-check after waiting for admission; a preceding
                         # connect may have reported 429 while this worker queued.
-                        with self._broker_cooldown_state_lock:
-                            remaining = self._broker_cooldown_until - time.monotonic()
+                        with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
+                            remaining = _SHARED_BROKER_COOLDOWN_UNTIL - time.monotonic()
                         if remaining > 0:
                             continue
                         with self._lock:
