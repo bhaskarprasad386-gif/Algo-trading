@@ -82,6 +82,19 @@ class MarketDataWebSocket:
             raise TradingAppException("WebSocketAuthError", "JWT token or feed token is missing.", 401)
         socket = SmartWebSocketV2(auth_token, self.auth.api_key, self.auth.client_id, feed_token)
 
+        # SmartWebSocketV2's built-in _on_error() closes and reconnects the
+        # same SDK instance. Its on_close callback then triggers our common
+        # manager to replace that socket concurrently, creating overlapping
+        # sessions and repeated disconnect/reconnect loops. The application
+        # already owns recovery, so forward the original SDK error directly
+        # and let exactly one recovery owner replace the socket.
+        def forward_sdk_error(wsapp, error):
+            callback = getattr(socket, "on_error", None)
+            if callable(callback):
+                callback(wsapp, error)
+
+        socket._on_error = forward_sdk_error
+
         def handle_open(wsapp):
             with self._lock:
                 self._connected = True
@@ -103,12 +116,17 @@ class MarketDataWebSocket:
                 self._connecting = False
                 self._error_count += 1
                 self._consecutive_failures += 1
-                self._last_error = str(error)
+                error_detail = (
+                    f"{type(error).__name__}: {error}"
+                    if isinstance(error, BaseException)
+                    else str(error)
+                )
+                self._last_error = error_detail
                 failure_callback = self.on_failure
-            app_logger.error(f"Angel One WebSocket error: {error}")
+            app_logger.error("Angel One WebSocket error: %s", error_detail)
             if failure_callback is not None:
                 try:
-                    failure_callback(str(error))
+                    failure_callback(error_detail)
                 except Exception as exc:
                     app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
 
@@ -118,7 +136,13 @@ class MarketDataWebSocket:
                 self._connecting = False
                 stopping = self._stopping
                 failure_callback = self.on_failure
-            app_logger.warning("Angel One WebSocket connection closed")
+            close_code = getattr(wsapp, "close_status_code", None)
+            close_reason = getattr(wsapp, "close_reason", None)
+            app_logger.warning(
+                "Angel One WebSocket connection closed code=%s reason=%s",
+                close_code,
+                close_reason,
+            )
             if not stopping and failure_callback is not None:
                 try:
                     failure_callback("socket closed")
