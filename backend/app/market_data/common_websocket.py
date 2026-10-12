@@ -95,6 +95,9 @@ class CommonWebSocketManager:
         self._socket_generation: dict[SocketGroup, int] = {}
         # Keep generation counters monotonic after an active socket is removed.
         self._socket_generation_counter: dict[SocketGroup, int] = {}
+        # One connect worker per current socket generation. Recovery and the
+        # periodic supervisor can race to request the same generation.
+        self._connect_started_generation: dict[SocketGroup, int] = {}
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -361,6 +364,17 @@ class CommonWebSocketManager:
         generation: int,
     ) -> None:
         """Start broker I/O without holding the reconcile lock while it blocks."""
+        with self._lock:
+            if (
+                self._closed
+                or self._sockets.get(group) is not socket
+                or self._socket_generation.get(group) != generation
+            ):
+                return
+            if self._connect_started_generation.get(group) == generation:
+                return
+            self._connect_started_generation[group] = generation
+
         completed = Event()
         failure: dict[str, Exception] = {}
 
