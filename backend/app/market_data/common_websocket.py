@@ -439,8 +439,8 @@ class CommonWebSocketManager:
             context={"event": "socket_failure_callback", "group": f"{group.mode}:{group.shard}", "generation": generation},
         )
         app_logger.warning(
-            "Common feed socket failure callback group=%s generation=%s reason=%s; scheduling immediate recovery",
-            group, generation, reason,
+            f"Common feed socket failure callback group={group} generation={generation} "
+            f"reason={reason!r}; scheduling immediate recovery"
         )
 
         def _recover() -> None:
