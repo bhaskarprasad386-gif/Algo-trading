@@ -51,6 +51,11 @@ class CommonWebSocketManager:
         # Failure callbacks must publish cooldown without waiting for admission:
         # otherwise a queued connect worker can win the admission lock first.
         self._broker_cooldown_state_lock = Lock()
+        # Serialize actual broker handshakes across shards. This lock is never
+        # acquired by reconciliation or failure callbacks, so a blocked SDK call
+        # cannot hold the manager's recovery locks. Waiters re-check cooldown and
+        # socket generation after admission to close the check/connect race.
+        self._broker_connect_admission_lock = Lock()
         self._broker_cooldown_until = 0.0
         self._broker_cooldown_seconds = 60.0
         self._delivery_errors = 0
@@ -373,33 +378,52 @@ class CommonWebSocketManager:
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
-                # Check cooldown atomically, but never hold a global lock while
-                # socket.connect() blocks. A stalled shard must not prevent recovery
-                # of another shard. A synchronous 429 publishes cooldown immediately.
+                # A cooldown check alone has a check/connect race: another shard
+                # can pass the check and enter connect() before a 429 callback is
+                # published. Serialize broker handshakes, but never take either
+                # manager/reconcile lock across the blocking SDK call.
                 while True:
                     with self._broker_cooldown_state_lock:
                         remaining = self._broker_cooldown_until - time.monotonic()
-                    if remaining <= 0:
-                        break
-                    app_logger.warning(
-                        "Skipping Angel connect during connection-limit cooldown group=%s remaining=%.1fs",
-                        group, remaining,
-                    )
-                    time.sleep(min(max(remaining, 0.05), 1.0))
-                    with self._lock:
-                        still_current = (
-                            self._sockets.get(group) is socket
-                            and self._socket_generation.get(group) == generation
-                            and not self._closed
+                    if remaining > 0:
+                        app_logger.warning(
+                            "Skipping Angel connect during connection-limit cooldown group=%s remaining=%.1fs",
+                            group, remaining,
                         )
-                    if not still_current:
-                        self._close_socket_bounded(socket)
-                        return
-                try:
-                    socket.connect(**connect_kwargs)
-                except Exception as connect_exc:
-                    self._apply_broker_cooldown(connect_exc)
-                    raise
+                        time.sleep(min(max(remaining, 0.05), 1.0))
+                        with self._lock:
+                            still_current = (
+                                self._sockets.get(group) is socket
+                                and self._socket_generation.get(group) == generation
+                                and not self._closed
+                            )
+                        if not still_current:
+                            self._close_socket_bounded(socket)
+                            return
+                        continue
+
+                    with self._broker_connect_admission_lock:
+                        # Re-check after waiting for admission; a preceding
+                        # connect may have reported 429 while this worker queued.
+                        with self._broker_cooldown_state_lock:
+                            remaining = self._broker_cooldown_until - time.monotonic()
+                        if remaining > 0:
+                            continue
+                        with self._lock:
+                            still_current = (
+                                self._sockets.get(group) is socket
+                                and self._socket_generation.get(group) == generation
+                                and not self._closed
+                            )
+                        if not still_current:
+                            self._close_socket_bounded(socket)
+                            return
+                        try:
+                            socket.connect(**connect_kwargs)
+                        except Exception as connect_exc:
+                            self._apply_broker_cooldown(connect_exc)
+                            raise
+                        break
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
                 # successfully connected socket alive as an orphan session.
