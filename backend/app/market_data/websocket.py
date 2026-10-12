@@ -94,10 +94,8 @@ class MarketDataWebSocket:
             if callable(callback):
                 callback(wsapp, error)
 
-        if hasattr(socket, "_on_error"):
-            socket._on_error = handle_sdk_transport_error
-        if hasattr(socket, "MAX_RETRY_ATTEMPT"):
-            socket.MAX_RETRY_ATTEMPT = 0
+        socket._on_error = handle_sdk_transport_error
+        socket.MAX_RETRY_ATTEMPT = 0
 
         def handle_open(wsapp):
             with self._lock:
