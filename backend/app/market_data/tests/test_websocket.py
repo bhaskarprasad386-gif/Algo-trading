@@ -7,8 +7,9 @@ from app.market_data.websocket import MarketDataWebSocket
 class FakeSocket:
     instances = []
 
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
         self.args = args
+        self.kwargs = kwargs
         self.on_open = None
         self.on_data = None
         self.on_error = None
@@ -197,6 +198,19 @@ def test_websocket_failure_callbacks_notify_manager_on_error_and_close(monkeypat
     assert failures == ["temporary DNS failure"]
     socket.on_close(socket)
     assert failures == ["temporary DNS failure", "socket closed"]
+
+
+def test_sdk_internal_error_handler_forwards_original_error_without_retrying(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    client.on_failure = failures.append
+    socket = client._build_socket()
+
+    socket._on_error(socket, RuntimeError("transport reset"))
+
+    assert failures == ["RuntimeError: transport reset"]
+    assert client.health["last_error"] == "RuntimeError: transport reset"
 
 
 def test_blocking_initial_subscribe_notifies_failure_and_does_not_stall_on_open(monkeypatch):
