@@ -57,5 +57,5 @@ jobs:
             app/market_data/tests/test_websocket.py \
             app/market_data/tests/test_batch_pq.py \
             app/market_data/tests/test_batch_k.py \
-            tests/test_live_cash_future_common.py
+            tests/test_live_cash_future_common.py \
             tests/test_common_websocket_cooldown.py
