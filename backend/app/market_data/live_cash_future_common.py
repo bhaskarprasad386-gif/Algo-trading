@@ -19,6 +19,7 @@ from app.market_data.historical import HistoricalDataClient
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+from app.market_data.shared_cache import cache_key_for_instrument, get_shared_market_data_cache
 
 
 def _expiry(value: Any) -> date | None:
@@ -249,6 +250,16 @@ class LiveCashFutureCommonRunner:
         # the scanner pairs cash symbols with their current/near futures.
         if record.underlying != meta["underlying"]:
             record = replace(record, underlying=meta["underlying"])
+        # Keep one bounded latest snapshot per exchange/token for all strategy
+        # consumers; scanner pairing remains event-driven and uses this record.
+        try:
+            get_shared_market_data_cache().put(
+                cache_key_for_instrument(record.instrument.exchange, record.instrument.token),
+                self._record_payload(record, meta),
+                timestamp_ns=record.timestamp_ns,
+            )
+        except Exception as exc:
+            app_logger.warning("Cash-Future shared-cache write failed: %s", exc)
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED and self._ingestor is not None:
             # Persist one latest broker tick per second. The canonical WebSocket
         # can emit many ticks inside a second, but this stream is explicitly 1s.
