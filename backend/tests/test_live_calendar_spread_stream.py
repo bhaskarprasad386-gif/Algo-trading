@@ -307,3 +307,47 @@ def test_calendar_mcx_close_tracks_us_daylight_saving_transition():
     # After the transition, the published winter close extends to 23:55 IST.
     assert collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 50, tzinfo=IST))
     assert not collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 56, tzinfo=IST))
+
+def test_calendar_scanner_seeds_only_fresh_identity_matched_executable_cache_quotes(monkeypatch):
+    import app.market_data.live_calendar_spread_stream as stream
+
+    collector = LiveCalendarSpreadOneSecondCollector("unused")
+    descriptor = collector._descriptor({
+        "exchange": "NFO", "token": "101", "symbol": "NIFTY29OCT26FUT",
+        "kind": "INDEX_FUTURE", "expiry": datetime(2026, 10, 29).date(),
+        "lot_size": 75, "underlying": "NIFTY",
+    })
+    now = 1_800_000_000_000_000_000
+    good = {
+        "exchange": "NFO", "segment": "NFO", "token": "101",
+        "symbol": "NIFTY29OCT26FUT", "timestamp_ns": now - 100_000_000,
+        "ltp": 25000.0, "bid": 24999.5, "ask": 25000.5,
+    }
+
+    class FakeFeed:
+        def latest_snapshot(self, key):
+            return snapshots.get(key)
+
+    snapshots = {descriptor.key: good}
+    collector._feed = FakeFeed()
+    collector._kind_by_key[("NFO", "101")] = "INDEX_FUTURE"
+    observed = []
+    collector.on_observation = observed.append
+    monkeypatch.setattr(stream.time_module, "time_ns", lambda: now)
+    monkeypatch.setattr(collector, "_exchange_open", lambda _exchange, _local: True)
+
+    assert collector._seed_from_cache([descriptor]) == 1
+    assert observed[0]["ltp"] == 25000.0
+    assert observed[0]["source_timestamp_ns"] == now - 100_000_000
+    assert observed[0]["contract_month"] == "2026-10"
+    assert observed[0]["contract_family"] == "INDEX_FUTURE"
+
+    observed.clear()
+    snapshots[descriptor.key] = {**good, "exchange": "BFO"}
+    assert collector._seed_from_cache([descriptor]) == 0
+    snapshots[descriptor.key] = {**good, "timestamp_ns": now - 1_500_000_000}
+    assert collector._seed_from_cache([descriptor]) == 0
+    snapshots[descriptor.key] = {**good, "ask": None}
+    assert collector._seed_from_cache([descriptor]) == 0
+    assert observed == []
+

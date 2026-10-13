@@ -63,11 +63,22 @@ class BoundedMarketDataCache:
         timestamp = time.time_ns() if timestamp_ns is None else int(timestamp_ns)
         if timestamp < 0:
             raise ValueError("timestamp_ns cannot be negative")
-        entry = CacheEntry(deepcopy(value), timestamp, now + self.ttl_seconds)
         with self._lock:
-            self._purge_expired_locked(now)
+            previous = self._entries.get(key)
+            # Out-of-order callbacks must not roll a live quote backwards.
+            # An expired entry is replaceable even if its timestamp is newer.
+            if (
+                previous is not None
+                and previous.expires_at_monotonic > now
+                and timestamp < previous.timestamp_ns
+            ):
+                return
+            entry = CacheEntry(deepcopy(value), timestamp, now + self.ttl_seconds)
             self._entries.pop(key, None)
             self._entries[key] = entry
+            # Do not scan the entire cache on every tick. Expired entries are
+            # removed on read/diagnostics; this write path remains O(1) unless
+            # the hard capacity is exceeded.
             while len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
                 self._evictions += 1
@@ -112,6 +123,14 @@ _SHARED_CACHE = BoundedMarketDataCache(
     ttl_seconds=settings.MARKET_DATA_CACHE_TTL_SECONDS,
 )
 
+
+
+def market_data_cache_key(exchange: str, segment: str, token: str) -> str:
+    """Return a canonical cache key for a full instrument identity."""
+    parts = (str(exchange).strip().upper(), str(segment).strip().upper(), str(token).strip())
+    if not all(parts):
+        raise ValueError("exchange, segment and token are required for a market-data cache key")
+    return ":".join(parts)
 
 def get_shared_market_data_cache() -> BoundedMarketDataCache:
     return _SHARED_CACHE

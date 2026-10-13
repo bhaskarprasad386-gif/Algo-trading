@@ -613,6 +613,12 @@ def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
             time.sleep(0.01)
         assert original.closed is True
         assert original.connected is False
+        # The replacement waits for the shared broker-admission lock until the
+        # stale connect worker exits. Its connect may therefore finish just
+        # after the old worker signals late_connect_finished.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not replacement.connected:
+            time.sleep(0.01)
         assert replacement.connected is True
         assert len([item for item in LateSuccessfulConnectSocket.instances if not item.closed]) == 1
     finally:
@@ -1141,3 +1147,71 @@ def test_single_socket_transport_failure_preserves_other_healthy_shard():
         assert manager._recovery_thread.is_alive()
     finally:
         manager.close()
+
+
+
+def test_normalized_live_ticks_are_published_to_shared_memory_cache():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_normalized_callback("cash", lambda record: seen.append(record))
+    try:
+        manager.subscribe("cash", [d.key], mode=3)
+        manager._on_data(
+            SocketGroup(3, 0),
+            {"token": "101", "exchange_type": 1, "ltp": 100},
+        )
+
+        snapshot = cache.get(d.key.value)
+        assert seen, "normalized scanner callback should still receive the live record"
+        assert snapshot is not None
+        assert snapshot["token"] == "101"
+        assert snapshot["symbol"] == d.symbol
+        assert "payload" not in snapshot
+        assert manager.snapshot()["market_data_cache"]["entries"] >= 1
+        assert manager.snapshot()["market_data_cache_write_errors"] == 0
+    finally:
+        manager.close()
+        cache.clear()
+
+
+
+def test_normalized_tick_is_cached_before_consumer_callback():
+    from app.market_data.shared_cache import get_shared_market_data_cache, market_data_cache_key
+
+    registry = InstrumentRegistry()
+    d = descriptor("cache-integration-78123")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    cache = get_shared_market_data_cache()
+    cache_key = market_data_cache_key(d.key.exchange, d.key.segment, d.key.token)
+    cache.delete(cache_key)
+    callback_observations = []
+
+    def on_record(record):
+        snapshot = cache.get(cache_key)
+        callback_observations.append((record, snapshot))
+
+    manager.register_normalized_callback("cache-integration", on_record)
+    try:
+        manager.subscribe("cache-integration", [d.key])
+        manager._on_data(
+            SocketGroup(1, 0),
+            {"token": d.key.token, "ltp": 12345, "timestamp_ns": 1_800_000_000_000_000_000},
+        )
+        assert len(callback_observations) == 1
+        record, snapshot = callback_observations[0]
+        assert snapshot is not None
+        assert snapshot["token"] == d.key.token
+        assert snapshot["ltp"] == record.ltp
+        assert snapshot["timestamp_ns"] == record.timestamp_ns
+        assert cache.get(cache_key)["ltp"] == record.ltp
+    finally:
+        manager.close()
+        cache.delete(cache_key)

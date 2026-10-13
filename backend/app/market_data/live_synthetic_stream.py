@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time
 from threading import Event, Lock
-from time import sleep
+from time import sleep, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -199,6 +199,70 @@ class LiveSyntheticOptionFutureRecorder:
                 )
             )
 
+    def _seed_from_cache(self, descriptors) -> int:
+        """Warm the live scanner from fresh shared quotes without re-persisting them."""
+        feed = self._feed
+        if feed is None:
+            return 0
+        now_ns = time_ns()
+        seeded = 0
+        for descriptor in descriptors:
+            snapshot = feed.latest_snapshot(descriptor.key)
+            if not isinstance(snapshot, dict):
+                continue
+            if (
+                str(snapshot.get("exchange") or "").strip().upper() != descriptor.key.exchange.strip().upper()
+                or str(snapshot.get("segment") or "").strip().upper() != descriptor.key.segment.strip().upper()
+                or str(snapshot.get("token") or "").strip() != descriptor.key.token.strip()
+                or str(snapshot.get("symbol") or "").strip().upper() != descriptor.symbol.strip().upper()
+            ):
+                continue
+            try:
+                timestamp_ns = int(snapshot.get("timestamp_ns"))
+                ltp = float(snapshot.get("ltp"))
+                bid = float(snapshot.get("bid"))
+                ask = float(snapshot.get("ask"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            age_ns = now_ns - timestamp_ns
+            # A cache entry may still be inside cache TTL but already be too old
+            # for an executable option/future spread decision.
+            if (
+                timestamp_ns <= 0
+                or age_ns < 0
+                or age_ns > 1_000_000_000
+                or ltp <= 0
+                or bid <= 0
+                or ask <= 0
+                or bid > ask
+            ):
+                continue
+            meta = self._metadata.get(
+                (descriptor.key.exchange.strip().upper(), descriptor.key.token.strip())
+            )
+            if meta is None:
+                continue
+            payload = dict(snapshot)
+            payload.update({
+                "timestamp_ns": timestamp_ns,
+                "source_timestamp_ns": timestamp_ns,
+                "underlying": meta.underlying,
+                "instrument_class": meta.instrument_class,
+                "expiry": meta.expiry,
+                "option_type": meta.option_type,
+                "strike": meta.strike,
+                "lot_size": meta.lot_size,
+                "contract_role": meta.contract_role,
+            })
+            if self.on_observation is not None:
+                try:
+                    self.on_observation(payload)
+                except Exception:
+                    # Cache warm-up must not break live socket startup.
+                    continue
+            seeded += 1
+        return seeded
+
     def _on_record(self, record) -> None:
         key = (record.instrument.exchange.strip().upper(), record.instrument.token.strip())
         second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
@@ -231,7 +295,9 @@ class LiveSyntheticOptionFutureRecorder:
         else:
             feed_kwargs["socket_factory"] = lambda: MarketDataWebSocket(auth=self.auth)
         self._feed = CommonStrategyMarketFeed(self.consumer, **feed_kwargs)
-        self._feed.start(self._descriptors(), self._on_record)
+        descriptors = self._descriptors()
+        self._feed.start(descriptors, self._on_record)
+        self._seed_from_cache(descriptors)
         try:
             while self.market_open() and not self.stop_event.is_set():
                 sleep(self.poll_seconds)

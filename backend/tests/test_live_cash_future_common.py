@@ -204,3 +204,103 @@ def test_cash_future_scanner_does_not_replace_newer_leg_with_out_of_order_tick()
     assert scanner.update(delayed, contract_month="CASH") is None
     assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
     assert scanner.out_of_order_records == 1
+
+
+
+def test_cash_future_runner_seeds_fresh_shared_cash_and_future_quotes(monkeypatch):
+    import time
+    import app.market_data.live_cash_future_common as module
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    now = time.time_ns()
+    cash_key = InstrumentKey("NSE", "NSE", "1")
+    future_key = InstrumentKey("NFO", "NFO", "2")
+    snapshots = {
+        "NSE:NSE:1": {
+            "exchange": "NSE", "segment": "NSE", "token": "1",
+            "symbol": "ABC-EQ", "instrument_type": "equity",
+            "timestamp_ns": now - 100_000_000, "ltp": 99.5, "bid": 99.0, "ask": 100.0,
+        },
+        "NFO:NFO:2": {
+            "exchange": "NFO", "segment": "NFO", "token": "2",
+            "symbol": "ABC26OCTFUT", "instrument_type": "future",
+            "timestamp_ns": now, "ltp": 103.5, "bid": 103.0, "ask": 104.0,
+        },
+    }
+
+    class Cache:
+        def get(self, key):
+            return snapshots.get(key)
+
+    monkeypatch.setattr(module, "get_shared_market_data_cache", lambda: Cache())
+    manager = CommonWebSocketManager(socket_factory=lambda: object())
+    manager.registry.register_many((
+        InstrumentDescriptor(cash_key, "ABC-EQ", "equity", "NSE", "NSE"),
+        InstrumentDescriptor(future_key, "ABC26OCTFUT", "future", "NFO", "NFO", lot_size=50),
+    ))
+    runner = LiveCashFutureCommonRunner("ignored", manager=manager)
+    runner._metadata = {
+        cash_key: {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"},
+        future_key: {"leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT", "lot_size": 50},
+    }
+
+    assert runner._seed_scanner_from_shared_cache() == 2
+    assert runner.last_result is not None
+    assert runner.last_result.signal.symbol == "ABC"
+    assert runner.last_result.signal.gap_points == 3.0
+    assert runner.snapshot()["cache_seeded_records"] == 2
+    assert runner.snapshot()["scanner_results"] == 1
+    runner.stop()
+
+
+def test_cash_future_runner_cache_seed_rejects_stale_wrong_identity_and_non_executable_quotes(monkeypatch):
+    import time
+    import app.market_data.live_cash_future_common as module
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    now = time.time_ns()
+    keys = (
+        InstrumentKey("NSE", "NSE", "1"),
+        InstrumentKey("NFO", "NFO", "2"),
+        InstrumentKey("NFO", "NFO", "3"),
+    )
+    snapshots = {
+        "NSE:NSE:1": {
+            "exchange": "NSE", "segment": "NSE", "token": "1",
+            "symbol": "ABC-EQ", "instrument_type": "equity",
+            "timestamp_ns": now - 5_000_000_000, "ltp": 99.5, "bid": 99.0, "ask": 100.0,
+        },
+        "NFO:NFO:2": {
+            "exchange": "NSE", "segment": "NFO", "token": "2",
+            "symbol": "ABC26OCTFUT", "instrument_type": "future",
+            "timestamp_ns": now, "ltp": 103.5, "bid": 103.0, "ask": 104.0,
+        },
+        "NFO:NFO:3": {
+            "exchange": "NFO", "segment": "NFO", "token": "3",
+            "symbol": "ABC26NOVFUT", "instrument_type": "future",
+            "timestamp_ns": now, "ltp": 103.5, "bid": None, "ask": 104.0,
+        },
+    }
+
+    class Cache:
+        def get(self, key):
+            return snapshots.get(key)
+
+    monkeypatch.setattr(module, "get_shared_market_data_cache", lambda: Cache())
+    manager = CommonWebSocketManager(socket_factory=lambda: object())
+    manager.registry.register_many((
+        InstrumentDescriptor(keys[0], "ABC-EQ", "equity", "NSE", "NSE"),
+        InstrumentDescriptor(keys[1], "ABC26OCTFUT", "future", "NFO", "NFO", lot_size=50),
+        InstrumentDescriptor(keys[2], "ABC26NOVFUT", "future", "NFO", "NFO", lot_size=50),
+    ))
+    runner = LiveCashFutureCommonRunner("ignored", manager=manager)
+    runner._metadata = {
+        keys[0]: {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"},
+        keys[1]: {"leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT"},
+        keys[2]: {"leg": "FUTURE", "underlying": "ABC", "contract_month": "NEAR"},
+    }
+
+    assert runner._seed_scanner_from_shared_cache() == 0
+    assert runner.last_result is None
+    assert runner.snapshot()["cache_seed_rejections"] == 3
+    runner.stop()

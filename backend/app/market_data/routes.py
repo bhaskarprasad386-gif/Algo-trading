@@ -102,6 +102,39 @@ def get_ltp_by_symbol(
         raise HTTPException(status_code=502, detail="Market data provider request failed") from e
 
 
+@router.get("/cache-ltp")
+def get_cached_ltp(
+    exchange: str = Query(..., min_length=1),
+    segment: str = Query(..., min_length=1),
+    symboltoken: str = Query(..., min_length=1),
+):
+    """Read a fresh process-local common-feed LTP without calling the broker."""
+    from app.market_data.shared_cache import get_shared_market_data_cache, market_data_cache_key
+
+    normalized_exchange = exchange.strip().upper()
+    normalized_segment = segment.strip().upper()
+    token = symboltoken.strip()
+    if normalized_exchange not in {"NSE", "NFO", "BSE", "BFO", "MCX"}:
+        raise HTTPException(status_code=400, detail="Unsupported exchange for common-feed cache")
+
+    record = get_shared_market_data_cache().get(
+        market_data_cache_key(normalized_exchange, normalized_segment, token)
+    )
+    if record is None or record.get("ltp") is None:
+        raise HTTPException(status_code=404, detail="No fresh common-feed LTP is cached for this instrument")
+
+    return {
+        "status": True,
+        "source": "common-market-data-cache",
+        "exchange": normalized_exchange,
+        "segment": normalized_segment,
+        "symboltoken": token,
+        "ltp": record["ltp"],
+        "timestamp_ns": record.get("timestamp_ns"),
+        "symbol": record.get("symbol"),
+    }
+
+
 @router.get("/historical")
 def get_historical(
     exchange: str = Query(...),

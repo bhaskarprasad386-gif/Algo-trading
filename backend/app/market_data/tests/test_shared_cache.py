@@ -31,3 +31,29 @@ def test_cache_expires_stale_snapshots():
     time.sleep(0.02)
     assert cache.get("A") is None
     assert cache.stats()["expired"] >= 1
+
+
+
+def test_cache_rejects_out_of_order_tick_timestamps():
+    cache = BoundedMarketDataCache(max_entries=10, ttl_seconds=60)
+    cache.put("NSE:EQ:101", {"ltp": 102}, timestamp_ns=200)
+    cache.put("NSE:EQ:101", {"ltp": 101}, timestamp_ns=100)
+    assert cache.get("NSE:EQ:101")["ltp"] == 102
+    cache.put("NSE:EQ:101", {"ltp": 103}, timestamp_ns=200)
+    assert cache.get("NSE:EQ:101")["ltp"] == 103
+
+ 
+def test_market_data_cache_key_is_canonical_across_callers():
+    from app.market_data.shared_cache import market_data_cache_key
+
+    assert market_data_cache_key("NSE", "NSE", "101") == "NSE:NSE:101"
+    assert market_data_cache_key(" nfo ", " nfo ", "101") == "NFO:NFO:101"
+    assert market_data_cache_key("NSE", "NSE", "101") != market_data_cache_key("NFO", "NFO", "101")
+
+
+def test_market_data_cache_key_rejects_missing_identity_parts():
+    from app.market_data.shared_cache import market_data_cache_key
+    import pytest
+
+    with pytest.raises(ValueError):
+        market_data_cache_key("NSE", "", "101")

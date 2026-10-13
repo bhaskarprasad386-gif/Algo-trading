@@ -33,6 +33,10 @@ def test_underlying_feed_accepts_authoritative_index_token_without_cash_lookup()
         tracker=tracker,
         concrete_tokens={"NIFTY": "26000"},
     )
+    # Authoritative tokens must resolve without downloading the remote master.
+    feed.instrument_master.download = lambda force=False: (_ for _ in ()).throw(
+        AssertionError("authoritative token lookup must not access the network")
+    )
     assert feed._tokens() == {"NIFTY": "26000"}
 
 def test_index_token_resolution_uses_exact_master_entry():
@@ -97,12 +101,13 @@ def test_index_token_resolution_still_rejects_multiple_migrated_entries():
     else:
         raise AssertionError("expected LookupError")
 
-def test_underlying_feed_resolves_index_from_master_when_declared():
+def test_underlying_feed_resolves_index_from_master_when_declared(monkeypatch):
     master = InstrumentMaster()
     master.instruments = [
         {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
     ]
     master._loaded = True
+    monkeypatch.setattr(master, "download", lambda force=False: master.instruments)
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"})
@@ -110,7 +115,7 @@ def test_underlying_feed_resolves_index_from_master_when_declared():
     assert feed._tokens() == {"NIFTY": "99926000"}
 
 
-def test_underlying_feed_routes_bse_indices_to_bfo_exchange_type():
+def test_underlying_feed_routes_bse_indices_to_bfo_exchange_type(monkeypatch):
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"SENSEX": (80000.0, 80100.0), "NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY", "SENSEX", "BANKEX"),
@@ -118,6 +123,7 @@ def test_underlying_feed_routes_bse_indices_to_bfo_exchange_type():
         concrete_tokens={"NIFTY": "999", "SENSEX": "1", "BANKEX": "2"},
         index_symbols=frozenset({"NIFTY", "SENSEX", "BANKEX"}),
     )
+    monkeypatch.setattr(feed.instrument_master, "download", lambda force=False: [])
     groups = feed._subscription_groups(feed._tokens())
     assert groups[1] == ["999"]
     assert groups[4] == ["1", "2"]

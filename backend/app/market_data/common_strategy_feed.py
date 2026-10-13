@@ -14,6 +14,7 @@ from app.market_data.websocket import MarketDataWebSocket
 from .common_websocket import CommonWebSocketManager
 from .contracts import InstrumentKey
 from .registry import InstrumentDescriptor
+from .shared_cache import get_shared_market_data_cache, market_data_cache_key
 
 _EXCHANGE_SEGMENTS = {
     "NSE": "NSE", "NFO": "NFO", "BSE": "BSE",
@@ -132,6 +133,20 @@ class CommonStrategyMarketFeed:
             return
         self.manager.clear_consumer(self.consumer)
         self._started = False
+
+    def latest_snapshot(self, instrument: InstrumentKey) -> dict[str, Any] | None:
+        """Read the freshest normalized quote for an instrument from the process cache.
+
+        Callback delivery remains the low-latency strategy path; this accessor is
+        for consumers that need to inspect the latest shared state without
+        maintaining a second quote copy. Cache TTL is enforced by the cache.
+        """
+        if not isinstance(instrument, InstrumentKey):
+            raise TypeError("instrument must be an InstrumentKey")
+        key = market_data_cache_key(
+            instrument.exchange, instrument.segment, instrument.token
+        )
+        return get_shared_market_data_cache().get(key)
 
     def snapshot(self) -> dict[str, Any]:
         return self.manager.snapshot()

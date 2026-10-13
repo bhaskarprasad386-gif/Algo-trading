@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor
+from app.market_data.shared_cache import get_shared_market_data_cache, market_data_cache_key
 
 
 def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
@@ -19,13 +20,41 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
     # Model an active socket generation as the production connect callback does.
     manager._sockets[group] = object()
     manager._socket_generation[group] = 1
-    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
-        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
-    )
 
-    manager.register_normalized_callback("test", lambda _record: None)
+    record = SimpleNamespace(
+        instrument=key,
+        symbol="TEST",
+        timestamp_ns=123456789,
+        ltp=101.5,
+        bid=101.4,
+        ask=101.6,
+        as_dict=lambda: {
+            "exchange": "NSE",
+            "segment": "NSE",
+            "token": "123",
+            "symbol": "TEST",
+            "timestamp_ns": 123456789,
+            "ltp": 101.5,
+            "bid": 101.4,
+            "ask": 101.6,
+            "payload": {"raw": "omitted"},
+        },
+    )
+    manager._normalizer.normalize = lambda _descriptor, _message: record
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    delivered = []
+    manager.register_normalized_callback("test", delivered.append)
 
     manager._on_data(group, {"token": "123", "exchange_type": 1}, generation=1)
+
+    cached = cache.get(market_data_cache_key("NSE", "NSE", "123"))
+    assert cached is not None
+    assert cached["ltp"] == 101.5
+    assert cached["timestamp_ns"] == 123456789
+    assert "payload" not in cached
+    assert delivered == [record]
 
     snapshot = manager.snapshot()
     assert snapshot["ticks_received"] == 1
@@ -34,3 +63,4 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
         "exchange_type": 1, "exchange": "NSE", "segment": "NSE", "token": "123",
         "symbol": "TEST", "timestamp_ns": 123456789, "ltp": 101.5, "bid": 101.4, "ask": 101.6,
     }
+    cache.delete(market_data_cache_key("NSE", "NSE", "123"))
