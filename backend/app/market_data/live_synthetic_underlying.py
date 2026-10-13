@@ -96,7 +96,10 @@ class LiveSyntheticUnderlyingFeed:
         return value * 1_000
 
     def _tokens(self) -> dict[str, str]:
-        self.instrument_master.download()
+        # Concrete tokens are authoritative; do not fetch the instrument master
+        # when every requested symbol can be resolved without it.
+        if any(symbol not in self.concrete_tokens for symbol in self.symbols):
+            self.instrument_master.download()
         result = {}
         for symbol in self.symbols:
             try:
@@ -135,7 +138,6 @@ class LiveSyntheticUnderlyingFeed:
         return groups
 
     def _descriptors(self):
-        self.instrument_master.download()
         tokens = self._tokens()
         descriptors = []
         for symbol, token in tokens.items():
