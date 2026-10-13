@@ -67,8 +67,10 @@ class BoundedMarketDataCache:
         with self._lock:
             self._purge_expired_locked(now)
             current = self._entries.get(key)
-            # Out-of-order broker frames must never replace a newer snapshot.
-            if current is not None and timestamp <= current.timestamp_ns:
+            # Reject only older broker frames. Equal timestamps are valid for
+            # feeds whose exchange timestamp has coarse precision; in that
+            # case the latest arrival is the best available snapshot.
+            if current is not None and timestamp < current.timestamp_ns:
                 return
             self._entries.pop(key, None)
             self._entries[key] = entry
