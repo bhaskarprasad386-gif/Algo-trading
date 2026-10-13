@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
+from .shared_cache import get_shared_market_data_cache
 from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
 from app.core.logger import app_logger
@@ -123,6 +124,7 @@ class CommonWebSocketManager:
         self._callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
+        self._shared_cache = get_shared_market_data_cache()
         self._lock = RLock()
         self._reconcile_lock = RLock()
         # State and admission are shared across all Angel WebSocket components.
@@ -974,6 +976,13 @@ class CommonWebSocketManager:
                 continue
             try:
                 record = self._normalizer.normalize(descriptor, message)
+                # Publish once at the strategy-neutral boundary before fan-out.
+                # InstrumentKey.value is the canonical EXCHANGE:SEGMENT:TOKEN key.
+                self._shared_cache.put(
+                    record.instrument.value,
+                    record.as_dict(),
+                    timestamp_ns=record.timestamp_ns,
+                )
                 with self._lock:
                     self._normalized_records_emitted += 1
                     self._last_tick = {
