@@ -20,6 +20,7 @@ def reset_shared_broker_cooldown_between_tests():
     with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
         common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
         common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+    common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 0.0
     yield
     with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
         common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
@@ -101,7 +102,10 @@ class CooldownOnFirstConnectSocket(CooldownSocket):
         super().connect(**kwargs)
 
 
-def test_queued_shard_rechecks_429_cooldown_after_connect_admission():
+def test_queued_shard_rechecks_429_cooldown_after_connect_admission(monkeypatch):
+    monkeypatch.setattr(
+        common_websocket_module, "_SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS", 0.02
+    )
     CooldownOnFirstConnectSocket.instances.clear()
     CooldownOnFirstConnectSocket.first_connect_seen.clear()
     registry = InstrumentRegistry()
