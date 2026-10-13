@@ -75,6 +75,8 @@ class AngelOneAuth:
                 self.is_logged_in = True
                 self._session_obtained_at = time.monotonic()
                 self._force_fresh_session = False
+                self._login_retry_after = 0.0
+                self._login_failure_count = 0
                 app_logger.info("Angel One login successful")
                 return {"status": "success", "message": "Login successful", "client_code": self.session_data.get("clientcode")}
             except TradingAppException as exc:
