@@ -101,12 +101,13 @@ def test_index_token_resolution_still_rejects_multiple_migrated_entries():
     else:
         raise AssertionError("expected LookupError")
 
-def test_underlying_feed_resolves_index_from_master_when_declared():
+def test_underlying_feed_resolves_index_from_master_when_declared(monkeypatch):
     master = InstrumentMaster()
     master.instruments = [
         {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
     ]
     master._loaded = True
+    monkeypatch.setattr(master, "download", lambda force=False: master.instruments)
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"})
