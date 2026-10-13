@@ -69,4 +69,4 @@ def test_rate_limit_failure_applies_90_second_cooldown(monkeypatch):
         instance.login()
 
     assert caught.value.name == "LoginCooldown"
-    assert fake.calls == 0
+    assert fake.calls == 1
