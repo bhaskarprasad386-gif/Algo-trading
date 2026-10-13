@@ -449,3 +449,45 @@ def test_market_open_keeps_equity_derivatives_open_until_1540():
     assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 39, 59, tzinfo=ist))
     assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 0, tzinfo=ist))
     assert not LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 1, tzinfo=ist))
+
+def test_synthetic_recorder_seeds_only_fresh_identity_matched_executable_cache_quotes(monkeypatch):
+    from app.market_data import live_synthetic_stream as stream
+
+    collector = _collector()
+    descriptor = collector._descriptors()[0]
+    now = 1_800_000_000_000_000_000
+    good = {
+        "exchange": "NFO", "segment": "NFO", "token": "101",
+        "symbol": "NIFTY30SEP26CE", "timestamp_ns": now - 100_000_000,
+        "ltp": 123.45, "bid": 123.40, "ask": 123.50,
+    }
+    snapshots = {
+        descriptor.key: good,
+    }
+
+    class FakeFeed:
+        def latest_snapshot(self, key):
+            return snapshots.get(key)
+
+    collector._feed = FakeFeed()
+    observed = []
+    collector.on_observation = observed.append
+    monkeypatch.setattr(stream, "time_ns", lambda: now)
+
+    assert collector._seed_from_cache([descriptor]) == 1
+    assert len(observed) == 1
+    assert observed[0]["ltp"] == 123.45
+    assert observed[0]["underlying"] == "NIFTY"
+    assert observed[0]["contract_role"] == "CURRENT"
+
+    # Identity mismatch, stale data, and non-executable depth must never warm
+    # the scanner even if the cache's TTL has not yet expired.
+    observed.clear()
+    snapshots[descriptor.key] = {**good, "token": "999"}
+    assert collector._seed_from_cache([descriptor]) == 0
+    snapshots[descriptor.key] = {**good, "timestamp_ns": now - 1_500_000_000}
+    assert collector._seed_from_cache([descriptor]) == 0
+    snapshots[descriptor.key] = {**good, "bid": None}
+    assert collector._seed_from_cache([descriptor]) == 0
+    assert observed == []
+
