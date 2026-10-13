@@ -79,7 +79,7 @@ class AngelOneAuth:
                 self._login_failure_count = 0
                 app_logger.info("Angel One login successful")
                 return {"status": "success", "message": "Login successful", "client_code": self.session_data.get("clientcode")}
-            except TradingAppException:
+            except TradingAppException as exc:
                 self.is_logged_in = False
                 self._login_failure_count += 1
                 message = str(exc).lower()
@@ -94,7 +94,7 @@ class AngelOneAuth:
                     "rate_limited" if cooldown == 90.0 else "authentication_or_transport",
                 )
                 raise
-            except Exception:
+            except Exception as exc:
                 self.is_logged_in = False
                 self._login_failure_count += 1
                 message = str(exc).lower()
