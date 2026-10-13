@@ -236,6 +236,10 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
                     "exchange_timestamp": "1750000001000000000",
                     "last_traded_price": price,
                 })
+            # This fake source is finite. End the session after all frames have
+            # been delivered so callback failures fail the assertions promptly
+            # instead of hanging the test's market-hours polling loop.
+            collector.stop_event.set()
 
         def close(self):
             return None
