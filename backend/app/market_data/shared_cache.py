@@ -63,11 +63,22 @@ class BoundedMarketDataCache:
         timestamp = time.time_ns() if timestamp_ns is None else int(timestamp_ns)
         if timestamp < 0:
             raise ValueError("timestamp_ns cannot be negative")
-        entry = CacheEntry(deepcopy(value), timestamp, now + self.ttl_seconds)
         with self._lock:
-            self._purge_expired_locked(now)
+            previous = self._entries.get(key)
+            # Out-of-order callbacks must not roll a live quote backwards.
+            # An expired entry is replaceable even if its timestamp is newer.
+            if (
+                previous is not None
+                and previous.expires_at_monotonic > now
+                and timestamp < previous.timestamp_ns
+            ):
+                return
+            entry = CacheEntry(deepcopy(value), timestamp, now + self.ttl_seconds)
             self._entries.pop(key, None)
             self._entries[key] = entry
+            # Do not scan the entire cache on every tick. Expired entries are
+            # removed on read/diagnostics; this write path remains O(1) unless
+            # the hard capacity is exceeded.
             while len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
                 self._evictions += 1
