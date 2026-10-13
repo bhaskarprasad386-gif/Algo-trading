@@ -107,6 +107,29 @@ class MarketDataWebSocket:
             if self.exchange_type is not None and self.tokens:
                 self._subscribe_initial_bounded(socket)
 
+        # Angel's SDK may invoke on_error and then on_close for the same
+        # underlying failure. Treat them as one failure event so the manager
+        # receives at most one notification and only one recovery is requested.
+        failure_notification_lock = Lock()
+        failure_notification_sent = False
+
+        def notify_failure_once(reason: str) -> bool:
+            nonlocal failure_notification_sent
+            with failure_notification_lock:
+                if failure_notification_sent:
+                    return False
+                failure_notification_sent = True
+            with self._lock:
+                failure_callback = self.on_failure
+            if failure_callback is not None:
+                try:
+                    failure_callback(reason)
+                except Exception as exc:
+                    app_logger.error(
+                        "Angel One WebSocket failure notification failed: %s", exc
+                    )
+            return True
+
         def handle_data(wsapp, message):
             if self.on_data:
                 self.on_data(message)
@@ -123,14 +146,9 @@ class MarketDataWebSocket:
                     else str(error)
                 )
                 self._last_error = error_detail
-                failure_callback = self.on_failure
             app_logger.error("Angel One WebSocket error: %s", error_detail)
-            if failure_callback is not None:
-                try:
-                    failure_callback(error_detail)
-                except Exception as exc:
-                    app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
-            if self._auto_reconnect:
+            first_failure = notify_failure_once(error_detail)
+            if first_failure and self._auto_reconnect:
                 self._schedule_reconnect()
 
         def handle_close(wsapp):
@@ -138,7 +156,6 @@ class MarketDataWebSocket:
                 self._connected = False
                 self._connecting = False
                 stopping = self._stopping
-                failure_callback = self.on_failure
             close_code = getattr(wsapp, "close_status_code", None)
             close_reason = getattr(wsapp, "close_reason", None)
             app_logger.warning(
@@ -146,12 +163,10 @@ class MarketDataWebSocket:
                 close_code,
                 close_reason,
             )
-            if not stopping and failure_callback is not None:
-                try:
-                    failure_callback("socket closed")
-                except Exception as exc:
-                    app_logger.error(f"Angel One WebSocket close notification failed: {exc}")
-            if not stopping and self._auto_reconnect:
+            first_failure = False
+            if not stopping:
+                first_failure = notify_failure_once("socket closed")
+            if first_failure and self._auto_reconnect:
                 self._schedule_reconnect()
 
         socket.on_open = handle_open
@@ -214,17 +229,20 @@ class MarketDataWebSocket:
 
     def _reconnect_after_disconnect(self) -> None:
         retry_after_exit = False
-        with self._lock:
-            exchange_type = self.exchange_type
-            tokens = list(self.tokens)
-            mode = self.mode
-            correlation_id = self.correlation_id
-            on_data = self.on_data
-            on_failure = self.on_failure
-        if exchange_type is None or not tokens:
-            return
-        reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
         try:
+            with self._lock:
+                exchange_type = self.exchange_type
+                tokens = list(self.tokens)
+                mode = self.mode
+                correlation_id = self.correlation_id
+                on_data = self.on_data
+                on_failure = self.on_failure
+                stopping = self._stopping
+            # Keep every exit path inside try/finally: even an empty subscription
+            # set must release the single-flight reconnect guard.
+            if stopping or exchange_type is None or not tokens:
+                return
+            reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
             self.connect(
                 subscriptions=reconnect_subscriptions,
                 mode=mode,
