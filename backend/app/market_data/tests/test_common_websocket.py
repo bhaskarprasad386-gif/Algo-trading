@@ -1101,3 +1101,43 @@ def test_boolean_and_fractional_exchange_types_are_rejected():
         assert snapshot["ticks_received"] == 0
     finally:
         manager.close()
+
+
+
+def test_single_socket_transport_failure_preserves_other_healthy_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor("101"), descriptor("102")]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key for item in descriptors])
+        assert len(FakeSocket.instances) == 2
+        original_by_group = {
+            group: socket for group, socket in manager._sockets.items()
+        }
+        failed_group = SocketGroup(1, 0)
+        healthy_group = SocketGroup(1, 1)
+        failed_socket = original_by_group[failed_group]
+        healthy_socket = original_by_group[healthy_group]
+
+        failed_socket.connect_calls[0]["on_failure"]("transport reset")
+
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
+            current = manager.snapshot()
+            if current["socket_groups"] == 2 and failed_socket.closed:
+                break
+            time.sleep(0.01)
+
+        assert failed_socket.closed is True
+        assert manager._sockets[healthy_group] is healthy_socket
+        assert healthy_socket.closed is False
+        assert healthy_socket.connected is True
+        assert sorted(manager.snapshot()["connected_groups"]) == ["1:0", "1:1"]
+        assert len(FakeSocket.instances) == 3  # only the failed shard was replaced
+        assert manager._recovery_thread is not None
+        assert manager._recovery_thread.is_alive()
+    finally:
+        manager.close()

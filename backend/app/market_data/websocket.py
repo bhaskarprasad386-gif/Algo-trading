@@ -55,6 +55,12 @@ class MarketDataWebSocket:
         with self._lock:
             return self._connected
 
+    def mark_session_stale(self) -> None:
+        """Defer a forced fresh login until the next admitted handshake."""
+        marker = getattr(self.auth, "mark_session_stale", None)
+        if callable(marker):
+            marker()
+
     def _token_groups(self) -> list[dict]:
         return [{"exchangeType": exchange_type, "tokens": list(tokens)} for exchange_type, tokens in sorted(self.subscriptions.items()) if tokens]
 

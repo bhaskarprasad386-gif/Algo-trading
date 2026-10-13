@@ -58,6 +58,16 @@ def _wait_for_shared_broker_connect_admission(
     return False
 
 
+def _mark_socket_auth_stale(socket: Any) -> None:
+    """Mark auth stale without letting an optional socket hook break recovery."""
+    marker = getattr(socket, "mark_session_stale", None)
+    if callable(marker):
+        try:
+            marker()
+        except Exception as exc:
+            app_logger.warning("Could not mark Angel session stale after broker limit error: %s", exc)
+
+
 def shared_broker_cooldown_remaining() -> float:
     with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
         return max(0.0, _SHARED_BROKER_COOLDOWN_UNTIL - time.monotonic())
@@ -88,7 +98,8 @@ def connect_with_shared_broker_admission(
         try:
             socket.connect(**connect_kwargs)
         except Exception as exc:
-            apply_shared_broker_cooldown(exc, cooldown_seconds)
+            if apply_shared_broker_cooldown(exc, cooldown_seconds):
+                _mark_socket_auth_stale(socket)
             raise
         return True
 
@@ -403,7 +414,8 @@ class CommonWebSocketManager:
     ) -> None:
         # Callback failures may be asynchronous; set cooldown before scheduling
         # invalidation/recovery so recovery cannot immediately reconnect.
-        self._apply_broker_cooldown(reason)
+        if self._apply_broker_cooldown(reason):
+            _mark_socket_auth_stale(socket)
         self._schedule_socket_failure_recovery(group, socket, generation, str(reason))
 
     def _start_socket_connect(
@@ -484,7 +496,8 @@ class CommonWebSocketManager:
                     try:
                         socket.connect(**connect_kwargs)
                     except Exception as connect_exc:
-                        self._apply_broker_cooldown(connect_exc)
+                        if self._apply_broker_cooldown(connect_exc):
+                            _mark_socket_auth_stale(socket)
                         raise
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
@@ -599,7 +612,10 @@ class CommonWebSocketManager:
         def _recover() -> None:
             self._close_socket_bounded(socket)
             try:
-                self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=0.0)
+                # Recover the failed/missing group only. A zero silent-age threshold
+                # marks every healthy connected shard stale and tears down unrelated
+                # sessions whenever just one socket reports a transport error.
+                self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
             except Exception as exc:
                 runtime_diagnostics.record(
                     component="Common Market Feed",
