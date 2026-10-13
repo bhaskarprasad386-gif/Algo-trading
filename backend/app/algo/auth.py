@@ -39,6 +39,9 @@ class AngelOneAuth:
             # Keep this flag set until a full login succeeds; failed logins must not
             # silently fall back to the stale JWT/feedToken pair.
             self._force_fresh_session = False
+            # Coalesce repeated login failures instead of hammering the broker.
+            self._login_retry_after = 0.0
+            self._login_failure_count = 0
             self._initialized = True
 
     def _validate_credentials(self) -> None:
@@ -48,6 +51,14 @@ class AngelOneAuth:
     def login(self) -> Dict[str, Any]:
         """Login to Angel One and store session tokens server-side."""
         with self._state_lock:
+            now = time.monotonic()
+            if now < self._login_retry_after:
+                remaining = self._login_retry_after - now
+                raise TradingAppException(
+                    "LoginCooldown",
+                    f"Angel One login suppressed after a previous failure; retry in {remaining:.1f}s",
+                    429 if remaining >= 60.0 else 503,
+                )
             try:
                 self._validate_credentials()
                 self.smart_api = SmartConnect(api_key=self.api_key)
@@ -66,12 +77,36 @@ class AngelOneAuth:
                 self._force_fresh_session = False
                 app_logger.info("Angel One login successful")
                 return {"status": "success", "message": "Login successful", "client_code": self.session_data.get("clientcode")}
-            except TradingAppException:
-                raise
-            except Exception as e:
+            except TradingAppException as exc:
                 self.is_logged_in = False
-                app_logger.error(f"Angel One login failed: {str(e)}")
-                raise TradingAppException("LoginError", f"Angel One login failed: {str(e)}", 500)
+                self._login_failure_count += 1
+                message = str(exc).lower()
+                cooldown = 90.0 if any(term in message for term in (
+                    "access rate", "429", "too many requests", "rate limit",
+                    "connection limit exceeded",
+                )) else min(30.0 * self._login_failure_count, 120.0)
+                self._login_retry_after = time.monotonic() + cooldown
+                app_logger.warning(
+                    "Angel One login failed; retry suppressed for %.0fs (failure_count=%d, category=%s)",
+                    cooldown, self._login_failure_count,
+                    "rate_limited" if cooldown == 90.0 else "authentication_or_transport",
+                )
+                raise
+            except Exception as exc:
+                self.is_logged_in = False
+                self._login_failure_count += 1
+                message = str(exc).lower()
+                cooldown = 90.0 if any(term in message for term in (
+                    "access rate", "429", "too many requests", "rate limit",
+                    "connection limit exceeded",
+                )) else min(30.0 * self._login_failure_count, 120.0)
+                self._login_retry_after = time.monotonic() + cooldown
+                app_logger.warning(
+                    "Angel One login transport failure; retry suppressed for %.0fs (failure_count=%d, category=%s)",
+                    cooldown, self._login_failure_count,
+                    "rate_limited" if cooldown == 90.0 else "authentication_or_transport",
+                )
+                raise TradingAppException("LoginError", "Angel One login failed; retry is temporarily suppressed", 500)
 
     def refresh_session(self) -> Dict[str, Any]:
         """Refresh session using the server-side refresh token."""
