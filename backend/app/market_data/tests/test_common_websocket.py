@@ -1156,7 +1156,7 @@ def test_normalized_live_ticks_are_published_to_shared_memory_cache():
     seen = []
     manager.register_normalized_callback("cash", lambda record: seen.append(record))
     try:
-        manager.subscribe("cash", [d.key])
+        manager.subscribe("cash", [d.key], mode=3)
         manager._on_data(
             SocketGroup(3, 0),
             {"token": "101", "exchange_type": 1, "ltp": 100},
