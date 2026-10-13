@@ -135,8 +135,10 @@ class AngelOneAuth:
                 return {"status": "success", "message": "Session refreshed"}
             except TradingAppException:
                 raise
-            except Exception as e:
-                app_logger.error(f"Session refresh failed: {str(e)}")
+            except Exception:
+                # SDK/HTTP exceptions may include request headers or authentication data.
+                # Keep secrets out of application logs; the retry path is handled by login().
+                app_logger.warning("Angel One session refresh failed; attempting guarded login")
                 return self.login()
 
     def mark_session_stale(self) -> None:
