@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: bool = True
     LIVE_MARKET_DATA_RETENTION_DAYS: int = 1
     # Shared latest-snapshot cache; bounded in-process now, Redis-ready interface later.
-    MARKET_DATA_CACHE_MAX_ENTRIES: int = 2000
+    MARKET_DATA_CACHE_MAX_ENTRIES: int = 12000
     MARKET_DATA_CACHE_TTL_SECONDS: float = 15.0
     MARKET_DATA_INGEST_QUEUE_MAX: int = 5000
     MARKET_DATA_INGEST_BATCH_SIZE: int = 100
