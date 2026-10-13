@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.contracts import InstrumentKey
-from app.market_data.registry import InstrumentDescriptor
+from app.market_data.registry import InstrumentDescriptor\nfrom app.market_data.shared_cache import get_shared_market_data_cache, market_data_cache_key
 
 
 def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
