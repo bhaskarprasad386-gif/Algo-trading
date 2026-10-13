@@ -124,5 +124,13 @@ _SHARED_CACHE = BoundedMarketDataCache(
 )
 
 
+
+def market_data_cache_key(exchange: str, segment: str, token: str) -> str:
+    """Return a canonical cache key for a full instrument identity."""
+    parts = (str(exchange).strip().upper(), str(segment).strip().upper(), str(token).strip())
+    if not all(parts):
+        raise ValueError("exchange, segment and token are required for a market-data cache key")
+    return ":".join(parts)
+
 def get_shared_market_data_cache() -> BoundedMarketDataCache:
     return _SHARED_CACHE
