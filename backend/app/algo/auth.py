@@ -87,11 +87,13 @@ class AngelOneAuth:
                     app_logger.warning("Refresh failed, doing full login again")
                     return self.login()
                 refreshed = data.get("data", {})
-                if not isinstance(refreshed, dict) or not refreshed.get("jwtToken"):
-                    raise TradingAppException("RefreshError", "Angel One refresh response missing session token", 502)
+                if not isinstance(refreshed, dict) or not refreshed.get("jwtToken") or not refreshed.get("feedToken"):
+                    app_logger.warning("Refresh response missing JWT/feed token, doing full login again")
+                    return self.login()
                 self.session_data.update(refreshed)
                 self.is_logged_in = True
                 self._session_obtained_at = time.monotonic()
+                self._force_fresh_session = False
                 app_logger.info("Angel One session refreshed")
                 return {"status": "success", "message": "Session refreshed"}
             except TradingAppException:
@@ -124,7 +126,7 @@ class AngelOneAuth:
             # The flag is cleared only by a successful login, so failure cannot
             # silently reuse stale credentials on the next reconnect attempt.
             if self._force_fresh_session:
-                return self.login()
+                return self.refresh_session()
             if not self.is_logged_in or self.smart_api is None or not self.session_data:
                 return self.login()
             age = time.monotonic() - self._session_obtained_at
