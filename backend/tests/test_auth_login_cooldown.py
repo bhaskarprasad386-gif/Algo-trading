@@ -50,7 +50,7 @@ def test_rate_limit_failure_applies_90_second_cooldown(monkeypatch):
             pass
 
         def generateSession(self, client_id, password, totp):
-            self.calls += 1
+            type(self).calls += 1
             raise RuntimeError("Access denied because of exceeding access rate")
 
     fake = FakeSmartConnect
