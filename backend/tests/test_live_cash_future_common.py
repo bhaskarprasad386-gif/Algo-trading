@@ -241,7 +241,7 @@ def test_cash_future_runner_seeds_fresh_shared_cash_and_future_quotes(monkeypatc
     runner = LiveCashFutureCommonRunner("ignored", manager=manager)
     runner._metadata = {
         cash_key: {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"},
-        future_key: {"leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT"},
+        future_key: {"leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT", "lot_size": 50},
     }
 
     assert runner._seed_scanner_from_shared_cache() == 2
