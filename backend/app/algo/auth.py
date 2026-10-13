@@ -79,7 +79,7 @@ class AngelOneAuth:
                 self._login_failure_count = 0
                 app_logger.info("Angel One login successful")
                 return {"status": "success", "message": "Login successful", "client_code": self.session_data.get("clientcode")}
-            except TradingAppException as exc:
+            except TradingAppException:
                 self.is_logged_in = False
                 self._login_failure_count += 1
                 message = str(exc).lower()
@@ -89,12 +89,12 @@ class AngelOneAuth:
                 )) else min(30.0 * self._login_failure_count, 120.0)
                 self._login_retry_after = time.monotonic() + cooldown
                 app_logger.warning(
-                    "Angel One login failed; retry suppressed for %.0fs (failure_count=%d, category=%s)",
+                    "Angel One login failed; retry suppressed for {:.0f}s (failure_count={}, category={})",
                     cooldown, self._login_failure_count,
                     "rate_limited" if cooldown == 90.0 else "authentication_or_transport",
                 )
                 raise
-            except Exception as exc:
+            except Exception:
                 self.is_logged_in = False
                 self._login_failure_count += 1
                 message = str(exc).lower()
@@ -104,7 +104,7 @@ class AngelOneAuth:
                 )) else min(30.0 * self._login_failure_count, 120.0)
                 self._login_retry_after = time.monotonic() + cooldown
                 app_logger.warning(
-                    "Angel One login transport failure; retry suppressed for %.0fs (failure_count=%d, category=%s)",
+                    "Angel One login transport failure; retry suppressed for {:.0f}s (failure_count={}, category={})",
                     cooldown, self._login_failure_count,
                     "rate_limited" if cooldown == 90.0 else "authentication_or_transport",
                 )
