@@ -14,7 +14,6 @@ def test_ltp_by_symbol_requires_symbol():
     assert response.status_code == 422
 
 
-
 def test_cache_ltp_reads_fresh_common_feed_snapshot_without_broker(monkeypatch):
     from app.market_data import shared_cache
 
@@ -58,3 +57,12 @@ def test_cache_ltp_returns_404_on_cache_miss(monkeypatch):
     )
 
     assert response.status_code == 404
+
+
+def test_cache_ltp_rejects_unsupported_exchange():
+    response = TestClient(app).get(
+        "/api/v1/market-data/cache-ltp",
+        params={"exchange": "INVALID", "segment": "EQ", "symboltoken": "101"},
+    )
+
+    assert response.status_code == 400
