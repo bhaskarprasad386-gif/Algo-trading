@@ -202,7 +202,7 @@ class CommonStrategyMarketFeed:
             # socket threads cannot deliver a newer tick before an older one.
             with callback_lock:
                 previous = self._last_timestamp_ns.get(key)
-                if previous is not None and record.timestamp_ns <= previous:
+                if previous is not None and record.timestamp_ns < previous:
                     return
                 self._last_timestamp_ns[key] = record.timestamp_ns
                 callback(record)
