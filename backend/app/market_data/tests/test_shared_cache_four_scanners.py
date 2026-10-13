@@ -54,7 +54,7 @@ def test_four_scanner_callbacks_see_same_cached_quote_before_delivery():
             manager.subscribe(name, [key])
         assert len(CacheTestSocket.instances) == 1
         manager._on_data(
-            SocketGroup(3, 0),
+            SocketGroup(1, 0),
             {"token": key.token, "ltp": 98765, "timestamp_ns": 1_800_000_000_000_000_001},
         )
         assert set(seen) == set(names)
