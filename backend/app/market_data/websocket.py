@@ -130,6 +130,8 @@ class MarketDataWebSocket:
                     failure_callback(error_detail)
                 except Exception as exc:
                     app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
+            if self._auto_reconnect:
+                self._schedule_reconnect()
 
         def handle_close(wsapp):
             with self._lock:
