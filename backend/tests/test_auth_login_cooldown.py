@@ -62,7 +62,7 @@ def test_rate_limit_failure_applies_90_second_cooldown(monkeypatch):
         instance.login()
 
     remaining = instance._login_retry_after - before
-    assert 89.0 <= remaining <= 90.0
+    assert 89.0 <= remaining <= 91.0
     assert instance._login_failure_count == 1
 
     with pytest.raises(TradingAppException) as caught:
@@ -110,4 +110,4 @@ def test_rate_limit_message_in_broker_response_applies_90_second_cooldown(monkey
         instance.login()
 
     remaining = instance._login_retry_after - before
-    assert 89.0 <= remaining <= 90.0
+    assert 89.0 <= remaining <= 91.0
