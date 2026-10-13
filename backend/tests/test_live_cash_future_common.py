@@ -230,16 +230,22 @@ def test_runner_rejects_out_of_order_records_before_scanner_update():
 
 
 def test_runner_warm_starts_cash_future_pair_from_shared_cache():
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
     from app.market_data.common_strategy_feed import replay_cached_snapshots
     from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
     from app.market_data.shared_cache import get_shared_market_data_cache
+
+    expiry_date = datetime.now(ZoneInfo("Asia/Kolkata")).date() + timedelta(days=30)
+    expiry_text = expiry_date.strftime("%d%b%Y").upper()
+    expiry_symbol = expiry_date.strftime("%d%b%y").upper()
 
     class Master:
         def download(self):
             return [{
                 "exch_seg": "NFO", "instrumenttype": "FUTSTK", "name": "ABC",
-                "token": "302", "symbol": "ABC29OCT26FUT",
-                "expiry": "29OCT2026", "lotsize": "50",
+                "token": "302", "symbol": f"ABC{expiry_symbol}FUT",
+                "expiry": expiry_text, "lotsize": "50",
             }]
 
         def resolve_cash_instrument(self, symbol, exchange):
