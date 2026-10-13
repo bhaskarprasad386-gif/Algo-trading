@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data import common_strategy_feed
@@ -77,8 +78,10 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
     )
     box_desc = recorder._descriptors()[0]
 
-    calendar_feed.start([calendar_desc], lambda _r: None)
-    box_feed.start([box_desc], lambda _r: None)
+    calendar_received = []
+    box_received = []
+    calendar_feed.start([calendar_desc], calendar_received.append)
+    box_feed.start([box_desc], box_received.append)
 
     assert len(FakeSocket.instances) == 1
     socket = FakeSocket.instances[0]
@@ -86,6 +89,47 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
     assert set(socket.connect_calls[0]["subscriptions"][2]) == {"FUT-1"}
     subscribed = [token for tokens, _mode in socket.subscribe_calls for token in tokens]
     assert set(subscribed) == {"OPT-1"}
+
+    # Exercise the real manager routing/fan-out path with deterministic
+    # normalized records. Each strategy consumer must receive its own tick.
+    manager._normalizer.normalize = lambda descriptor, _message: SimpleNamespace(
+        instrument=descriptor.key,
+        symbol=descriptor.symbol,
+        timestamp_ns=123456789,
+        ltp=101.5,
+        bid=101.4,
+        ask=101.6,
+        as_dict=lambda: {
+            "exchange": descriptor.key.exchange,
+            "segment": descriptor.key.segment,
+            "token": descriptor.key.token,
+            "symbol": descriptor.symbol,
+            "timestamp_ns": 123456789,
+            "ltp": 101.5,
+            "bid": 101.4,
+            "ask": 101.6,
+            "payload": {},
+        },
+    )
+    for expected_token, expected_delivery in (
+        ("FUT-1", calendar_received),
+        ("OPT-1", box_received),
+    ):
+        route = next(
+            (group, exchange_type, token)
+            for group, routes in manager._route_index.items()
+            for exchange_type, token in routes
+            if token == expected_token
+        )
+        group, exchange_type, token = route
+        manager._on_data(
+            group,
+            {"token": token, "exchange_type": exchange_type},
+            generation=manager._socket_generation[group],
+        )
+        assert len(expected_delivery) == 1
+        assert expected_delivery[0].instrument.token == expected_token
+        assert expected_delivery[0].ltp == 101.5
 
     box_feed.stop()
     calendar_feed.stop()
