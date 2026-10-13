@@ -1173,3 +1173,39 @@ def test_normalized_live_ticks_are_published_to_shared_memory_cache():
     finally:
         manager.close()
         cache.clear()
+
+
+
+def test_normalized_tick_is_cached_before_consumer_callback():
+    from app.market_data.shared_cache import get_shared_market_data_cache, market_data_cache_key
+
+    registry = InstrumentRegistry()
+    d = descriptor("cache-integration-78123")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    cache = get_shared_market_data_cache()
+    cache_key = market_data_cache_key(d.key.exchange, d.key.segment, d.key.token)
+    cache.delete(cache_key)
+    callback_observations = []
+
+    def on_record(record):
+        snapshot = cache.get(cache_key)
+        callback_observations.append((record, snapshot))
+
+    manager.register_normalized_callback("cache-integration", on_record)
+    try:
+        manager.subscribe("cache-integration", [d.key])
+        manager._on_data(
+            SocketGroup(1, 0),
+            {"token": d.key.token, "ltp": 12345, "timestamp_ns": 1_800_000_000_000_000_000},
+        )
+        assert len(callback_observations) == 1
+        record, snapshot = callback_observations[0]
+        assert snapshot is not None
+        assert snapshot["token"] == d.key.token
+        assert snapshot["ltp"] == record.ltp
+        assert snapshot["timestamp_ns"] == record.timestamp_ns
+        assert cache.get(cache_key)["ltp"] == record.ltp
+    finally:
+        manager.close()
+        cache.delete(cache_key)
