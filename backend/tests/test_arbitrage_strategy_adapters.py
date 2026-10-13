@@ -20,7 +20,7 @@ def calendar(ts, expiry, bid, ask):
 
 def test_box_adapter_closes_only_on_later_reverse_edge():
     adapter = BoxSpreadStrategyAdapter(fees_per_unit=1.0)
-    low = option(1, 100, 6, 7, 3, 4)
+    low = option(1, 100, 6, 7, 5, 6)
     high = option(1, 110, 2, 3, 4, 5)
     entries = tuple(adapter.entry({"low": low, "high": high, "data_resolution": "1s"}))
     assert len(entries) == 1
