@@ -171,6 +171,7 @@ class LiveCashFutureCommonRunner:
             }
             metadata[future_key] = {
                 "leg": "FUTURE", "underlying": underlying, "contract_month": row["_month"],
+                "lot_size": lot,
             }
         self._metadata = metadata
         return tuple(descriptors)
@@ -298,7 +299,7 @@ class LiveCashFutureCommonRunner:
                     close=snapshot.get("close"),
                     underlying=meta["underlying"],
                     expiry=snapshot.get("expiry"),
-                    lot_size=(self._metadata_lot_size(key) if expected_type is InstrumentType.FUTURE else None),
+                    lot_size=(meta.get("lot_size") if expected_type is InstrumentType.FUTURE else None),
                     tick_size=snapshot.get("tick_size"),
                     payload=snapshot.get("payload") if isinstance(snapshot.get("payload"), dict) else {},
                 )
@@ -319,10 +320,6 @@ class LiveCashFutureCommonRunner:
             except (TypeError, ValueError, OverflowError):
                 self._cache_seed_rejections += 1
         return seeded
-
-    def _metadata_lot_size(self, key: InstrumentKey) -> int | None:
-        descriptor = self.manager.registry.get(key)
-        return descriptor.lot_size if descriptor is not None else None
 
     def _on_record(self, record: MarketDataRecord) -> None:
         self._records_received += 1
