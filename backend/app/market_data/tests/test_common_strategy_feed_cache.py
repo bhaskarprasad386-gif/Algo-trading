@@ -28,3 +28,23 @@ def test_strategy_feed_rejects_non_instrument_cache_lookup():
         assert "InstrumentKey" in str(exc)
     else:
         raise AssertionError("non-InstrumentKey lookup should be rejected")
+
+
+
+def test_strategy_feeds_read_the_same_latest_snapshot_for_shared_instrument():
+    cache = get_shared_market_data_cache()
+    instrument = InstrumentKey("NFO", "NFO", "98765")
+    key = market_data_cache_key("NFO", "NFO", "98765")
+    cache.delete(key)
+    first = CommonStrategyMarketFeed("cash-future-cache-reader", manager=object())
+    second = CommonStrategyMarketFeed("box-spread-cache-reader", manager=object())
+    value = {
+        "exchange": "NFO", "segment": "NFO", "token": "98765",
+        "timestamp_ns": 123456789, "ltp": 456.7,
+    }
+    try:
+        cache.put(key, value, timestamp_ns=value["timestamp_ns"])
+        assert first.latest_snapshot(instrument) == value
+        assert second.latest_snapshot(instrument) == value
+    finally:
+        cache.delete(key)
