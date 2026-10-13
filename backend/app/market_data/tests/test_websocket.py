@@ -275,7 +275,7 @@ def test_websocket_reconnect_scheduler_is_single_flight(monkeypatch):
 
 
 
-def test_marking_auth_stale_forces_fresh_login_even_for_young_session():
+def test_marking_auth_stale_forces_token_refresh_even_for_young_session():
     from threading import RLock
     import time
     from app.algo.auth import AngelOneAuth
@@ -284,20 +284,23 @@ def test_marking_auth_stale_forces_fresh_login_even_for_young_session():
     auth._state_lock = RLock()
     auth.is_logged_in = True
     auth.smart_api = object()
-    auth.session_data = {"jwtToken": "old-jwt", "feedToken": "old-feed"}
+    auth.session_data = {
+        "jwtToken": "old-jwt",
+        "feedToken": "old-feed",
+        "refreshToken": "refresh-token",
+    }
     auth._session_obtained_at = time.monotonic()
     auth._force_fresh_session = False
     calls = []
 
-    def fresh_login():
+    def fresh_token():
         calls.append(True)
-        auth.session_data = {"jwtToken": "new-jwt", "feedToken": "new-feed"}
-        auth.is_logged_in = True
+        auth.session_data.update({"jwtToken": "new-jwt", "feedToken": "new-feed"})
         auth._force_fresh_session = False
         auth._session_obtained_at = time.monotonic()
         return {"status": "success"}
 
-    auth.login = fresh_login
+    auth.refresh_session = fresh_token
     auth.mark_session_stale()
     auth.ensure_session_fresh(3600)
 
