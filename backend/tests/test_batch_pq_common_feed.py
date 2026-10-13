@@ -77,11 +77,23 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
         "synthetic-options", auth=object()
     )
     box_desc = recorder._descriptors()[0]
+    cash_feed = common_strategy_feed.CommonStrategyMarketFeed(
+        "cash-future", auth=object()
+    )
+    synthetic_feed = common_strategy_feed.CommonStrategyMarketFeed(
+        "synthetic-future", auth=object()
+    )
 
     calendar_received = []
     box_received = []
+    cash_received = []
+    synthetic_received = []
     calendar_feed.start([calendar_desc], calendar_received.append)
     box_feed.start([box_desc], box_received.append)
+    # Multiple strategies may consume the same broker instrument without
+    # opening another socket or overwriting each other's callbacks.
+    cash_feed.start([calendar_desc], cash_received.append)
+    synthetic_feed.start([calendar_desc], synthetic_received.append)
 
     assert len(FakeSocket.instances) == 1
     socket = FakeSocket.instances[0]
@@ -111,9 +123,9 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
             "payload": {},
         },
     )
-    for expected_token, expected_delivery in (
-        ("FUT-1", calendar_received),
-        ("OPT-1", box_received),
+    for expected_token, expected_deliveries in (
+        ("FUT-1", (calendar_received, cash_received, synthetic_received)),
+        ("OPT-1", (box_received,)),
     ):
         route = next(
             (group, exchange_type, token)
@@ -127,10 +139,13 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
             {"token": token, "exchange_type": exchange_type},
             generation=manager._socket_generation[group],
         )
-        assert len(expected_delivery) == 1
-        assert expected_delivery[0].instrument.token == expected_token
-        assert expected_delivery[0].ltp == 101.5
+        for expected_delivery in expected_deliveries:
+            assert len(expected_delivery) == 1
+            assert expected_delivery[0].instrument.token == expected_token
+            assert expected_delivery[0].ltp == 101.5
 
+    synthetic_feed.stop()
+    cash_feed.stop()
     box_feed.stop()
     calendar_feed.stop()
     assert socket.closed is True
