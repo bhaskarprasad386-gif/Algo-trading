@@ -1,31 +1,29 @@
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.market_data.shared_cache import (
-    get_shared_market_data_cache,
-    market_data_cache_key,
-    publish_market_data_snapshot,
+    BoundedMarketDataCache,
+    cache_key_for_instrument,
+    put_market_data_record,
 )
 
 
 def test_common_market_data_snapshot_is_published_under_canonical_key():
     token = "cache-integration-test-991827"
-    key = market_data_cache_key("nfo", token)
-    publish_market_data_snapshot(
-        "nfo",
-        token,
-        {"ltp": 123.45, "bid": 123.4, "ask": 123.5},
+    payload = {"ltp": 123.45, "bid": 123.4, "ask": 123.5}
+    record = SimpleNamespace(
+        instrument=SimpleNamespace(exchange="nfo", token=token),
         timestamp_ns=1_800_000_000_000_000_000,
+        as_dict=lambda: dict(payload),
     )
+    cache = BoundedMarketDataCache(max_entries=10, ttl_seconds=60)
 
-    assert key == f"NFO:{token}"
-    assert get_shared_market_data_cache().get(key) == {
-        "ltp": 123.45,
-        "bid": 123.4,
-        "ask": 123.5,
-    }
+    key = put_market_data_record(record, cache=cache)
 
+    assert key == cache_key_for_instrument("NFO", token) == f"NFO:{token}"
+    assert cache.get(key) == payload
 
 def test_separate_catalog_instances_serialize_writes_to_same_daily_shard(tmp_path):
     base_path = str(tmp_path / "live_market.sqlite3")
