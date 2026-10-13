@@ -137,3 +137,25 @@ def put_market_data_record(record: Any, cache: MarketDataCache | None = None) ->
 
 def get_shared_market_data_cache() -> BoundedMarketDataCache:
     return _SHARED_CACHE
+
+
+def market_data_cache_key(exchange: str, token: str) -> str:
+    """Canonical identity for the latest normalized snapshot of an instrument."""
+    exchange_value = str(exchange).strip().upper()
+    token_value = str(token).strip()
+    if not exchange_value or not token_value:
+        raise ValueError("exchange and token are required for a market-data cache key")
+    return f"{exchange_value}:{token_value}"
+
+
+def publish_market_data_snapshot(
+    exchange: str,
+    token: str,
+    value: dict[str, Any],
+    *,
+    timestamp_ns: int,
+) -> None:
+    """Publish one normalized tick to the process-wide bounded snapshot cache."""
+    _SHARED_CACHE.put(
+        market_data_cache_key(exchange, token), value, timestamp_ns=timestamp_ns
+    )
