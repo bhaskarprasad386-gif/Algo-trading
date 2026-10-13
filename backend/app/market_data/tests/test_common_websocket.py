@@ -1141,3 +1141,35 @@ def test_single_socket_transport_failure_preserves_other_healthy_shard():
         assert manager._recovery_thread.is_alive()
     finally:
         manager.close()
+
+
+
+def test_normalized_live_ticks_are_published_to_shared_memory_cache():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_normalized_callback("cash", lambda record: seen.append(record))
+    try:
+        manager.subscribe("cash", [d.key])
+        manager._on_data(
+            SocketGroup(3, 0),
+            {"token": "101", "exchange_type": 1, "ltp": 100},
+        )
+
+        snapshot = cache.get(d.key.value)
+        assert seen, "normalized scanner callback should still receive the live record"
+        assert snapshot is not None
+        assert snapshot["token"] == "101"
+        assert snapshot["symbol"] == d.symbol
+        assert "payload" not in snapshot
+        assert manager.snapshot()["market_data_cache"]["entries"] >= 1
+        assert manager.snapshot()["market_data_cache_write_errors"] == 0
+    finally:
+        manager.close()
+        cache.clear()
