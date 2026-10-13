@@ -62,7 +62,7 @@ def test_four_scanner_callbacks_see_same_cached_quote_before_delivery():
         assert all(snapshot is not None for snapshot in snapshots)
         assert all(snapshot["token"] == key.token for snapshot in snapshots)
         assert len({snapshot["timestamp_ns"] for snapshot in snapshots}) == 1
-        assert len({snapshot["ltp"] for snapshot in snapshots}) == 1
+        assert {snapshot["ltp"] for snapshot in snapshots} == {987.65}
     finally:
         manager.close()
         cache.delete(cache_key)
