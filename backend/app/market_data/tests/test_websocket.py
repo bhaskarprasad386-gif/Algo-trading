@@ -197,7 +197,31 @@ def test_websocket_failure_callbacks_notify_manager_on_error_and_close(monkeypat
     socket.on_error(socket, "temporary DNS failure")
     assert failures == ["temporary DNS failure"]
     socket.on_close(socket)
-    assert failures == ["temporary DNS failure", "socket closed"]
+    assert failures == ["temporary DNS failure"]
+
+
+def test_websocket_error_then_close_requests_only_one_reconnect(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=True)
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+
+    socket.on_error(socket, "temporary DNS failure")
+    socket.on_close(socket)
+
+    assert scheduled == [True]
+
+
+def test_websocket_empty_reconnect_releases_single_flight_guard(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client._is_reconnecting = True
+
+    client._reconnect_after_disconnect()
+
+    assert client._is_reconnecting is False
+    assert client._reconnect_thread is None
 
 
 def test_sdk_internal_error_handler_forwards_original_error_without_retrying(monkeypatch):
