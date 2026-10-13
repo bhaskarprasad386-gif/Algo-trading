@@ -38,3 +38,9 @@ def test_cache_rejects_out_of_order_snapshot_for_same_instrument():
     cache.put("NSE:EQ:101", {"ltp": 102}, timestamp_ns=200)
     cache.put("NSE:EQ:101", {"ltp": 99}, timestamp_ns=100)
     assert cache.get("NSE:EQ:101")["ltp"] == 102
+
+def test_cache_rejects_duplicate_timestamp_snapshot_for_same_instrument():
+    cache = BoundedMarketDataCache(max_entries=10, ttl_seconds=60)
+    cache.put("NSE:EQ:101", {"ltp": 102}, timestamp_ns=200)
+    cache.put("NSE:EQ:101", {"ltp": 99}, timestamp_ns=200)
+    assert cache.get("NSE:EQ:101")["ltp"] == 102
