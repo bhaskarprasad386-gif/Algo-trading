@@ -389,7 +389,14 @@ class LiveCashFutureOneSecondCollector:
                                 rejected += 1
                                 app_logger.error(f"1-second live record rejected {token}: {exc}")
                         payload = dict(message)
+                        exchange = "NSE" if meta["leg"] == "CASH" else "NFO"
+                        # Use the same canonical broker identity as the common
+                        # WebSocket publisher; strategy-local leg names must
+                        # never create a second cache namespace for one token.
                         payload.update({
+                            "exchange": exchange,
+                            "segment": exchange,
+                            "token": token,
                             "source_timestamp_ns": second_ns,
                             "ltp": _ltp(message),
                             "close": _ltp(message),
@@ -408,7 +415,7 @@ class LiveCashFutureOneSecondCollector:
                             gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
                         observations += 1
                         latest[token] = (second_ns, payload)
-                        self.shared_cache.put(f"{meta['leg']}:{token}", payload, timestamp_ns=second_ns)
+                        self.shared_cache.put(f"{exchange}:{exchange}:{token}", payload, timestamp_ns=second_ns)
                         with _STATE_LOCK:
                             _STATE["last_observation_ns"] = second_ns
                             _STATE["gap_seconds"] = gap_seconds
