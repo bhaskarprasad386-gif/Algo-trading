@@ -33,6 +33,10 @@ def test_underlying_feed_accepts_authoritative_index_token_without_cash_lookup()
         tracker=tracker,
         concrete_tokens={"NIFTY": "26000"},
     )
+    # Authoritative tokens must resolve without downloading the remote master.
+    feed.instrument_master.download = lambda force=False: (_ for _ in ()).throw(
+        AssertionError("authoritative token lookup must not access the network")
+    )
     assert feed._tokens() == {"NIFTY": "26000"}
 
 def test_index_token_resolution_uses_exact_master_entry():
