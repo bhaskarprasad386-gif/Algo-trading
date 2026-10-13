@@ -115,7 +115,7 @@ def test_underlying_feed_resolves_index_from_master_when_declared(monkeypatch):
     assert feed._tokens() == {"NIFTY": "99926000"}
 
 
-def test_underlying_feed_routes_bse_indices_to_bfo_exchange_type():
+def test_underlying_feed_routes_bse_indices_to_bfo_exchange_type(monkeypatch):
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"SENSEX": (80000.0, 80100.0), "NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY", "SENSEX", "BANKEX"),
@@ -123,6 +123,7 @@ def test_underlying_feed_routes_bse_indices_to_bfo_exchange_type():
         concrete_tokens={"NIFTY": "999", "SENSEX": "1", "BANKEX": "2"},
         index_symbols=frozenset({"NIFTY", "SENSEX", "BANKEX"}),
     )
+    monkeypatch.setattr(feed.instrument_master, "download", lambda force=False: [])
     groups = feed._subscription_groups(feed._tokens())
     assert groups[1] == ["999"]
     assert groups[4] == ["1", "2"]
