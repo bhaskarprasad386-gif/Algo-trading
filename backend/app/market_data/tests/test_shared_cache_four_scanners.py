@@ -39,6 +39,7 @@ def test_four_scanner_callbacks_see_same_cached_quote_before_delivery():
     )
     registry = InstrumentRegistry()
     registry.register(descriptor)
+    socket_count_before = len(CacheTestSocket.instances)
     manager = CommonWebSocketManager(registry, socket_factory=CacheTestSocket)
     cache = get_shared_market_data_cache()
     cache_key = market_data_cache_key(key.exchange, key.segment, key.token)
@@ -52,7 +53,7 @@ def test_four_scanner_callbacks_see_same_cached_quote_before_delivery():
                 name, lambda record, consumer=name: seen.__setitem__(consumer, cache.get(cache_key))
             )
             manager.subscribe(name, [key])
-        assert len(CacheTestSocket.instances) == 1
+        assert len(CacheTestSocket.instances) - socket_count_before == 1
         manager._on_data(
             SocketGroup(1, 0),
             {"token": key.token, "exchange_type": 2, "ltp": 98765, "timestamp_ns": 1_800_000_000_000_000_001},
