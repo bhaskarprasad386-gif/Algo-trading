@@ -28,12 +28,24 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         "x-client-code": socket.client_code,
         "x-feed-token": socket.feed_token,
     }
+    def compatible_sdk_close(wsapp: Any, *close_args: Any) -> None:
+        """Bridge websocket-client's 3-argument close callback to SDK variants."""
+        callback = getattr(socket, "_on_close", None)
+        if not callable(callback):
+            return
+        try:
+            callback(wsapp, *close_args)
+        except TypeError:
+            # Some SmartApi releases define _on_close(self, wsapp) only,
+            # while websocket-client calls its handler as (wsapp, code, reason).
+            callback(wsapp)
+
     socket.wsapp = websocket_client.WebSocketApp(
         socket.ROOT_URI,
         header=headers,
         on_open=socket._on_open,
         on_error=socket._on_error,
-        on_close=socket._on_close,
+        on_close=compatible_sdk_close,
         on_data=socket._on_data,
         on_ping=socket._on_ping,
         on_pong=socket._on_pong,
