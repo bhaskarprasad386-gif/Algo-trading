@@ -31,6 +31,31 @@ class SocketGroup:
 _SHARED_BROKER_COOLDOWN_STATE_LOCK = Lock()
 _SHARED_BROKER_CONNECT_ADMISSION_LOCK = Lock()
 _SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+_SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 2.0
+_SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+
+
+def _wait_for_shared_broker_connect_admission(
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
+    """Wait under the admission lock until cooldown and global pacing both allow connect."""
+    global _SHARED_BROKER_LAST_CONNECT_STARTED_AT
+    while should_stop is None or not should_stop():
+        with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
+            now = time.monotonic()
+            cooldown_remaining = max(0.0, _SHARED_BROKER_COOLDOWN_UNTIL - now)
+            pacing_remaining = max(
+                0.0,
+                _SHARED_BROKER_LAST_CONNECT_STARTED_AT
+                + _SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS
+                - now,
+            )
+            wait_for = max(cooldown_remaining, pacing_remaining)
+            if wait_for <= 0.0:
+                _SHARED_BROKER_LAST_CONNECT_STARTED_AT = now
+                return True
+        time.sleep(min(max(wait_for, 0.01), 0.1))
+    return False
 
 
 def shared_broker_cooldown_remaining() -> float:
@@ -57,25 +82,15 @@ def connect_with_shared_broker_admission(
     cooldown_seconds: float = 60.0,
 ) -> bool:
     """Run a direct Angel connect only after the broker-wide 429 cooldown."""
-    while should_stop is None or not should_stop():
-        remaining = shared_broker_cooldown_remaining()
-        if remaining > 0:
-            time.sleep(min(max(remaining, 0.05), 1.0))
-            continue
-        with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
-            if should_stop is not None and should_stop():
-                return False
-            # Re-check inside admission: another component may have received 429.
-            remaining = shared_broker_cooldown_remaining()
-            if remaining > 0:
-                continue
-            try:
-                socket.connect(**connect_kwargs)
-            except Exception as exc:
-                apply_shared_broker_cooldown(exc, cooldown_seconds)
-                raise
-            return True
-    return False
+    with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
+        if not _wait_for_shared_broker_connect_admission(should_stop):
+            return False
+        try:
+            socket.connect(**connect_kwargs)
+        except Exception as exc:
+            apply_shared_broker_cooldown(exc, cooldown_seconds)
+            raise
+        return True
 
 
 class CommonWebSocketManager:
@@ -438,48 +453,39 @@ class CommonWebSocketManager:
                 # can pass the check and enter connect() before a 429 callback is
                 # published. Serialize broker handshakes, but never take either
                 # manager/reconcile lock across the blocking SDK call.
-                while True:
-                    with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
-                        remaining = _SHARED_BROKER_COOLDOWN_UNTIL - time.monotonic()
-                    if remaining > 0:
-                        app_logger.warning(
-                            "Skipping Angel connect during connection-limit cooldown group=%s remaining=%.1fs",
-                            group, remaining,
+                with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
+                    with self._lock:
+                        still_current = (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                            and not self._closed
                         )
-                        time.sleep(min(max(remaining, 0.05), 1.0))
+                    if not still_current:
+                        self._close_socket_bounded(socket)
+                        return
+                    # Share both the 429 cooldown and minimum connect-start
+                    # interval with direct collectors. Re-check stop/currentness
+                    # while waiting so stale generations do not consume admission.
+                    def _still_current() -> bool:
                         with self._lock:
-                            still_current = (
+                            return (
                                 self._sockets.get(group) is socket
                                 and self._socket_generation.get(group) == generation
                                 and not self._closed
                             )
-                        if not still_current:
-                            self._close_socket_bounded(socket)
-                            return
-                        continue
-
-                    with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
-                        # Re-check after waiting for admission; a preceding
-                        # connect may have reported 429 while this worker queued.
-                        with _SHARED_BROKER_COOLDOWN_STATE_LOCK:
-                            remaining = _SHARED_BROKER_COOLDOWN_UNTIL - time.monotonic()
-                        if remaining > 0:
-                            continue
-                        with self._lock:
-                            still_current = (
-                                self._sockets.get(group) is socket
-                                and self._socket_generation.get(group) == generation
-                                and not self._closed
-                            )
-                        if not still_current:
-                            self._close_socket_bounded(socket)
-                            return
-                        try:
-                            socket.connect(**connect_kwargs)
-                        except Exception as connect_exc:
-                            self._apply_broker_cooldown(connect_exc)
-                            raise
-                        break
+                    if not _wait_for_shared_broker_connect_admission(
+                        should_stop=lambda: not _still_current()
+                    ):
+                        self._close_socket_bounded(socket)
+                        return
+                    if not _still_current():
+                        self._close_socket_bounded(socket)
+                        return
+                    try:
+                        socket.connect(**connect_kwargs)
+                    except Exception as connect_exc:
+                        self._apply_broker_cooldown(connect_exc)
+                        raise
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
                 # successfully connected socket alive as an orphan session.

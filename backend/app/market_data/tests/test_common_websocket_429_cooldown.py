@@ -1,5 +1,5 @@
 """Focused regression tests for Angel One 429 connect admission cooldown."""
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 import time
 
 import pytest
@@ -19,9 +19,12 @@ def reset_shared_broker_cooldown_between_tests():
     # The production gate is intentionally process-wide; isolate test cases.
     with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
         common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+        common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+    common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 0.0
     yield
     with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
         common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+        common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
 
 
 
@@ -99,7 +102,10 @@ class CooldownOnFirstConnectSocket(CooldownSocket):
         super().connect(**kwargs)
 
 
-def test_queued_shard_rechecks_429_cooldown_after_connect_admission():
+def test_queued_shard_rechecks_429_cooldown_after_connect_admission(monkeypatch):
+    monkeypatch.setattr(
+        common_websocket_module, "_SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS", 0.02
+    )
     CooldownOnFirstConnectSocket.instances.clear()
     CooldownOnFirstConnectSocket.first_connect_seen.clear()
     registry = InstrumentRegistry()
@@ -159,6 +165,33 @@ def test_direct_collector_connect_waits_for_shared_429_cooldown():
     assert socket.calls == 1
     assert elapsed >= 0.08
     assert shared_broker_cooldown_remaining() == 0.0
+
+
+def test_concurrent_direct_connects_obey_shared_minimum_start_interval(monkeypatch):
+    monkeypatch.setattr(
+        common_websocket_module, "_SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS", 0.04
+    )
+    starts = []
+    starts_lock = Lock()
+    class TimedSocket:
+        def connect(self, **kwargs):
+            with starts_lock:
+                starts.append(time.monotonic())
+
+    workers = [
+        Thread(target=connect_with_shared_broker_admission, args=(TimedSocket(), {}))
+        for _ in range(3)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=2.0)
+
+    assert all(not worker.is_alive() for worker in workers), "connect workers did not finish"
+    assert len(starts) == 3
+    starts.sort()
+    assert starts[1] - starts[0] >= 0.03
+    assert starts[2] - starts[1] >= 0.03
 
 
 def test_direct_collector_connect_failure_publishes_shared_429_cooldown():
