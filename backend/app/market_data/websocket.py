@@ -1,6 +1,6 @@
 import math
 import time
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, current_thread
 from typing import Any, Callable, Optional
 
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
@@ -30,6 +30,7 @@ class MarketDataWebSocket:
         self._reconnect_attempts = 3
         self._reconnect_delay_seconds = 2.0
         self._reconnect_thread = None
+        self._is_reconnecting = False
         self._consecutive_failures = 0
         self._error_count = 0
         self._reconnect_count = 0
@@ -129,6 +130,8 @@ class MarketDataWebSocket:
                     failure_callback(error_detail)
                 except Exception as exc:
                     app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
+            if self._auto_reconnect:
+                self._schedule_reconnect()
 
         def handle_close(wsapp):
             with self._lock:
@@ -198,8 +201,9 @@ class MarketDataWebSocket:
         with self._reconnect_lock:
             if self._stopping:
                 return
-            if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
+            if self._is_reconnecting:
                 return
+            self._is_reconnecting = True
             self._reconnect_count += 1
             self._reconnect_thread = Thread(
                 target=self._reconnect_after_disconnect,
@@ -209,8 +213,7 @@ class MarketDataWebSocket:
             self._reconnect_thread.start()
 
     def _reconnect_after_disconnect(self) -> None:
-        with self._reconnect_lock:
-            self._reconnect_thread = None
+        retry_after_exit = False
         with self._lock:
             exchange_type = self.exchange_type
             tokens = list(self.tokens)
@@ -242,6 +245,14 @@ class MarketDataWebSocket:
             if not stopping:
                 delay = min(60.0, self._reconnect_delay_seconds * (2 ** min(failures - 1, 5)))
                 time.sleep(delay)
+                retry_after_exit = True
+        finally:
+            with self._reconnect_lock:
+                if self._reconnect_thread is current_thread():
+                    self._reconnect_thread = None
+                self._is_reconnecting = False
+                should_retry = retry_after_exit and not self._stopping
+            if should_retry:
                 self._schedule_reconnect()
 
     def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None):
