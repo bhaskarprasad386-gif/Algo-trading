@@ -5,6 +5,8 @@ values. No strategy opens or owns a broker WebSocket directly.
 """
 from __future__ import annotations
 
+import fcntl
+import os
 from threading import Lock
 from typing import Any, Callable, Iterable
 
@@ -22,6 +24,31 @@ _EXCHANGE_SEGMENTS = {
 _SHARED_LOCK = Lock()
 _SHARED_MANAGER: CommonWebSocketManager | None = None
 _SHARED_AUTH: AngelOneAuth | None = None
+_PROCESS_ADMISSION_HANDLE = None
+_PROCESS_ADMISSION_PATH = os.environ.get(
+    "ANGEL_WS_PROCESS_LOCK_PATH", "/tmp/algo-trading-angel-ws.lock"
+)
+
+
+def _acquire_process_admission() -> None:
+    """Prevent a second local app process from opening competing Angel sessions."""
+    global _PROCESS_ADMISSION_HANDLE
+    if _PROCESS_ADMISSION_HANDLE is not None:
+        return
+    handle = open(_PROCESS_ADMISSION_PATH, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise RuntimeError(
+            "Another local process already owns the Angel WebSocket admission lock "
+            f"({_PROCESS_ADMISSION_PATH}); stop the duplicate process before starting this service."
+        ) from exc
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"pid={os.getpid()}\\n")
+    handle.flush()
+    _PROCESS_ADMISSION_HANDLE = handle
 
 
 def shared_common_manager_snapshot() -> dict[str, Any] | None:
@@ -39,6 +66,7 @@ def shared_common_manager(
     global _SHARED_MANAGER, _SHARED_AUTH
     with _SHARED_LOCK:
         if _SHARED_MANAGER is None:
+            _acquire_process_admission()
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
             _SHARED_MANAGER = CommonWebSocketManager(socket_factory=factory)
