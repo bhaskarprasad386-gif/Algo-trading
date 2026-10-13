@@ -13,6 +13,15 @@ from app.market_data.live_synthetic_stream import (
     LiveSyntheticOptionFutureRecorder,
     SyntheticSubscription,
 )
+from app.market_data.shared_cache import get_shared_market_data_cache
+
+
+@pytest.fixture(autouse=True)
+def isolate_shared_market_data_cache():
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    yield
+    cache.clear()
 
 
 def _collector():
