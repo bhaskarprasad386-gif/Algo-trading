@@ -83,6 +83,32 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert set(seen) == {("box", "101"), ("cash", "101")}
 
 
+def test_normalized_ticks_are_published_to_shared_cache_before_fanout():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_normalized_callback("cache-test", seen.append)
+    try:
+        manager.subscribe("cache-test", [d.key])
+        manager._on_data(
+            SocketGroup(1, 0),
+            {"token": "101", "exchange_type": 1, "ltp": 12345, "timestamp_ns": 200},
+        )
+        snapshot = cache.get("NSE:EQ:101")
+        assert snapshot is not None
+        assert snapshot["timestamp_ns"] == 200
+        assert snapshot["ltp"] == 123.45
+        assert len(seen) == 1
+    finally:
+        manager.close()
+
+
 def test_mode_upgrade_rehomes_socket_group_without_duplicate_sockets():
     registry = InstrumentRegistry()
     d = descriptor("101")
