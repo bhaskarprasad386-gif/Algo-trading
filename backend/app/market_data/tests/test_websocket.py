@@ -296,3 +296,22 @@ def test_websocket_reconnect_scheduler_is_single_flight(monkeypatch):
     assert created[0].started is True
     assert client.health["reconnect_count"] == 1
     assert client._is_reconnecting is True
+
+
+def test_websocket_reconnect_worker_start_failure_releases_guard(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+
+    class BrokenThread:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread start failed")
+
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    client._schedule_reconnect()
+
+    assert client._is_reconnecting is False
+    assert client._reconnect_thread is None
+    assert client.health["reconnect_count"] == 0
