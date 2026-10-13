@@ -56,6 +56,7 @@ class HistoricalArbitrageRunner:
         self.writer = writer
         self._open: dict[str, OpenPosition] = {}
         self._sequence = 0
+        self._trade_sequence = 0
         self._audit_sequence = 0
         self._realized_pnl = 0.0
         self.completed = 0
@@ -115,8 +116,9 @@ class HistoricalArbitrageRunner:
                         "entry_edge": position.entry_price,
                         "exit_edge": execution.exit_price,
                     })
+                    self._trade_sequence += 1
                     self.writer.ledger.append_trades(self.writer.spec.run_id, [BacktestTrade(
-                        trade_id=position.trade_id, sequence=self._sequence,
+                        trade_id=position.trade_id, sequence=self._trade_sequence,
                         timestamp_ns=execution.timestamp_ns, instrument=position.instrument,
                         side=position.side, quantity=position.quantity,
                         entry_price=position.entry_price, exit_price=execution.exit_price,
