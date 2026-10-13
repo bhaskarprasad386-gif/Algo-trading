@@ -33,8 +33,11 @@ def _underlying_feed(on_price=None):
     return feed, tracker
 
 
-def test_late_starting_underlying_feed_seeds_tracker_from_shared_cache():
+def test_late_starting_underlying_feed_seeds_tracker_from_shared_cache(monkeypatch):
+    import app.market_data.live_synthetic_underlying as module
     descriptor = _descriptor()
+    now = 1_700_000_000_500_000_000
+    monkeypatch.setattr(module, "time_ns", lambda: now)
     seen = []
     feed, tracker = _underlying_feed(lambda *args: seen.append(args))
     feed._feed = _CacheReader({
@@ -53,8 +56,10 @@ def test_late_starting_underlying_feed_seeds_tracker_from_shared_cache():
     assert seen == [("NIFTY", 22048.0, 1_700_000_000_000_000_000)]
 
 
-def test_cache_seed_rejects_mismatched_identity_and_does_not_overwrite_newer_tick():
+def test_cache_seed_rejects_mismatched_identity_and_does_not_overwrite_newer_tick(monkeypatch):
+    import app.market_data.live_synthetic_underlying as module
     descriptor = _descriptor()
+    monkeypatch.setattr(module, "time_ns", lambda: 1_700_000_000_500_000_000)
     seen = []
     feed, tracker = _underlying_feed(lambda *args: seen.append(args))
     feed._feed = _CacheReader({
@@ -74,8 +79,10 @@ def test_cache_seed_rejects_mismatched_identity_and_does_not_overwrite_newer_tic
     assert seen == [("NIFTY", 22120.0, 1_700_000_001_000_000_000)]
 
 
-def test_cache_seed_rejects_wrong_instrument_and_invalid_quote():
+def test_cache_seed_rejects_wrong_instrument_and_invalid_quote(monkeypatch):
+    import app.market_data.live_synthetic_underlying as module
     descriptor = _descriptor()
+    monkeypatch.setattr(module, "time_ns", lambda: 1_700_000_000_500_000_000)
     feed, tracker = _underlying_feed()
     feed._feed = _CacheReader({
         descriptor.key.value: {
@@ -101,3 +108,25 @@ def test_cache_seed_rejects_wrong_instrument_and_invalid_quote():
     }
     assert feed._seed_from_cache((descriptor,)) == 0
     assert tracker.atm("NIFTY") is None
+
+def test_cache_seed_rejects_quotes_older_than_one_second(monkeypatch):
+    import app.market_data.live_synthetic_underlying as module
+
+    descriptor = _descriptor()
+    now = 1_700_000_002_000_000_000
+    monkeypatch.setattr(module, "time_ns", lambda: now)
+    feed, tracker = _underlying_feed()
+    feed._feed = _CacheReader({
+        descriptor.key.value: {
+            "exchange": "NSE",
+            "segment": "NSE",
+            "token": "26000",
+            "symbol": "NIFTY",
+            "timestamp_ns": now - 1_000_000_001,
+            "ltp": 22048.0,
+        }
+    })
+
+    assert feed._seed_from_cache((descriptor,)) == 0
+    assert tracker.atm("NIFTY") is None
+

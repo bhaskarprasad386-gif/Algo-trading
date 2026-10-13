@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from math import isfinite
 from threading import Event, Lock
+from time import time_ns
 from typing import Callable
 
 from app.algo.auth import AngelOneAuth
@@ -190,6 +191,7 @@ class LiveSyntheticUnderlyingFeed:
         feed = self._feed
         if feed is None:
             return 0
+        now_ns = time_ns()
         seeded = 0
         for descriptor in descriptors:
             snapshot = feed.latest_snapshot(descriptor.key)
@@ -205,7 +207,16 @@ class LiveSyntheticUnderlyingFeed:
                 or str(snapshot.get("symbol") or "").strip().upper() != descriptor.symbol.strip().upper()
             ):
                 continue
-            if self._apply_price(snapshot.get("symbol"), snapshot.get("ltp"), snapshot.get("timestamp_ns")):
+            try:
+                timestamp_ns = int(snapshot.get("timestamp_ns"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            age_ns = now_ns - timestamp_ns
+            # Cache TTL is intentionally broader than the scanner warm-up window;
+            # do not seed ATM selection from an old or future-dated quote.
+            if timestamp_ns <= 0 or age_ns < 0 or age_ns > 1_000_000_000:
+                continue
+            if self._apply_price(snapshot.get("symbol"), snapshot.get("ltp"), timestamp_ns):
                 seeded += 1
         return seeded
 
