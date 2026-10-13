@@ -204,3 +204,26 @@ def test_cash_future_scanner_does_not_replace_newer_leg_with_out_of_order_tick()
     assert scanner.update(delayed, contract_month="CASH") is None
     assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
     assert scanner.out_of_order_records == 1
+
+
+def test_runner_rejects_out_of_order_records_before_scanner_update():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    scanner = CashFutureOpportunityScanner(minimum_gap_points=0, minimum_gross_profit=0)
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+        scanner=scanner,
+    )
+    cash_key = InstrumentKey("NSE", "NSE", "301")
+    future_key = InstrumentKey("NFO", "NFO", "302")
+    runner._metadata[cash_key] = {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"}
+    runner._metadata[future_key] = {"leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT"}
+
+    runner._on_record(record(cash_key, "ABC-EQ", InstrumentType.EQUITY, 2_000_000_000, 99, 100))
+    runner._on_record(record(future_key, "ABC26OCTFUT", InstrumentType.FUTURE, 2_000_000_000, 103, 104, lot=50))
+    runner._on_record(record(cash_key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 90, 91))
+
+    assert runner._out_of_order_records == 1
+    assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
+    runner.stop()
