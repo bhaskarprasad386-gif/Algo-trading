@@ -204,3 +204,30 @@ def test_cash_future_scanner_does_not_replace_newer_leg_with_out_of_order_tick()
     assert scanner.update(delayed, contract_month="CASH") is None
     assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
     assert scanner.out_of_order_records == 1
+
+
+
+def test_cash_future_runner_publishes_canonical_shared_snapshot():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+    from app.market_data.shared_cache import cache_key_for_instrument, get_shared_market_data_cache
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+    )
+    key = InstrumentKey("NSE", "NSE", "1")
+    runner._metadata[key] = {
+        "leg": "CASH", "underlying": "ABC", "contract_month": "CASH",
+    }
+
+    runner._on_record(record(key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100))
+
+    snapshot = cache.get(cache_key_for_instrument("NSE", "1"))
+    assert snapshot is not None
+    assert snapshot["underlying"] == "ABC"
+    assert snapshot["bid"] == 99
+    assert snapshot["ask"] == 100
+    runner.stop()
+    cache.clear()
