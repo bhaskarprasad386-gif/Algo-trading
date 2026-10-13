@@ -93,7 +93,7 @@ def test_normalized_common_feed_publishes_shared_snapshot():
     manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
     received = []
     manager.register_normalized_callback("scanner", received.append)
-    manager.subscribe("scanner", [d.key])
+    manager.subscribe("scanner", [d.key], mode=3)
 
     manager._on_data(
         SocketGroup(3, 0),
