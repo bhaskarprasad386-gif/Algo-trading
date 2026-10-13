@@ -35,6 +35,10 @@ class AngelOneAuth:
             self.is_logged_in: bool = False
             self._state_lock = RLock()
             self._session_obtained_at = 0.0
+            # A broker connection-limit response can invalidate an otherwise young session.
+            # Keep this flag set until a full login succeeds; failed logins must not
+            # silently fall back to the stale JWT/feedToken pair.
+            self._force_fresh_session = False
             self._initialized = True
 
     def _validate_credentials(self) -> None:
@@ -59,6 +63,7 @@ class AngelOneAuth:
                     raise TradingAppException("LoginError", "Angel One login response missing session token", 502)
                 self.is_logged_in = True
                 self._session_obtained_at = time.monotonic()
+                self._force_fresh_session = False
                 app_logger.info("Angel One login successful")
                 return {"status": "success", "message": "Login successful", "client_code": self.session_data.get("clientcode")}
             except TradingAppException:
@@ -95,6 +100,16 @@ class AngelOneAuth:
                 app_logger.error(f"Session refresh failed: {str(e)}")
                 return self.login()
 
+    def mark_session_stale(self) -> None:
+        """Force a new full login before the next WebSocket handshake.
+
+        Use this after broker connection-limit/handshake failures. Do not log in
+        here: the caller may still be inside the shared cooldown, and multiple
+        socket failures must coalesce into one refresh on the next admitted connect.
+        """
+        with self._state_lock:
+            self._force_fresh_session = True
+
     def ensure_session_fresh(self, max_age_seconds: float) -> Dict[str, Any]:
         """Refresh the Angel session before using a potentially stale JWT/feed token."""
         try:
@@ -104,6 +119,12 @@ class AngelOneAuth:
         if max_age <= 0:
             raise ValueError("max_age_seconds must be positive")
         with self._state_lock:
+            # A 429/connection-limit failure forces a fresh generateSession login
+            # even when the current session is younger than the normal age limit.
+            # The flag is cleared only by a successful login, so failure cannot
+            # silently reuse stale credentials on the next reconnect attempt.
+            if self._force_fresh_session:
+                return self.login()
             if not self.is_logged_in or self.smart_api is None or not self.session_data:
                 return self.login()
             age = time.monotonic() - self._session_obtained_at
