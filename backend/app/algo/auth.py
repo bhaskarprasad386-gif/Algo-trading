@@ -103,7 +103,7 @@ class AngelOneAuth:
                 return self.login()
 
     def mark_session_stale(self) -> None:
-        """Force a new full login before the next WebSocket handshake.
+        """Force fresh JWT/feed-token generation before the next WebSocket handshake.
 
         Use this after broker connection-limit/handshake failures. Do not log in
         here: the caller may still be inside the shared cooldown, and multiple
