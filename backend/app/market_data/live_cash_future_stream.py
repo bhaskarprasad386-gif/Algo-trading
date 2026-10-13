@@ -324,16 +324,21 @@ class LiveCashFutureOneSecondCollector:
         for thread in threads:
             thread.start()
 
-        repository = DailySQLiteMarketDataRepository(self.data_db)
-        ingestor = BoundedMarketDataIngestor(
-            repository,
-            max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
-            batch_size=settings.MARKET_DATA_INGEST_BATCH_SIZE,
-            flush_seconds=settings.MARKET_DATA_INGEST_FLUSH_SECONDS,
-            put_timeout_seconds=settings.MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS,
-            record_source=SOURCE,
-            on_error=lambda exc: app_logger.error(f"1-second live persistence error: {exc}"),
-        )
+        repository = None
+        ingestor = None
+        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+            repository = DailySQLiteMarketDataRepository(self.data_db)
+            ingestor = BoundedMarketDataIngestor(
+                repository,
+                max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
+                batch_size=settings.MARKET_DATA_INGEST_BATCH_SIZE,
+                flush_seconds=settings.MARKET_DATA_INGEST_FLUSH_SECONDS,
+                put_timeout_seconds=settings.MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS,
+                record_source=SOURCE,
+                on_error=lambda exc: app_logger.error(f"1-second live persistence error: {exc}"),
+            )
+        else:
+            app_logger.info("Legacy Cash-Future live persistence disabled; scanner callbacks remain active")
         with _STATE_LOCK:
             _STATE["running"] = True
             _STATE["connected"] = False
@@ -342,12 +347,14 @@ class LiveCashFutureOneSecondCollector:
         last_message_monotonic = time_module.monotonic()
         written = 0
         rejected = 0
-        persistence_snapshot: dict[str, Any] = {}
+        persistence_snapshot: dict[str, Any] = {"enabled": ingestor is not None}
         dropped = 0
         pairs = 0
         observations = 0
         gap_seconds = 0
         def queue_record(record: HistoricalRecord) -> None:
+            if ingestor is None:
+                return
             if not ingestor.submit_historical(record, priority=BufferPriority.CRITICAL):
                 raise TimeoutError("critical live persistence queue rejected record")
 
@@ -441,13 +448,14 @@ class LiveCashFutureOneSecondCollector:
                     rejected += 1
                     app_logger.error(f"1-second final record rejected {token}: {exc}")
         finally:
-            try:
-                ingestor.close(timeout=10.0)
-                persistence_snapshot = dict(ingestor.snapshot())
-                written = int(persistence_snapshot["inserted"])
-                repository.checkpoint(mode="PASSIVE")
-            finally:
-                repository.close()
+            if ingestor is not None and repository is not None:
+                try:
+                    ingestor.close(timeout=10.0)
+                    persistence_snapshot = {"enabled": True, **dict(ingestor.snapshot())}
+                    written = int(persistence_snapshot["inserted"])
+                    repository.checkpoint(mode="PASSIVE")
+                finally:
+                    repository.close()
             for socket in self._sockets:
                 socket.close()
             for thread in threads:
