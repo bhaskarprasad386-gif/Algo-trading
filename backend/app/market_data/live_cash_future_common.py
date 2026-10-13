@@ -66,6 +66,8 @@ class LiveCashFutureCommonRunner:
         self._latest_persisted: dict[InstrumentKey, MarketDataRecord] = {}
         self._latest_record_timestamps: dict[InstrumentKey, int] = {}
         self._out_of_order_records = 0
+        self._record_locks_guard = threading.Lock()
+        self._record_locks: dict[InstrumentKey, threading.Lock] = {}
         self._last_retention_date: date | None = None
         self._last_contract_refresh_date: date | None = None
         # Runtime path telemetry: proves whether normalized records reach this
@@ -244,6 +246,14 @@ class LiveCashFutureCommonRunner:
             app_logger.error("Cash-Future common persistence submit failed: %s", exc)
 
     def _on_record(self, record: MarketDataRecord) -> None:
+        # Keep cache replay and live socket callbacks ordered per instrument,
+        # while allowing independent instruments to be processed concurrently.
+        with self._record_locks_guard:
+            record_lock = self._record_locks.setdefault(record.instrument, threading.Lock())
+        with record_lock:
+            self._process_record(record)
+
+    def _process_record(self, record: MarketDataRecord) -> None:
         previous_timestamp = self._latest_record_timestamps.get(record.instrument)
         if previous_timestamp is not None and record.timestamp_ns <= previous_timestamp:
             self._out_of_order_records += 1
