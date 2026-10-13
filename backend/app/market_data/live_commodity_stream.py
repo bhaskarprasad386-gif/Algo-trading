@@ -8,6 +8,8 @@ from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
+from app.market_data.shared_cache import cache_key_for_instrument, get_shared_market_data_cache
+
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.core.config import settings
 from app.market_data.ingestion import BoundedMarketDataIngestor
@@ -127,6 +129,14 @@ class LiveCommodityMarketDataRecorder:
                 "strike": meta.strike,
                 "lot_size": meta.lot_size,
             })
+        try:
+            get_shared_market_data_cache().put(
+                cache_key_for_instrument(record.instrument.exchange, record.instrument.token),
+                payload,
+                timestamp_ns=record.timestamp_ns,
+            )
+        except Exception:
+            pass
         if self._ingestor is not None:
             self._ingestor.submit_historical(HistoricalRecord(
                 source=self.SOURCE,
