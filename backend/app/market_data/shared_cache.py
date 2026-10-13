@@ -113,5 +113,27 @@ _SHARED_CACHE = BoundedMarketDataCache(
 )
 
 
+def cache_key_for_instrument(exchange: str, token: str) -> str:
+    """Return one canonical key for every consumer of the same exchange/token."""
+    exchange_key = str(exchange).strip().upper()
+    token_key = str(token).strip()
+    if not exchange_key or not token_key:
+        raise ValueError("exchange and token are required for a market-data cache key")
+    return f"{exchange_key}:{token_key}"
+
+
+def put_market_data_record(record: Any, cache: MarketDataCache | None = None) -> str:
+    """Publish a normalized record under its canonical instrument key."""
+    instrument = getattr(record, "instrument", None)
+    if instrument is None:
+        raise TypeError("record must expose an instrument")
+    key = cache_key_for_instrument(instrument.exchange, instrument.token)
+    payload = record.as_dict()
+    (cache or get_shared_market_data_cache()).put(
+        key, payload, timestamp_ns=int(record.timestamp_ns)
+    )
+    return key
+
+
 def get_shared_market_data_cache() -> BoundedMarketDataCache:
     return _SHARED_CACHE
