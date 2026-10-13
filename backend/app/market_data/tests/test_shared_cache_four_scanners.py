@@ -55,7 +55,7 @@ def test_four_scanner_callbacks_see_same_cached_quote_before_delivery():
         assert len(CacheTestSocket.instances) == 1
         manager._on_data(
             SocketGroup(1, 0),
-            {"token": key.token, "ltp": 98765, "timestamp_ns": 1_800_000_000_000_000_001},
+            {"token": key.token, "exchange_type": 2, "ltp": 98765, "timestamp_ns": 1_800_000_000_000_000_001},
         )
         assert set(seen) == set(names)
         snapshots = list(seen.values())
