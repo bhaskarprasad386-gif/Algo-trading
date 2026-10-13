@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
-from .shared_cache import publish_market_data_snapshot
+from .shared_cache import put_market_data_record
 from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
 from app.core.logger import app_logger
@@ -992,12 +992,7 @@ class CommonWebSocketManager:
                 # the common feed sees the same bounded latest snapshot, even when
                 # that strategy maintains additional pairing state of its own.
                 try:
-                    publish_market_data_snapshot(
-                        record.instrument.exchange,
-                        record.instrument.token,
-                        record.as_dict(),
-                        timestamp_ns=record.timestamp_ns,
-                    )
+                    put_market_data_record(record)
                 except Exception as cache_exc:
                     # Cache trouble must never suppress the live scanner callback.
                     app_logger.warning(
