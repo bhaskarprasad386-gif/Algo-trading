@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.logger import app_logger
 from app.market_data.cash_future_opportunity import CashFutureOpportunityScanner, CashFutureScanResult
 from app.market_data.common_websocket import CommonWebSocketManager
-from app.market_data.common_strategy_feed import shared_common_manager
+from app.market_data.common_strategy_feed import replay_cached_snapshots, shared_common_manager
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
 from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.market_data.historical import HistoricalDataClient
@@ -64,6 +64,8 @@ class LiveCashFutureCommonRunner:
         self._metadata: dict[InstrumentKey, dict[str, Any]] = {}
         self._last_result: CashFutureScanResult | None = None
         self._latest_persisted: dict[InstrumentKey, MarketDataRecord] = {}
+        self._latest_record_timestamps: dict[InstrumentKey, int] = {}
+        self._out_of_order_records = 0
         self._last_retention_date: date | None = None
         self._last_contract_refresh_date: date | None = None
         # Runtime path telemetry: proves whether normalized records reach this
@@ -96,6 +98,7 @@ class LiveCashFutureCommonRunner:
             "scanner_rejections": self._scanner_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
+            "out_of_order_records": self._out_of_order_records,
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
@@ -193,6 +196,8 @@ class LiveCashFutureCommonRunner:
             added_keys = sorted(new_keys - old_keys, key=lambda key: key.value)
             removed_keys = sorted(old_keys - new_keys, key=lambda key: key.value)
             if added_keys:
+                added_descriptors = tuple(d for d in descriptors if d.key in set(added_keys))
+                replay_cached_snapshots(self.manager, added_descriptors, self._on_record)
                 self.manager.subscribe(self.CONSUMER, added_keys, mode=3)
             if removed_keys:
                 self.manager.unsubscribe(self.CONSUMER, removed_keys)
@@ -239,6 +244,11 @@ class LiveCashFutureCommonRunner:
             app_logger.error("Cash-Future common persistence submit failed: %s", exc)
 
     def _on_record(self, record: MarketDataRecord) -> None:
+        previous_timestamp = self._latest_record_timestamps.get(record.instrument)
+        if previous_timestamp is not None and record.timestamp_ns <= previous_timestamp:
+            self._out_of_order_records += 1
+            return
+        self._latest_record_timestamps[record.instrument] = record.timestamp_ns
         self._records_received += 1
         meta = self._metadata.get(record.instrument)
         if meta is None:
@@ -355,6 +365,10 @@ class LiveCashFutureCommonRunner:
         else:
             app_logger.info("Cash-Future live market-data persistence disabled; WebSocket/scanner remain live in memory")
         keys = list(self._metadata)
+        usable_descriptors = tuple(d for d in descriptors if d.key in accepted)
+        # Seed scanner pairs from the common cache before waiting for the first
+        # live tick; stale replay is rejected by _on_record's per-instrument gate.
+        replay_cached_snapshots(self.manager, usable_descriptors, self._on_record)
         subscribed = False
         try:
             while not self.stop_event.wait(1.0):
