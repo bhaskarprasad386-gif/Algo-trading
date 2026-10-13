@@ -17,7 +17,7 @@ from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
 from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
-from .shared_cache import get_shared_market_data_cache
+from .shared_cache import get_shared_market_data_cache, market_data_cache_key
 from app.core.logger import app_logger
 from app.core.diagnostics import runtime_diagnostics
 
@@ -998,7 +998,7 @@ class CommonWebSocketManager:
                     cached_record = record.as_dict()
                     cached_record.pop("payload", None)
                     self._market_data_cache.put(
-                        record.instrument.value,
+                        market_data_cache_key(record.instrument.exchange, record.instrument.segment, record.instrument.token),
                         cached_record,
                         timestamp_ns=record.timestamp_ns,
                     )
