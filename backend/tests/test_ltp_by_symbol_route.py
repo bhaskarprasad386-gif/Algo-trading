@@ -34,13 +34,14 @@ def test_cache_ltp_reads_fresh_common_feed_snapshot_without_broker(monkeypatch):
     monkeypatch.setattr(shared_cache, "get_shared_market_data_cache", lambda: cache)
     response = TestClient(app).get(
         "/api/v1/market-data/cache-ltp",
-        params={"exchange": "nse", "symboltoken": "101"},
+        params={"exchange": "nse", "segment": "EQ", "symboltoken": "101"},
     )
 
     assert response.status_code == 200
     assert response.json()["ltp"] == 123.45
     assert response.json()["source"] == "common-market-data-cache"
-    assert cache.requested_key == "NSE:NSE:101"
+    assert response.json()["segment"] == "EQ"
+    assert cache.requested_key == "NSE:EQ:101"
 
 
 def test_cache_ltp_returns_404_on_cache_miss(monkeypatch):
@@ -53,7 +54,7 @@ def test_cache_ltp_returns_404_on_cache_miss(monkeypatch):
     monkeypatch.setattr(shared_cache, "get_shared_market_data_cache", lambda: EmptyCache())
     response = TestClient(app).get(
         "/api/v1/market-data/cache-ltp",
-        params={"exchange": "NFO", "symboltoken": "202"},
+        params={"exchange": "NFO", "segment": "NFO", "symboltoken": "202"},
     )
 
     assert response.status_code == 404
