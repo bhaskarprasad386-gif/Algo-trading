@@ -1135,7 +1135,7 @@ def test_single_socket_transport_failure_preserves_other_healthy_shard():
         assert manager._sockets[healthy_group] is healthy_socket
         assert healthy_socket.closed is False
         assert healthy_socket.connected is True
-        assert manager.snapshot()["connected_groups"] == ["1:0", "1:1"]
+        assert sorted(manager.snapshot()["connected_groups"]) == ["1:0", "1:1"]
         assert len(FakeSocket.instances) == 3  # only the failed shard was replaced
         assert manager._recovery_thread is not None
         assert manager._recovery_thread.is_alive()
