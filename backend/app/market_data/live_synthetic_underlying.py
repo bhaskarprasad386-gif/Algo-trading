@@ -1,7 +1,8 @@
 """Live underlying-price feed backed by the common market-data manager."""
 from __future__ import annotations
 
-from threading import Event
+from math import isfinite
+from threading import Event, Lock
 from typing import Callable
 
 from app.algo.auth import AngelOneAuth
@@ -69,6 +70,8 @@ class LiveSyntheticUnderlyingFeed:
         )
         self.stop_event = Event()
         self._feed: CommonStrategyMarketFeed | None = None
+        self._price_lock = Lock()
+        self._latest_timestamp_by_symbol: dict[str, int] = {}
 
     @staticmethod
     def _price(message: dict) -> float | None:
@@ -153,15 +156,56 @@ class LiveSyntheticUnderlyingFeed:
             )
         return descriptors
 
-    def _on_record(self, record) -> None:
-        symbol = record.symbol.strip().upper()
-        price = record.ltp
-        if price is None or price <= 0:
-            return
-        timestamp_ns = record.timestamp_ns
-        self.tracker.update(symbol, price)
+    def _apply_price(self, symbol: str, price: object, timestamp_ns: object) -> bool:
+        symbol = str(symbol).strip().upper()
+        try:
+            normalized_price = float(price)
+            normalized_timestamp = int(timestamp_ns)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if (
+            not symbol
+            or not isfinite(normalized_price)
+            or normalized_price <= 0
+            or normalized_timestamp <= 0
+        ):
+            return False
+        with self._price_lock:
+            previous_timestamp = self._latest_timestamp_by_symbol.get(symbol)
+            if previous_timestamp is not None and normalized_timestamp <= previous_timestamp:
+                return False
+            self._latest_timestamp_by_symbol[symbol] = normalized_timestamp
+            self.tracker.update(symbol, normalized_price)
         if self.on_price is not None:
-            self.on_price(symbol, price, timestamp_ns)
+            self.on_price(symbol, normalized_price, normalized_timestamp)
+        return True
+
+    def _on_record(self, record) -> None:
+        self._apply_price(record.symbol, record.ltp, record.timestamp_ns)
+
+    def _seed_from_cache(self, descriptors) -> int:
+        """Seed the underlying tracker from fresh canonical snapshots on late start."""
+        feed = self._feed
+        if feed is None:
+            return 0
+        seeded = 0
+        for descriptor in descriptors:
+            snapshot = feed.latest_snapshot(descriptor.key)
+            if not isinstance(snapshot, dict):
+                continue
+            # Guard against malformed or mismatched cache entries. Cache TTL is
+            # enforced by latest_snapshot(); timestamp ordering prevents a cache
+            # read racing a newer live callback from rolling the tracker back.
+            if (
+                str(snapshot.get("exchange") or "").strip().upper() != descriptor.key.exchange.strip().upper()
+                or str(snapshot.get("segment") or "").strip().upper() != descriptor.key.segment.strip().upper()
+                or str(snapshot.get("token") or "").strip() != descriptor.key.token.strip()
+                or str(snapshot.get("symbol") or "").strip().upper() != descriptor.symbol.strip().upper()
+            ):
+                continue
+            if self._apply_price(snapshot.get("symbol"), snapshot.get("ltp"), snapshot.get("timestamp_ns")):
+                seeded += 1
+        return seeded
 
     def run_forever(self) -> None:
         self._feed = CommonStrategyMarketFeed(
@@ -173,6 +217,7 @@ class LiveSyntheticUnderlyingFeed:
             app_logger.warning("Synthetic underlying feed found no resolvable live symbols")
             return
         self._feed.start(descriptors, self._on_record)
+        self._seed_from_cache(descriptors)
         try:
             while not self.stop_event.wait(1.0):
                 pass
