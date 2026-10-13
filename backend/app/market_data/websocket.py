@@ -219,13 +219,21 @@ class MarketDataWebSocket:
             if self._is_reconnecting:
                 return
             self._is_reconnecting = True
-            self._reconnect_count += 1
-            self._reconnect_thread = Thread(
+            worker = Thread(
                 target=self._reconnect_after_disconnect,
                 name="angel-ws-reconnect",
                 daemon=True,
             )
-            self._reconnect_thread.start()
+            self._reconnect_thread = worker
+            self._reconnect_count += 1
+            try:
+                worker.start()
+            except Exception as exc:
+                # A failed thread start must not permanently lock out recovery.
+                self._reconnect_thread = None
+                self._is_reconnecting = False
+                self._reconnect_count -= 1
+                app_logger.error("Unable to start Angel WebSocket reconnect worker: %s", exc)
 
     def _reconnect_after_disconnect(self) -> None:
         retry_after_exit = False
