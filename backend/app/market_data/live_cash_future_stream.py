@@ -94,6 +94,13 @@ def _ingest_live_record(catalog: DailyMarketDataShardCatalog, record: Historical
     """Persist one live second-bucket with atomic first-write-wins semantics."""
     return catalog.ingest_if_absent(record)
 
+def _shared_cache_key(meta: dict[str, Any], token: str) -> str:
+    """Return the canonical exchange/segment/token identity for a live leg."""
+    exchange = "NSE" if meta.get("leg") == "CASH" else "NFO"
+    return f"{exchange}:{exchange}:{str(token).strip()}"
+
+
+
 
 class _LatestMessageBuffer:
     """Hard-bounded coalescing tick buffer with producer backpressure."""
@@ -390,9 +397,7 @@ class LiveCashFutureOneSecondCollector:
                                 app_logger.error(f"1-second live record rejected {token}: {exc}")
                         payload = dict(message)
                         exchange = "NSE" if meta["leg"] == "CASH" else "NFO"
-                        # Use the same canonical broker identity as the common
-                        # WebSocket publisher; strategy-local leg names must
-                        # never create a second cache namespace for one token.
+                        # Keep the cache payload's identity aligned with its key.
                         payload.update({
                             "exchange": exchange,
                             "segment": exchange,
@@ -415,7 +420,7 @@ class LiveCashFutureOneSecondCollector:
                             gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
                         observations += 1
                         latest[token] = (second_ns, payload)
-                        self.shared_cache.put(f"{exchange}:{exchange}:{token}", payload, timestamp_ns=second_ns)
+                        self.shared_cache.put(_shared_cache_key(meta, token), payload, timestamp_ns=second_ns)
                         with _STATE_LOCK:
                             _STATE["last_observation_ns"] = second_ns
                             _STATE["gap_seconds"] = gap_seconds
