@@ -14,6 +14,7 @@ from app.market_data.cash_future_opportunity import CashFutureOpportunityScanner
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
+from app.market_data.shared_cache import get_shared_market_data_cache, market_data_cache_key
 from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.market_data.historical import HistoricalDataClient
 from app.market_data.ingestion import BoundedMarketDataIngestor
@@ -75,6 +76,8 @@ class LiveCashFutureCommonRunner:
         self._scanner_results = 0
         self._records_missing_executable_quote = 0
         self._scanner_rejections = 0
+        self._cache_seeded_records = 0
+        self._cache_seed_rejections = 0
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -94,6 +97,8 @@ class LiveCashFutureCommonRunner:
             "scanner_results": self._scanner_results,
             "records_missing_executable_quote": self._records_missing_executable_quote,
             "scanner_rejections": self._scanner_rejections,
+            "cache_seeded_records": self._cache_seeded_records,
+            "cache_seed_rejections": self._cache_seed_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
         }
@@ -194,6 +199,7 @@ class LiveCashFutureCommonRunner:
             removed_keys = sorted(old_keys - new_keys, key=lambda key: key.value)
             if added_keys:
                 self.manager.subscribe(self.CONSUMER, added_keys, mode=3)
+                self._seed_scanner_from_shared_cache(set(added_keys))
             if removed_keys:
                 self.manager.unsubscribe(self.CONSUMER, removed_keys)
             self._metadata = new_metadata
@@ -237,6 +243,86 @@ class LiveCashFutureCommonRunner:
             )
         except Exception as exc:
             app_logger.error("Cash-Future common persistence submit failed: %s", exc)
+
+    def _seed_scanner_from_shared_cache(self, keys: set[InstrumentKey] | None = None) -> int:
+        """Seed scanner pair state from fresh canonical snapshots, without replaying persistence."""
+        cache = get_shared_market_data_cache()
+        now_ns = time.time_ns()
+        seeded = 0
+        for key, meta in tuple(self._metadata.items()):
+            if keys is not None and key not in keys:
+                continue
+            try:
+                snapshot = cache.get(market_data_cache_key(key.exchange, key.segment, key.token))
+                if not isinstance(snapshot, dict):
+                    continue
+                if (
+                    str(snapshot.get("exchange", "")).strip().upper() != key.exchange.strip().upper()
+                    or str(snapshot.get("segment", "")).strip().upper() != key.segment.strip().upper()
+                    or str(snapshot.get("token", "")).strip() != key.token.strip()
+                ):
+                    self._cache_seed_rejections += 1
+                    continue
+                timestamp_ns = snapshot.get("timestamp_ns")
+                if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns <= 0:
+                    self._cache_seed_rejections += 1
+                    continue
+                # Do not let a merely cache-resident, old quote initialize a live opportunity.
+                if timestamp_ns > now_ns or now_ns - timestamp_ns > self.scanner.MAX_PAIR_AGE_NS:
+                    self._cache_seed_rejections += 1
+                    continue
+                expected_type = InstrumentType.EQUITY if meta["leg"] == "CASH" else InstrumentType.FUTURE
+                if str(snapshot.get("instrument_type", "")).strip().lower() != expected_type.value:
+                    self._cache_seed_rejections += 1
+                    continue
+                symbol = str(snapshot.get("symbol") or "").strip()
+                if not symbol:
+                    self._cache_seed_rejections += 1
+                    continue
+                record = MarketDataRecord(
+                    instrument=key,
+                    symbol=symbol,
+                    instrument_type=expected_type,
+                    timestamp_ns=timestamp_ns,
+                    timeframe=str(snapshot.get("timeframe") or "1s"),
+                    ltp=snapshot.get("ltp"),
+                    bid=snapshot.get("bid"),
+                    ask=snapshot.get("ask"),
+                    bid_qty=snapshot.get("bid_qty"),
+                    ask_qty=snapshot.get("ask_qty"),
+                    volume=snapshot.get("volume"),
+                    oi=snapshot.get("oi"),
+                    open=snapshot.get("open"),
+                    high=snapshot.get("high"),
+                    low=snapshot.get("low"),
+                    close=snapshot.get("close"),
+                    underlying=meta["underlying"],
+                    expiry=snapshot.get("expiry"),
+                    lot_size=(self._metadata_lot_size(key) if expected_type is InstrumentType.FUTURE else None),
+                    tick_size=snapshot.get("tick_size"),
+                    payload=snapshot.get("payload") if isinstance(snapshot.get("payload"), dict) else {},
+                )
+                if not record.is_executable_quote:
+                    self._cache_seed_rejections += 1
+                    continue
+                result = self.scanner.update(record, contract_month=meta["contract_month"])
+                seeded += 1
+                self._cache_seeded_records += 1
+                if result is not None and result.signal.qualifies:
+                    self._scanner_results += 1
+                    self._last_result = result
+                    if self.on_result is not None:
+                        try:
+                            self.on_result(result)
+                        except Exception as exc:
+                            app_logger.error("Cash-Future cache-seed result callback failed: %s", exc)
+            except (TypeError, ValueError, OverflowError):
+                self._cache_seed_rejections += 1
+        return seeded
+
+    def _metadata_lot_size(self, key: InstrumentKey) -> int | None:
+        descriptor = self.manager.registry.get(key)
+        return descriptor.lot_size if descriptor is not None else None
 
     def _on_record(self, record: MarketDataRecord) -> None:
         self._records_received += 1
@@ -362,6 +448,7 @@ class LiveCashFutureCommonRunner:
                     if not subscribed:
                         self.manager.subscribe(self.CONSUMER, keys, mode=3)
                         subscribed = True
+                        self._seed_scanner_from_shared_cache(set(keys))
                         self._last_contract_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
                 except Exception as exc:
                     # A transient broker/auth/socket failure must not terminate
