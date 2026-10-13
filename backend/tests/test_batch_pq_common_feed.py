@@ -2,6 +2,7 @@ from datetime import date
 
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data import common_strategy_feed
+from app.market_data.shared_cache import get_shared_market_data_cache
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_stream import (
     LiveSyntheticOptionFutureRecorder,
@@ -41,6 +42,8 @@ class FakeSocket:
 
 def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
     FakeSocket.instances.clear()
+    cache = get_shared_market_data_cache()
+    cache.clear()
     manager = CommonWebSocketManager(socket_factory=FakeSocket)
     monkeypatch.setattr(common_strategy_feed, "shared_common_manager", lambda *a, **k: manager)
 
@@ -77,8 +80,24 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
     )
     box_desc = recorder._descriptors()[0]
 
-    calendar_feed.start([calendar_desc], lambda _r: None)
-    box_feed.start([box_desc], lambda _r: None)
+    cache.put(calendar_desc.key.value, {
+        "exchange": "NFO", "segment": "NFO", "token": "FUT-1",
+        "symbol": calendar_desc.symbol, "instrument_type": "future",
+        "timestamp_ns": 1000, "ltp": 101.0, "payload": {"source": "cache"},
+    }, timestamp_ns=1000)
+    cache.put(box_desc.key.value, {
+        "exchange": "NFO", "segment": "NFO", "token": "OPT-1",
+        "symbol": box_desc.symbol, "instrument_type": "option",
+        "timestamp_ns": 2000, "ltp": 202.0, "strike": 100.0,
+        "option_type": "CE", "payload": {"source": "cache"},
+    }, timestamp_ns=2000)
+    calendar_records = []
+    box_records = []
+    calendar_feed.start([calendar_desc], calendar_records.append)
+    box_feed.start([box_desc], box_records.append)
+
+    assert [(r.timestamp_ns, r.ltp) for r in calendar_records] == [(1000, 101.0)]
+    assert [(r.timestamp_ns, r.ltp) for r in box_records] == [(2000, 202.0)]
 
     assert len(FakeSocket.instances) == 1
     socket = FakeSocket.instances[0]
@@ -90,3 +109,4 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
     box_feed.stop()
     calendar_feed.stop()
     assert socket.closed is True
+    cache.clear()
