@@ -308,3 +308,41 @@ def test_marking_auth_stale_forces_token_refresh_even_for_young_session():
     assert auth.session_data["jwtToken"] == "new-jwt"
     assert auth.session_data["feedToken"] == "new-feed"
     assert auth._force_fresh_session is False
+
+
+def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
+    import ssl
+    from app.market_data import websocket as websocket_module
+
+    calls = {}
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            calls["url"] = url
+            calls["callbacks"] = kwargs
+
+        def run_forever(self, **kwargs):
+            calls["run_forever"] = kwargs
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt",
+        api_key="api-key",
+        client_code="client",
+        feed_token="feed",
+        _on_open=lambda *args: None,
+        _on_error=lambda *args: None,
+        _on_close=lambda *args: None,
+        _on_data=lambda *args: None,
+        _on_ping=lambda *args: None,
+        _on_pong=lambda *args: None,
+    )
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert calls["url"].startswith("wss://")
+    assert calls["run_forever"]["sslopt"]["cert_reqs"] == ssl.CERT_REQUIRED
+    assert calls["run_forever"]["ping_interval"] == 10
+    assert calls["run_forever"]["ping_timeout"] == 5
+    assert calls["callbacks"]["on_open"] is sdk_socket._on_open
