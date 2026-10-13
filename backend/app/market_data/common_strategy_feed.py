@@ -134,6 +134,8 @@ class CommonStrategyMarketFeed:
         self.manager = manager or shared_common_manager(auth, socket_factory=socket_factory)
         self._started = False
         self._last_timestamp_ns: dict[str, int] = {}
+        self._timestamp_guard = Lock()
+        self._callback_locks: dict[str, Lock] = {}
 
     @staticmethod
     def descriptor(
@@ -194,11 +196,16 @@ class CommonStrategyMarketFeed:
 
         def ordered_callback(record: MarketDataRecord) -> None:
             key = record.instrument.value
-            previous = self._last_timestamp_ns.get(key)
-            if previous is not None and record.timestamp_ns <= previous:
-                return
-            self._last_timestamp_ns[key] = record.timestamp_ns
-            callback(record)
+            with self._timestamp_guard:
+                callback_lock = self._callback_locks.setdefault(key, Lock())
+            # Serialize callbacks per instrument (not globally), so concurrent
+            # socket threads cannot deliver a newer tick before an older one.
+            with callback_lock:
+                previous = self._last_timestamp_ns.get(key)
+                if previous is not None and record.timestamp_ns <= previous:
+                    return
+                self._last_timestamp_ns[key] = record.timestamp_ns
+                callback(record)
 
         self.manager.register_normalized_callback(self.consumer, ordered_callback)
         # Warm-start local scanner state from the latest live snapshot before
