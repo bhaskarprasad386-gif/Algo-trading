@@ -1,3 +1,4 @@
+import app.market_data.common_websocket as common_websocket_module
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.contracts import InstrumentKey
@@ -49,6 +50,11 @@ def descriptor(token, exchange="NSE", segment="EQ"):
 
 def setup_function():
     FakeSocket.instances.clear()
+    # These tests assert manager behavior, not production pacing duration.
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+        common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+    common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 0.0
 
 
 def test_common_manager_deduplicates_shared_instrument_and_fans_out():
