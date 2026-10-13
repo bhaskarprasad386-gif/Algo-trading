@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time
 from threading import Event, Lock
-from time import sleep
+from time import sleep, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
