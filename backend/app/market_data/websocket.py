@@ -1,14 +1,48 @@
 import math
+import ssl
 import time
 from threading import Event, Lock, Thread, current_thread
 from typing import Any, Callable, Optional
 
+import websocket as websocket_client
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
 from app.algo.auth import AngelOneAuth
 from app.core.config import settings
 from app.core.exceptions import TradingAppException
 from app.core.logger import app_logger
+
+
+
+
+def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
+    """Run Angel's SDK transport with certificate validation and bounded ping/pong.
+
+    smartapi-python disables certificate validation in its connect() method and
+    sets a ping interval without a pong deadline. Reuse its callbacks and headers,
+    but own the transport options so silent dead peers are detected.
+    """
+    headers = {
+        "Authorization": socket.auth_token,
+        "x-api-key": socket.api_key,
+        "x-client-code": socket.client_code,
+        "x-feed-token": socket.feed_token,
+    }
+    socket.wsapp = websocket_client.WebSocketApp(
+        socket.ROOT_URI,
+        header=headers,
+        on_open=socket._on_open,
+        on_error=socket._on_error,
+        on_close=socket._on_close,
+        on_data=socket._on_data,
+        on_ping=socket._on_ping,
+        on_pong=socket._on_pong,
+    )
+    socket.wsapp.run_forever(
+        sslopt={"cert_reqs": ssl.CERT_REQUIRED},
+        ping_interval=10,
+        ping_timeout=5,
+    )
 
 
 class MarketDataWebSocket:
@@ -101,6 +135,14 @@ class MarketDataWebSocket:
                 callback(wsapp, error)
 
         socket._on_error = forward_sdk_error
+
+        # Override only the real Angel SDK transport. Test doubles and alternate
+        # socket adapters keep their own connect() implementation.
+        if all(hasattr(socket, attr) for attr in (
+            "ROOT_URI", "auth_token", "api_key", "client_code", "feed_token",
+            "_on_open", "_on_close", "_on_data", "_on_ping", "_on_pong",
+        )):
+            socket.connect = lambda: _connect_sdk_socket_with_verified_tls(socket)
 
         def handle_open(wsapp):
             with self._lock:

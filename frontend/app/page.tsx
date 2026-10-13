@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Activity, Bell, Clock3, Database, Gauge, Radio, ShieldCheck, TriangleAlert, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
-import { appConfig } from "@/lib/config";
+import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
 const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const strategies = [
@@ -61,7 +61,7 @@ export default function HomePage() {
     const connect = () => {
       if (cancelled) return;
       setWsStatus("connecting");
-      socket = new WebSocket(appConfig.wsUrl.replace(/\/$/, "") + "/ws/dashboard");
+      socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
       socket.onopen = () => {
         retryMs = 1000;
         setWsStatus("connected");
