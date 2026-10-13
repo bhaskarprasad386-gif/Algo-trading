@@ -1131,6 +1131,12 @@ def test_boolean_and_fractional_exchange_types_are_rejected():
 
 
 def test_single_socket_transport_failure_preserves_other_healthy_shard():
+    # This unit test exercises local shard replacement, not broker-wide pacing
+    # or cooldown. Isolate module-level admission state left by other tests.
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+        common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+    common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 0.0
     registry = InstrumentRegistry()
     descriptors = [descriptor("101"), descriptor("102")]
     registry.register_many(descriptors)
@@ -1167,3 +1173,7 @@ def test_single_socket_transport_failure_preserves_other_healthy_shard():
         assert manager._recovery_thread.is_alive()
     finally:
         manager.close()
+        with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+            common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+            common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+        common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 2.0
