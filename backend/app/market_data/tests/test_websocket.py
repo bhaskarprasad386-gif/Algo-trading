@@ -272,3 +272,36 @@ def test_websocket_reconnect_scheduler_is_single_flight(monkeypatch):
     assert created[0].started is True
     assert client.health["reconnect_count"] == 1
     assert client._is_reconnecting is True
+
+
+
+def test_marking_auth_stale_forces_fresh_login_even_for_young_session():
+    from threading import RLock
+    import time
+    from app.algo.auth import AngelOneAuth
+
+    auth = object.__new__(AngelOneAuth)
+    auth._state_lock = RLock()
+    auth.is_logged_in = True
+    auth.smart_api = object()
+    auth.session_data = {"jwtToken": "old-jwt", "feedToken": "old-feed"}
+    auth._session_obtained_at = time.monotonic()
+    auth._force_fresh_session = False
+    calls = []
+
+    def fresh_login():
+        calls.append(True)
+        auth.session_data = {"jwtToken": "new-jwt", "feedToken": "new-feed"}
+        auth.is_logged_in = True
+        auth._force_fresh_session = False
+        auth._session_obtained_at = time.monotonic()
+        return {"status": "success"}
+
+    auth.login = fresh_login
+    auth.mark_session_stale()
+    auth.ensure_session_fresh(3600)
+
+    assert calls == [True]
+    assert auth.session_data["jwtToken"] == "new-jwt"
+    assert auth.session_data["feedToken"] == "new-feed"
+    assert auth._force_fresh_session is False
