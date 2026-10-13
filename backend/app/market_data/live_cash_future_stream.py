@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.common_websocket import apply_shared_broker_cooldown, connect_with_shared_broker_admission
-from app.market_data.shared_cache import get_shared_market_data_cache
+from app.market_data.shared_cache import cache_key_for_instrument, get_shared_market_data_cache
 from app.market_data.bounded_buffer import BufferPriority
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
@@ -324,16 +324,19 @@ class LiveCashFutureOneSecondCollector:
         for thread in threads:
             thread.start()
 
-        repository = DailySQLiteMarketDataRepository(self.data_db)
-        ingestor = BoundedMarketDataIngestor(
-            repository,
-            max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
-            batch_size=settings.MARKET_DATA_INGEST_BATCH_SIZE,
-            flush_seconds=settings.MARKET_DATA_INGEST_FLUSH_SECONDS,
-            put_timeout_seconds=settings.MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS,
-            record_source=SOURCE,
-            on_error=lambda exc: app_logger.error(f"1-second live persistence error: {exc}"),
-        )
+        repository = None
+        ingestor = None
+        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+            repository = DailySQLiteMarketDataRepository(self.data_db)
+            ingestor = BoundedMarketDataIngestor(
+                repository,
+                max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
+                batch_size=settings.MARKET_DATA_INGEST_BATCH_SIZE,
+                flush_seconds=settings.MARKET_DATA_INGEST_FLUSH_SECONDS,
+                put_timeout_seconds=settings.MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS,
+                record_source=SOURCE,
+                on_error=lambda exc: app_logger.error(f"1-second live persistence error: {exc}"),
+            )
         with _STATE_LOCK:
             _STATE["running"] = True
             _STATE["connected"] = False
@@ -348,6 +351,10 @@ class LiveCashFutureOneSecondCollector:
         observations = 0
         gap_seconds = 0
         def queue_record(record: HistoricalRecord) -> None:
+            # This legacy collector must honor the same opt-in persistence gate
+            # as the common runner; scanning and cache publication stay live.
+            if ingestor is None:
+                return
             if not ingestor.submit_historical(record, priority=BufferPriority.CRITICAL):
                 raise TimeoutError("critical live persistence queue rejected record")
 
@@ -408,7 +415,7 @@ class LiveCashFutureOneSecondCollector:
                             gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
                         observations += 1
                         latest[token] = (second_ns, payload)
-                        self.shared_cache.put(f"{meta['leg']}:{token}", payload, timestamp_ns=second_ns)
+                        self.shared_cache.put(cache_key_for_instrument("NSE" if meta["leg"] == "CASH" else "NFO", token), payload, timestamp_ns=second_ns)
                         with _STATE_LOCK:
                             _STATE["last_observation_ns"] = second_ns
                             _STATE["gap_seconds"] = gap_seconds
@@ -442,12 +449,15 @@ class LiveCashFutureOneSecondCollector:
                     app_logger.error(f"1-second final record rejected {token}: {exc}")
         finally:
             try:
-                ingestor.close(timeout=10.0)
-                persistence_snapshot = dict(ingestor.snapshot())
-                written = int(persistence_snapshot["inserted"])
-                repository.checkpoint(mode="PASSIVE")
+                if ingestor is not None:
+                    ingestor.close(timeout=10.0)
+                    persistence_snapshot = dict(ingestor.snapshot())
+                    written = int(persistence_snapshot["inserted"])
+                if repository is not None:
+                    repository.checkpoint(mode="PASSIVE")
             finally:
-                repository.close()
+                if repository is not None:
+                    repository.close()
             for socket in self._sockets:
                 socket.close()
             for thread in threads:

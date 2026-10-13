@@ -1,5 +1,7 @@
 import sqlite3
 import tracemalloc
+import threading
+import time
 
 from app.backtesting.atomic_replay import AtomicReplayStore
 from app.backtesting.resumable_high_resolution import ResumableHighResolutionRunner
@@ -91,3 +93,50 @@ def test_backtest_worker_cleanup_removes_completed_future():
     assert backtest_jobs.cleanup_finished_workers() == 1
     with backtest_jobs._LOCK:
         assert "finished-test" not in backtest_jobs._FUTURES
+
+
+
+def test_daily_shard_writes_are_serialized_across_catalog_instances(tmp_path):
+    from app.backtesting.historical_catalog import HistoricalRecord
+    from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
+
+    base_path = str(tmp_path / "shared-market.sqlite3")
+    errors = []
+    inserted = []
+    barrier = threading.Barrier(4)
+
+    def writer(worker_id):
+        catalog = DailyMarketDataShardCatalog(base_path)
+        try:
+            records = [
+                HistoricalRecord(
+                    "concurrent-live-test",
+                    f"EXCHANGE:{worker_id}:{index}",
+                    "1s",
+                    time.time_ns(),
+                    {"ltp": 100.0 + index},
+                )
+                for index in range(25)
+            ]
+            barrier.wait(timeout=5)
+            inserted.append(catalog.ingest_if_absent_batch(records))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            catalog.close()
+
+    workers = [threading.Thread(target=writer, args=(index,)) for index in range(4)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert errors == []
+    assert sum(inserted) == 100
+
+    check = DailyMarketDataShardCatalog(base_path)
+    try:
+        assert check.count(source="concurrent-live-test", timeframe="1s") == 100
+    finally:
+        check.close()

@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 import heapq
 import re
 from pathlib import Path
+from threading import Lock, RLock
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,22 @@ from app.backtesting.trading_calendar import TradingCalendar
 
 IST = ZoneInfo("Asia/Kolkata")
 SHARD_SUFFIX = ".sqlite3"
+
+# SQLite permits only one writer per database file. Multiple live scanners may
+# own separate catalog/connection objects for the same shard, so serialize
+# writes process-wide by the resolved shard path before entering SQLite.
+_WRITE_LOCKS_GUARD = Lock()
+_WRITE_LOCKS: dict[str, RLock] = {}
+
+
+def _write_lock_for(path: Path) -> RLock:
+    key = str(path.resolve())
+    with _WRITE_LOCKS_GUARD:
+        lock = _WRITE_LOCKS.get(key)
+        if lock is None:
+            lock = RLock()
+            _WRITE_LOCKS[key] = lock
+        return lock
 _SHARD_DATE_RE = re.compile(r"_(\d{4})_(\d{2})_(\d{2})$")
 
 
@@ -38,14 +55,16 @@ class DailyMarketDataShardCatalog:
         self.base_path = Path(base_path)
         self.base_path.parent.mkdir(parents=True, exist_ok=True)
         self._catalogs: dict[Path, HistoricalCatalog] = {}
+        self._catalogs_lock = RLock()
         self._legacy = HistoricalCatalog(str(self.base_path)) if self.base_path.exists() else None
 
     def _open(self, path: Path) -> HistoricalCatalog:
-        catalog = self._catalogs.get(path)
-        if catalog is None:
-            catalog = HistoricalCatalog(str(path))
-            self._catalogs[path] = catalog
-        return catalog
+        with self._catalogs_lock:
+            catalog = self._catalogs.get(path)
+            if catalog is None:
+                catalog = HistoricalCatalog(str(path))
+                self._catalogs[path] = catalog
+            return catalog
 
     def _catalogs_for_read(self) -> tuple[HistoricalCatalog, ...]:
         catalogs: list[HistoricalCatalog] = []
@@ -70,9 +89,11 @@ class DailyMarketDataShardCatalog:
         grouped = self._group_by_day(records)
         inserted = 0
         for trading_date, batch in grouped.items():
-            inserted += self._open(shard_path(self.base_path, trading_date)).ingest_if_absent_batch(
-                batch, ingested_at_ns=ingested_at_ns
-            )
+            path = shard_path(self.base_path, trading_date)
+            with _write_lock_for(path):
+                inserted += self._open(path).ingest_if_absent_batch(
+                    batch, ingested_at_ns=ingested_at_ns
+                )
         return inserted
 
     def ingest_if_absent(self, record: HistoricalRecord, *, ingested_at_ns: int = 0) -> int:
@@ -82,10 +103,12 @@ class DailyMarketDataShardCatalog:
         if isinstance(records, HistoricalRecord):
             records = (records,)
         grouped = self._group_by_day(records)
-        return sum(
-            self._open(shard_path(self.base_path, trading_date)).ingest(batch, ingested_at_ns=ingested_at_ns)
-            for trading_date, batch in grouped.items()
-        )
+        inserted = 0
+        for trading_date, batch in grouped.items():
+            path = shard_path(self.base_path, trading_date)
+            with _write_lock_for(path):
+                inserted += self._open(path).ingest(batch, ingested_at_ns=ingested_at_ns)
+        return inserted
 
     def append(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
         return self.ingest(records, ingested_at_ns=ingested_at_ns)

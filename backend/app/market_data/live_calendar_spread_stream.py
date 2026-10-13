@@ -16,6 +16,8 @@ from zoneinfo import ZoneInfo
 from app.algo.auth import AngelOneAuth
 from app.core.config import settings
 from app.core.logger import app_logger
+from app.market_data.shared_cache import cache_key_for_instrument, get_shared_market_data_cache
+
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.persistence import DailySQLiteMarketDataRepository
@@ -272,6 +274,14 @@ class LiveCalendarSpreadOneSecondCollector:
         )
         if record.expiry:
             payload["contract_month"] = record.expiry[:7]
+        try:
+            get_shared_market_data_cache().put(
+                cache_key_for_instrument(record.instrument.exchange, record.instrument.token),
+                payload,
+                timestamp_ns=record.timestamp_ns,
+            )
+        except Exception as exc:
+            app_logger.warning("Calendar Spread shared-cache write failed: %s", exc)
         with self._lock:
             self._stats["records_emitted"] += 1
         # Deliver to the in-memory scanner first. Optional disk persistence is
