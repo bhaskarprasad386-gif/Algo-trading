@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
+from .shared_cache import publish_market_data_snapshot
 from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
 from app.core.logger import app_logger
@@ -987,6 +988,22 @@ class CommonWebSocketManager:
                         "bid": record.bid,
                         "ask": record.ask,
                     }
+                # Publish centrally before strategy fan-out so every consumer of
+                # the common feed sees the same bounded latest snapshot, even when
+                # that strategy maintains additional pairing state of its own.
+                try:
+                    publish_market_data_snapshot(
+                        record.instrument.exchange,
+                        record.instrument.token,
+                        record.as_dict(),
+                        timestamp_ns=record.timestamp_ns,
+                    )
+                except Exception as cache_exc:
+                    # Cache trouble must never suppress the live scanner callback.
+                    app_logger.warning(
+                        "Common feed shared-cache publish failed exchange=%s token=%s error=%s",
+                        record.instrument.exchange, record.instrument.token, cache_exc,
+                    )
                 callback(record)
                 with self._lock:
                     self._normalized_records_delivered += 1
