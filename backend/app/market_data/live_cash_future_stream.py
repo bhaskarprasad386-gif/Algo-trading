@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.common_websocket import apply_shared_broker_cooldown, connect_with_shared_broker_admission
-from app.market_data.shared_cache import get_shared_market_data_cache
+from app.market_data.shared_cache import cache_key_for_instrument, get_shared_market_data_cache
 from app.market_data.bounded_buffer import BufferPriority
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
@@ -408,7 +408,7 @@ class LiveCashFutureOneSecondCollector:
                             gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
                         observations += 1
                         latest[token] = (second_ns, payload)
-                        self.shared_cache.put(f"{meta['leg']}:{token}", payload, timestamp_ns=second_ns)
+                        self.shared_cache.put(cache_key_for_instrument("NSE" if meta["leg"] == "CASH" else "NFO", token), payload, timestamp_ns=second_ns)
                         with _STATE_LOCK:
                             _STATE["last_observation_ns"] = second_ns
                             _STATE["gap_seconds"] = gap_seconds
