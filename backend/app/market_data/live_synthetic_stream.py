@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
 from app.core.config import settings
+from app.market_data.shared_cache import cache_key_for_instrument, get_shared_market_data_cache
+
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -183,6 +185,14 @@ class LiveSyntheticOptionFutureRecorder:
                 "lot_size": meta.lot_size,
                 "contract_role": meta.contract_role,
             })
+        try:
+            get_shared_market_data_cache().put(
+                cache_key_for_instrument(record.instrument.exchange, record.instrument.token),
+                payload,
+                timestamp_ns=record.timestamp_ns,
+            )
+        except Exception:
+            pass
         if self.on_observation is not None:
             try:
                 self.on_observation(dict(payload))
