@@ -82,7 +82,7 @@ class AngelOneAuth:
             except TradingAppException as exc:
                 self.is_logged_in = False
                 self._login_failure_count += 1
-                message = str(exc).lower()
+                message = str(exc.message if isinstance(exc, TradingAppException) else exc).lower()
                 cooldown = 90.0 if any(term in message for term in (
                     "access rate", "429", "too many requests", "rate limit",
                     "connection limit exceeded",
