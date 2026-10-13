@@ -108,6 +108,9 @@ def test_underlying_feed_resolves_index_from_master_when_declared():
         {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
     ]
     master._loaded = True
+    # This test verifies index-token resolution, not the daily HTTP refresh.
+    # Keep the preloaded fixture deterministic and prevent external network I/O.
+    master.download = lambda force=False: master.instruments
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"})
