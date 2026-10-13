@@ -70,3 +70,44 @@ def test_rate_limit_failure_applies_90_second_cooldown(monkeypatch):
 
     assert caught.value.name == "LoginCooldown"
     assert fake.calls == 1
+
+
+
+def test_rate_limit_message_in_broker_response_applies_90_second_cooldown(monkeypatch):
+    instance = object.__new__(AngelOneAuth)
+    instance._state_lock = RLock()
+    instance.api_key = "test-api-key"
+    instance.client_id = "test-client"
+    instance.password = "test-password"
+    instance.totp_secret = "TESTSECRET"
+    instance.smart_api = None
+    instance.session_data = None
+    instance.is_logged_in = False
+    instance._session_obtained_at = 0.0
+    instance._force_fresh_session = False
+    instance._login_retry_after = 0.0
+    instance._login_failure_count = 0
+
+    class FakeSmartConnect:
+        def __init__(self, api_key):
+            pass
+
+        def generateSession(self, client_id, password, totp):
+            return {
+                "status": False,
+                "message": "Access denied because of exceeding access rate",
+            }
+
+    monkeypatch.setattr(auth_module, "SmartConnect", FakeSmartConnect)
+    monkeypatch.setattr(
+        auth_module.pyotp,
+        "TOTP",
+        lambda secret: type("T", (), {"now": lambda self: "000000"})(),
+    )
+
+    before = time.monotonic()
+    with pytest.raises(TradingAppException):
+        instance.login()
+
+    remaining = instance._login_retry_after - before
+    assert 89.0 <= remaining <= 90.0
