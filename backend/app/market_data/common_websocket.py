@@ -17,6 +17,7 @@ from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
 from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
+from .shared_cache import get_shared_market_data_cache
 from app.core.logger import app_logger
 from app.core.diagnostics import runtime_diagnostics
 
@@ -123,6 +124,9 @@ class CommonWebSocketManager:
         self._callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
+        # One bounded latest-snapshot cache shared by all scanner threads in this process.
+        self._market_data_cache = get_shared_market_data_cache()
+        self._market_data_cache_write_errors = 0
         self._lock = RLock()
         self._reconcile_lock = RLock()
         # State and admission are shared across all Angel WebSocket components.
@@ -987,6 +991,26 @@ class CommonWebSocketManager:
                         "bid": record.bid,
                         "ask": record.ask,
                     }
+                # Cache canonical latest state before callback fan-out. Exclude
+                # the raw provider payload: it is not needed for shared reads
+                # and can be substantially larger than normalized quote fields.
+                try:
+                    cached_record = record.as_dict()
+                    cached_record.pop("payload", None)
+                    self._market_data_cache.put(
+                        record.instrument.value,
+                        cached_record,
+                        timestamp_ns=record.timestamp_ns,
+                    )
+                except Exception as cache_exc:
+                    with self._lock:
+                        self._market_data_cache_write_errors += 1
+                    runtime_diagnostics.record(
+                        component="Common Market Feed",
+                        error_type="MarketDataCacheWriteError",
+                        message=str(cache_exc),
+                        context={"event": "cache_write", "instrument": record.instrument.value},
+                    )
                 callback(record)
                 with self._lock:
                     self._normalized_records_delivered += 1
@@ -1045,6 +1069,8 @@ class CommonWebSocketManager:
                 "missing_descriptor_records": self._missing_descriptor_records,
                 "normalized_records_emitted": self._normalized_records_emitted,
                 "normalized_records_delivered": self._normalized_records_delivered,
+                "market_data_cache": self._market_data_cache.stats(),
+                "market_data_cache_write_errors": self._market_data_cache_write_errors,
                 "raw_callback_attempts": self._raw_callback_attempts,
                 "raw_callback_successes": self._raw_callback_successes,
                 "missing_exchange_type_frames": self._missing_exchange_type_frames,
