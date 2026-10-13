@@ -197,16 +197,19 @@ class LiveCashFutureCommonRunner:
             new_keys = set(new_metadata)
             added_keys = sorted(new_keys - old_keys, key=lambda key: key.value)
             removed_keys = sorted(old_keys - new_keys, key=lambda key: key.value)
-            if added_keys:
-                added_descriptors = tuple(d for d in descriptors if d.key in set(added_keys))
-                replay_cached_snapshots(self.manager, added_descriptors, self._on_record)
-                self.manager.subscribe(self.CONSUMER, added_keys, mode=3)
-            if removed_keys:
-                self.manager.unsubscribe(self.CONSUMER, removed_keys)
+            # Reset scanner state before replaying newly-added contracts; doing
+            # this afterward would immediately erase the warmed cache snapshots.
             self._metadata = new_metadata
             reset_scanner = getattr(self.scanner, "reset", None)
             if callable(reset_scanner):
                 reset_scanner()
+            if added_keys:
+                added_key_set = set(added_keys)
+                added_descriptors = tuple(d for d in descriptors if d.key in added_key_set)
+                replay_cached_snapshots(self.manager, added_descriptors, self._on_record)
+                self.manager.subscribe(self.CONSUMER, added_keys, mode=3)
+            if removed_keys:
+                self.manager.unsubscribe(self.CONSUMER, removed_keys)
             self._last_contract_refresh_date = today
             app_logger.info(
                 "Cash-Future contract rollover complete date=%s old=%s new=%s added=%s removed=%s",
