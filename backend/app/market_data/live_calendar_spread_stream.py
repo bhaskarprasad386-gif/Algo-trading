@@ -305,6 +305,72 @@ class LiveCalendarSpreadOneSecondCollector:
                     self._stats["persistence_errors"] += 1
                 app_logger.error(f"Calendar Spread persistence enqueue failed after live callback: {exc}")
 
+    def _seed_from_cache(self, descriptors) -> int:
+        """Warm the calendar scanner from fresh shared futures quotes, without persistence."""
+        feed = self._feed
+        if feed is None or self.on_observation is None:
+            return 0
+        now_ns = time_module.time_ns()
+        seeded = 0
+        for descriptor in descriptors:
+            snapshot = feed.latest_snapshot(descriptor.key)
+            if not isinstance(snapshot, dict):
+                continue
+            if (
+                str(snapshot.get("exchange") or "").strip().upper() != descriptor.key.exchange.strip().upper()
+                or str(snapshot.get("segment") or "").strip().upper() != descriptor.key.segment.strip().upper()
+                or str(snapshot.get("token") or "").strip() != descriptor.key.token.strip()
+                or str(snapshot.get("symbol") or "").strip().upper() != descriptor.symbol.strip().upper()
+            ):
+                continue
+            try:
+                timestamp_ns = int(snapshot.get("timestamp_ns"))
+                ltp = float(snapshot.get("ltp"))
+                bid = float(snapshot.get("bid"))
+                ask = float(snapshot.get("ask"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            age_ns = now_ns - timestamp_ns
+            if (
+                timestamp_ns < 946_684_800_000_000_000
+                or age_ns < 0
+                or age_ns > 1_000_000_000
+                or ltp <= 0
+                or bid <= 0
+                or ask <= 0
+                or bid > ask
+            ):
+                continue
+            local = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
+            if not self._exchange_open(descriptor.exchange, local):
+                continue
+            payload = dict(snapshot)
+            second_ns = timestamp_ns // 1_000_000_000 * 1_000_000_000
+            payload.update({
+                "timestamp_ns": second_ns,
+                "bucket_timestamp_ns": second_ns,
+                "source_timestamp_ns": timestamp_ns,
+                "exchange_timestamp_ns": timestamp_ns,
+                "timestamp_source": "exchange",
+                "exchange": descriptor.exchange,
+                "instrument_type": descriptor.instrument_type.upper(),
+                "contract_family": self._kind_by_key.get(
+                    (descriptor.exchange.strip().upper(), descriptor.key.token.strip()),
+                    descriptor.instrument_type.upper(),
+                ),
+            })
+            if descriptor.expiry:
+                payload["contract_month"] = descriptor.expiry[:7]
+            try:
+                self.on_observation(payload)
+            except Exception as exc:
+                with self._lock:
+                    self._stats["callback_errors"] += 1
+                app_logger.warning(f"Calendar Spread shared-cache seed callback failed: {exc}")
+                continue
+            seeded += 1
+        return seeded
+
     def _run_session(self) -> None:
         contracts = self._contracts()
         if not contracts:
@@ -332,6 +398,7 @@ class LiveCalendarSpreadOneSecondCollector:
                 )
                 self._ingestor.start()
             feed.start(descriptors, self._observe_record)
+            self._seed_from_cache(descriptors)
             while not self.stop_event.is_set() and self.market_open():
                 time_module.sleep(self.poll_seconds)
             with self._lock:
