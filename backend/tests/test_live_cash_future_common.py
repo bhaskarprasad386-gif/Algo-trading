@@ -227,3 +227,64 @@ def test_runner_rejects_out_of_order_records_before_scanner_update():
     assert runner._out_of_order_records == 1
     assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
     runner.stop()
+
+
+def test_runner_warm_starts_cash_future_pair_from_shared_cache():
+    from app.market_data.common_strategy_feed import replay_cached_snapshots
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    class Master:
+        def download(self):
+            return [{
+                "exch_seg": "NFO", "instrumenttype": "FUTSTK", "name": "ABC",
+                "token": "302", "symbol": "ABC29OCT26FUT",
+                "expiry": "29OCT2026", "lotsize": "50",
+            }]
+
+        def resolve_cash_instrument(self, symbol, exchange):
+            assert (symbol, exchange) == ("ABC", "NSE")
+            return {"token": "301", "symbol": "ABC-EQ"}
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    manager = CommonWebSocketManager(socket_factory=lambda: object())
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        instrument_master=Master(),
+        manager=manager,
+        scanner=CashFutureOpportunityScanner(minimum_gap_points=0, minimum_gross_profit=0),
+    )
+    try:
+        descriptors = runner._build_descriptors()
+        accepted = runner._register_descriptors(descriptors)
+        runner._metadata = {key: meta for key, meta in runner._metadata.items() if key in accepted}
+        for descriptor in descriptors:
+            meta = runner._metadata[descriptor.key]
+            is_cash = meta["leg"] == "CASH"
+            bid, ask = (99.0, 100.0) if is_cash else (103.0, 104.0)
+            cache.put(descriptor.key.value, {
+                "exchange": descriptor.exchange,
+                "segment": descriptor.segment,
+                "token": descriptor.key.token,
+                "symbol": descriptor.symbol,
+                "instrument_type": descriptor.instrument_type,
+                "timestamp_ns": 2_000_000_000,
+                "ltp": (bid + ask) / 2,
+                "bid": bid,
+                "ask": ask,
+                "bid_qty": 10,
+                "ask_qty": 10,
+                "lot_size": descriptor.lot_size,
+                "expiry": descriptor.expiry,
+                "payload": {"exchange_timestamp_ns": 2_000_000_000},
+            }, timestamp_ns=2_000_000_000)
+
+        assert replay_cached_snapshots(manager, descriptors, runner._on_record) == 2
+        assert runner.snapshot()["records_received"] == 2
+        assert runner.last_result is not None
+        assert runner.last_result.signal.qualifies
+        assert runner.last_result.signal.gap_points == 3.0
+    finally:
+        runner.stop()
+        cache.clear()
