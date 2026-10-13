@@ -978,11 +978,19 @@ class CommonWebSocketManager:
                 record = self._normalizer.normalize(descriptor, message)
                 # Publish once at the strategy-neutral boundary before fan-out.
                 # InstrumentKey.value is the canonical EXCHANGE:SEGMENT:TOKEN key.
-                self._shared_cache.put(
-                    record.instrument.value,
-                    record.as_dict(),
-                    timestamp_ns=record.timestamp_ns,
-                )
+                # Cache publication is an optimization, never a reason to
+                # drop a normalized live tick or suppress telemetry/fan-out.
+                try:
+                    self._shared_cache.put(
+                        record.instrument.value,
+                        record.as_dict(),
+                        timestamp_ns=record.timestamp_ns,
+                    )
+                except Exception as cache_exc:
+                    app_logger.warning(
+                        "Common feed cache publish failed for %s: %s",
+                        record.instrument.value, cache_exc,
+                    )
                 with self._lock:
                     self._normalized_records_emitted += 1
                     self._last_tick = {
