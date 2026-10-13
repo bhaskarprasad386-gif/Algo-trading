@@ -7,9 +7,15 @@ from app.market_data.live_cash_future_stream import (
     _ingest_live_record,
     _ltp,
     _timestamp_ns,
+    _shared_cache_key,
 )
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+def test_live_cache_uses_canonical_exchange_segment_token_keys():
+    assert _shared_cache_key({"leg": "CASH"}, "101") == "NSE:NSE:101"
+    assert _shared_cache_key({"leg": "FUTURE"}, "202") == "NFO:NFO:202"
 
 
 def test_live_timestamp_and_ltp_normalization():

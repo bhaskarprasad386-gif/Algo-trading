@@ -31,3 +31,17 @@ def test_cache_expires_stale_snapshots():
     time.sleep(0.02)
     assert cache.get("A") is None
     assert cache.stats()["expired"] >= 1
+
+
+def test_cache_rejects_out_of_order_snapshot_for_same_instrument():
+    cache = BoundedMarketDataCache(max_entries=10, ttl_seconds=60)
+    cache.put("NSE:EQ:101", {"ltp": 102}, timestamp_ns=200)
+    cache.put("NSE:EQ:101", {"ltp": 99}, timestamp_ns=100)
+    assert cache.get("NSE:EQ:101")["ltp"] == 102
+
+
+def test_cache_accepts_latest_arrival_for_equal_timestamp():
+    cache = BoundedMarketDataCache(max_entries=10, ttl_seconds=60)
+    cache.put("NSE:EQ:101", {"ltp": 102}, timestamp_ns=200)
+    cache.put("NSE:EQ:101", {"ltp": 99}, timestamp_ns=200)
+    assert cache.get("NSE:EQ:101")["ltp"] == 99

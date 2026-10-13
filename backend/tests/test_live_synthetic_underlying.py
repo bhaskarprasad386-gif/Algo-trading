@@ -28,9 +28,14 @@ def test_underlying_feed_normalizes_smartapi_price_and_timestamp():
 
 def test_underlying_feed_accepts_authoritative_index_token_without_cash_lookup():
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
+    master = InstrumentMaster()
+    master.download = lambda force=False: (_ for _ in ()).throw(
+        AssertionError("authoritative concrete tokens must not trigger a master download")
+    )
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",),
         tracker=tracker,
+        instrument_master=master,
         concrete_tokens={"NIFTY": "26000"},
     )
     assert feed._tokens() == {"NIFTY": "26000"}
@@ -103,6 +108,9 @@ def test_underlying_feed_resolves_index_from_master_when_declared():
         {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
     ]
     master._loaded = True
+    # This test verifies index-token resolution, not the daily HTTP refresh.
+    # Keep the preloaded fixture deterministic and prevent external network I/O.
+    master.download = lambda force=False: master.instruments
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"})

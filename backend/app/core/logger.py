@@ -1,6 +1,16 @@
 import sys
 from loguru import logger
 
+# SmartApi's SDK uses logzero and can emit authentication request details.
+# Disable that SDK logger globally; application diagnostics continue through Loguru.
+try:
+    import logzero
+
+    logzero.logger.disabled = True
+except Exception:
+    # Logging hardening must never prevent application startup.
+    pass
+
 logger.remove()
 
 logger.add(

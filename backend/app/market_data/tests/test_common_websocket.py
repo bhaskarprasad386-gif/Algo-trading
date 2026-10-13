@@ -83,6 +83,32 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert set(seen) == {("box", "101"), ("cash", "101")}
 
 
+def test_normalized_ticks_are_published_to_shared_cache_before_fanout():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_normalized_callback("cache-test", seen.append)
+    try:
+        manager.subscribe("cache-test", [d.key])
+        manager._on_data(
+            SocketGroup(1, 0),
+            {"token": "101", "exchange_type": 1, "ltp": 12345, "timestamp_ns": 200},
+        )
+        snapshot = cache.get("NSE:EQ:101")
+        assert snapshot is not None
+        assert snapshot["timestamp_ns"] == 200
+        assert snapshot["ltp"] == 123.45
+        assert len(seen) == 1
+    finally:
+        manager.close()
+
+
 def test_mode_upgrade_rehomes_socket_group_without_duplicate_sockets():
     registry = InstrumentRegistry()
     d = descriptor("101")
@@ -1105,6 +1131,12 @@ def test_boolean_and_fractional_exchange_types_are_rejected():
 
 
 def test_single_socket_transport_failure_preserves_other_healthy_shard():
+    # This unit test exercises local shard replacement, not broker-wide pacing
+    # or cooldown. Isolate module-level admission state left by other tests.
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+        common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+    common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 0.0
     registry = InstrumentRegistry()
     descriptors = [descriptor("101"), descriptor("102")]
     registry.register_many(descriptors)
@@ -1141,3 +1173,7 @@ def test_single_socket_transport_failure_preserves_other_healthy_shard():
         assert manager._recovery_thread.is_alive()
     finally:
         manager.close()
+        with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+            common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+            common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+        common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 2.0

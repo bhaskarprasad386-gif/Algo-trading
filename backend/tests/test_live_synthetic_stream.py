@@ -13,6 +13,15 @@ from app.market_data.live_synthetic_stream import (
     LiveSyntheticOptionFutureRecorder,
     SyntheticSubscription,
 )
+from app.market_data.shared_cache import get_shared_market_data_cache
+
+
+@pytest.fixture(autouse=True)
+def isolate_shared_market_data_cache():
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    yield
+    cache.clear()
 
 
 def _collector():
@@ -236,6 +245,10 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
                     "exchange_timestamp": "1750000001000000000",
                     "last_traded_price": price,
                 })
+            # This fake source is finite. End the session after all frames have
+            # been delivered so callback failures fail the assertions promptly
+            # instead of hanging the test's market-hours polling loop.
+            collector.stop_event.set()
 
         def close(self):
             return None

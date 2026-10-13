@@ -66,6 +66,12 @@ class BoundedMarketDataCache:
         entry = CacheEntry(deepcopy(value), timestamp, now + self.ttl_seconds)
         with self._lock:
             self._purge_expired_locked(now)
+            current = self._entries.get(key)
+            # Reject only older broker frames. Equal timestamps are valid for
+            # feeds whose exchange timestamp has coarse precision; in that
+            # case the latest arrival is the best available snapshot.
+            if current is not None and timestamp < current.timestamp_ns:
+                return
             self._entries.pop(key, None)
             self._entries[key] = entry
             while len(self._entries) > self.max_entries:

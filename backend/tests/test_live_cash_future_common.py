@@ -204,3 +204,93 @@ def test_cash_future_scanner_does_not_replace_newer_leg_with_out_of_order_tick()
     assert scanner.update(delayed, contract_month="CASH") is None
     assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
     assert scanner.out_of_order_records == 1
+
+
+def test_runner_rejects_out_of_order_records_before_scanner_update():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    scanner = CashFutureOpportunityScanner(minimum_gap_points=0, minimum_gross_profit=0)
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+        scanner=scanner,
+    )
+    cash_key = InstrumentKey("NSE", "NSE", "301")
+    future_key = InstrumentKey("NFO", "NFO", "302")
+    runner._metadata[cash_key] = {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"}
+    runner._metadata[future_key] = {"leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT"}
+
+    runner._on_record(record(cash_key, "ABC-EQ", InstrumentType.EQUITY, 2_000_000_000, 99, 100))
+    runner._on_record(record(future_key, "ABC26OCTFUT", InstrumentType.FUTURE, 2_000_000_000, 103, 104, lot=50))
+    runner._on_record(record(cash_key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 90, 91))
+
+    assert runner._out_of_order_records == 1
+    assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
+    runner.stop()
+
+
+def test_runner_warm_starts_cash_future_pair_from_shared_cache():
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from app.market_data.common_strategy_feed import replay_cached_snapshots
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    expiry_date = datetime.now(ZoneInfo("Asia/Kolkata")).date() + timedelta(days=30)
+    expiry_text = expiry_date.strftime("%d%b%Y").upper()
+    expiry_symbol = expiry_date.strftime("%d%b%y").upper()
+
+    class Master:
+        def download(self):
+            return [{
+                "exch_seg": "NFO", "instrumenttype": "FUTSTK", "name": "ABC",
+                "token": "302", "symbol": f"ABC{expiry_symbol}FUT",
+                "expiry": expiry_text, "lotsize": "50",
+            }]
+
+        def resolve_cash_instrument(self, symbol, exchange):
+            assert (symbol, exchange) == ("ABC", "NSE")
+            return {"token": "301", "symbol": "ABC-EQ"}
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    manager = CommonWebSocketManager(socket_factory=lambda: object())
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        instrument_master=Master(),
+        manager=manager,
+        scanner=CashFutureOpportunityScanner(minimum_gap_points=0, minimum_gross_profit=0),
+    )
+    try:
+        descriptors = runner._build_descriptors()
+        accepted = runner._register_descriptors(descriptors)
+        runner._metadata = {key: meta for key, meta in runner._metadata.items() if key in accepted}
+        for descriptor in descriptors:
+            meta = runner._metadata[descriptor.key]
+            is_cash = meta["leg"] == "CASH"
+            bid, ask = (99.0, 100.0) if is_cash else (103.0, 104.0)
+            cache.put(descriptor.key.value, {
+                "exchange": descriptor.exchange,
+                "segment": descriptor.segment,
+                "token": descriptor.key.token,
+                "symbol": descriptor.symbol,
+                "instrument_type": descriptor.instrument_type,
+                "timestamp_ns": 2_000_000_000,
+                "ltp": (bid + ask) / 2,
+                "bid": bid,
+                "ask": ask,
+                "bid_qty": 10,
+                "ask_qty": 10,
+                "lot_size": descriptor.lot_size,
+                "expiry": descriptor.expiry,
+                "payload": {"exchange_timestamp_ns": 2_000_000_000},
+            }, timestamp_ns=2_000_000_000)
+
+        assert replay_cached_snapshots(manager, descriptors, runner._on_record) == 2
+        assert runner.snapshot()["records_received"] == 2
+        assert runner.last_result is not None
+        assert runner.last_result.signal.qualifies
+        assert runner.last_result.signal.gap_points == 3.0
+    finally:
+        runner.stop()
+        cache.clear()
