@@ -63,3 +63,4 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
         "exchange_type": 1, "exchange": "NSE", "segment": "NSE", "token": "123",
         "symbol": "TEST", "timestamp_ns": 123456789, "ltp": 101.5, "bid": 101.4, "ask": 101.6,
     }
+    cache.delete(market_data_cache_key("NSE", "NSE", "123"))
