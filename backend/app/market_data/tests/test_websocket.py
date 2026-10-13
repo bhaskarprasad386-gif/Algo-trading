@@ -248,3 +248,27 @@ def test_websocket_rejects_missing_auth_tokens_before_opening_socket(monkeypatch
 
     assert FakeSocket.instances == []
 
+
+
+def test_websocket_reconnect_scheduler_is_single_flight(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    created = []
+
+    class HeldThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            created.append(self)
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(websocket_module, "Thread", HeldThread)
+    client._schedule_reconnect()
+    client._schedule_reconnect()
+
+    assert len(created) == 1
+    assert created[0].started is True
+    assert client.health["reconnect_count"] == 1
+    assert client._is_reconnecting is True
