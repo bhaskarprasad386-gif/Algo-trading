@@ -130,6 +130,7 @@ class LiveSyntheticRunner:
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
         self._refresh_requested = Event()
         self._stop_requested = Event()
+        self._runner_active = Event()
         self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
 
     @property
@@ -376,6 +377,14 @@ class LiveSyntheticRunner:
         )
 
     def run_forever(self) -> None:
+        """Run the scanner and publish actual execution state to health snapshots."""
+        self._runner_active.set()
+        try:
+            self._run_forever_impl()
+        finally:
+            self._runner_active.clear()
+
+    def _run_forever_impl(self) -> None:
         while not self._stop_requested.is_set():
             try:
                 atm_provider = self._ensure_atm_provider()
@@ -472,7 +481,7 @@ class LiveSyntheticRunner:
         feed = self._active_underlying_feed or self.underlying_feed
         recorder = self._recorder
         return {
-            "running": not self._stop_requested.is_set(),
+            "running": self._runner_active.is_set() and not self._stop_requested.is_set(),
             "targets": len(self.targets),
             "underlying_feed": None if feed is None else feed.snapshot(),
             "option_recorder": None if recorder is None else recorder.snapshot(),
