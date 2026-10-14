@@ -34,6 +34,10 @@ class LiveSyntheticScanner:
         self.on_result = on_result
         self._lock = Lock()
         self._buckets: dict[tuple[str, int, int], dict] = {}
+        # Per-contract monotonic guards span timestamp buckets; otherwise a
+        # delayed tick could be accepted into an older bucket after a newer
+        # quote for that same contract had already arrived.
+        self._latest_timestamps: dict[tuple, int] = {}
 
     @staticmethod
     def _expiry(value: object) -> int:
@@ -97,7 +101,17 @@ class LiveSyntheticScanner:
 
         expiry = self._expiry(payload.get("expiry"))
         strike = self._price(payload.get("strike"))
+        if option_type in {"CE", "PE"} and strike is not None:
+            contract_key = (symbol, expiry, "OPTION", strike, option_type)
+        elif option_type == "" or "FUT" in str(payload.get("symbol") or "").upper():
+            contract_key = (symbol, expiry, "FUTURE", str(payload.get("symbol") or "").upper())
+        else:
+            return ()
         with self._lock:
+            previous_timestamp = self._latest_timestamps.get(contract_key)
+            if previous_timestamp is not None and timestamp_ns < previous_timestamp:
+                return ()
+            self._latest_timestamps[contract_key] = timestamp_ns
             key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
             bucket = self._buckets.setdefault(key, {"future": None, "options": {}})
             if option_type in {"CE", "PE"} and strike is not None:
@@ -277,6 +291,10 @@ class LiveSyntheticScanner:
     def _prune(self, timestamp_ns: int) -> None:
         cutoff = timestamp_ns - 3_000_000_000
         self._buckets = {key: value for key, value in self._buckets.items() if key[1] >= cutoff}
+        self._latest_timestamps = {
+            key: seen_ns for key, seen_ns in self._latest_timestamps.items()
+            if seen_ns >= cutoff
+        }
 
 
 __all__ = ["LiveSyntheticScanner"]
