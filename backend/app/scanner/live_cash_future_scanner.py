@@ -717,26 +717,8 @@ class LiveCashFutureScanner:
         edge_quality = min(1.0, max(0.0, net_gap_pct) / 1.0)
         quality_score = round(100.0 * (0.30 * quote_quality + 0.25 * liquidity_quality + 0.25 * stability_quality + 0.20 * edge_quality), 2)
 
-        state_key = (symbol, month)
-        with self._lock:
-            previous_alert_state = self._alert_state.get(state_key)
-            cooldown = max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS))
-            now_monotonic = time.monotonic()
-            cooldown_ok = now_monotonic - self._alert_last_at.get(state_key, 0.0) >= cooldown
-            if False and alert_eligible and previous_alert_state != "ACTIVE" and cooldown_ok:
-                alert_event = "RECOVERY" if previous_alert_state else "NEW"
-                self._alert_state[state_key] = "ACTIVE"
-                self._alert_last_at[state_key] = now_monotonic
-            elif not alert_eligible:
-                self._alert_state[state_key] = "WEAKENING" if previous_alert_state == "ACTIVE" else "INACTIVE"
-                # A genuinely inactive opportunity must release the cooldown so
-                # the next qualifying observation can emit a recovery event.
-                # The cooldown is for repeated alerts while the opportunity is
-                # still active, not for suppressing a post-expiry recovery.
-                self._alert_last_at.pop(state_key, None)
-                alert_event = None
-            else:
-                alert_event = None
+        # Pair-only mode: never trigger alerts or broker-facing notifications.
+        alert_event = None
 
         signal = LiveCashFutureSignal(
             symbol=symbol,
