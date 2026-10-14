@@ -35,6 +35,7 @@ from app.market_data.nifty50_universe import (
     NIFTY50_STOCK_SYMBOLS,
     NIFTY50_INDEX_SYMBOLS,
     NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS,
+    select_synthetic_stock_symbols,
 )
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
@@ -567,10 +568,7 @@ async def _live_synthetic_loop() -> None:
 
             # Synthetic scans only the explicitly ranked top-15 NIFTY-50
             # stock allowlist; other scanners retain the full NIFTY-50 universe.
-            stock_symbols = [
-                symbol for symbol in NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS
-                if symbol in nifty50_stocks
-            ]
+            stock_symbols = list(select_synthetic_stock_symbols(nifty50_stocks))
             unavailable_top15 = sorted(
                 set(NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS) - nifty50_stocks
             )
