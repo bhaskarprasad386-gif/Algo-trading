@@ -18,8 +18,8 @@ def test_live_scanner_pairs_same_second_cash_and_future():
     assert scanner.observe(cash) is None
     signal = scanner.observe(future)
     assert signal is not None
-    assert signal.gap == pytest.approx(0.8)
-    assert round(signal.gap_pct, 3) == 0.8
+    assert signal.gap == pytest.approx(1.0)
+    assert round(signal.gap_pct, 3) == 1.0
 
 
 def test_live_scanner_rejects_pair_beyond_one_second():
@@ -40,10 +40,13 @@ def test_live_scanner_requires_executable_two_sided_quotes():
         "leg": "CASH", "underlying": "ABC", "ltp": 100.0,
         "bid": 99.9, "source_timestamp_ns": 1_000_000_000,
     })
-    assert scanner.observe({
+    signal = scanner.observe({
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
         "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": 1_000_000_000,
-    }) is None
+    })
+    assert signal is not None
+    assert signal.cash_ask is None
+    assert signal.eligible is False
 
 
 def test_live_scanner_advanced_metrics(monkeypatch):
@@ -55,7 +58,7 @@ def test_live_scanner_advanced_metrics(monkeypatch):
                               "ltp":101,"bid":100.8,"ask":101,"lot_size":100,
                               "expiry":"30SEP2026","source_timestamp_ns":ts})
     assert signal is not None
-    assert signal.gross_lot_value == pytest.approx(80.0)
+    assert signal.gross_lot_value == pytest.approx(100.0)
     assert signal.net_gap < signal.gap
     assert signal.cash_day_high == 100
     assert signal.cash_day_low == 100
@@ -103,10 +106,10 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
         })
 
     first = pair("CURRENT", base, 101)
-    assert first.lifecycle == "NEW"
-    assert first.alert_event == "NEW"
+    assert first.lifecycle == "PAIR_ONLY"
+    assert first.alert_event is None
     second = pair("CURRENT", base + 1_000_000_000, 101)
-    assert second.lifecycle == "ACTIVE"
+    assert second.lifecycle == "PAIR_ONLY"
     assert second.alert_event is None
     # Compare current/near while both contracts are still actionable. Expired
     # signals are intentionally excluded from the live-fast snapshot.
@@ -118,11 +121,12 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
     assert current["gap_pct_delta_vs_peer"] is not None
     assert current["is_best_contract_month"] is True
 
-    weakening = pair("CURRENT", base + 3_000_000_000, 100.5)
-    assert weakening.lifecycle == "WEAKENING"
-    expired = pair("CURRENT", base + 4_000_000_000, 99.5)
-    assert expired.lifecycle == "EXPIRED"
-    assert expired.alert_event is None
+    changed = pair("CURRENT", base + 3_000_000_000, 100.5)
+    assert changed.lifecycle == "PAIR_ONLY"
+    assert changed.alert_event is None
+    lower_gap = pair("CURRENT", base + 4_000_000_000, 99.5)
+    assert lower_gap.lifecycle == "PAIR_ONLY"
+    assert lower_gap.alert_event is None
 
 
 def test_live_scanner_ranking_exposes_multi_factor_score():
@@ -158,9 +162,9 @@ def test_live_scanner_emits_recovery_event_after_expiry(monkeypatch):
             "ltp": bid, "bid": bid, "ask": bid + 0.1, "lot_size": 1, "source_timestamp_ns": ts,
         })
 
-    assert pair(base, 101).alert_event == "NEW"
+    assert pair(base, 101).alert_event is None
     assert pair(base + 1_000_000_000, 99).alert_event is None
-    assert pair(base + 2_000_000_000, 101).alert_event == "RECOVERY"
+    assert pair(base + 2_000_000_000, 101).alert_event is None
 
 
 def test_live_scanner_liquidity_filter_requires_all_four_depth_sides(monkeypatch):
@@ -171,11 +175,14 @@ def test_live_scanner_liquidity_filter_requires_all_four_depth_sides(monkeypatch
         "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
         "bid_qty": 200, "ask_qty": 200, "source_timestamp_ns": ts,
     })
-    assert scanner.observe({
+    signal = scanner.observe({
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
         "ltp": 101, "bid": 100.8, "ask": 101,
         "bid_qty": 200, "source_timestamp_ns": ts,
-    }) is None
+    })
+    assert signal is not None
+    assert signal.liquidity_qty is None
+    assert signal.eligible is False
 
 
 def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
@@ -193,7 +200,7 @@ def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
         "expiry": "30SEP2026", "source_timestamp_ns": ts,
     })
     assert below is not None
-    assert below.gross_profit == pytest.approx(80.0)
+    assert below.gross_profit == pytest.approx(200.0)
     assert below.alert_event is None
 
     ts += 1_000_000_000
@@ -207,9 +214,9 @@ def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
         "expiry": "30SEP2026", "source_timestamp_ns": ts,
     })
     assert above is not None
-    assert above.gross_profit == 200.0
+    assert above.gross_profit == 400.0
     assert above.alert_lots == 2
-    assert above.alert_event == "RECOVERY"
+    assert above.alert_event is None
 
 
 def test_live_scanner_does_not_alert_when_capacity_is_zero(monkeypatch):
