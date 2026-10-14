@@ -101,13 +101,24 @@ class LiveSyntheticScanner:
             key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
             bucket = self._buckets.setdefault(key, {"future": None, "options": {}})
             if option_type in {"CE", "PE"} and strike is not None:
-                bucket["options"].setdefault(strike, {})[option_type] = payload
+                legs = bucket["options"].setdefault(strike, {})
+                previous_leg = legs.get(option_type)
+                if previous_leg is not None and int(previous_leg.get("source_timestamp_ns") or 0) > timestamp_ns:
+                    # A delayed/out-of-order tick must never roll a contract leg backwards.
+                    return ()
+                legs[option_type] = payload
             elif option_type == "":
+                previous_future = bucket.get("future")
+                if previous_future is not None and int(previous_future.get("source_timestamp_ns") or 0) > timestamp_ns:
+                    return ()
                 bucket["future"] = payload
             else:
                 # Futures may not carry option_type in older instrument masters.
                 instrument_symbol = str(payload.get("symbol") or "").upper()
                 if "FUT" in instrument_symbol:
+                    previous_future = bucket.get("future")
+                    if previous_future is not None and int(previous_future.get("source_timestamp_ns") or 0) > timestamp_ns:
+                        return ()
                     bucket["future"] = payload
 
             if bucket["future"] is None:
