@@ -488,6 +488,7 @@ async def _live_cash_future_loop() -> None:
             on_payload=lambda payload: live_cash_future_scanner.observe(
                 payload, session_factory=SessionLocal
             ),
+            on_reset=live_cash_future_scanner.reset_pair_state,
         )
         live_cash_future_runner = runner
         try:
