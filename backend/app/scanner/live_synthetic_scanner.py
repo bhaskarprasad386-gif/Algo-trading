@@ -132,6 +132,7 @@ class LiveSyntheticScanner:
                 return ()
             strikes = bucket["options"]
             option_quotes: list[OptionQuote] = []
+            executable_strikes: set[float] = set()
             for option_strike, legs in strikes.items():
                 ce, pe = legs.get("CE"), legs.get("PE")
                 if ce is None or pe is None:
@@ -151,8 +152,10 @@ class LiveSyntheticScanner:
                     continue
                 if max(leg_timestamps) - min(leg_timestamps) > self.TIMESTAMP_TOLERANCE_NS:
                     continue
-                if not liquid_leg(ce) or not liquid_leg(pe):
-                    continue
+                # Keep complete, fresh price pairs in the chain so ATM strike-distance
+                # remains anchored to the real option chain, even when ATM depth is
+                # not executable. Only executable strikes may produce live signals.
+                executable = liquid_leg(ce) and liquid_leg(pe)
                 ce_bid, ce_ask = self._price(ce.get("bid")), self._price(ce.get("ask"))
                 pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
                 if None in (ce_bid, ce_ask, pe_bid, pe_ask):
@@ -160,6 +163,8 @@ class LiveSyntheticScanner:
                 lot = int(positive_number(ce.get("lot_size") or future_payload.get("lot_size") or 0))
                 if lot <= 0:
                     continue
+                if executable:
+                    executable_strikes.add(option_strike)
                 option_quotes.append(
                     OptionQuote(
                         timestamp_ns=future_timestamp_ns,
@@ -229,22 +234,23 @@ class LiveSyntheticScanner:
                 except ValueError:
                     self._prune(timestamp_ns)
                     return ()
-            # A live stream may not have a liquid, complete CE+PE pair at
-            # the exact ATM strike. Anchor strike-distance enumeration to the
-            # nearest *observed executable pair* rather than raising and
-            # interrupting the runner on a partial option chain.
+            # Anchor strike distance to the actual ATM selected from the
+            # instrument master, not to the nearest liquid quote. Complete but
+            # non-executable ATM prices remain in option_quotes as an anchor;
+            # only strikes with executable CE+PE depth can emit signals.
             available_strikes = {quote.strike for quote in option_quotes}
             requested_atm = float(atm)
-            scan_atm = (
-                requested_atm
-                if requested_atm in available_strikes
-                else min(available_strikes, key=lambda value: abs(value - requested_atm))
-            )
-            results = scan_synthetic_snapshot(
-                option_quotes,
-                future,
-                atm_strike=scan_atm,
-                config=config,
+            if requested_atm not in available_strikes:
+                self._prune(timestamp_ns)
+                return ()
+            results = tuple(
+                result for result in scan_synthetic_snapshot(
+                    option_quotes,
+                    future,
+                    atm_strike=requested_atm,
+                    config=config,
+                )
+                if result.option.strike in executable_strikes
             )
             self._prune(timestamp_ns)
         if results and self.on_result is not None:
