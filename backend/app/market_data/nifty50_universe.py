@@ -15,4 +15,17 @@ NIFTY50_STOCK_SYMBOLS = frozenset({
 
 NIFTY50_INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"})
 
-__all__ = ["NIFTY50_STOCK_SYMBOLS", "NIFTY50_INDEX_SYMBOLS"]
+# Explicit ranked allowlist for the Synthetic scanner. This is intentionally
+# separate from the full NIFTY-50 universe used by other scanners. Keep this
+# list updated when the intended top-15 coverage changes.
+NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS = (
+    "HDFCBANK", "RELIANCE", "ICICIBANK", "BHARTIARTL", "INFY",
+    "LT", "SBIN", "ITC", "AXISBANK", "KOTAKBANK",
+    "M&M", "TCS", "BAJFINANCE", "HINDUNILVR", "SUNPHARMA",
+)
+
+__all__ = [
+    "NIFTY50_STOCK_SYMBOLS",
+    "NIFTY50_INDEX_SYMBOLS",
+    "NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS",
+]
