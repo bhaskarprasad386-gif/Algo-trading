@@ -75,10 +75,9 @@ class LiveSyntheticAtmTracker:
             tick_ns = time_ns()
         with self._lock:
             previous = self._prices.get(key)
-            if previous is not None and tick_ns < previous[1]:
-                # Delayed exchange ticks must not replace a newer underlying price.
-                return self.atm(key)
-            self._prices[key] = (value, tick_ns)
+            if previous is None or tick_ns >= previous[1]:
+                self._prices[key] = (value, tick_ns)
+            # Older ticks are ignored; resolve ATM after releasing the lock.
         return self.atm(key)
 
     def atm(self, symbol: str, _timestamp_ns: int | None = None, *, max_age_seconds: float = 5.0) -> float | None:
