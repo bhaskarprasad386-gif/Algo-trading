@@ -1,3 +1,5 @@
+from time import time_ns
+
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
 
 
@@ -21,6 +23,12 @@ def test_atm_tracker_rejects_unknown_or_invalid_inputs():
     else:
         raise AssertionError("expected positive price validation")
 
+def test_atm_tracker_rejects_stale_wall_clock_underlying_price():
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)})
+    tracker.update("NIFTY", 106.0, time_ns() - 6_000_000_000)
+    assert tracker.atm("NIFTY") is None
+
+
 def test_concrete_strikes_from_master_uses_real_chain_and_expiry():
     instruments = [
         {"name": "NIFTY", "exch_seg": "NFO", "instrumenttype": "OPTIDX", "expiry": "30SEP2026", "strike": "9500"},
@@ -30,3 +38,13 @@ def test_concrete_strikes_from_master_uses_real_chain_and_expiry():
         {"name": "NIFTY", "exch_seg": "NSE", "instrumenttype": "OPTIDX", "expiry": "30SEP2026", "strike": "11000"},
     ]
     assert concrete_strikes_from_master(instruments, symbols=("NIFTY",), expiry="30SEP2026") == {"NIFTY": (95.0, 100.0)}
+
+def test_atm_tracker_does_not_roll_back_on_out_of_order_ticks():
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)})
+    base = time_ns()
+    assert tracker.update("NIFTY", 104.0, base) == 105.0
+    assert tracker.update("NIFTY", 109.0, base + 100_000_000) == 110.0
+    # A delayed older quote must leave the latest price/ATM untouched.
+    assert tracker.update("NIFTY", 101.0, base + 50_000_000) == 110.0
+    assert tracker.atm("NIFTY") == 110.0
+

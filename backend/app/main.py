@@ -31,7 +31,10 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import (
+    NIFTY50_STOCK_SYMBOLS,
+    NIFTY50_INDEX_SYMBOLS,
+)
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -561,6 +564,7 @@ async def _live_synthetic_loop() -> None:
                 elif typ == "FUTCOM" and segment == "MCX":
                     commodity_symbols.add(name)
 
+            # Scan every NIFTY-50 stock with an available current/near NFO future.
             stock_symbols = sorted(nifty50_stocks)
             raw_index_symbols = sorted(index_symbols)
             index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))

@@ -184,16 +184,18 @@ def test_live_fast_scanner_route_uses_process_local_snapshot(monkeypatch):
 
 def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     from app.scanner.auto_routes import cash_future_live_scanner_history
 
     engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-route.sqlite3'}")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
     with Session() as db:
         db.add(LiveCashFutureScannerResult(
             symbol="OLD", contract_month="CURRENT", timestamp_ns=1,
-            observed_at=datetime.now() - timedelta(days=31),
+            observed_at=now - timedelta(days=31),
             cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
             cash_day_high=100, cash_day_low=100,
             future_day_high=101, future_day_low=101,
@@ -203,7 +205,7 @@ def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
         ))
         db.add(LiveCashFutureScannerResult(
             symbol="NEW", contract_month="CURRENT", timestamp_ns=2,
-            observed_at=datetime.now(),
+            observed_at=now,
             cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
             cash_day_high=100, cash_day_low=100,
             future_day_high=101, future_day_low=101,
@@ -220,13 +222,14 @@ def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
 
 def test_live_scanner_history_returns_latest_100_unique_pairs_for_today(tmp_path):
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     from app.scanner.auto_routes import cash_future_live_scanner_history
 
     engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-limit.sqlite3'}")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
     with Session() as db:
         for index in range(105):
             db.add(LiveCashFutureScannerResult(
@@ -298,13 +301,14 @@ def test_live_scanner_pair_diagnostic_exposes_invalid_future_book():
 
 def test_live_scanner_history_keeps_100_unique_pairs_when_one_pair_is_very_active(tmp_path):
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     from app.scanner.auto_routes import cash_future_live_scanner_history
 
     engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-adversarial.sqlite3'}")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
     with Session() as db:
         for index in range(1000):
             db.add(LiveCashFutureScannerResult(

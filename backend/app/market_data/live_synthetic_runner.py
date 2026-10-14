@@ -116,6 +116,8 @@ class LiveSyntheticRunner:
             lambda _symbol: SyntheticScanConfig(
                 allowed_stock_symbols=self.allowed_stock_symbols,
                 min_executable_edge=float(settings.LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS),
+                rate=float(settings.LIVE_SYNTHETIC_ANNUAL_RATE),
+                fees_per_unit=float(settings.LIVE_SYNTHETIC_FEES_PER_UNIT),
             )
         )
         self.session_factory = session_factory
@@ -128,6 +130,7 @@ class LiveSyntheticRunner:
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
         self._refresh_requested = Event()
         self._stop_requested = Event()
+        self._runner_active = Event()
         self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
 
     @property
@@ -248,6 +251,62 @@ class LiveSyntheticRunner:
             return None
         return feed
 
+    def _underlying_feed_supervisor(self) -> None:
+        """Keep the automatically-created underlying feed recoverable after thread exit."""
+        if self.underlying_feed is not None:
+            while not self._stop_requested.is_set():
+                feed = self.underlying_feed
+                self._active_underlying_feed = feed
+                try:
+                    feed.run_forever()
+                    if not self._stop_requested.is_set():
+                        app_logger.warning("Injected synthetic underlying feed exited unexpectedly")
+                except Exception as exc:
+                    app_logger.exception("Injected synthetic underlying feed failed: {}", exc)
+                finally:
+                    self._active_underlying_feed = None
+                if self._stop_requested.is_set():
+                    return
+                # LiveSyntheticUnderlyingFeed uses a one-shot stop event, so
+                # recreate it with the same resolved configuration before retry.
+                if not isinstance(feed, LiveSyntheticUnderlyingFeed):
+                    app_logger.error("Cannot recreate injected feed type {}; supervisor stopped", type(feed).__name__)
+                    return
+                self.underlying_feed = LiveSyntheticUnderlyingFeed(
+                    feed.symbols,
+                    tracker=feed.tracker,
+                    instrument_master=feed.instrument_master,
+                    auth=feed.auth,
+                    on_price=feed.on_price,
+                    concrete_tokens=feed.concrete_tokens,
+                    index_symbols=feed.index_symbols,
+                    commodity_symbols=feed.commodity_symbols,
+                    consumer=feed.consumer,
+                )
+                app_logger.warning("Recreated injected synthetic underlying feed after unexpected exit")
+                sleep(5.0)
+            return
+
+        while not self._stop_requested.is_set():
+            feed = None
+            try:
+                feed = self._ensure_underlying_feed()
+                if feed is None:
+                    app_logger.warning("Synthetic underlying feed has no resolvable tokens; retrying")
+                else:
+                    self._active_underlying_feed = feed
+                    feed.run_forever()
+                    if not self._stop_requested.is_set():
+                        app_logger.warning("Synthetic underlying feed exited unexpectedly; restarting")
+            except Exception as exc:
+                app_logger.exception("Synthetic underlying feed failed; restarting: {}", exc)
+            finally:
+                if feed is not None:
+                    feed.stop()
+                self._active_underlying_feed = None
+            if not self._stop_requested.is_set():
+                sleep(5.0)
+
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
         self._refresh_stock_universe()
@@ -318,6 +377,14 @@ class LiveSyntheticRunner:
         )
 
     def run_forever(self) -> None:
+        """Run the scanner and publish actual execution state to health snapshots."""
+        self._runner_active.set()
+        try:
+            self._run_forever_impl()
+        finally:
+            self._runner_active.clear()
+
+    def _run_forever_impl(self) -> None:
         while not self._stop_requested.is_set():
             try:
                 atm_provider = self._ensure_atm_provider()
@@ -328,17 +395,14 @@ class LiveSyntheticRunner:
         else:
             return
 
-        feed = self._ensure_underlying_feed()
-        if feed is None:
-            sleep(30.0)
-            return
+        # A caller-supplied ATM provider does not require a separate underlying
+        # feed. Automatic ATM tracking does, and its feed gets a restart supervisor.
         feed_thread = None
-        self._active_underlying_feed = feed
-        if feed is not None:
+        if self._atm_tracker is not None or self.underlying_feed is not None:
             feed_thread = Thread(
-                target=feed.run_forever,
+                target=self._underlying_feed_supervisor,
                 daemon=True,
-                name="synthetic-underlying-feed",
+                name="synthetic-underlying-feed-supervisor",
             )
             feed_thread.start()
         try:
@@ -402,8 +466,11 @@ class LiveSyntheticRunner:
                 self._recorder = None
                 break
         finally:
-            if feed is not None:
-                feed.stop()
+            active_feed = self._active_underlying_feed
+            if active_feed is not None:
+                active_feed.stop()
+            if self.underlying_feed is not None:
+                self.underlying_feed.stop()
             self._active_underlying_feed = None
             if self._recorder is not None:
                 self._recorder.stop()
@@ -414,7 +481,7 @@ class LiveSyntheticRunner:
         feed = self._active_underlying_feed or self.underlying_feed
         recorder = self._recorder
         return {
-            "running": not self._stop_requested.is_set(),
+            "running": self._runner_active.is_set() and not self._stop_requested.is_set(),
             "targets": len(self.targets),
             "underlying_feed": None if feed is None else feed.snapshot(),
             "option_recorder": None if recorder is None else recorder.snapshot(),

@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS: int = 90
     LIVE_SYNTHETIC_DATA_ENABLED: bool = True
     LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS: float = 0.0
+    # Explicit cost/carry assumptions for live synthetic cash-carry estimates.
+    # Configure fees_per_unit for the broker/product; zero means no fee deduction.
+    LIVE_SYNTHETIC_ANNUAL_RATE: float = 0.0
+    LIVE_SYNTHETIC_FEES_PER_UNIT: float = 0.0
     LIVE_SYNTHETIC_RESULT_RETENTION_DAYS: int = 90
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = True
     LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS: float = 0.0
