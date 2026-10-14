@@ -240,3 +240,32 @@ def test_live_synthetic_scanner_keeps_real_atm_anchor_when_atm_depth_is_not_exec
     assert result
     assert all(item.option.strike == 105.0 for item in result)
     assert all(item.strike_distance == 1 for item in result)
+
+
+def test_live_synthetic_scanner_rejects_out_of_order_tick_across_buckets():
+    ts = 20_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    # New CE quote arrives first in a later bucket.
+    scanner.observe(_base(ts + 2_000_000_000, 105.0, "CE", 4.5, 5.0))
+    scanner.observe(_base(ts + 2_000_000_000, 105.0, "PE", 4.0, 5.0))
+    # Delayed CE belongs to an older bucket; it must not be accepted just
+    # because the older bucket has no CE update yet.
+    scanner.observe(_base(ts + 500_000_000, 105.0, "CE", 1.0, 5.0))
+    scanner.observe(_base(ts + 500_000_000, 105.0, "PE", 4.0, 5.0))
+    old_result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "30SEP2026", "bid": 115.0, "ask": 116.0,
+        "bid_qty": 10, "ask_qty": 10, "lot_size": 1,
+        "source_timestamp_ns": ts + 500_000_000, "symbol": "NIFTYFUT",
+        "volume": 100, "oi": 1000,
+    })
+    assert old_result == ()
+    new_result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "30SEP2026", "bid": 115.0, "ask": 116.0,
+        "bid_qty": 10, "ask_qty": 10, "lot_size": 1,
+        "source_timestamp_ns": ts + 2_000_000_000, "symbol": "NIFTYFUT",
+        "volume": 100, "oi": 1000,
+    })
+    assert new_result
+    assert new_result[0].option.call_bid == 4.5
