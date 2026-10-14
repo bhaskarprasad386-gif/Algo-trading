@@ -545,14 +545,11 @@ class LiveCashFutureScanner:
         ask = self._price(payload, "ask")
         bid_qty = self._positive_qty(payload, "bid_qty")
         ask_qty = self._positive_qty(payload, "ask_qty")
-        # Keep crossed futures long enough to pair them with the cash quote so
-        # pair_snapshot can explain the invalid book. Crossed cash quotes cannot
-        # produce a valid executable pair and remain an immediate drop.
+        # Bid/ask and depth are diagnostics only. Pair construction is driven by
+        # synchronized positive LTPs; a bad/missing book must not discard the pair.
         if leg == "CASH" and bid is not None and ask is not None and bid > ask:
             with self._lock:
                 self._increment_stat("crossed_cash_quotes")
-                self._increment_stat("dropped")
-            return None
         lot = None
         try:
             raw_lot = payload.get("lot_size")
@@ -617,58 +614,32 @@ class LiveCashFutureScanner:
             self._increment_stat("pairs")
 
         cash_ask, future_bid = cash["ask"], future["bid"]
-        if cash_ask is None or future_bid is None:
-            missing = []
-            if cash_ask is None:
-                missing.append("CASH_ASK_MISSING")
-            if future_bid is None:
-                missing.append("FUTURE_BID_MISSING")
+        quote_complete = all(
+            value is not None and value > 0
+            for value in (cash["bid"], cash_ask, future_bid, future["ask"])
+        ) and cash["bid"] <= cash_ask and future_bid <= future["ask"]
+        if quote_complete:
+            with self._lock:
+                self._increment_stat("pairs_with_quotes")
+        else:
             with self._lock:
                 self._increment_stat("pairs_missing_quotes")
-            self._record_pair_event(
-                symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
-                cash=cash, future=future, status="MISSING_EXECUTION_QUOTE",
-                reasons=tuple(["PAIR_CREATED", *missing]), lot_size=lot, session_factory=session_factory,
-            )
-            return None
-        with self._lock:
-            self._increment_stat("pairs_with_quotes")
 
         liquidity_values = [
             cash["bid_qty"], cash["ask_qty"],
             future["bid_qty"], future["ask_qty"],
         ]
         liquidity_qty = min(liquidity_values) if all(value is not None for value in liquidity_values) else None
-        min_liquidity = max(0, int(settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY))
-        if min_liquidity > 0 and (liquidity_qty is None or liquidity_qty < min_liquidity):
-            with self._lock:
-                self._increment_stat("pairs_dropped_liquidity")
-            self._record_pair_event(
-                symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
-                cash=cash, future=future, status="LIQUIDITY_BLOCKED",
-                reasons=("PAIR_CREATED", "EXECUTION_QUOTES_PRESENT", "LIQUIDITY_BELOW_THRESHOLD"),
-                gap=future_bid - cash_ask, gap_pct=(future_bid - cash_ask) / cash_ask * 100.0,
-                liquidity_qty=liquidity_qty, lot_size=lot, session_factory=session_factory,
-            )
-            return None
 
-        if future["bid"] is not None and future["ask"] is not None and future["bid"] > future["ask"]:
-            self._increment_stat("dropped")
-            self._record_pair_event(
-                symbol=symbol,
-                month=month,
-                timestamp_ns=timestamp_ns,
-                received_at_ns=received_at_ns,
-                cash=cash,
-                future=future,
-                status="INVALID_FUTURE_BOOK",
-                reasons=("PAIR_CREATED", "EXECUTION_QUOTES_PRESENT", "INVALID_FUTURE_BOOK"),
-                lot_size=lot,
-                session_factory=session_factory,
-            )
-            return None
-        gap = future_bid - cash_ask
-        gap_pct = gap / cash_ask * 100.0
+        # Reference pair always exists from synchronized LTPs. Executable spread
+        # and depth are displayed when available but never gate pair creation.
+        cash_reference_price = cash_ask if cash_ask is not None else cash["ltp"]
+        future_reference_price = future_bid if future_bid is not None else future["ltp"]
+        if quote_complete:
+            gap = future_bid - cash_ask
+        else:
+            gap = future["ltp"] - cash["ltp"]
+        gap_pct = gap / cash_reference_price * 100.0
         expiry = self._parse_expiry(future.get("expiry"))
         days = max(1, (expiry - ts_date).days) if expiry else None
         extreme_key = (symbol, ts_date.isoformat())
@@ -693,21 +664,21 @@ class LiveCashFutureScanner:
             self._stability[stability_key] = (stable, timestamp_ns)
             previous_signal = self._signals.get((symbol, month))
 
-        combined_notional = (cash_ask + future_bid) * (lot or 1)
+        combined_notional = (cash_reference_price + future_reference_price) * (lot or 1)
         estimated_cost = combined_notional * max(0.0, float(settings.LIVE_CASH_FUTURE_COST_BPS)) / 10_000.0
         estimated_cost += max(0.0, float(settings.LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT))
         estimated_cost += combined_notional * max(0.0, float(settings.LIVE_CASH_FUTURE_SLIPPAGE_BPS)) / 10_000.0
         estimated_cost += max(0.0, float(settings.LIVE_CASH_FUTURE_SLIPPAGE_PER_LOT))
         gross_lot_value = gap * lot if lot else None
         net_gap = gap - estimated_cost / lot if lot else gap
-        net_gap_pct = net_gap / cash_ask * 100.0
+        net_gap_pct = net_gap / cash_reference_price * 100.0
         annualized = gap_pct * 365.0 / days if days else None
 
         capacity_lots = None
         capacity_notional = None
-        if lot and lot > 0 and cash_ask > 0:
-            capacity_lots = max(0, int(float(settings.LIVE_CASH_FUTURE_CAPITAL) // (cash_ask * lot)))
-            capacity_notional = capacity_lots * cash_ask * lot
+        if lot and lot > 0 and cash_reference_price > 0:
+            capacity_lots = max(0, int(float(settings.LIVE_CASH_FUTURE_CAPITAL) // (cash_reference_price * lot)))
+            capacity_notional = capacity_lots * cash_reference_price * lot
 
         min_stable = max(1, int(settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS))
         configured_lots = max(1, int(settings.LIVE_CASH_FUTURE_ALERT_LOTS))
@@ -716,7 +687,8 @@ class LiveCashFutureScanner:
         net_profit = net_gap * lot * alert_lots if lot and alert_lots else None
         actionable_lots = alert_lots is not None and alert_lots >= 1
         eligible = (
-            gap > 0
+            quote_complete
+            and gap > 0
             and net_gap > 0
             and gap_pct >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT)
             and stable >= min_stable
@@ -738,15 +710,19 @@ class LiveCashFutureScanner:
             )
         )
         if previous_signal is None:
-            lifecycle = "NEW" if eligible else "EXPIRED"
+            lifecycle = "NEW" if eligible else "PAIR_ONLY"
         elif eligible and previous_signal.gap > 0 and gap < previous_signal.gap:
             lifecycle = "WEAKENING"
         elif eligible:
             lifecycle = "ACTIVE"
         else:
-            lifecycle = "EXPIRED"
+            lifecycle = "PAIR_ONLY"
 
-        reasons = ["TWO_SIDED_EXECUTABLE_QUOTE"]
+        reasons = ["PAIR_CREATED_BY_SYNCHRONIZED_LTP"]
+        if quote_complete:
+            reasons.append("EXECUTION_QUOTES_PRESENT")
+        else:
+            reasons.append("EXECUTION_QUOTES_INCOMPLETE_INFORMATIONAL")
         if gap > 0:
             reasons.append("POSITIVE_EXECUTABLE_SPREAD")
         if net_gap > 0:
@@ -836,7 +812,7 @@ class LiveCashFutureScanner:
             alert_event=alert_event,
             quality_score=quality_score,
         )
-        diagnostic_status = "SIGNAL" if eligible else "NO_SIGNAL"
+        diagnostic_status = "SIGNAL" if eligible else "PAIR_CREATED"
         self._record_pair_event(
             symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
             cash=cash, future=future, status=diagnostic_status,
@@ -877,10 +853,10 @@ class LiveCashFutureScanner:
                 signal for signal in self._signals.values()
                 if signal.received_at_ns >= cutoff
             ]
-        # Only eligible signals are emitted, but a fresh near contract can still
-        # provide comparison context for a current contract even when its own
-        # executable edge is below the opportunity threshold.
-        signals = [signal for signal in fresh_signals if signal.eligible]
+        # Emit every fresh synchronized LTP pair. Eligibility, bid/ask quality,
+        # liquidity, and stability remain informational fields rather than
+        # filters that hide the pair from the live scanner.
+        signals = list(fresh_signals)
         signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
         rank_scores = self._rank(signals)
         by_symbol: dict[str, list[LiveCashFutureSignal]] = {}
