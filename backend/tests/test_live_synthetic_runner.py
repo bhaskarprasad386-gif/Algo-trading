@@ -318,3 +318,21 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
     # The timeout must be retried; it must not terminate the runner on the first failure.
     runner.run_forever()
     assert calls["wait"] == 2
+
+def test_runner_snapshot_reports_actual_execution_state(monkeypatch):
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    assert runner.snapshot()["running"] is False
+
+    def fake_run():
+        assert runner.snapshot()["running"] is True
+
+    monkeypatch.setattr(runner, "_run_forever_impl", fake_run)
+    runner.run_forever()
+    assert runner.snapshot()["running"] is False
+
