@@ -336,3 +336,17 @@ def test_runner_snapshot_reports_actual_execution_state(monkeypatch):
     runner.run_forever()
     assert runner.snapshot()["running"] is False
 
+
+
+def test_synthetic_stock_universe_is_limited_to_ranked_top15_in_rank_order():
+    from app.market_data.nifty50_universe import (
+        NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS,
+        select_synthetic_stock_symbols,
+    )
+
+    assert len(NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS) == 15
+    assert len(set(NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS)) == 15
+    selected = select_synthetic_stock_symbols({
+        "TCS", "HDFCBANK", "RELIANCE", "WIPRO", "INFY", "ICICIBANK"
+    })
+    assert selected == ("HDFCBANK", "RELIANCE", "ICICIBANK", "INFY", "TCS")
