@@ -63,3 +63,20 @@ def test_low_liquidity_and_zero_volume_do_not_block_pair(monkeypatch):
     assert signal.liquidity_qty == 1
     assert scanner.health()["pairs_dropped_liquidity"] == 0
     assert len(scanner.snapshot(max_age_seconds=5.0, limit=10)) == 1
+
+
+def test_bid_ask_are_read_only_and_never_change_pair_gap_or_emit_alert(monkeypatch):
+    monkeypatch.setattr(settings, "LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS", 5.0)
+    scanner = LiveCashFutureScanner()
+
+    signal = _pair(scanner, cash_book=True, future_book=True)
+
+    assert signal is not None
+    # LTP gap is authoritative even when a book is present.
+    assert signal.gap == signal.future_ltp - signal.cash_ltp == 1.5
+    assert signal.cash_ask == 100.1
+    assert signal.future_bid == 101.4
+    assert signal.eligible is False
+    assert signal.alert_eligible is False
+    assert signal.alert_event is None
+    assert signal.lifecycle == "PAIR_ONLY"
