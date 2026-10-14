@@ -220,3 +220,23 @@ def test_live_synthetic_scanner_ignores_out_of_order_leg_updates():
     assert result
     assert result[0].option.call_bid == 4.5
 
+
+
+def test_live_synthetic_scanner_keeps_real_atm_anchor_when_atm_depth_is_not_executable():
+    ts = 10_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    # ATM prices are present but the quote has no volume/OI, so it may anchor
+    # chain distance but must not itself be treated as an executable signal.
+    scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "volume": 0, "oi": 0})
+    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "volume": 0, "oi": 0})
+    scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts, 105.0, "PE", 4.0, 5.0))
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "30SEP2026", "bid": 115.0, "ask": 116.0,
+        "bid_qty": 10, "ask_qty": 10, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    assert result
+    assert all(item.option.strike == 105.0 for item in result)
+    assert all(item.strike_distance == 1 for item in result)
