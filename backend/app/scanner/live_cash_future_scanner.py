@@ -631,14 +631,11 @@ class LiveCashFutureScanner:
         ]
         liquidity_qty = min(liquidity_values) if all(value is not None for value in liquidity_values) else None
 
-        # Reference pair always exists from synchronized LTPs. Executable spread
-        # and depth are displayed when available but never gate pair creation.
-        cash_reference_price = cash_ask if cash_ask is not None else cash["ltp"]
-        future_reference_price = future_bid if future_bid is not None else future["ltp"]
-        if quote_complete:
-            gap = future_bid - cash_ask
-        else:
-            gap = future["ltp"] - cash["ltp"]
+        # Pair metrics are based only on synchronized LTPs. Bid/ask is retained
+        # strictly as read-only display data and must not affect gap or eligibility.
+        cash_reference_price = cash["ltp"]
+        future_reference_price = future["ltp"]
+        gap = future_reference_price - cash_reference_price
         gap_pct = gap / cash_reference_price * 100.0
         expiry = self._parse_expiry(future.get("expiry"))
         days = max(1, (expiry - ts_date).days) if expiry else None
@@ -686,37 +683,11 @@ class LiveCashFutureScanner:
         gross_profit = gap * lot * alert_lots if lot and alert_lots else None
         net_profit = net_gap * lot * alert_lots if lot and alert_lots else None
         actionable_lots = alert_lots is not None and alert_lots >= 1
-        eligible = (
-            quote_complete
-            and gap > 0
-            and net_gap > 0
-            and gap_pct >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT)
-            and stable >= min_stable
-        )
-        alert_eligible = (
-            eligible
-            and actionable_lots
-            and (
-                float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT) <= 0
-                or (gross_profit is not None and gross_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT))
-            )
-            and (
-                float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT) <= 0
-                or (net_profit is not None and net_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT))
-            )
-            and (
-                float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT) <= 0
-                or (annualized is not None and annualized >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT))
-            )
-        )
-        if previous_signal is None:
-            lifecycle = "NEW" if eligible else "PAIR_ONLY"
-        elif eligible and previous_signal.gap > 0 and gap < previous_signal.gap:
-            lifecycle = "WEAKENING"
-        elif eligible:
-            lifecycle = "ACTIVE"
-        else:
-            lifecycle = "PAIR_ONLY"
+        # This scanner is pair/display-only: all spread, book, liquidity,
+        # stability and profitability fields are informational, never signal gates.
+        eligible = False
+        alert_eligible = False
+        lifecycle = "PAIR_ONLY"
 
         reasons = ["PAIR_CREATED_BY_SYNCHRONIZED_LTP"]
         if quote_complete:
@@ -724,7 +695,7 @@ class LiveCashFutureScanner:
         else:
             reasons.append("EXECUTION_QUOTES_INCOMPLETE_INFORMATIONAL")
         if gap > 0:
-            reasons.append("POSITIVE_EXECUTABLE_SPREAD")
+            reasons.append("POSITIVE_LTP_GAP_INFORMATIONAL")
         if net_gap > 0:
             reasons.append("POSITIVE_NET_GAP")
         if stable >= min_stable:
@@ -752,7 +723,7 @@ class LiveCashFutureScanner:
             cooldown = max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS))
             now_monotonic = time.monotonic()
             cooldown_ok = now_monotonic - self._alert_last_at.get(state_key, 0.0) >= cooldown
-            if alert_eligible and previous_alert_state != "ACTIVE" and cooldown_ok:
+            if False and alert_eligible and previous_alert_state != "ACTIVE" and cooldown_ok:
                 alert_event = "RECOVERY" if previous_alert_state else "NEW"
                 self._alert_state[state_key] = "ACTIVE"
                 self._alert_last_at[state_key] = now_monotonic
@@ -823,7 +794,7 @@ class LiveCashFutureScanner:
             self._signals[(signal.symbol, signal.contract_month)] = signal
 
         meaningful_change = previous_signal is None or previous_signal.lifecycle != signal.lifecycle or previous_signal.alert_event != signal.alert_event or abs(signal.gap_pct - previous_signal.gap_pct) >= 0.05 or abs(signal.quality_score - previous_signal.quality_score) >= 2.0
-        if eligible and meaningful_change and session_factory is not None:
+        if meaningful_change and session_factory is not None:
             self._result_executor.submit(self._persist_result, session_factory, signal)
         if alert_event and session_factory is not None:
             # Keep database I/O off the market-data callback path just like
