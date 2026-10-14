@@ -204,3 +204,105 @@ def test_cash_future_scanner_does_not_replace_newer_leg_with_out_of_order_tick()
     assert scanner.update(delayed, contract_month="CASH") is None
     assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
     assert scanner.out_of_order_records == 1
+
+
+def test_production_payload_mode_uses_only_authoritative_scanner():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    class LegacyScanner:
+        out_of_order_records = 0
+        stale_pair_rejections = 0
+
+        def __init__(self):
+            self.update_calls = 0
+
+        def update(self, *args, **kwargs):
+            self.update_calls += 1
+            raise AssertionError("legacy scanner must not run in production mode")
+
+    legacy = LegacyScanner()
+    payloads = []
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+        scanner=legacy,
+        on_payload=payloads.append,
+    )
+    key = InstrumentKey("NSE", "NSE", "1")
+    runner._metadata[key] = {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"}
+    runner._on_record(record(key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100))
+
+    assert len(payloads) == 1
+    assert payloads[0]["underlying"] == "ABC"
+    assert legacy.update_calls == 0
+    state = runner.snapshot()
+    assert state["authoritative_scanner"] == "LiveCashFutureScanner"
+    assert state["authoritative_payload_mode"] is True
+    assert state["scanner_updates"] == 0
+    assert state["payload_callbacks"] == 1
+    runner.stop()
+
+
+def test_authoritative_callback_failure_does_not_fallback_to_legacy_scanner():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    class LegacyScanner:
+        out_of_order_records = 0
+        stale_pair_rejections = 0
+
+        def __init__(self):
+            self.update_calls = 0
+
+        def update(self, *args, **kwargs):
+            self.update_calls += 1
+            raise AssertionError("must never fallback to legacy scanner")
+
+    legacy = LegacyScanner()
+
+    def broken_callback(payload):
+        raise RuntimeError("simulated authoritative scanner failure")
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+        scanner=legacy,
+        on_payload=broken_callback,
+    )
+    key = InstrumentKey("NSE", "NSE", "1")
+    runner._metadata[key] = {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"}
+    runner._on_record(record(key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100))
+
+    state = runner.snapshot()
+    assert legacy.update_calls == 0
+    assert state["payload_callback_errors"] == 1
+    assert state["scanner_updates"] == 0
+    runner.stop()
+
+
+def test_live_cash_future_scanner_rollover_reset_clears_transient_state_only():
+    from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
+
+    scanner = LiveCashFutureScanner()
+    scanner._latest[("ABC", 1)] = {"CASH": {"received_at_ns": 1}}
+    scanner._signals[("ABC", "CURRENT")] = object()
+    scanner._session_extremes[("ABC", "2026-10-14")] = {"cash_high": 1.0}
+    scanner._stability[("ABC", "CURRENT")] = (3, 1)
+    scanner._alert_state[("ABC", "CURRENT")] = "ACTIVE"
+    scanner._alert_last_at[("ABC", "CURRENT")] = 123.0
+    scanner._pair_events.append({"symbol": "ABC"})
+    scanner._last_pair_persist_at[("ABC", "CURRENT")] = 123.0
+    scanner._stats["observations"] = 7
+    scanner._last_observation_ns = 1
+
+    scanner.reset_pair_state()
+
+    assert not scanner._latest
+    assert not scanner._signals
+    assert not scanner._session_extremes
+    assert not scanner._stability
+    assert not scanner._alert_state
+    assert not scanner._alert_last_at
+    assert not scanner._pair_events
+    assert not scanner._last_pair_persist_at
+    assert scanner._last_observation_ns is None
+    assert scanner.health()["observations"] == 7
