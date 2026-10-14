@@ -205,6 +205,8 @@ def test_live_synthetic_scanner_rejects_commodity_scope():
 def test_live_synthetic_scanner_ignores_out_of_order_leg_updates():
     ts = 9_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts + 300_000_000, 105.0, "CE", 4.5, 5.0))
     # Late CE tick must not overwrite the newer 4.5 bid.
@@ -245,6 +247,11 @@ def test_live_synthetic_scanner_keeps_real_atm_anchor_when_atm_depth_is_not_exec
 def test_live_synthetic_scanner_rejects_out_of_order_tick_across_buckets():
     ts = 20_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    # The old bucket has a complete ATM anchor and PE, but its CE must be
+    # rejected after the newer CE has arrived in another bucket.
+    scanner.observe(_base(ts + 500_000_000, 100.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts + 500_000_000, 100.0, "PE", 4.0, 5.0))
+    scanner.observe(_base(ts + 500_000_000, 105.0, "PE", 4.0, 5.0))
     # New CE quote arrives first in a later bucket.
     scanner.observe(_base(ts + 2_000_000_000, 105.0, "CE", 4.5, 5.0))
     scanner.observe(_base(ts + 2_000_000_000, 105.0, "PE", 4.0, 5.0))
@@ -260,6 +267,8 @@ def test_live_synthetic_scanner_rejects_out_of_order_tick_across_buckets():
         "volume": 100, "oi": 1000,
     })
     assert old_result == ()
+    scanner.observe(_base(ts + 2_000_000_000, 100.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts + 2_000_000_000, 100.0, "PE", 4.0, 5.0))
     new_result = scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
         "expiry": "30SEP2026", "bid": 115.0, "ask": 116.0,
