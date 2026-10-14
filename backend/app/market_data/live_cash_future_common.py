@@ -101,8 +101,9 @@ class LiveCashFutureCommonRunner:
             "scanner_results": self._scanner_results,
             "records_missing_executable_quote": self._records_missing_executable_quote,
             "scanner_rejections": self._scanner_rejections,
-            "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
-            "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
+            "scanner_telemetry_source": "CashFutureOpportunityScanner compatibility path",
+            "scanner_out_of_order_records": None if self._authoritative_payload_mode else getattr(self.scanner, "out_of_order_records", 0),
+            "scanner_stale_pair_rejections": None if self._authoritative_payload_mode else getattr(self.scanner, "stale_pair_rejections", 0),
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
