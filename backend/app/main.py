@@ -34,8 +34,6 @@ from app.market_data.instruments import InstrumentMaster
 from app.market_data.nifty50_universe import (
     NIFTY50_STOCK_SYMBOLS,
     NIFTY50_INDEX_SYMBOLS,
-    NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS,
-    select_synthetic_stock_symbols,
 )
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
@@ -566,17 +564,8 @@ async def _live_synthetic_loop() -> None:
                 elif typ == "FUTCOM" and segment == "MCX":
                     commodity_symbols.add(name)
 
-            # Synthetic scans only the explicitly ranked top-15 NIFTY-50
-            # stock allowlist; other scanners retain the full NIFTY-50 universe.
-            stock_symbols = list(select_synthetic_stock_symbols(nifty50_stocks))
-            unavailable_top15 = sorted(
-                set(NIFTY50_SYNTHETIC_TOP15_STOCK_SYMBOLS) - nifty50_stocks
-            )
-            if unavailable_top15:
-                app_logger.warning(
-                    "Synthetic top-15 stocks skipped because no current NFO future exists: {}",
-                    ", ".join(unavailable_top15),
-                )
+            # Scan every NIFTY-50 stock with an available current/near NFO future.
+            stock_symbols = sorted(nifty50_stocks)
             raw_index_symbols = sorted(index_symbols)
             index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
             missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
