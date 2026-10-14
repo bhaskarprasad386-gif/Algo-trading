@@ -6,7 +6,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from app.core.config import settings
 from app.core.logger import app_logger
