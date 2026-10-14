@@ -201,3 +201,22 @@ def test_live_synthetic_scanner_rejects_commodity_scope():
     payload = _base(6_000_000_000, 105.0, "CE", 4.0, 5.0)
     payload["instrument_class"] = "COMMODITY"
     assert scanner.observe(payload) == ()
+
+def test_live_synthetic_scanner_ignores_out_of_order_leg_updates():
+    ts = 9_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts + 300_000_000, 105.0, "CE", 4.5, 5.0))
+    # Late CE tick must not overwrite the newer 4.5 bid.
+    scanner.observe(_base(ts + 100_000_000, 105.0, "CE", 1.0, 5.0))
+    scanner.observe(_base(ts + 300_000_000, 105.0, "PE", 4.0, 5.0))
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "30SEP2026", "bid": 115.0, "ask": 116.0,
+        "bid_qty": 10, "ask_qty": 10, "lot_size": 1,
+        "source_timestamp_ns": ts + 300_000_000, "symbol": "NIFTYFUT",
+        "volume": 100, "oi": 1000,
+    })
+    assert result
+    assert result[0].option.call_bid == 4.5
+
