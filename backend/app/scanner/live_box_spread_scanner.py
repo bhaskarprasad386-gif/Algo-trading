@@ -48,7 +48,19 @@ class LiveBoxSpreadScanner:
             expiry=self._expiry(payload.get("expiry"))
             key=self._matching_bucket_key(symbol,ts,expiry)
             bucket=self._buckets.setdefault(key,{})
-            bucket[(strike,typ)]=payload
+            leg_key=(strike,typ)
+            previous=bucket.get(leg_key)
+            # Out-of-order broker updates must never overwrite a newer quote
+            # for the same contract within the active assembly window.
+            if previous is not None:
+                try:
+                    previous_ts=int(previous.get("source_timestamp_ns") or 0)
+                except (TypeError,ValueError):
+                    previous_ts=0
+                if previous_ts > ts:
+                    self._prune(ts)
+                    return ()
+            bucket[leg_key]=payload
             grouped=[]
             for s in sorted({k[0] for k in bucket}):
                 ce,pe=bucket.get((s,"CE")),bucket.get((s,"PE"))
