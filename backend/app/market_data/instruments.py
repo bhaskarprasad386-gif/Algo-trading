@@ -85,6 +85,43 @@ class InstrumentMaster:
                 f"instrument master structure invalid: {len(valid_rows)}/{len(data)} rows "
                 "have token, symbol and exchange segment"
             )
+        # A structurally valid but incomplete snapshot is not safe for live
+        # Cash-Future: it must contain NSE cash instruments and at least one
+        # unexpired NFO stock-future contract.
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        has_cash = any(
+            str(row.get("exch_seg", "")).strip().upper() == "NSE"
+            and (
+                str(row.get("symbol", "")).strip().upper().endswith("-EQ")
+                or str(row.get("instrumenttype", "")).strip().upper() in {"EQ", "CASH", "EQUITY"}
+            )
+            and str(row.get("token", "")).strip()
+            for row in valid_rows
+        )
+        expiry_formats = ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y", "%d/%m/%Y")
+        has_current_stock_future = False
+        for row in valid_rows:
+            if (
+                str(row.get("exch_seg", "")).strip().upper() != "NFO"
+                or str(row.get("instrumenttype", "")).strip().upper() != "FUTSTK"
+                or not str(row.get("token", "")).strip()
+            ):
+                continue
+            raw_expiry = str(row.get("expiry", "")).strip().upper()
+            for expiry_format in expiry_formats:
+                try:
+                    expiry = datetime.strptime(raw_expiry, expiry_format).date()
+                    if expiry >= today:
+                        has_current_stock_future = True
+                    break
+                except ValueError:
+                    continue
+            if has_current_stock_future:
+                break
+        if not has_cash:
+            raise ValueError("instrument master has no resolvable NSE cash coverage")
+        if not has_current_stock_future:
+            raise ValueError("instrument master has no unexpired NFO FUTSTK contract with a recognized expiry")
         return object_rows
 
     @classmethod
