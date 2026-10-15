@@ -57,7 +57,7 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
     captured = []
     def select(*args, **kwargs):
         captured.append(kwargs["underlying"])
-        return BoxContractSelection((), "29OCT2026", 100.0)
+        return BoxContractSelection((object(),), "29OCT2026", 100.0)
 
     monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"READY": (100.0, 110.0), "WAITING": (100.0, 110.0)})
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
