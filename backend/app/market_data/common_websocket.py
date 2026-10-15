@@ -400,6 +400,11 @@ class CommonWebSocketManager:
                         generation=generation,
                     )
                 else:
+                    # Keep the old acknowledged token set while the broker is
+                    # cooling down. Updating it here would lose the pending
+                    # delta, so recovery could never apply it after cooldown.
+                    if self._broker_cooldown_remaining() > 0.0:
+                        continue
                     removed = previous_tokens.get(group, set()) - pairs
                     added = pairs - previous_tokens.get(group, set())
                     if removed:
@@ -746,6 +751,11 @@ class CommonWebSocketManager:
             self._recovery_thread.start()
 
     def _recovery_loop(self) -> None:
+        # Subscription changes intentionally remain pending during a shared
+        # broker cooldown. Reconcile once when that cooldown expires so the
+        # remembered socket-token set catches up without sending broker calls
+        # while Angel is rate-limiting us.
+        cooldown_was_active = False
         while not self._recovery_stop.wait(self._recovery_interval_seconds):
             with self._lock:
                 has_intent = bool(self.registry.subscriptions())
@@ -756,6 +766,12 @@ class CommonWebSocketManager:
                     min_age_seconds=0.0,
                     silent_age_seconds=self._silent_feed_timeout_seconds,
                 )
+                cooldown_remaining = self._broker_cooldown_remaining()
+                if cooldown_remaining > 0.0:
+                    cooldown_was_active = True
+                elif cooldown_was_active:
+                    self._reconcile()
+                    cooldown_was_active = False
             except Exception as exc:
                 runtime_diagnostics.record(
                     component="Common Market Feed",
