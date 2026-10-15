@@ -1118,6 +1118,13 @@ class CommonWebSocketManager:
         worker = Thread(target=_close, name="common-ws-close", daemon=True)
         worker.start()
         worker.join(timeout=max(0.1, float(timeout)))
+        if worker.is_alive():
+            app_logger.error(
+                "Common feed socket close timed out group=%s generation=%s reason=%s",
+                f"{group.mode}:{group.shard}" if group is not None else "unknown",
+                generation if generation is not None else "unknown",
+                reason,
+            )
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -1177,6 +1184,22 @@ class CommonWebSocketManager:
                     f"{group.mode}:{group.shard}"
                     for group, socket in sockets.items()
                     if bool(getattr(socket, "connected", False))
+                ],
+                "transport_threads_alive_groups": [
+                    f"{group.mode}:{group.shard}"
+                    for group, socket in sockets.items()
+                    if bool(
+                        getattr(socket, "health", {}).get("transport_thread_alive", False)
+                        if isinstance(getattr(socket, "health", {}), dict) else False
+                    )
+                ],
+                "transport_close_timed_out_groups": [
+                    f"{group.mode}:{group.shard}"
+                    for group, socket in sockets.items()
+                    if bool(
+                        getattr(socket, "health", {}).get("transport_close_timed_out", False)
+                        if isinstance(getattr(socket, "health", {}), dict) else False
+                    )
                 ],
                 "disconnected_groups": [
                     f"{group.mode}:{group.shard}"
