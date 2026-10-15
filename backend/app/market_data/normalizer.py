@@ -130,7 +130,13 @@ class AngelOneTickNormalizer:
                 return raw_price, raw_quantity
         return None, None
 
-    def normalize(self, descriptor: InstrumentDescriptor, payload: Mapping[str, Any]) -> MarketDataRecord:
+    def normalize(
+        self,
+        descriptor: InstrumentDescriptor,
+        payload: Mapping[str, Any],
+        *,
+        received_at_ns: int | None = None,
+    ) -> MarketDataRecord:
         if not isinstance(descriptor, InstrumentDescriptor):
             raise TypeError("descriptor must be an InstrumentDescriptor")
         if not isinstance(payload, Mapping):
@@ -166,6 +172,8 @@ class AngelOneTickNormalizer:
         timestamp_ns, timestamp_provenance = self._timestamp_detail(payload)
         normalized_payload = dict(payload)
         normalized_payload["_timestamp_provenance"] = timestamp_provenance
+        if received_at_ns is not None and int(received_at_ns) > 0:
+            normalized_payload["_received_at_ns"] = int(received_at_ns)
         record = MarketDataRecord(
             instrument=InstrumentKey(
                 descriptor.key.exchange, descriptor.key.segment, token

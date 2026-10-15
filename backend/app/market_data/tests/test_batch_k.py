@@ -234,3 +234,15 @@ def test_normalizer_tracks_timestamp_provenance_without_raw_timestamp_diagnostic
     assert invalid.payload["_timestamp_provenance"] == "fallback_invalid"
     assert invalid_zero.payload["_timestamp_provenance"] == "invalid"
     assert "raw_timestamp_value" not in broker_ms.payload
+
+
+
+def test_normalizer_preserves_websocket_ingress_timestamp():
+    received_at_ns = 1_760_000_000_123_456_789
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {"token": "101", "exchange_timestamp": 1720000000123},
+        received_at_ns=received_at_ns,
+    )
+    assert record.payload["_received_at_ns"] == received_at_ns
+    assert record.timestamp_ns == 1720000000123 * 1_000_000
