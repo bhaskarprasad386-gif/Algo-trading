@@ -531,7 +531,7 @@ async def _live_synthetic_loop() -> None:
         try:
             master.download()
             today = datetime.now(IST).date()
-            nifty50_stocks: set[str] = set()
+            top15_liquid_stocks: set[str] = set()
             index_symbols: set[str] = set()
             commodity_symbols: set[str] = set()
             for item in master.instruments:
@@ -551,7 +551,7 @@ async def _live_synthetic_loop() -> None:
                 if expiry < today:
                     continue
                 if typ == "FUTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
-                    nifty50_stocks.add(name)
+                    top15_liquid_stocks.add(name)
                 elif (
                     typ == "FUTIDX"
                     and segment in {"NFO", "BFO"}
@@ -561,7 +561,7 @@ async def _live_synthetic_loop() -> None:
                 elif typ == "FUTCOM" and segment == "MCX":
                     commodity_symbols.add(name)
 
-            stock_symbols = sorted(nifty50_stocks)
+            stock_symbols = sorted(top15_liquid_stocks)
             raw_index_symbols = sorted(index_symbols)
             index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
             missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
@@ -582,11 +582,10 @@ async def _live_synthetic_loop() -> None:
             targets = []
             missing_expiry = []
             for symbol, instrument_class in target_specs:
-                expiry_selector = (
-                    select_monthly_option_expiry
-                    if instrument_class == "INDEX"
-                    else select_nearest_option_expiry
-                )
+                # Synthetic Future must pair options with the listed future's
+                # expiry for both stocks and indices; weekly options belong to
+                # the separate Box Spread scanner only.
+                expiry_selector = select_monthly_option_expiry
                 expiry = expiry_selector(
                     master.instruments,
                     underlying=symbol,

@@ -390,3 +390,31 @@ def test_monthly_index_universe_contains_all_six_supported_indices():
     assert NIFTY50_INDEX_SYMBOLS == frozenset(
         {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
     )
+
+
+def test_monthly_stock_expiry_matches_real_futures_and_skips_weekly_chain():
+    from datetime import date
+
+    items = [
+        {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "FUTSTK", "expiry": "29OCT2026"},
+        {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "FUTSTK", "expiry": "26NOV2026"},
+        {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "OPTSTK", "expiry": "22OCT2026"},
+        {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "OPTSTK", "expiry": "29OCT2026"},
+        {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "OPTSTK", "expiry": "26NOV2026"},
+    ]
+    selected = select_monthly_option_expiry(
+        items, underlying="RELIANCE", instrument_class="STOCK", today=date(2026, 10, 15)
+    )
+    assert selected == "29OCT2026"
+
+
+def test_monthly_stock_expiry_returns_none_when_only_weekly_options_exist():
+    from datetime import date
+
+    items = [
+        {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "FUTSTK", "expiry": "29OCT2026"},
+        {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "OPTSTK", "expiry": "22OCT2026"},
+    ]
+    assert select_monthly_option_expiry(
+        items, underlying="RELIANCE", instrument_class="STOCK", today=date(2026, 10, 15)
+    ) is None
