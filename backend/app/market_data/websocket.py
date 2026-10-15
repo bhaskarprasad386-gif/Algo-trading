@@ -306,22 +306,20 @@ class MarketDataWebSocket:
             self._last_error = reason
             self._consecutive_failures += 1
             failure_callback = self.on_failure
-        notified = False
         if failure_callback is not None:
             try:
                 failure_callback(reason)
-                notified = True
             except Exception as exc:
                 app_logger.error(f"Angel One WebSocket initial-subscribe notification failed: {exc}")
-        if not notified:
-            # Without a functioning recovery owner, do not leave an opened SDK
-            # transport running after its initial subscription failed or timed out.
-            try:
-                socket.close_connection()
-            except Exception as exc:
-                app_logger.warning("Angel One WebSocket close after initial-subscribe failure failed: %s", exc)
-            if self._auto_reconnect:
-                self._schedule_reconnect()
+        # The failed subscribe cannot be trusted, even when a recovery callback
+        # exists. Close this transport now; the common manager (auto-reconnect
+        # disabled) or this wrapper (auto-reconnect enabled) owns replacement.
+        try:
+            socket.close_connection()
+        except Exception as exc:
+            app_logger.warning("Angel One WebSocket close after initial-subscribe failure failed: %s", exc)
+        if self._auto_reconnect:
+            self._schedule_reconnect()
 
     def _schedule_reconnect(self) -> None:
         with self._reconnect_lock:
