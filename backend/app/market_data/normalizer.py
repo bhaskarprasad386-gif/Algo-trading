@@ -96,7 +96,7 @@ class AngelOneTickNormalizer:
         return AngelOneTickNormalizer._timestamp_detail(payload)[0]
 
     @classmethod
-    def _depth_detail(cls, payload: Mapping[str, Any], side: str) -> tuple[Any, Any]:
+    def _depth_detail(cls, payload: Mapping[str, Any], side: str) -> tuple[Any, Any, bool]:
         """Return the first usable positive price and its own optional quantity.
 
         Broker depth arrays can contain empty or malformed top levels. Skip those
@@ -116,7 +116,9 @@ class AngelOneTickNormalizer:
                     if payload.get(f"{side}_quantity") is not None
                     else payload.get("bid_qty" if side == "buy" else "ask_qty")
                 )
-                return direct_price, direct_qty
+                # `bid`/`ask` are canonical aliases in rupees; broker-native
+                # `buy_price`/`sell_price` remain scaled integer prices.
+                return direct_price, direct_qty, direct_name == ("bid" if side == "buy" else "ask")
 
         for key in (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side):
             value = payload.get(key)
@@ -138,8 +140,8 @@ class AngelOneTickNormalizer:
                     if candidate_value is not None:
                         raw_quantity = level.get(candidate)
                         break
-                return raw_price, raw_quantity
-        return None, None
+                return raw_price, raw_quantity, False
+        return None, None, False
 
     def normalize(
         self,
@@ -159,14 +161,14 @@ class AngelOneTickNormalizer:
         if instrument_type is None:
             raise ValueError(f"unsupported instrument_type: {descriptor.instrument_type}")
 
-        bid_raw, bid_qty_raw = self._depth_detail(payload, "buy")
-        ask_raw, ask_qty_raw = self._depth_detail(payload, "sell")
+        bid_raw, bid_qty_raw, bid_is_canonical = self._depth_detail(payload, "buy")
+        ask_raw, ask_qty_raw, ask_is_canonical = self._depth_detail(payload, "sell")
         bid_value = self._finite_float(bid_raw)
         ask_value = self._finite_float(ask_raw)
         bid_qty_value = self._finite_float(bid_qty_raw)
         ask_qty_value = self._finite_float(ask_qty_raw)
-        bid = None if bid_value is None or bid_value < 0 else bid_value / self.price_scale
-        ask = None if ask_value is None or ask_value < 0 else ask_value / self.price_scale
+        bid = None if bid_value is None or bid_value < 0 else bid_value / (1.0 if bid_is_canonical else self.price_scale)
+        ask = None if ask_value is None or ask_value < 0 else ask_value / (1.0 if ask_is_canonical else self.price_scale)
         bid_qty = None if bid_qty_value is None or bid_qty_value < 0 else bid_qty_value
         ask_qty = None if ask_qty_value is None or ask_qty_value < 0 else ask_qty_value
         # A crossed/malformed depth snapshot should not discard otherwise valid

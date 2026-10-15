@@ -265,3 +265,13 @@ def test_normalizer_accepts_direct_bid_ask_aliases_without_depth_arrays():
     assert record.ask == 123.50
     assert record.bid_qty == 10
     assert record.ask_qty == 12
+
+
+def test_normalizer_preserves_rupee_units_for_canonical_bid_ask_aliases():
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {"token": "101", "ltp": 12345, "bid": 123.40, "ask": 123.50},
+    )
+    assert record.ltp == 123.45
+    assert record.bid == 123.40
+    assert record.ask == 123.50
