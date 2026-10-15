@@ -34,13 +34,13 @@ def test_synthetic_stock_is_both_sides_of_atm_with_max_seven_positions():
     assert max(distance for _, distance, _ in result) == 7
 
 
-def test_synthetic_index_allows_ten_positions_when_chain_has_them():
+def test_synthetic_index_is_bounded_to_fifteen_actual_positions_per_side():
     strikes = tuple(range(100, 201))
     result = enumerate_synthetic_strikes(strikes, atm_strike=150, instrument_class="INDEX")
-    assert max(distance for _, distance, _ in result) == 10
-    assert (140.0, 10, "LOWER") in result
-    assert (160.0, 10, "UPPER") in result
-    assert 139.0 not in {strike for strike, _, _ in result}
+    assert max(distance for _, distance, _ in result) == 15
+    assert (135.0, 15, "LOWER") in result
+    assert (165.0, 15, "UPPER") in result
+    assert 134.0 not in {strike for strike, _, _ in result}
 
 
 def test_distance_is_chain_position_count():
@@ -66,20 +66,22 @@ def test_custom_policy_can_tighten_limits_without_changing_engine():
     )
 
 
-def test_synthetic_index_and_commodity_radii_are_ten():
+def test_synthetic_index_radius_is_fifteen_and_commodity_remains_ten():
     strikes = tuple(range(50, 151))
-    assert max(d for _, d, _ in enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="INDEX")) == 10
+    assert max(d for _, d, _ in enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="INDEX")) == 15
     assert max(d for _, d, _ in enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="COMMODITY")) == 10
 
 
-def test_index_synthetic_selection_takes_ten_actual_liquid_candidates_per_side_without_atm():
-    strikes = [float(value) for value in range(50, 151, 5) if value != 100]
+def test_index_synthetic_scope_is_up_to_fifteen_actual_strikes_per_side_without_atm():
+    strikes = [float(value) for value in range(0, 201, 5) if value != 100]
     selected = enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="INDEX")
     lower = [(strike, distance) for strike, distance, side in selected if side == "LOWER"]
     upper = [(strike, distance) for strike, distance, side in selected if side == "UPPER"]
-    assert len(lower) == 10
-    assert len(upper) == 10
-    assert lower[0] == (50.0, 10)
+    assert len(lower) == 15
+    assert len(upper) == 15
+    assert lower[0] == (25.0, 15)
     assert lower[-1] == (95.0, 1)
     assert upper[0] == (105.0, 1)
-    assert upper[-1] == (150.0, 10)
+    assert upper[-1] == (175.0, 15)
+    assert 20.0 not in {strike for strike, _, _ in selected}
+    assert 180.0 not in {strike for strike, _, _ in selected}
