@@ -264,7 +264,12 @@ class LiveSyntheticOptionFutureRecorder:
         if self._manager is not None:
             feed_kwargs["manager"] = self._manager
         else:
-            feed_kwargs["socket_factory"] = lambda: MarketDataWebSocket(auth=self.auth)
+            # The common manager is the sole reconnect supervisor. A private
+            # SDK reconnect loop here can race manager-driven shard recovery.
+            feed_kwargs["socket_factory"] = lambda: MarketDataWebSocket(
+                auth=self.auth,
+                auto_reconnect=False,
+            )
         self._feed = CommonStrategyMarketFeed(self.consumer, **feed_kwargs)
         self._feed.start(self._descriptors(), self._on_record)
         try:

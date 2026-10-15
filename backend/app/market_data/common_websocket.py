@@ -95,13 +95,17 @@ def connect_with_shared_broker_admission(
     with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
         if not _wait_for_shared_broker_connect_admission(should_stop):
             return False
+        # MarketDataWebSocket.connect returns on handshake success/failure; its
+        # run_forever loop now lives in a separate tracked transport thread.
+        if should_stop is not None and should_stop():
+            return False
         try:
             socket.connect(**connect_kwargs)
         except Exception as exc:
             if apply_shared_broker_cooldown(exc, cooldown_seconds):
                 _mark_socket_auth_stale(socket)
             raise
-        return True
+    return True
 
 
 class CommonWebSocketManager:
@@ -156,6 +160,10 @@ class CommonWebSocketManager:
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
+        # Keep transport activity, successful routing, and consumer delivery as
+        # separate clocks; a mapping/callback issue must not masquerade as a dead socket.
+        self._last_raw_frame_at_by_group: dict[SocketGroup, float] = {}
+        self._last_successful_route_at: dict[SocketGroup, float] = {}
         self._last_data_at: dict[SocketGroup, float] = {}
         # None means this socket generation has not delivered a tick to any consumer yet.
         self._last_successful_delivery_at: dict[SocketGroup, float | None] = {}
@@ -167,9 +175,6 @@ class CommonWebSocketManager:
         # One connect worker per current socket generation. Recovery and the
         # periodic supervisor can race to request the same generation.
         self._connect_started_generation: dict[SocketGroup, int] = {}
-        # A socket object must never receive two connect() calls, even if
-        # concurrent recovery paths race while its group generation changes.
-        self._connect_started_socket_ids: set[int] = set()
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -180,7 +185,7 @@ class CommonWebSocketManager:
         self._connect_call_wait_seconds = 0.25
         # Subscription APIs can block inside the SDK too; bound those calls so
         # they cannot monopolize the reconciliation lock and stop recovery.
-        self._socket_call_wait_seconds = 0.25
+        self._socket_call_wait_seconds = 2.0
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
@@ -192,6 +197,13 @@ class CommonWebSocketManager:
         self._last_connect_failure = None
         self._socket_failure_events = 0
         self._last_socket_failure = None
+        # Coalesce callback-triggered recovery per shard. The periodic supervisor
+        # remains the fallback, but duplicate SDK callbacks must not spawn a
+        # burst of close/recovery workers for the same failed generation.
+        self._failure_recovery_groups: set[SocketGroup] = set()
+        # Retired transports remain visible until their close worker actually exits.
+        # Store metadata only; never retain broker frames or authentication payloads.
+        self._retired_transports: dict[str, dict[str, Any]] = {}
         self._recovery_attempts = 0
         self._last_recovery_at = None
 
@@ -336,14 +348,35 @@ class CommonWebSocketManager:
                     self._socket_tokens.pop(group, None)
                     self._socket_created_at.pop(group, None)
                     self._last_data_at.pop(group, None)
+                    self._last_raw_frame_at_by_group.pop(group, None)
+                    self._last_successful_route_at.pop(group, None)
                     self._last_successful_delivery_at.pop(group, None)
                     self._socket_generation.pop(group, None)
 
-            for socket in stale_sockets:
-                self._close_socket_bounded(socket)
+            for group, socket in zip(stale_groups, stale_sockets):
+                def _reconcile_after_obsolete_close(obsolete_group=group):
+                    try:
+                        with self._reconcile_lock:
+                            self._reconcile()
+                    except Exception as exc:
+                        app_logger.warning(
+                            "Common feed reconcile after obsolete close failed group=%s: %s",
+                            f"{obsolete_group.mode}:{obsolete_group.shard}", exc,
+                        )
+                self._close_socket_tracked(
+                    socket, group=group,
+                    generation=self._socket_generation_counter.get(group),
+                    reason="obsolete_group", on_finished=_reconcile_after_obsolete_close,
+                )
 
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
+                if socket is None:
+                    # The failed generation is still being closed. Do not admit
+                    # its replacement until the bounded close attempt completes.
+                    with self._lock:
+                        if group in self._failure_recovery_groups:
+                            continue
                 if socket is not None:
                     # A transport can become unusable before its SDK wrapper
                     # publishes the close callback. Never send incremental
@@ -369,11 +402,42 @@ class CommonWebSocketManager:
                                 self._socket_tokens.pop(group, None)
                                 self._socket_created_at.pop(group, None)
                                 self._last_data_at.pop(group, None)
+                                self._last_raw_frame_at_by_group.pop(group, None)
+                                self._last_successful_route_at.pop(group, None)
                                 self._last_successful_delivery_at.pop(group, None)
                                 self._socket_generation.pop(group, None)
-                        self._close_socket_bounded(socket)
+                                # Retirement is also a recovery lifecycle: block a
+                                # replacement while the old transport is still closing.
+                                self._failure_recovery_groups.add(group)
+                        def _resume_after_retired_close(retired_group=group):
+                            try:
+                                with self._reconcile_lock:
+                                    with self._lock:
+                                        self._failure_recovery_groups.discard(retired_group)
+                                    self._reconcile()
+                            except Exception as exc:
+                                app_logger.warning(
+                                    "Common feed reconcile after retired close failed group=%s: %s",
+                                    f"{retired_group.mode}:{retired_group.shard}", exc,
+                                )
+                        close_worker = self._close_socket_tracked(
+                            socket, group=group,
+                            generation=self._socket_generation_counter.get(group),
+                            reason="reconcile_disconnected",
+                            on_finished=_resume_after_retired_close,
+                        )
                         socket = None
+                        if close_worker.is_alive():
+                            continue
+                        with self._lock:
+                            self._failure_recovery_groups.discard(group)
                 if socket is None:
+                    # A timed-out close on any retired shard may still occupy
+                    # one of Angel's global sessions. Do not open a replacement
+                    # until all known retired close workers have exited.
+                    with self._lock:
+                        if self._retired_transports:
+                            continue
                     socket = self._create_socket()
                     subscriptions = self._group_subscriptions(pairs)
                     with self._lock:
@@ -390,6 +454,8 @@ class CommonWebSocketManager:
                         self._socket_tokens[group] = set(pairs)
                         now = time.monotonic()
                         self._socket_created_at[group] = now
+                        self._last_raw_frame_at_by_group[group] = now
+                        self._last_successful_route_at.pop(group, None)
                         self._last_data_at[group] = now
                         self._last_successful_delivery_at[group] = None
                     self._start_socket_connect(
@@ -469,14 +535,9 @@ class CommonWebSocketManager:
                 or self._socket_generation.get(group) != generation
             ):
                 return
-            socket_id = id(socket)
-            if (
-                self._connect_started_generation.get(group) == generation
-                or socket_id in self._connect_started_socket_ids
-            ):
+            if self._connect_started_generation.get(group) == generation:
                 return
             self._connect_started_generation[group] = generation
-            self._connect_started_socket_ids.add(socket_id)
 
         completed = Event()
         failure: dict[str, Exception] = {}
@@ -495,23 +556,10 @@ class CommonWebSocketManager:
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
-                # A cooldown check alone has a check/connect race: another shard
-                # can pass the check and enter connect() before a 429 callback is
-                # published. Serialize broker handshakes, but never take either
-                # manager/reconcile lock across the blocking SDK call.
+                # Keep broker-wide admission through handshake success/failure.
+                # MarketDataWebSocket.connect now starts run_forever in a tracked
+                # thread and returns once the handshake outcome is known.
                 with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
-                    with self._lock:
-                        still_current = (
-                            self._sockets.get(group) is socket
-                            and self._socket_generation.get(group) == generation
-                            and not self._closed
-                        )
-                    if not still_current:
-                        self._close_socket_bounded(socket)
-                        return
-                    # Share both the 429 cooldown and minimum connect-start
-                    # interval with direct collectors. Re-check stop/currentness
-                    # while waiting so stale generations do not consume admission.
                     def _still_current() -> bool:
                         with self._lock:
                             return (
@@ -519,6 +567,22 @@ class CommonWebSocketManager:
                                 and self._socket_generation.get(group) == generation
                                 and not self._closed
                             )
+                    if not _still_current():
+                        self._close_socket_bounded(socket)
+                        return
+                    # A replacement worker may already be queued for admission
+                    # while another shard's close is still in flight. Re-check
+                    # retirement after acquiring the global lock, not only when
+                    # creating the placeholder socket.
+                    while _still_current():
+                        with self._lock:
+                            retirement_pending = bool(self._retired_transports)
+                        if not retirement_pending:
+                            break
+                        time.sleep(0.05)
+                    if not _still_current():
+                        self._close_socket_bounded(socket)
+                        return
                     if not _wait_for_shared_broker_connect_admission(
                         should_stop=lambda: not _still_current()
                     ):
@@ -533,16 +597,21 @@ class CommonWebSocketManager:
                         if self._apply_broker_cooldown(connect_exc):
                             _mark_socket_auth_stale(socket)
                         raise
-                # A timed-out connect worker can finish after recovery has
-                # already installed a replacement. Never leave that late,
-                # successfully connected socket alive as an orphan session.
-                with self._lock:
-                    is_current_after_connect = (
-                        self._sockets.get(group) is socket
-                        and self._socket_generation.get(group) == generation
-                    )
-                if not is_current_after_connect:
-                    self._close_socket_bounded(socket)
+                    # Check and retire a late successful handshake before releasing
+                    # global admission; otherwise the next shard could connect while
+                    # this just-opened orphan is still closing.
+                    with self._lock:
+                        is_current_after_connect = (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                        )
+                    if not is_current_after_connect:
+                        self._close_socket_tracked(
+                            socket, group=group, generation=generation,
+                            reason="late_connect_success",
+                            on_finished=lambda: self._reconcile_after_retirement(group),
+                        )
+                        return
             except Exception as exc:
                 failure["exception"] = exc
                 # Keep this exception path non-blocking: _start_socket_connect
@@ -556,10 +625,13 @@ class CommonWebSocketManager:
                         and self._socket_generation.get(group) == generation
                     )
                     if is_current:
+                        self._failure_recovery_groups.add(group)
                         self._sockets.pop(group, None)
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
                         self._last_data_at.pop(group, None)
+                        self._last_raw_frame_at_by_group.pop(group, None)
+                        self._last_successful_route_at.pop(group, None)
                         self._last_successful_delivery_at.pop(group, None)
                         self._socket_generation.pop(group, None)
                     self._connect_failures += 1
@@ -585,7 +657,21 @@ class CommonWebSocketManager:
                     group, type(exc).__name__, exc,
                 )
                 if is_current:
-                    self._close_socket_bounded(socket)
+                    def _resume_after_connect_failure(failed_group=group):
+                        # This callback can run while _reconcile is waiting for
+                        # the connect result; don't acquire its lock or deadlock
+                        # the caller that must receive the original exception.
+                        with self._lock:
+                            self._failure_recovery_groups.discard(failed_group)
+                    close_worker = self._close_socket_tracked(
+                        socket, group=group, generation=generation, reason="connect_failure",
+                        on_finished=_resume_after_connect_failure, timeout=0.1,
+                    )
+                    if not close_worker.is_alive():
+                        _resume_after_connect_failure()
+                # Return the connect exception after state and close gating are set,
+                # without waiting for any later supervisor reconciliation.
+                completed.set()
             finally:
                 completed.set()
 
@@ -619,10 +705,15 @@ class CommonWebSocketManager:
                     or self._socket_generation.get(group) != generation
                 ):
                     return
+                if group in self._failure_recovery_groups:
+                    return
+                self._failure_recovery_groups.add(group)
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
                 self._socket_failure_events += 1
@@ -643,13 +734,17 @@ class CommonWebSocketManager:
             group, generation, reason,
         )
 
-        def _recover() -> None:
-            self._close_socket_bounded(socket)
+        def _recover_after_close() -> None:
             try:
-                # Recover the failed/missing group only. A zero silent-age threshold
-                # marks every healthy connected shard stale and tears down unrelated
-                # sessions whenever just one socket reports a transport error.
+                # Keep admission blocked while the supervisor processes the
+                # failure. Clear the marker only immediately before serialized
+                # reconciliation, so concurrent reconcile calls cannot race
+                # ahead and admit a replacement from stale state.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
+                with self._reconcile_lock:
+                    with self._lock:
+                        self._failure_recovery_groups.discard(group)
+                    self._reconcile()
             except Exception as exc:
                 runtime_diagnostics.record(
                     component="Common Market Feed",
@@ -661,6 +756,36 @@ class CommonWebSocketManager:
                     "Common feed failure-triggered recovery failed group=%s; supervisor will retry: %s",
                     group, exc,
                 )
+                # Only clear a failed generation's marker when no replacement
+                # has become current. Never erase a newer generation's failure.
+                with self._reconcile_lock:
+                    with self._lock:
+                        if group not in self._sockets:
+                            self._failure_recovery_groups.discard(group)
+
+        def _recover() -> None:
+            try:
+                close_worker = self._close_socket_tracked(
+                    socket, group=group, generation=generation, reason="failure_callback",
+                    on_finished=_recover_after_close,
+                )
+                if close_worker.is_alive():
+                    # The tracked close watcher resumes recovery when the transport exits.
+                    return
+                _recover_after_close()
+            except Exception as exc:
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={"event": "failure_triggered_recovery", "group": f"{group.mode}:{group.shard}"},
+                )
+                app_logger.warning(
+                    "Common feed failure-triggered recovery failed group=%s; supervisor will retry: %s",
+                    group, exc,
+                )
+                with self._lock:
+                    self._failure_recovery_groups.discard(group)
 
         Thread(target=_recover, name=f"common-ws-failure-recovery-{group.mode}-{group.shard}", daemon=True).start()
     def _run_socket_operation_bounded(
@@ -707,11 +832,27 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
 
         if is_current:
-            self._close_socket_bounded(socket)
+            with self._lock:
+                self._failure_recovery_groups.add(group)
+            def _resume_after_operation_close(failed_group=group):
+                # The current reconcile caller owns _reconcile_lock here; only
+                # clear the state marker and let the caller unwind on the error.
+                with self._lock:
+                    self._failure_recovery_groups.discard(failed_group)
+            close_worker = self._close_socket_tracked(
+                socket, group=group,
+                generation=self._socket_generation_counter.get(group),
+                reason=f"socket_{operation_name}_failure",
+                on_finished=_resume_after_operation_close,
+            )
+            if not close_worker.is_alive():
+                _resume_after_operation_close()
 
         if not finished:
             error = TimeoutError(
@@ -857,6 +998,8 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
@@ -866,8 +1009,13 @@ class CommonWebSocketManager:
             self._recovery_attempts += 1
             self._last_recovery_at = time.time()
 
-        for _, socket, _, _ in stale:
-            self._close_socket_bounded(socket)
+        for stale_group, socket, _, _ in stale:
+            self._close_socket_tracked(
+                socket, group=stale_group,
+                generation=self._socket_generation_counter.get(stale_group),
+                reason="stale_recovery",
+                on_finished=lambda retired_group=stale_group: self._reconcile_after_retirement(retired_group),
+            )
         try:
             self._reconcile()
         except Exception:
@@ -909,7 +1057,9 @@ class CommonWebSocketManager:
             if group not in self._sockets:
                 return
             self._raw_frames_received += 1
-            self._last_raw_frame_at = time.monotonic()
+            frame_at = time.monotonic()
+            self._last_raw_frame_at = frame_at
+            self._last_raw_frame_at_by_group[group] = frame_at
             if not isinstance(message, dict):
                 self._invalid_frame_types += 1
                 return
@@ -978,6 +1128,7 @@ class CommonWebSocketManager:
             )
             if matching:
                 self._ticks_received += 1
+                self._last_successful_route_at[group] = time.monotonic()
                 routed_exchange_type = (
                     exchange_type
                     if exchange_type is not None
@@ -1065,26 +1216,174 @@ class CommonWebSocketManager:
                     context={"event": "normalized_delivery", "group": f"{group.mode}:{group.shard}", "token": token},
                 )
 
+    def _watch_retired_transport(
+        self,
+        close_worker: Thread,
+        *,
+        group: SocketGroup,
+        generation: int | None,
+        reason: str,
+        on_finished: Callable[[], None] | None = None,
+        retirement_key: str | None = None,
+    ) -> None:
+        """Expose and supervise a retired transport until its close call exits."""
+        key = retirement_key or f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
+        with self._lock:
+            self._retired_transports[key] = {
+                "group": f"{group.mode}:{group.shard}",
+                "generation": generation,
+                "reason": reason,
+                "retired_at": self._retired_transports.get(key, {}).get("retired_at", time.time()),
+                "close_worker_alive": bool(close_worker.is_alive()),
+                "last_observed_at": time.time(),
+            }
+
+        def _watch() -> None:
+            while close_worker.is_alive():
+                close_worker.join(timeout=10.0)
+                with self._lock:
+                    record = self._retired_transports.get(key)
+                    if record is not None:
+                        record["close_worker_alive"] = bool(close_worker.is_alive())
+                        record["last_observed_at"] = time.time()
+                if close_worker.is_alive():
+                    app_logger.error(
+                        "Common feed retired transport still alive group=%s generation=%s reason=%s; replacement remains blocked",
+                        f"{group.mode}:{group.shard}", generation, reason,
+                    )
+            with self._lock:
+                self._retired_transports.pop(key, None)
+            if on_finished is not None:
+                try:
+                    on_finished()
+                except Exception as exc:
+                    app_logger.warning(
+                        "Common feed retired transport completion handler failed group=%s reason=%s: %s",
+                        f"{group.mode}:{group.shard}", reason, exc,
+                    )
+
+        Thread(
+            target=_watch,
+            name=f"common-ws-retire-watch-{group.mode}-{group.shard}",
+            daemon=True,
+        ).start()
+
+    def _reconcile_after_retirement(self, group: SocketGroup) -> None:
+        """Resume desired-state reconciliation after a retired close completes."""
+        try:
+            with self._reconcile_lock:
+                self._reconcile()
+        except Exception as exc:
+            app_logger.warning(
+                "Common feed reconcile after retired transport close failed group=%s: %s",
+                f"{group.mode}:{group.shard}", exc,
+            )
+
+    def _close_socket_tracked(
+        self,
+        socket: Any,
+        *,
+        group: SocketGroup,
+        generation: int | None,
+        reason: str,
+        on_finished: Callable[[], None] | None = None,
+        timeout: float = 2.0,
+    ) -> Thread:
+        """Register retirement before waiting, so concurrent reconciles see the slot occupied."""
+        key = f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
+        with self._lock:
+            self._retired_transports[key] = {
+                "group": f"{group.mode}:{group.shard}",
+                "generation": generation,
+                "reason": reason,
+                "retired_at": time.time(),
+                "close_worker_alive": True,
+                "last_observed_at": time.time(),
+            }
+        worker = self._close_socket_bounded(
+            socket, timeout=timeout, group=group, generation=generation, reason=reason
+        )
+        if worker.is_alive():
+            self._watch_retired_transport(
+                worker, group=group, generation=generation, reason=reason,
+                on_finished=on_finished, retirement_key=key,
+            )
+        else:
+            with self._lock:
+                self._retired_transports.pop(key, None)
+        return worker
+
     @staticmethod
-    def _close_socket_bounded(socket: Any, timeout: float = 2.0) -> None:
+    def _close_socket_bounded(
+        socket: Any,
+        timeout: float = 2.0,
+        *,
+        group: SocketGroup | None = None,
+        generation: int | None = None,
+        reason: str = "lifecycle_cleanup",
+    ) -> Thread:
+        # Close remains bounded, but logs distinguish manager retirement from
+        # broker callbacks and include group/generation context when available.
+        app_logger.info(
+            "Common feed socket close requested group=%s generation=%s reason=%s",
+            f"{group.mode}:{group.shard}" if group is not None else "unknown",
+            generation if generation is not None else "unknown",
+            reason,
+        )
         def _close() -> None:
             try:
                 socket.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                app_logger.debug("Common feed socket close raised: %s", exc)
         worker = Thread(target=_close, name="common-ws-close", daemon=True)
         worker.start()
         worker.join(timeout=max(0.1, float(timeout)))
+        if worker.is_alive():
+            app_logger.error(
+                "Common feed socket close timed out group=%s generation=%s reason=%s",
+                f"{group.mode}:{group.shard}" if group is not None else "unknown",
+                generation if generation is not None else "unknown",
+                reason,
+            )
+        return worker
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             sockets = dict(self._sockets)
+            socket_health_by_group: dict[str, dict[str, Any]] = {}
+            for group, socket in sockets.items():
+                try:
+                    health = getattr(socket, "health", {})
+                    if not isinstance(health, dict):
+                        health = {}
+                except Exception as exc:
+                    health = {"health_read_error": f"{type(exc).__name__}: {exc}"}
+                # Expose only lifecycle diagnostics, never auth headers, tokens,
+                # raw broker frames, or subscription payloads.
+                socket_health_by_group[f"{group.mode}:{group.shard}"] = {
+                    key: health[key]
+                    for key in (
+                        "connected",
+                        "connecting",
+                        "stopping",
+                        "error_count",
+                        "reconnect_count",
+                        "consecutive_failures",
+                        "last_error",
+                        "transport_thread_alive",
+                        "transport_close_timed_out",
+                        "initial_subscribe_success",
+                        "health_read_error",
+                    )
+                    if key in health
+                }
             return {
                 "subscriptions": len(self.registry.subscriptions()),
                 "active_instruments": len(self.registry.active_keys()),
                 "socket_groups": len(sockets),
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
+                "socket_health_by_group": socket_health_by_group,
                 "delivery_errors": self._delivery_errors,
                 "missing_callback_routes": self._missing_callback_routes,
                 "missing_descriptor_records": self._missing_descriptor_records,
@@ -1109,6 +1408,16 @@ class CommonWebSocketManager:
                     max(0.0, time.monotonic() - self._last_raw_frame_at)
                     if self._last_raw_frame_at is not None else None
                 ),
+                "last_raw_frame_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": max(0.0, time.monotonic() - at)
+                    for group, at in self._last_raw_frame_at_by_group.items()
+                    if group in sockets
+                },
+                "last_successful_route_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": max(0.0, time.monotonic() - at)
+                    for group, at in self._last_successful_route_at.items()
+                    if group in sockets
+                },
                 "last_successful_delivery_age_seconds_by_group": {
                     f"{group.mode}:{group.shard}": (
                         None if delivered_at is None
@@ -1125,6 +1434,22 @@ class CommonWebSocketManager:
                     for group, socket in sockets.items()
                     if bool(getattr(socket, "connected", False))
                 ],
+                "transport_threads_alive_groups": [
+                    f"{group.mode}:{group.shard}"
+                    for group, socket in sockets.items()
+                    if bool(
+                        getattr(socket, "health", {}).get("transport_thread_alive", False)
+                        if isinstance(getattr(socket, "health", {}), dict) else False
+                    )
+                ],
+                "transport_close_timed_out_groups": [
+                    f"{group.mode}:{group.shard}"
+                    for group, socket in sockets.items()
+                    if bool(
+                        getattr(socket, "health", {}).get("transport_close_timed_out", False)
+                        if isinstance(getattr(socket, "health", {}), dict) else False
+                    )
+                ],
                 "disconnected_groups": [
                     f"{group.mode}:{group.shard}"
                     for group, socket in sockets.items()
@@ -1135,6 +1460,14 @@ class CommonWebSocketManager:
                 "last_connect_failure": dict(self._last_connect_failure) if self._last_connect_failure else None,
                 "socket_failure_events": self._socket_failure_events,
                 "last_socket_failure": dict(self._last_socket_failure) if self._last_socket_failure else None,
+                "failure_recovery_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in self._failure_recovery_groups
+                ),
+                "retired_transport_count": len(self._retired_transports),
+                "retired_transports": [dict(item) for item in self._retired_transports.values()],
+                "retired_transport_groups": sorted({
+                    str(item.get("group")) for item in self._retired_transports.values()
+                }),
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
             }
@@ -1152,10 +1485,13 @@ class CommonWebSocketManager:
                 self._sockets.clear()
                 self._socket_tokens.clear()
                 self._socket_created_at.clear()
+                self._last_raw_frame_at_by_group.clear()
+                self._last_successful_route_at.clear()
                 self._last_data_at.clear()
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
+                self._failure_recovery_groups.clear()
             for socket in sockets:
-                self._close_socket_bounded(socket)
+                self._close_socket_bounded(socket, reason="manager_shutdown")
         if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)

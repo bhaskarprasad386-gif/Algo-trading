@@ -228,6 +228,7 @@ def test_blocking_initial_subscribe_notifies_failure_and_does_not_stall_on_open(
     client.connect(1, ["101"], on_failure=failures.append)
     assert failures == ["initial subscribe exceeded 0.02s"]
     assert client.connected is False
+    assert FakeSocket.instances[-1].closed is True
     release.set()
     client.close()
 
@@ -310,6 +311,22 @@ def test_marking_auth_stale_forces_token_refresh_even_for_young_session():
     assert auth._force_fresh_session is False
 
 
+
+def test_reconnect_without_tokens_always_clears_single_flight_state(monkeypatch):
+    from threading import current_thread
+
+    client = MarketDataWebSocket(auth=make_auth())
+    client._reconnect_thread = current_thread()
+    client._is_reconnecting = True
+    client.exchange_type = None
+    client.tokens = []
+
+    client._reconnect_after_disconnect()
+
+    assert client._reconnect_thread is None
+    assert client._is_reconnecting is False
+
+
 def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
     import ssl
     from app.market_data import websocket as websocket_module
@@ -323,6 +340,7 @@ def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
 
         def run_forever(self, **kwargs):
             calls["run_forever"] = kwargs
+            calls["callbacks"]["on_open"](self)
 
     monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
     sdk_socket = SimpleNamespace(
@@ -346,3 +364,30 @@ def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
     assert calls["run_forever"]["ping_interval"] == 10
     assert calls["run_forever"]["ping_timeout"] == 5
     assert calls["callbacks"]["on_open"] is sdk_socket._on_open
+
+
+def test_websocket_close_waits_for_transport_and_reports_orphan(monkeypatch):
+    from threading import Event, Thread
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    release = Event()
+    transport = Thread(target=lambda: release.wait(timeout=2.0), daemon=True)
+    transport.start()
+    client._transport_thread = transport
+    client.websocket = FakeSocket.instances[-1] if FakeSocket.instances else FakeSocket("jwt", "api", "client", "feed")
+
+    client.close()
+    assert client.health["transport_close_timed_out"] is True
+    assert client.health["transport_thread_alive"] is True
+    release.set()
+    transport.join(timeout=1.0)
+    assert not transport.is_alive()
+
+
+def test_initial_subscribe_success_is_reported_separately(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    assert client.health["initial_subscribe_success"] is True
+    client.close()

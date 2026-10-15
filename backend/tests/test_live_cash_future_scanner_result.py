@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from time import time_ns
 from dataclasses import replace
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -200,7 +201,7 @@ def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
     with Session() as db:
         db.add(LiveCashFutureScannerResult(
             symbol="OLD", contract_month="CURRENT", timestamp_ns=1,
-            observed_at=datetime.now() - timedelta(days=31),
+            observed_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None) - timedelta(days=31),
             cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
             cash_day_high=100, cash_day_low=100,
             future_day_high=101, future_day_low=101,
@@ -210,7 +211,7 @@ def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
         ))
         db.add(LiveCashFutureScannerResult(
             symbol="NEW", contract_month="CURRENT", timestamp_ns=2,
-            observed_at=datetime.now(),
+            observed_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None),
             cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
             cash_day_high=100, cash_day_low=100,
             future_day_high=101, future_day_low=101,
@@ -233,7 +234,7 @@ def test_live_scanner_history_returns_latest_100_unique_pairs_for_today(tmp_path
     engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-limit.sqlite3'}")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
     with Session() as db:
         for index in range(105):
             db.add(LiveCashFutureScannerResult(
@@ -261,7 +262,7 @@ def test_live_scanner_history_resets_at_next_calendar_day(monkeypatch, tmp_path)
     with Session() as db:
         db.add(LiveCashFutureScannerResult(
             symbol="YESTERDAY", contract_month="CURRENT", timestamp_ns=1,
-            observed_at=datetime.now() - timedelta(days=1),
+            observed_at=datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None) - timedelta(days=1),
             cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
             cash_day_high=100, cash_day_low=100, future_day_high=101, future_day_low=101,
             estimated_cost=0, net_gap=1, net_gap_pct=1, stable_observations=1,
@@ -312,7 +313,7 @@ def test_live_scanner_history_keeps_100_unique_pairs_when_one_pair_is_very_activ
     engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-adversarial.sqlite3'}")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
     with Session() as db:
         for index in range(1000):
             db.add(LiveCashFutureScannerResult(
