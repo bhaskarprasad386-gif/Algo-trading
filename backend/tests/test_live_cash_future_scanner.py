@@ -330,26 +330,17 @@ def test_live_scanner_snapshot_excludes_stale_signals():
     assert [row["symbol"] for row in rows] == ["FRESH"]
 
 
-def test_live_scanner_snapshot_uses_receive_time_not_exchange_timestamp():
+def test_live_scanner_rejects_old_source_timestamp_even_when_just_received():
     scanner = LiveCashFutureScanner()
     source_ts = int(time() * 1_000_000_000) - 10_000_000_000
     received_ts = int(time() * 1_000_000_000)
-    scanner.observe({
+    assert scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
         "source_timestamp_ns": source_ts, "received_at_ns": received_ts,
-    })
-    signal = scanner.observe({
-        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-        "ltp": 101, "bid": 100.8, "ask": 101, "lot_size": 6000,
-        "source_timestamp_ns": source_ts, "received_at_ns": received_ts,
-    })
-    assert signal is not None
-    rows = scanner.snapshot(max_age_seconds=5, limit=10)
-    assert rows
-    assert rows[0]["received_at_ns"] == received_ts
-
-
-
+    }) is None
+    health = scanner.health()
+    assert health["stale_quotes"] == 1
+    assert health["dropped"] == 1
 
 def test_live_scanner_snapshot_applies_strict_5000_gross_lot_visibility_only():
     scanner = LiveCashFutureScanner()
