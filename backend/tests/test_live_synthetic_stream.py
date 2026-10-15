@@ -538,3 +538,41 @@ def test_recorder_does_not_flush_old_quote_as_live():
 
     assert collector._flush_completed_buckets(now_ns=timestamp + 6_000_000_000) == 0
     assert ("NFO", "101") in collector._latest
+
+
+def test_synthetic_fallback_socket_disables_private_reconnect(monkeypatch):
+    from app.market_data import live_synthetic_stream as stream
+
+    collector = _collector()
+    monkeypatch.setattr(settings, "LIVE_MARKET_DATA_PERSISTENCE_ENABLED", False)
+    monkeypatch.setattr(
+        stream.LiveSyntheticOptionFutureRecorder,
+        "market_open",
+        staticmethod(lambda now=None: False),
+    )
+    captured = {}
+
+    class FakeSocket:
+        def __init__(self, *, auth, auto_reconnect=True):
+            self.auth = auth
+            self.auto_reconnect = auto_reconnect
+
+    class FakeFeed:
+        def __init__(self, consumer, **kwargs):
+            captured.update(kwargs)
+
+        def start(self, descriptors, callback):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
+    monkeypatch.setattr(stream, "CommonStrategyMarketFeed", FakeFeed)
+
+    collector._run_session()
+
+    assert "manager" not in captured
+    socket = captured["socket_factory"]()
+    assert socket.auth is collector.auth
+    assert socket.auto_reconnect is False
