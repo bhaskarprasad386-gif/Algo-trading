@@ -180,10 +180,17 @@ class AngelOneTickNormalizer:
         ask = None if ask_value is None or ask_value < 0 else ask_value / (1.0 if ask_is_canonical else self.price_scale)
         bid_qty = None if bid_qty_value is None or bid_qty_value < 0 else bid_qty_value
         ask_qty = None if ask_qty_value is None or ask_qty_value < 0 else ask_qty_value
-        # A crossed/malformed depth snapshot should not discard otherwise valid
-        # LTP/OHLC/OI fields from the same broker tick. Mark only the quote sides
-        # unusable so downstream executable scanners can safely reject the quote.
-        if bid is not None and ask is not None and bid > ask:
+        # Preserve a bounded reason code before clearing unusable crossed quotes.
+        # This distinguishes a genuinely absent ask from a crossed book that was
+        # intentionally invalidated; never retain the raw quote values in diagnostics.
+        quote_normalization_reason = (
+            "crossed_book" if bid is not None and ask is not None and bid > ask
+            else "missing_both_sides" if bid is None and ask is None
+            else "missing_bid" if bid is None
+            else "missing_ask" if ask is None
+            else "quotes_valid"
+        )
+        if quote_normalization_reason == "crossed_book":
             bid = ask = None
 
         option_type = None
@@ -194,6 +201,7 @@ class AngelOneTickNormalizer:
         timestamp_ns, timestamp_provenance = self._timestamp_detail(payload)
         normalized_payload = dict(payload)
         normalized_payload["_timestamp_provenance"] = timestamp_provenance
+        normalized_payload["_quote_normalization_reason"] = quote_normalization_reason
         if received_at_ns is not None and int(received_at_ns) > 0:
             normalized_payload["_received_at_ns"] = int(received_at_ns)
         record = MarketDataRecord(
