@@ -106,7 +106,11 @@ class LiveSyntheticScanner:
             return ()
         bid = self._price(payload.get("bid"))
         ask = self._price(payload.get("ask"))
-        if bid is None or ask is None or ask < bid:
+        ltp = self._price(payload.get("ltp") or payload.get("last_traded_price"))
+        # LTP establishes that a leg exists; executable bid/ask may follow on a
+        # subsequent broker tick. Keep that leg pending for the bounded quote wait.
+        quote_missing = bid is None or ask is None
+        if (quote_missing and ltp is None) or (not quote_missing and ask < bid):
             self._count("invalid_quote")
             return ()
 
@@ -138,7 +142,10 @@ class LiveSyntheticScanner:
         strike = self._price(payload.get("strike"))
         with self._lock:
             key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
-            bucket = self._buckets.setdefault(key, {"future": None, "options": {}})
+            bucket = self._buckets.setdefault(
+                key,
+                {"future": None, "options": {}, "first_seen_monotonic_ns": time.monotonic_ns()},
+            )
             if option_type in {"CE", "PE"} and strike is not None:
                 bucket["options"].setdefault(strike, {})[option_type] = payload
             elif option_type == "":
@@ -231,13 +238,39 @@ class LiveSyntheticScanner:
                     )
                 )
 
+            bucket_age_ns = time.monotonic_ns() - int(
+                bucket.get("first_seen_monotonic_ns", time.monotonic_ns())
+            )
             if not option_quotes:
+                # LTP-complete CE+PE legs form a candidate even if one executable
+                # book is late. Keep it in memory for at most three seconds so a
+                # follow-up quote tick can complete the same candidate.
+                pending_quote_pair = any(
+                    legs.get("CE") is not None
+                    and legs.get("PE") is not None
+                    and self._price(legs["CE"].get("ltp") or legs["CE"].get("last_traded_price")) is not None
+                    and self._price(legs["PE"].get("ltp") or legs["PE"].get("last_traded_price")) is not None
+                    and (
+                        not liquid_leg(legs["CE"])
+                        or not liquid_leg(legs["PE"])
+                    )
+                    for legs in strikes.values()
+                )
+                if pending_quote_pair and bucket_age_ns < 3_000_000_000:
+                    self._count("waiting_for_executable_quote")
+                    return ()
                 self._count("no_executable_ce_pe_pair")
                 self._prune(timestamp_ns)
                 return ()
 
             future_bid, future_ask = self._price(future_payload.get("bid")), self._price(future_payload.get("ask"))
             if future_bid is None or future_ask is None or future_ask < future_bid:
+                if (
+                    self._price(future_payload.get("ltp") or future_payload.get("last_traded_price")) is not None
+                    and bucket_age_ns < 3_000_000_000
+                ):
+                    self._count("waiting_for_executable_quote")
+                    return ()
                 self._count("invalid_future_quote")
                 self._prune(timestamp_ns)
                 return ()
