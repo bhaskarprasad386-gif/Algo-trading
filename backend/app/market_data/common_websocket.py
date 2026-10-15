@@ -193,6 +193,10 @@ class CommonWebSocketManager:
         self._last_connect_failure = None
         self._socket_failure_events = 0
         self._last_socket_failure = None
+        # Coalesce callback-triggered recovery per shard. The periodic supervisor
+        # remains the fallback, but duplicate SDK callbacks must not spawn a
+        # burst of close/recovery workers for the same failed generation.
+        self._failure_recovery_groups: set[SocketGroup] = set()
         self._recovery_attempts = 0
         self._last_recovery_at = None
 
@@ -605,6 +609,9 @@ class CommonWebSocketManager:
                     or self._socket_generation.get(group) != generation
                 ):
                     return
+                if group in self._failure_recovery_groups:
+                    return
+                self._failure_recovery_groups.add(group)
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
@@ -630,8 +637,10 @@ class CommonWebSocketManager:
         )
 
         def _recover() -> None:
-            self._close_socket_bounded(socket)
             try:
+                self._close_socket_bounded(
+                    socket, group=group, generation=generation, reason="failure_callback"
+                )
                 # Recover the failed/missing group only. A zero silent-age threshold
                 # marks every healthy connected shard stale and tears down unrelated
                 # sessions whenever just one socket reports a transport error.
@@ -647,6 +656,9 @@ class CommonWebSocketManager:
                     "Common feed failure-triggered recovery failed group=%s; supervisor will retry: %s",
                     group, exc,
                 )
+            finally:
+                with self._lock:
+                    self._failure_recovery_groups.discard(group)
 
         Thread(target=_recover, name=f"common-ws-failure-recovery-{group.mode}-{group.shard}", daemon=True).start()
     def _run_socket_operation_bounded(
@@ -1136,6 +1148,9 @@ class CommonWebSocketManager:
                 "last_connect_failure": dict(self._last_connect_failure) if self._last_connect_failure else None,
                 "socket_failure_events": self._socket_failure_events,
                 "last_socket_failure": dict(self._last_socket_failure) if self._last_socket_failure else None,
+                "failure_recovery_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in self._failure_recovery_groups
+                ),
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
             }
@@ -1156,7 +1171,8 @@ class CommonWebSocketManager:
                 self._last_data_at.clear()
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
+                self._failure_recovery_groups.clear()
             for socket in sockets:
-                self._close_socket_bounded(socket)
+                self._close_socket_bounded(socket, reason="manager_shutdown")
         if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)
