@@ -9,7 +9,7 @@ def _master(items):
     return master
 
 
-def test_index_selection_uses_actual_strikes_with_locked_plus_minus_10():
+def test_index_selection_subscribes_actual_chain_for_liquidity_selection():
     items = [
         {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"FUTIDX","expiry":"29OCT2026","token":"900","symbol":"NIFTY29OCT26FUT","lotsize":"65"},
         *[
@@ -23,7 +23,7 @@ def test_index_selection_uses_actual_strikes_with_locked_plus_minus_10():
     )
     strikes = {x.strike for x in selected.subscriptions if x.strike is not None}
     assert strikes
-    assert max(abs(s-24150.0) for s in strikes) <= 10 * 50
+    assert strikes == {float(24000 + i * 50) for i in range(1, 32)}
 
 
 def test_stock_selection_requires_configured_nifty50_universe():
