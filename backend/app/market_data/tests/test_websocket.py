@@ -228,6 +228,7 @@ def test_blocking_initial_subscribe_notifies_failure_and_does_not_stall_on_open(
     client.connect(1, ["101"], on_failure=failures.append)
     assert failures == ["initial subscribe exceeded 0.02s"]
     assert client.connected is False
+    assert FakeSocket.instances[-1].closed is True
     release.set()
     client.close()
 
