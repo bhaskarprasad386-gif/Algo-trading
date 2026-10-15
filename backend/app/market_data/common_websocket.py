@@ -95,6 +95,9 @@ def connect_with_shared_broker_admission(
     with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
         if not _wait_for_shared_broker_connect_admission(should_stop):
             return False
+    # Admission may have waited; honor cancellation again before starting I/O.
+    if should_stop is not None and should_stop():
+        return False
     # Do not hold broker-wide admission while a transport runs indefinitely.
     try:
         socket.connect(**connect_kwargs)
@@ -513,6 +516,9 @@ class CommonWebSocketManager:
                 # Admission timestamp/cooldown was reserved above. The lock is
                 # deliberately released before connect() so a blocked transport
                 # cannot prevent another shard from being admitted.
+                if not _still_current():
+                    self._close_socket_bounded(socket)
+                    return
                 try:
                     socket.connect(**connect_kwargs)
                 except Exception as connect_exc:
