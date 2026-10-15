@@ -33,6 +33,9 @@ class LiveSyntheticScanner:
         self._lock = Lock()
         self._diagnostics_lock = Lock()
         self._diagnostics: Counter[str] = Counter()
+        self._last_observation_at_ns: int | None = None
+        self._last_successful_calculation_at_ns: int | None = None
+        self._last_result_count = 0
         self._buckets: dict[tuple[str, int, int], dict] = {}
 
     def _count(self, reason: str, amount: int = 1) -> None:
@@ -45,6 +48,9 @@ class LiveSyntheticScanner:
             counters = dict(self._diagnostics)
         with self._lock:
             counters["active_buckets"] = len(self._buckets)
+            counters["last_observation_at_ns"] = self._last_observation_at_ns
+            counters["last_successful_calculation_at_ns"] = self._last_successful_calculation_at_ns
+            counters["last_result_count"] = self._last_result_count
         return {"counters": counters}
 
     @staticmethod
@@ -66,6 +72,10 @@ class LiveSyntheticScanner:
         return number if number > 0 else None
 
     def observe(self, payload: dict) -> tuple[SyntheticScanResult, ...]:
+        self._count("observations_received")
+        observed_at_ns = time.time_ns()
+        with self._lock:
+            self._last_observation_at_ns = observed_at_ns
         if not isinstance(payload, dict):
             self._count("invalid_payload_or_scope")
             return ()
@@ -243,8 +253,14 @@ class LiveSyntheticScanner:
             )
             self._prune(timestamp_ns)
             self._count("scan_evaluations")
+            with self._lock:
+                self._last_successful_calculation_at_ns = time.time_ns()
+                self._last_result_count = len(results)
             if results:
                 self._count("opportunities_emitted", len(results))
+                self._count("successful_pairs", len(option_quotes))
+            else:
+                self._count("empty_calculations")
         if results and self.on_result is not None:
             self.on_result(results)
         return results
