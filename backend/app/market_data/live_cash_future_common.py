@@ -315,7 +315,7 @@ class LiveCashFutureCommonRunner:
         provenance = record.payload.get("_timestamp_provenance")
         payload.update({
             "source_timestamp_ns": record.timestamp_ns,
-            "timestamp_provenance": provenance if provenance in self._timestamp_diagnostics else "unknown",
+            "timestamp_provenance": provenance if isinstance(provenance, str) and provenance in self._timestamp_diagnostics else "unknown",
             "leg": meta["leg"],
             "underlying": meta["underlying"],
             "contract_month": meta["contract_month"],
@@ -344,7 +344,7 @@ class LiveCashFutureCommonRunner:
     def _on_record(self, record: MarketDataRecord) -> None:
         self._records_received += 1
         provenance = record.payload.get("_timestamp_provenance")
-        provenance_key = provenance if provenance in self._timestamp_diagnostics else "unknown"
+        provenance_key = provenance if isinstance(provenance, str) and provenance in self._timestamp_diagnostics else "unknown"
         self._timestamp_diagnostics[provenance_key] += 1
         meta = self._metadata.get(record.instrument)
         if meta is None:
