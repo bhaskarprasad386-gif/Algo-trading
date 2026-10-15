@@ -40,7 +40,10 @@ class LiveBoxSpreadScanner:
         typ=str(payload.get("option_type") or "").strip().upper()
         strike=self._price(payload.get("strike"))
         bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))
-        if not symbol or cls not in {"STOCK","INDEX"} or ts<=0 or typ not in {"CE","PE"} or strike is None or bid is None or ask is None or ask<bid:return ()
+        # Keep an identified leg even when its executable quote/liquidity has
+        # not arrived yet. The other three legs may already be usable; retain
+        # this candidate for up to three seconds for the missing leg to update.
+        if not symbol or cls not in {"STOCK","INDEX"} or ts<=0 or typ not in {"CE","PE"} or strike is None:return ()
         with self._lock:
             expiry=self._expiry(payload.get("expiry"))
             key=self._matching_bucket_key(symbol,ts,expiry)
@@ -57,10 +60,20 @@ class LiveBoxSpreadScanner:
                     pe_lot = int(float(pe.get("lot_size") or 0))
                     if ce_expiry != pe_expiry or ce_lot <= 0 or ce_lot != pe_lot:
                         continue
+                    # A leg without both sides of its executable market is
+                    # pending, not an immediate candidate rejection. A later
+                    # tick can fill it while this bucket remains inside the
+                    # three-second assembly window.
+                    ce_bid, ce_ask = self._price(ce.get("bid")), self._price(ce.get("ask"))
+                    pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
+                    if (
+                        ce_bid is None or ce_ask is None or ce_ask < ce_bid
+                        or pe_bid is None or pe_ask is None or pe_ask < pe_bid
+                    ):
+                        continue
                     grouped.append(OptionQuote(
                         ts,symbol,ce_expiry,s,
-                        self._price(ce.get("bid")) or 0,self._price(ce.get("ask")) or 0,
-                        self._price(pe.get("bid")) or 0,self._price(pe.get("ask")) or 0,
+                        ce_bid, ce_ask, pe_bid, pe_ask,
                         ce_lot,cls,
                         # Use the weaker CE/PE leg so one liquid side cannot
                         # mask an illiquid side in the four-leg structure.
@@ -82,7 +95,8 @@ class LiveBoxSpreadScanner:
         if results and self.on_result is not None:self.on_result(results)
         return results
 
-    TIMESTAMP_TOLERANCE_NS=1_000_000_000
+    # Box Spread waits at most three seconds for a delayed fourth leg.
+    TIMESTAMP_TOLERANCE_NS=3_000_000_000
 
     def _matching_bucket_key(self,symbol,ts,expiry):
         candidates=[
