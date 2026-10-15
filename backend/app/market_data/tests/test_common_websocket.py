@@ -1309,3 +1309,50 @@ def test_reconcile_disconnected_socket_blocks_replacement_until_close_finishes()
     finally:
         BlockingRetireSocket.release_close.set()
         manager.close()
+
+
+
+def test_retired_transport_health_blocks_new_global_session_until_close_exits():
+    registry = InstrumentRegistry()
+    first = descriptor("801")
+    second = descriptor("802")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    release = Event()
+    try:
+        manager.subscribe("cash", [first.key])
+        assert len(FakeSocket.instances) == 1
+
+        blocked_close = Thread(
+            target=lambda: release.wait(timeout=4.0),
+            name="test-retired-transport",
+            daemon=True,
+        )
+        blocked_close.start()
+        manager._watch_retired_transport(
+            blocked_close,
+            group=SocketGroup(9, 9),
+            generation=99,
+            reason="test_blocked_close",
+            on_finished=manager._reconcile,
+        )
+
+        manager.subscribe("cash", [second.key])
+        snapshot = manager.snapshot()
+        assert snapshot["retired_transport_count"] == 1
+        assert snapshot["retired_transport_groups"] == ["9:9"]
+        assert len(FakeSocket.instances) == 1, (
+            "a retired transport may still consume a broker session; don't open another shard"
+        )
+
+        release.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
+            time.sleep(0.01)
+        assert len(FakeSocket.instances) == 2
+        assert manager.snapshot()["retired_transport_count"] == 0
+    finally:
+        release.set()
+        manager.close()
