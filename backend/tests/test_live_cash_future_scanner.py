@@ -23,7 +23,8 @@ def test_live_scanner_pairs_same_second_cash_and_future():
 
 
 def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch):
-    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 2.0)
+    # Leave headroom for test execution time while keeping the later 4s leg gap outside tolerance.
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 2.5)
     scanner = LiveCashFutureScanner()
     # Keep all source timestamps within the scanner's source-age acceptance window
     # so the test isolates pair tolerance rather than stale-source rejection.
