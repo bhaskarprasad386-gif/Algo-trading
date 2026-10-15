@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from time import time_ns
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
