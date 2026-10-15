@@ -88,7 +88,9 @@ class LiveCashFutureScanner:
             "pair_events_persisted": 0, "invalid_payloads": 0,
             "invalid_legs": 0, "invalid_timestamps": 0, "invalid_prices": 0,
             "stale_quotes": 0, "crossed_cash_quotes": 0,
-            "out_of_order_updates": 0, "cache_evictions": 0,
+            "out_of_order_updates": 0, "out_of_order_same_second": 0,
+            "out_of_order_older_second": 0, "out_of_order_lag_ns_total": 0,
+            "out_of_order_lag_ns_max": 0, "cache_evictions": 0,
         }
         self._last_observation_ns: int | None = None
         self._pair_events: deque[dict] = deque(maxlen=2000)
@@ -101,6 +103,21 @@ class LiveCashFutureScanner:
         """Update a health counter safely from concurrent market-data callbacks."""
         with self._lock:
             self._stats[key] = self._stats.get(key, 0) + amount
+
+    def _record_out_of_order(self, previous_timestamp_ns: int, incoming_timestamp_ns: int) -> None:
+        """Count rejected stale ordering and quantify how far behind it arrived."""
+        lag_ns = max(0, int(previous_timestamp_ns) - int(incoming_timestamp_ns))
+        with self._lock:
+            self._stats["out_of_order_updates"] += 1
+            self._stats["dropped"] += 1
+            self._stats["out_of_order_lag_ns_total"] += lag_ns
+            self._stats["out_of_order_lag_ns_max"] = max(
+                self._stats["out_of_order_lag_ns_max"], lag_ns
+            )
+            if previous_timestamp_ns // 1_000_000_000 == incoming_timestamp_ns // 1_000_000_000:
+                self._stats["out_of_order_same_second"] += 1
+            else:
+                self._stats["out_of_order_older_second"] += 1
 
     @staticmethod
     def _price(payload: dict, key: str, divisor: float = 1.0) -> float | None:
@@ -578,17 +595,17 @@ class LiveCashFutureScanner:
             bucket = self._latest.setdefault(nearest, {})
             if leg == "CASH":
                 previous_leg = bucket.get("CASH")
-                if previous_leg and timestamp_ns < int(previous_leg.get("timestamp_ns") or 0):
-                    self._increment_stat("out_of_order_updates")
-                    self._increment_stat("dropped")
+                previous_timestamp_ns = int(previous_leg.get("timestamp_ns") or 0) if previous_leg else 0
+                if previous_leg and timestamp_ns < previous_timestamp_ns:
+                    self._record_out_of_order(previous_timestamp_ns, timestamp_ns)
                     return None
                 bucket["CASH"] = leg_payload
             else:
                 futures = bucket.setdefault("FUTURE", {})
                 previous_leg = futures.get(month)
-                if previous_leg and timestamp_ns < int(previous_leg.get("timestamp_ns") or 0):
-                    self._increment_stat("out_of_order_updates")
-                    self._increment_stat("dropped")
+                previous_timestamp_ns = int(previous_leg.get("timestamp_ns") or 0) if previous_leg else 0
+                if previous_leg and timestamp_ns < previous_timestamp_ns:
+                    self._record_out_of_order(previous_timestamp_ns, timestamp_ns)
                     return None
                 futures[month] = leg_payload
             self._prune_latest_locked(now_ns, tolerance_ns)
