@@ -22,6 +22,33 @@ def test_live_scanner_pairs_same_second_cash_and_future():
     assert round(signal.gap_pct, 3) == 1.0
 
 
+def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 2.0)
+    scanner = LiveCashFutureScanner()
+    now = int(time() * 1_000_000_000)
+
+    # The first cash tick defines the bucket key. The older future tick is
+    # within tolerance of that key, but a later cash update moves the actual
+    # cash/future pair 2 seconds apart while still landing in the same bucket.
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "SYNC", "ltp": 100,
+        "source_timestamp_ns": now + 2_000_000_000,
+    }) is None
+    first_pair = scanner.observe({
+        "leg": "FUTURE", "underlying": "SYNC", "contract_month": "CURRENT",
+        "ltp": 101, "source_timestamp_ns": now,
+    })
+    assert first_pair is not None
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "SYNC", "ltp": 100.5,
+        "source_timestamp_ns": now + 4_000_000_000,
+    }) is None
+
+    health = scanner.health()
+    assert health["pairs_outside_timestamp_tolerance"] == 1
+    assert health["pairs"] == 1
+
+
 def test_live_scanner_rejects_pair_beyond_one_second():
     scanner = LiveCashFutureScanner()
     assert scanner.observe({
