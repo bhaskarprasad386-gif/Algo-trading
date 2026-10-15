@@ -95,13 +95,14 @@ def connect_with_shared_broker_admission(
     with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
         if not _wait_for_shared_broker_connect_admission(should_stop):
             return False
-        try:
-            socket.connect(**connect_kwargs)
-        except Exception as exc:
-            if apply_shared_broker_cooldown(exc, cooldown_seconds):
-                _mark_socket_auth_stale(socket)
-            raise
-        return True
+    # Do not hold broker-wide admission while a transport runs indefinitely.
+    try:
+        socket.connect(**connect_kwargs)
+    except Exception as exc:
+        if apply_shared_broker_cooldown(exc, cooldown_seconds):
+            _mark_socket_auth_stale(socket)
+        raise
+    return True
 
 
 class CommonWebSocketManager:
@@ -167,9 +168,6 @@ class CommonWebSocketManager:
         # One connect worker per current socket generation. Recovery and the
         # periodic supervisor can race to request the same generation.
         self._connect_started_generation: dict[SocketGroup, int] = {}
-        # A socket object must never receive two connect() calls, even if
-        # concurrent recovery paths race while its group generation changes.
-        self._connect_started_socket_ids: set[int] = set()
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -180,7 +178,7 @@ class CommonWebSocketManager:
         self._connect_call_wait_seconds = 0.25
         # Subscription APIs can block inside the SDK too; bound those calls so
         # they cannot monopolize the reconciliation lock and stop recovery.
-        self._socket_call_wait_seconds = 0.25
+        self._socket_call_wait_seconds = 2.0
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
@@ -469,14 +467,9 @@ class CommonWebSocketManager:
                 or self._socket_generation.get(group) != generation
             ):
                 return
-            socket_id = id(socket)
-            if (
-                self._connect_started_generation.get(group) == generation
-                or socket_id in self._connect_started_socket_ids
-            ):
+            if self._connect_started_generation.get(group) == generation:
                 return
             self._connect_started_generation[group] = generation
-            self._connect_started_socket_ids.add(socket_id)
 
         completed = Event()
         failure: dict[str, Exception] = {}
@@ -495,23 +488,10 @@ class CommonWebSocketManager:
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
-                # A cooldown check alone has a check/connect race: another shard
-                # can pass the check and enter connect() before a 429 callback is
-                # published. Serialize broker handshakes, but never take either
-                # manager/reconcile lock across the blocking SDK call.
+                # Serialize admission/pacing only, never the transport lifetime.
+                # Production SDK connect() can block in run_forever(); keeping the
+                # global lock around it starves other shards and direct collectors.
                 with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
-                    with self._lock:
-                        still_current = (
-                            self._sockets.get(group) is socket
-                            and self._socket_generation.get(group) == generation
-                            and not self._closed
-                        )
-                    if not still_current:
-                        self._close_socket_bounded(socket)
-                        return
-                    # Share both the 429 cooldown and minimum connect-start
-                    # interval with direct collectors. Re-check stop/currentness
-                    # while waiting so stale generations do not consume admission.
                     def _still_current() -> bool:
                         with self._lock:
                             return (
@@ -519,6 +499,9 @@ class CommonWebSocketManager:
                                 and self._socket_generation.get(group) == generation
                                 and not self._closed
                             )
+                    if not _still_current():
+                        self._close_socket_bounded(socket)
+                        return
                     if not _wait_for_shared_broker_connect_admission(
                         should_stop=lambda: not _still_current()
                     ):
@@ -527,12 +510,15 @@ class CommonWebSocketManager:
                     if not _still_current():
                         self._close_socket_bounded(socket)
                         return
-                    try:
-                        socket.connect(**connect_kwargs)
-                    except Exception as connect_exc:
-                        if self._apply_broker_cooldown(connect_exc):
-                            _mark_socket_auth_stale(socket)
-                        raise
+                # Admission timestamp/cooldown was reserved above. The lock is
+                # deliberately released before connect() so a blocked transport
+                # cannot prevent another shard from being admitted.
+                try:
+                    socket.connect(**connect_kwargs)
+                except Exception as connect_exc:
+                    if self._apply_broker_cooldown(connect_exc):
+                        _mark_socket_auth_stale(socket)
+                    raise
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
                 # successfully connected socket alive as an orphan session.
@@ -1066,12 +1052,27 @@ class CommonWebSocketManager:
                 )
 
     @staticmethod
-    def _close_socket_bounded(socket: Any, timeout: float = 2.0) -> None:
+    def _close_socket_bounded(
+        socket: Any,
+        timeout: float = 2.0,
+        *,
+        group: SocketGroup | None = None,
+        generation: int | None = None,
+        reason: str = "lifecycle_cleanup",
+    ) -> None:
+        # Close remains bounded, but logs distinguish manager retirement from
+        # broker callbacks and include group/generation context when available.
+        app_logger.info(
+            "Common feed socket close requested group=%s generation=%s reason=%s",
+            f"{group.mode}:{group.shard}" if group is not None else "unknown",
+            generation if generation is not None else "unknown",
+            reason,
+        )
         def _close() -> None:
             try:
                 socket.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                app_logger.debug("Common feed socket close raised: %s", exc)
         worker = Thread(target=_close, name="common-ws-close", daemon=True)
         worker.start()
         worker.join(timeout=max(0.1, float(timeout)))
