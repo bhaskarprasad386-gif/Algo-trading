@@ -30,6 +30,7 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         "x-feed-token": socket.feed_token,
     }
     ready = Event()
+    outcome: dict[str, Any] = {}
     original_open = socket.on_open
     original_error = socket.on_error
 
@@ -37,6 +38,7 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         try:
             if callable(original_open):
                 original_open(wsapp)
+            outcome["opened"] = True
         finally:
             ready.set()
 
@@ -44,6 +46,7 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         try:
             if callable(original_error):
                 original_error(wsapp, error)
+            outcome["error"] = str(error)
         finally:
             ready.set()
 
@@ -68,7 +71,9 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
                 ping_timeout=5,
             )
         finally:
-            ready.set()
+            if not ready.is_set():
+                outcome["error"] = "transport exited before open"
+                ready.set()
 
     worker = Thread(target=run_transport, name="angel-ws-transport", daemon=True)
     socket._transport_thread = worker
@@ -79,10 +84,9 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
             socket.close_connection()
         finally:
             raise TimeoutError(f"Angel WebSocket handshake timed out after {timeout:.1f}s")
-    # run_forever may exit before open (e.g. immediate transport error). The
-    # wrapper's on_failure callback records the concrete failure when available.
-    if not getattr(socket, "connected", False) and not getattr(socket, "on_open", None):
-        raise ConnectionError("Angel WebSocket transport exited before open")
+    if not outcome.get("opened"):
+        detail = outcome.get("error") or "transport exited before open"
+        raise ConnectionError(f"Angel WebSocket failed before open: {detail}")
 
 
 
