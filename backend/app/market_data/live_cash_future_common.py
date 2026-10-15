@@ -44,7 +44,8 @@ class LiveCashFutureCommonRunner:
         manager: CommonWebSocketManager | None = None,
         scanner: CashFutureOpportunityScanner | None = None,
         on_result: Callable[[CashFutureScanResult], None] | None = None,
-        on_payload: Callable[[dict[str, Any]], None] | None = None,
+        on_payload: Callable[[dict[str, Any]], Any] | None = None,
+        on_reset: Callable[[], None] | None = None,
     ) -> None:
         from app.market_data.instruments import InstrumentMaster
         self.data_db = data_db
@@ -56,6 +57,8 @@ class LiveCashFutureCommonRunner:
         )
         self.on_result = on_result
         self.on_payload = on_payload
+        self.on_reset = on_reset
+        self._authoritative_payload_mode = on_payload is not None
         self.stop_event = threading.Event()
         self._stop_lock = threading.Lock()
         self._stopped = False
@@ -71,6 +74,7 @@ class LiveCashFutureCommonRunner:
         self._records_received = 0
         self._records_missing_metadata = 0
         self._payload_callbacks = 0
+        self._payload_callback_errors = 0
         self._scanner_updates = 0
         self._scanner_results = 0
         self._records_missing_executable_quote = 0
@@ -90,12 +94,16 @@ class LiveCashFutureCommonRunner:
             "records_received": self._records_received,
             "records_missing_metadata": self._records_missing_metadata,
             "payload_callbacks": self._payload_callbacks,
+            "payload_callback_errors": self._payload_callback_errors,
+            "authoritative_scanner": "LiveCashFutureScanner" if self._authoritative_payload_mode else "CashFutureOpportunityScanner",
+            "authoritative_payload_mode": self._authoritative_payload_mode,
             "scanner_updates": self._scanner_updates,
             "scanner_results": self._scanner_results,
             "records_missing_executable_quote": self._records_missing_executable_quote,
             "scanner_rejections": self._scanner_rejections,
-            "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
-            "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
+            "scanner_telemetry_source": "CashFutureOpportunityScanner compatibility path",
+            "scanner_out_of_order_records": None if self._authoritative_payload_mode else getattr(self.scanner, "out_of_order_records", 0),
+            "scanner_stale_pair_rejections": None if self._authoritative_payload_mode else getattr(self.scanner, "stale_pair_rejections", 0),
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
@@ -197,9 +205,14 @@ class LiveCashFutureCommonRunner:
             if removed_keys:
                 self.manager.unsubscribe(self.CONSUMER, removed_keys)
             self._metadata = new_metadata
-            reset_scanner = getattr(self.scanner, "reset", None)
-            if callable(reset_scanner):
-                reset_scanner()
+            if self._authoritative_payload_mode:
+                if self.on_reset is not None:
+                    self.on_reset()
+            else:
+                reset_scanner = getattr(self.scanner, "reset", None)
+                if callable(reset_scanner):
+                    reset_scanner()
+            self._last_result = None
             self._last_contract_refresh_date = today
             app_logger.info(
                 "Cash-Future contract rollover complete date=%s old=%s new=%s added=%s removed=%s",
@@ -267,19 +280,24 @@ class LiveCashFutureCommonRunner:
             try:
                 self.on_payload(self._record_payload(record, meta))
                 self._payload_callbacks += 1
-            except Exception as exc:
-                app_logger.error("Cash-Future payload callback failed: %s", exc)
+            except Exception:
+                self._payload_callback_errors += 1
+                app_logger.exception("Cash-Future authoritative payload callback failed")
+            return
+
+        # Compatibility-only path when no authoritative callback is configured.
         try:
             self._scanner_updates += 1
-            result = self.scanner.update(
-                record,
-                contract_month=meta["contract_month"],
-            )
+            result = self.scanner.update(record, contract_month=meta["contract_month"])
         except ValueError as exc:
             if "two-sided executable quote" in str(exc):
                 self._records_missing_executable_quote += 1
             else:
                 self._scanner_rejections += 1
+            return
+        except Exception:
+            self._scanner_rejections += 1
+            app_logger.exception("Cash-Future compatibility scanner failed")
             return
         if result is not None and result.signal.qualifies:
             self._scanner_results += 1
@@ -287,8 +305,8 @@ class LiveCashFutureCommonRunner:
             if self.on_result is not None:
                 try:
                     self.on_result(result)
-                except Exception as exc:
-                    app_logger.error("Cash-Future result callback failed: %s", exc)
+                except Exception:
+                    app_logger.exception("Cash-Future result callback failed")
 
     def _register_descriptors(self, descriptors: tuple[InstrumentDescriptor, ...]) -> set[InstrumentKey]:
         """Register only canonical descriptors; shared consumers may already own a key."""

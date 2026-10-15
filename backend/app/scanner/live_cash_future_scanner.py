@@ -785,6 +785,21 @@ class LiveCashFutureScanner:
             self._alert_executor.submit(self._notify_users, session_factory, signal)
         return signal
 
+    def reset_pair_state(self) -> None:
+        """Clear transient quote/signal state after contract rollover.
+
+        Cumulative health counters and executor lifecycle are preserved.
+        """
+        with self._lock:
+            self._latest.clear()
+            self._signals.clear()
+            self._session_extremes.clear()
+            self._stability.clear()
+            self._alert_state.clear()
+            self._alert_last_at.clear()
+            self._pair_events.clear()
+            self._last_pair_persist_at.clear()
+            self._last_observation_ns = None
     def health(self) -> dict:
         with self._lock:
             stats = dict(self._stats)
