@@ -1224,3 +1224,49 @@ def test_snapshot_separates_raw_route_and_delivery_clocks():
         assert "1:0" in snapshot["last_successful_delivery_age_seconds_by_group"]
     finally:
         manager.close()
+
+
+def test_failed_shard_replacement_waits_for_old_socket_close():
+    class BlockingCloseSocket(FakeSocket):
+        release_close = Event()
+
+        def close(self):
+            type(self).release_close.wait(timeout=2.0)
+            self.closed = True
+            self.connected = False
+
+    registry = InstrumentRegistry()
+    item = descriptor("787")
+    registry.register(item)
+    BlockingCloseSocket.instances.clear()
+    BlockingCloseSocket.release_close.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingCloseSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        original = BlockingCloseSocket.instances[0]
+        original.connect_calls[0]["on_failure"]("transport reset")
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if "1:0" in manager.snapshot()["failure_recovery_groups"]:
+                break
+            time.sleep(0.01)
+        assert "1:0" in manager.snapshot()["failure_recovery_groups"]
+
+        manager._reconcile()
+        assert len(BlockingCloseSocket.instances) == 1, (
+            "replacement must wait until the retired transport close completes"
+        )
+
+        BlockingCloseSocket.release_close.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if len(BlockingCloseSocket.instances) == 2:
+                break
+            time.sleep(0.01)
+        assert len(BlockingCloseSocket.instances) == 2
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        BlockingCloseSocket.release_close.set()
+        manager.close()
