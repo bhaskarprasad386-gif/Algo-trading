@@ -38,7 +38,7 @@ def test_scanner_ranks_highest_executable_edge_first():
         option(1, 105, cb=10, ca=11, pb=5, pa=6),
     )
     results = scan_synthetic_snapshot(
-        quotes, future(1, bid=120, ask=121), atm_strike=100,
+        quotes, future(1, bid=130, ask=131), atm_strike=100,
     )
     assert results
     assert all(
