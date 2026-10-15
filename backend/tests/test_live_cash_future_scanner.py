@@ -363,6 +363,10 @@ def test_live_scanner_rejects_out_of_order_same_leg_updates_and_counts_reason(mo
     }) is None
     health = scanner.health()
     assert health["out_of_order_updates"] == 1
+    assert health["out_of_order_older_second"] == 1
+    assert health["out_of_order_same_second"] == 0
+    assert health["out_of_order_lag_ns_total"] == 500_000_000
+    assert health["out_of_order_lag_ns_max"] == 500_000_000
     assert health["dropped"] >= 1
 
 
