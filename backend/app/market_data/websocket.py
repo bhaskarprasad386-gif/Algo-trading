@@ -31,8 +31,8 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     }
     ready = Event()
     outcome: dict[str, Any] = {}
-    original_open = socket.on_open
-    original_error = socket.on_error
+    original_open = getattr(socket, "_on_open", None)
+    original_error = getattr(socket, "_on_error", None)
 
     def on_open_and_signal(wsapp):
         try:
@@ -50,8 +50,8 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         finally:
             ready.set()
 
-    socket.on_open = on_open_and_signal
-    socket.on_error = on_error_and_signal
+    socket._on_open = on_open_and_signal
+    socket._on_error = on_error_and_signal
     socket.wsapp = websocket_client.WebSocketApp(
         socket.ROOT_URI,
         header=headers,
