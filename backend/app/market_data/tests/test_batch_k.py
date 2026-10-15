@@ -161,3 +161,40 @@ def test_price_scale_rejects_non_finite_values():
             assert "finite and positive" in str(exc)
         else:
             raise AssertionError(f"invalid price scale accepted: {value}")
+
+
+def test_depth_skips_empty_levels_and_uses_first_valid_price():
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 12345,
+            "best_5_buy_data": [
+                {"flag": 0, "no of orders": 0, "price": 0, "quantity": 0},
+                {"flag": 1, "no of orders": 2, "price": 10100, "quantity": 7},
+            ],
+            "best_5_sell_data": [
+                {"flag": 0, "no of orders": 0, "price": 0, "quantity": 0},
+                {"flag": 1, "no of orders": 3, "price": 10150, "quantity": 9},
+            ],
+        },
+    )
+    assert record.bid == 101.0
+    assert record.ask == 101.5
+    assert record.bid_qty == 7.0
+    assert record.ask_qty == 9.0
+
+
+def test_depth_keeps_quote_missing_when_every_level_is_empty():
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 12345,
+            "best_5_buy_data": [{"price": 0, "quantity": 0}, {"price": None, "quantity": 0}],
+            "best_5_sell_data": [{"price": 0, "quantity": 0}],
+        },
+    )
+    assert record.ltp == 123.45
+    assert record.bid is None
+    assert record.ask is None
