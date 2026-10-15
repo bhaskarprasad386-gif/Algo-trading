@@ -409,31 +409,25 @@ class CommonWebSocketManager:
                                 # Retirement is also a recovery lifecycle: block a
                                 # replacement while the old transport is still closing.
                                 self._failure_recovery_groups.add(group)
+                        def _resume_after_retired_close(retired_group=group):
+                            try:
+                                with self._reconcile_lock:
+                                    with self._lock:
+                                        self._failure_recovery_groups.discard(retired_group)
+                                    self._reconcile()
+                            except Exception as exc:
+                                app_logger.warning(
+                                    "Common feed reconcile after retired close failed group=%s: %s",
+                                    f"{retired_group.mode}:{retired_group.shard}", exc,
+                                )
                         close_worker = self._close_socket_tracked(
                             socket, group=group,
                             generation=self._socket_generation_counter.get(group),
                             reason="reconcile_disconnected",
+                            on_finished=_resume_after_retired_close,
                         )
                         socket = None
                         if close_worker.is_alive():
-                            def _resume_after_retired_close(retired_group=group):
-                                try:
-                                    with self._reconcile_lock:
-                                        with self._lock:
-                                            self._failure_recovery_groups.discard(retired_group)
-                                        self._reconcile()
-                                except Exception as exc:
-                                    app_logger.warning(
-                                        "Common feed reconcile after retired close failed group=%s: %s",
-                                        f"{retired_group.mode}:{retired_group.shard}", exc,
-                                    )
-                            self._watch_retired_transport(
-                                close_worker,
-                                group=group,
-                                generation=self._socket_generation_counter.get(group),
-                                reason="reconcile_disconnected",
-                                on_finished=_resume_after_retired_close,
-                            )
                             continue
                         with self._lock:
                             self._failure_recovery_groups.discard(group)
@@ -645,10 +639,6 @@ class CommonWebSocketManager:
                     group, type(exc).__name__, exc,
                 )
                 if is_current:
-                    close_worker = self._close_socket_tracked(
-                        socket, group=group, generation=generation, reason="connect_failure",
-                        on_finished=_resume_after_connect_failure,
-                    )
                     def _resume_after_connect_failure(failed_group=group):
                         try:
                             with self._reconcile_lock:
@@ -660,12 +650,11 @@ class CommonWebSocketManager:
                                 "Common feed reconcile after connect failure failed group=%s: %s",
                                 f"{failed_group.mode}:{failed_group.shard}", reconcile_exc,
                             )
-                    if close_worker.is_alive():
-                        self._watch_retired_transport(
-                            close_worker, group=group, generation=generation,
-                            reason="connect_failure", on_finished=_resume_after_connect_failure,
-                        )
-                    else:
+                    close_worker = self._close_socket_tracked(
+                        socket, group=group, generation=generation, reason="connect_failure",
+                        on_finished=_resume_after_connect_failure,
+                    )
+                    if not close_worker.is_alive():
                         _resume_after_connect_failure()
             finally:
                 completed.set()
@@ -762,12 +751,7 @@ class CommonWebSocketManager:
                     on_finished=_recover_after_close,
                 )
                 if close_worker.is_alive():
-                    # Keep the shard blocked while close is still in flight. A
-                    # watcher resumes recovery only after the old close completes.
-                    self._watch_retired_transport(
-                        close_worker, group=group, generation=generation,
-                        reason="failure_callback", on_finished=_recover_after_close,
-                    )
+                    # The tracked close watcher resumes recovery when the transport exits.
                     return
                 _recover_after_close()
             except Exception as exc:
@@ -854,14 +838,7 @@ class CommonWebSocketManager:
                         "Common feed reconcile after socket operation failure failed group=%s: %s",
                         f"{failed_group.mode}:{failed_group.shard}", reconcile_exc,
                     )
-            if close_worker.is_alive():
-                self._watch_retired_transport(
-                    close_worker, group=group,
-                    generation=self._socket_generation_counter.get(group),
-                    reason=f"socket_{operation_name}_failure",
-                    on_finished=_resume_after_operation_close,
-                )
-            else:
+            if not close_worker.is_alive():
                 _resume_after_operation_close()
 
         if not finished:
