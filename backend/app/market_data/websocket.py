@@ -445,6 +445,9 @@ class MarketDataWebSocket:
                 if transport_thread is not None and transport_thread.is_alive():
                     with self._lock:
                         self._transport_close_timed_out = True
+                    # Do not create another socket while the previous transport
+                    # may still own a broker session.
+                    break
                 app_logger.error(f"WebSocket connection attempt {attempt + 1} failed: {exc}")
                 if attempt < reconnect_attempts:
                     time.sleep(reconnect_delay_seconds * (attempt + 1))
