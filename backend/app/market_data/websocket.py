@@ -71,7 +71,9 @@ class MarketDataWebSocket:
         self._last_error = None
         self._reconnect_lock = Lock()
         self._auto_reconnect = bool(auto_reconnect)
-        self._socket_operation_timeout_seconds = 0.25
+        # SDK subscribe calls can exceed a quarter-second under ordinary jitter.
+        # Keep a bounded failure path without invalidating healthy sockets too eagerly.
+        self._socket_operation_timeout_seconds = 5.0
         self._connecting = False
 
     @property
