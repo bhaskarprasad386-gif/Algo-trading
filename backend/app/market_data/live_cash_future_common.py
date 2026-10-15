@@ -75,6 +75,14 @@ class LiveCashFutureCommonRunner:
         self._scanner_results = 0
         self._records_missing_executable_quote = 0
         self._scanner_rejections = 0
+        self._quote_diagnostics_lock = threading.Lock()
+        self._quote_diagnostics: dict[str, int] = {
+            "records": 0, "cash_records": 0, "future_records": 0,
+            "missing_ltp": 0, "missing_bid": 0, "missing_ask": 0,
+            "missing_both_sides": 0, "buy_depth_present": 0,
+            "sell_depth_present": 0, "buy_depth_present_bid_missing": 0,
+            "sell_depth_present_ask_missing": 0,
+        }
         # Stage-by-stage universe accounting; symbol samples are bounded and
         # contain identifiers/reasons only, never raw broker payloads.
         self._universe_diagnostics: dict[str, Any] = {
@@ -116,8 +124,46 @@ class LiveCashFutureCommonRunner:
             "scanner_rejections": self._scanner_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
+            "quote_diagnostics": self._quote_diagnostics_snapshot(),
             "universe_diagnostics": dict(self._universe_diagnostics),
         }
+
+    @staticmethod
+    def _has_depth(payload: Any, *keys: str) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, dict) and bool(value):
+                return True
+            if isinstance(value, list) and bool(value):
+                return True
+        return False
+
+    def _quote_diagnostics_snapshot(self) -> dict[str, int]:
+        with self._quote_diagnostics_lock:
+            return dict(self._quote_diagnostics)
+
+    def _record_quote_diagnostics(self, record: MarketDataRecord, meta: dict[str, Any]) -> None:
+        """Compare raw depth presence with normalized quote sides; retain counters only."""
+        raw = record.payload
+        buy_depth = self._has_depth(raw, "best_5_buy_data", "best_buy_data", "best_buy", "buy")
+        sell_depth = self._has_depth(raw, "best_5_sell_data", "best_sell_data", "best_sell", "sell")
+        missing_ltp = record.ltp is None or record.ltp <= 0
+        missing_bid = record.bid is None or record.bid <= 0
+        missing_ask = record.ask is None or record.ask <= 0
+        with self._quote_diagnostics_lock:
+            stats = self._quote_diagnostics
+            stats["records"] += 1
+            stats["cash_records" if meta["leg"] == "CASH" else "future_records"] += 1
+            stats["missing_ltp"] += int(missing_ltp)
+            stats["missing_bid"] += int(missing_bid)
+            stats["missing_ask"] += int(missing_ask)
+            stats["missing_both_sides"] += int(missing_bid and missing_ask)
+            stats["buy_depth_present"] += int(buy_depth)
+            stats["sell_depth_present"] += int(sell_depth)
+            stats["buy_depth_present_bid_missing"] += int(buy_depth and missing_bid)
+            stats["sell_depth_present_ask_missing"] += int(sell_depth and missing_ask)
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
         rows = self.instrument_master.download()
@@ -298,6 +344,7 @@ class LiveCashFutureCommonRunner:
         # the scanner pairs cash symbols with their current/near futures.
         if record.underlying != meta["underlying"]:
             record = replace(record, underlying=meta["underlying"])
+        self._record_quote_diagnostics(record, meta)
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED and self._ingestor is not None:
             # Persist one latest broker tick per second. The canonical WebSocket
         # can emit many ticks inside a second, but this stream is explicitly 1s.
