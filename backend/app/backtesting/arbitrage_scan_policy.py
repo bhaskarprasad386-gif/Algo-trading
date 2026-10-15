@@ -98,9 +98,9 @@ def enumerate_synthetic_strikes(strikes: Iterable[float], *, atm_strike: float,
         if has_atm:
             distance = index - atm_index
         elif strike < atm:
-            distance = index - atm_index + 1
-        else:
             distance = index - atm_index
+        else:
+            distance = index - atm_index + 1
         if abs(distance) > radius: continue
         side = "LOWER" if strike < atm else "UPPER" if strike > atm else "ATM"
         result.append((strike, abs(distance), side))
