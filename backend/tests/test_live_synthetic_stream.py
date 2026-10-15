@@ -558,6 +558,10 @@ def test_synthetic_fallback_socket_disables_private_reconnect(monkeypatch):
             self.auto_reconnect = auto_reconnect
 
     class FakeFeed:
+        @staticmethod
+        def descriptor(**kwargs):
+            return kwargs
+
         def __init__(self, consumer, **kwargs):
             captured.update(kwargs)
 
