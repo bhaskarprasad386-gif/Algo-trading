@@ -44,9 +44,10 @@ class LiveSyntheticScanner:
 
     def diagnostics_snapshot(self) -> dict:
         """Return scanner-local counters without exposing cached market payloads."""
-        with self._diagnostics_lock:
-            counters = dict(self._diagnostics)
+        # Keep lock order consistent with observe(): scanner state before counters.
         with self._lock:
+            with self._diagnostics_lock:
+                counters = dict(self._diagnostics)
             counters["active_buckets"] = len(self._buckets)
             counters["last_observation_at_ns"] = self._last_observation_at_ns
             counters["last_successful_calculation_at_ns"] = self._last_successful_calculation_at_ns
@@ -256,9 +257,9 @@ class LiveSyntheticScanner:
             with self._lock:
                 self._last_successful_calculation_at_ns = time.time_ns()
                 self._last_result_count = len(results)
+            self._count("successful_pairs", len(option_quotes))
             if results:
                 self._count("opportunities_emitted", len(results))
-                self._count("successful_pairs", len(option_quotes))
             else:
                 self._count("empty_calculations")
         if results and self.on_result is not None:
