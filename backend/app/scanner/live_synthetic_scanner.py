@@ -146,15 +146,43 @@ class LiveSyntheticScanner:
                 key,
                 {"future": None, "options": {}, "first_seen_monotonic_ns": time.monotonic_ns()},
             )
+            # A later executable-book tick may complete an LTP-selected leg. Keep
+            # its original pairing timestamp only when it is the same instrument
+            # and arrives inside the explicit three-second quote-wait window.
+            def preserve_pending_anchor(previous: dict | None, current: dict) -> dict:
+                if previous is None:
+                    return current
+                previous_bid = self._price(previous.get("bid"))
+                previous_ask = self._price(previous.get("ask"))
+                previous_ltp = self._price(previous.get("ltp") or previous.get("last_traded_price"))
+                current_bid = self._price(current.get("bid"))
+                current_ask = self._price(current.get("ask"))
+                age_ns = time.monotonic_ns() - int(
+                    bucket.get("first_seen_monotonic_ns", time.monotonic_ns())
+                )
+                if (
+                    (previous_bid is None or previous_ask is None)
+                    and previous_ltp is not None
+                    and current_bid is not None
+                    and current_ask is not None
+                    and age_ns < 3_000_000_000
+                ):
+                    anchored = dict(current)
+                    anchored["source_timestamp_ns"] = previous.get("source_timestamp_ns")
+                    return anchored
+                return current
+
             if option_type in {"CE", "PE"} and strike is not None:
-                bucket["options"].setdefault(strike, {})[option_type] = payload
+                legs = bucket["options"].setdefault(strike, {})
+                payload = preserve_pending_anchor(legs.get(option_type), payload)
+                legs[option_type] = payload
             elif option_type == "":
-                bucket["future"] = payload
+                bucket["future"] = preserve_pending_anchor(bucket.get("future"), payload)
             else:
                 # Futures may not carry option_type in older instrument masters.
                 instrument_symbol = str(payload.get("symbol") or "").upper()
                 if "FUT" in instrument_symbol:
-                    bucket["future"] = payload
+                    bucket["future"] = preserve_pending_anchor(bucket.get("future"), payload)
 
             if bucket["future"] is None:
                 self._count("missing_future_leg")
@@ -326,7 +354,7 @@ class LiveSyntheticScanner:
             for key in self._buckets
             if key[0] == symbol
             and key[2] == expiry
-            and abs(key[1] - timestamp_ns) <= self.TIMESTAMP_TOLERANCE_NS
+            and abs(key[1] - timestamp_ns) <= 3_000_000_000
         ]
         if candidates:
             return min(candidates, key=lambda key: abs(key[1] - timestamp_ns))
