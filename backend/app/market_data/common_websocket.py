@@ -354,25 +354,20 @@ class CommonWebSocketManager:
                     self._socket_generation.pop(group, None)
 
             for group, socket in zip(stale_groups, stale_sockets):
-                close_worker = self._close_socket_bounded(
-                    socket, group=group, generation=self._socket_generation_counter.get(group),
-                    reason="obsolete_group",
+                def _reconcile_after_obsolete_close(obsolete_group=group):
+                    try:
+                        with self._reconcile_lock:
+                            self._reconcile()
+                    except Exception as exc:
+                        app_logger.warning(
+                            "Common feed reconcile after obsolete close failed group=%s: %s",
+                            f"{obsolete_group.mode}:{obsolete_group.shard}", exc,
+                        )
+                self._close_socket_tracked(
+                    socket, group=group,
+                    generation=self._socket_generation_counter.get(group),
+                    reason="obsolete_group", on_finished=_reconcile_after_obsolete_close,
                 )
-                if close_worker.is_alive():
-                    def _reconcile_after_obsolete_close(obsolete_group=group):
-                        try:
-                            with self._reconcile_lock:
-                                self._reconcile()
-                        except Exception as exc:
-                            app_logger.warning(
-                                "Common feed reconcile after obsolete close failed group=%s: %s",
-                                f"{obsolete_group.mode}:{obsolete_group.shard}", exc,
-                            )
-                    self._watch_retired_transport(
-                        close_worker, group=group,
-                        generation=self._socket_generation_counter.get(group),
-                        reason="obsolete_group", on_finished=_reconcile_after_obsolete_close,
-                    )
 
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
@@ -414,8 +409,10 @@ class CommonWebSocketManager:
                                 # Retirement is also a recovery lifecycle: block a
                                 # replacement while the old transport is still closing.
                                 self._failure_recovery_groups.add(group)
-                        close_worker = self._close_socket_bounded(
-                            socket, group=group, reason="reconcile_disconnected"
+                        close_worker = self._close_socket_tracked(
+                            socket, group=group,
+                            generation=self._socket_generation_counter.get(group),
+                            reason="reconcile_disconnected",
                         )
                         socket = None
                         if close_worker.is_alive():
@@ -648,8 +645,9 @@ class CommonWebSocketManager:
                     group, type(exc).__name__, exc,
                 )
                 if is_current:
-                    close_worker = self._close_socket_bounded(
-                        socket, group=group, generation=generation, reason="connect_failure"
+                    close_worker = self._close_socket_tracked(
+                        socket, group=group, generation=generation, reason="connect_failure",
+                        on_finished=_resume_after_connect_failure,
                     )
                     def _resume_after_connect_failure(failed_group=group):
                         try:
@@ -759,8 +757,9 @@ class CommonWebSocketManager:
 
         def _recover() -> None:
             try:
-                close_worker = self._close_socket_bounded(
-                    socket, group=group, generation=generation, reason="failure_callback"
+                close_worker = self._close_socket_tracked(
+                    socket, group=group, generation=generation, reason="failure_callback",
+                    on_finished=_recover_after_close,
                 )
                 if close_worker.is_alive():
                     # Keep the shard blocked while close is still in flight. A
@@ -838,8 +837,11 @@ class CommonWebSocketManager:
         if is_current:
             with self._lock:
                 self._failure_recovery_groups.add(group)
-            close_worker = self._close_socket_bounded(
-                socket, group=group, reason=f"socket_{operation_name}_failure"
+            close_worker = self._close_socket_tracked(
+                socket, group=group,
+                generation=self._socket_generation_counter.get(group),
+                reason=f"socket_{operation_name}_failure",
+                on_finished=_resume_after_operation_close,
             )
             def _resume_after_operation_close(failed_group=group):
                 try:
@@ -1227,15 +1229,16 @@ class CommonWebSocketManager:
         generation: int | None,
         reason: str,
         on_finished: Callable[[], None] | None = None,
+        retirement_key: str | None = None,
     ) -> None:
         """Expose and supervise a retired transport until its close call exits."""
-        key = f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
+        key = retirement_key or f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
         with self._lock:
             self._retired_transports[key] = {
                 "group": f"{group.mode}:{group.shard}",
                 "generation": generation,
                 "reason": reason,
-                "retired_at": time.time(),
+                "retired_at": self._retired_transports.get(key, {}).get("retired_at", time.time()),
                 "close_worker_alive": bool(close_worker.is_alive()),
                 "last_observed_at": time.time(),
             }
@@ -1269,6 +1272,40 @@ class CommonWebSocketManager:
             name=f"common-ws-retire-watch-{group.mode}-{group.shard}",
             daemon=True,
         ).start()
+
+    def _close_socket_tracked(
+        self,
+        socket: Any,
+        *,
+        group: SocketGroup,
+        generation: int | None,
+        reason: str,
+        on_finished: Callable[[], None] | None = None,
+        timeout: float = 2.0,
+    ) -> Thread:
+        """Register retirement before waiting, so concurrent reconciles see the slot occupied."""
+        key = f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
+        with self._lock:
+            self._retired_transports[key] = {
+                "group": f"{group.mode}:{group.shard}",
+                "generation": generation,
+                "reason": reason,
+                "retired_at": time.time(),
+                "close_worker_alive": True,
+                "last_observed_at": time.time(),
+            }
+        worker = self._close_socket_bounded(
+            socket, timeout=timeout, group=group, generation=generation, reason=reason
+        )
+        if worker.is_alive():
+            self._watch_retired_transport(
+                worker, group=group, generation=generation, reason=reason,
+                on_finished=on_finished, retirement_key=key,
+            )
+        else:
+            with self._lock:
+                self._retired_transports.pop(key, None)
+        return worker
 
     @staticmethod
     def _close_socket_bounded(
