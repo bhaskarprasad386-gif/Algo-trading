@@ -430,7 +430,23 @@ def test_live_scanner_counts_invalid_and_stale_input_categories():
     health = scanner.health()
     assert health["invalid_payloads"] == 1
     assert health["invalid_timestamps"] == 1
-    assert health["stale_quotes"] == 1
+
+
+
+def test_live_scanner_breaks_down_stale_receive_timestamp_reasons():
+    scanner = LiveCashFutureScanner()
+    now_ns = int(time() * 1_000_000_000)
+    base = {"leg": "CASH", "underlying": "STALE_REASON", "ltp": 100,
+            "source_timestamp_ns": now_ns}
+    assert scanner.observe({**base, "received_at_ns": now_ns - 10_000_000_000}) is None
+    assert scanner.observe({**base, "received_at_ns": now_ns + 10_000_000_000}) is None
+    assert scanner.observe({**base, "received_at_ns": 0}) is None
+    health = scanner.health()
+    assert health["stale_receive_timestamp_old"] == 1
+    assert health["stale_receive_timestamp_future"] == 1
+    assert health["stale_receive_timestamp_invalid"] == 1
+    # Aggregate stale count includes all three rejected observations.
+    assert health["stale_quotes"] == 3
 
 
 
