@@ -350,12 +350,16 @@ class CommonWebSocketManager:
                     # subscribe/unsubscribe operations to a known-dead socket.
                     with self._lock:
                         created_at = self._socket_created_at.get(group, time.monotonic())
-                    connected = bool(getattr(socket, "connected", False))
+                    # Test doubles and third-party wrappers may not expose a
+                    # connection-state property. Treat an unknown state as
+                    # unknown, not as a confirmed disconnect; otherwise every
+                    # reconcile can discard a healthy shared socket.
+                    connected_state = getattr(socket, "connected", None)
                     connecting = bool(getattr(socket, "connecting", False))
                     connect_timed_out = connecting and (
                         time.monotonic() - created_at >= self._connect_timeout_seconds
                     )
-                    disconnected = not connected and (
+                    disconnected = connected_state is False and (
                         not connecting or connect_timed_out
                     )
                     if disconnected:
