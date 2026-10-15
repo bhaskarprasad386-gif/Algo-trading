@@ -1359,3 +1359,32 @@ def test_retired_transport_health_blocks_new_global_session_until_close_exits():
     finally:
         release.set()
         manager.close()
+
+
+
+def test_snapshot_exposes_safe_per_socket_lifecycle_health():
+    class DiagnosticSocket(FakeSocket):
+        @property
+        def health(self):
+            return {
+                "connected": self.connected,
+                "last_error": "ConnectionResetError: simulated",
+                "transport_thread_alive": True,
+                "transport_close_timed_out": True,
+                "auth_token": "must-not-leak",
+            }
+
+    registry = InstrumentRegistry()
+    item = descriptor("990")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=DiagnosticSocket)
+    try:
+        manager.subscribe("cash", [item.key])
+        health = manager.snapshot()["socket_health_by_group"]["1:0"]
+        assert health["connected"] is True
+        assert health["last_error"] == "ConnectionResetError: simulated"
+        assert health["transport_thread_alive"] is True
+        assert health["transport_close_timed_out"] is True
+        assert "auth_token" not in health
+    finally:
+        manager.close()
