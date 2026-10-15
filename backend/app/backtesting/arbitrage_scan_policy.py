@@ -64,7 +64,32 @@ def enumerate_synthetic_strikes(strikes: Iterable[float], *, atm_strike: float,
                                 instrument_class: InstrumentClass,
                                 policy: ScanPolicy | None = None) -> tuple[tuple[float, int, Literal["LOWER","ATM","UPPER"]], ...]:
     policy = policy or ScanPolicy()
-    ordered = ordered_strikes_around_atm(strikes, atm_strike=atm_strike)
+    ordered = tuple(sorted(set(float(s) for s in strikes)))
+    if not ordered:
+        raise ValueError("option chain must contain at least one strike")
+
+    # Index callers pass the live, executable CE+PE pairs after quote/liquidity
+    # validation. Choose up to ten nearest liquid strikes on EACH side of ATM.
+    # Do not require ATM itself to be liquid/present, and do not apply a fixed
+    # position radius: the subscription layer supplies the full actual chain.
+    if instrument_class == "INDEX":
+        atm = float(atm_strike)
+        lower = [strike for strike in ordered if strike < atm]
+        upper = [strike for strike in ordered if strike > atm]
+        selected = (
+            [(strike, len(lower) - index, "LOWER") for index, strike in enumerate(lower[-10:])]
+            + [(strike, 0, "ATM") for strike in ordered if strike == atm]
+            + [(strike, index + 1, "UPPER") for index, strike in enumerate(upper[:10])]
+        )
+        # Lower distances count outward from ATM (1 is nearest); normalize order.
+        lower_selected = [(strike, len(lower[-10:]) - index, "LOWER")
+                          for index, strike in enumerate(lower[-10:])]
+        result = lower_selected + [(strike, 0, "ATM") for strike in ordered if strike == atm]
+        result += [(strike, index + 1, "UPPER") for index, strike in enumerate(upper[:10])]
+        return tuple(result)
+
+    # Stock scope deliberately retains its existing fixed actual-chain radius.
+    ordered = ordered_strikes_around_atm(ordered, atm_strike=atm_strike)
     atm_index = ordered.index(float(atm_strike))
     radius = policy.synthetic_radius(instrument_class)
     result = []
