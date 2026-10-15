@@ -601,9 +601,6 @@ class CommonWebSocketManager:
                         return
             except Exception as exc:
                 failure["exception"] = exc
-                # Publish an immediate connect failure before bounded close/reconcile
-                # work; callers must not lose the original error behind cleanup.
-                completed.set()
                 # Keep this exception path non-blocking: _start_socket_connect
                 # waits briefly for immediate failures, so waiting here for the
                 # reconcile lock would hide the original broker error from its
@@ -632,6 +629,8 @@ class CommonWebSocketManager:
                         "failed_at_ns": time.time_ns(),
                         "subscriptions": len(pairs),
                     }
+                # Publish failure state and original exception before close/reconcile.
+                completed.set()
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type=type(exc).__name__,
