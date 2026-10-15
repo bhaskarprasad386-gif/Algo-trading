@@ -134,3 +134,19 @@ def test_box_scanner_rejects_missing_fourth_leg_after_three_second_window():
         t + 3_500_000_000, 110, "PE", bid=102, ask=102.1
     ))
     assert results == ()
+
+
+def test_box_scanner_does_not_replace_newer_leg_with_out_of_order_quote():
+    scanner = _delayed_fourth_leg_scanner()
+    t = 10_000_000_000
+    scanner.observe(_delayed_leg_base(t + 1_000_000_000, 100, "CE", bid=100, ask=100.1))
+    # Older invalid update for the same contract must not erase its newer quote.
+    assert scanner.observe(_delayed_leg_base(
+        t + 500_000_000, 100, "CE", bid=None, ask=None, volume=0, oi=0
+    )) == ()
+    scanner.observe(_delayed_leg_base(t + 1_100_000_000, 100, "PE", bid=99.1, ask=99.2))
+    scanner.observe(_delayed_leg_base(t + 1_200_000_000, 110, "CE", bid=98.1, ask=98.2))
+    results = scanner.observe(_delayed_leg_base(
+        t + 1_300_000_000, 110, "PE", bid=102, ask=102.1
+    ))
+    assert any(result.direction == "LONG" for result in results)
