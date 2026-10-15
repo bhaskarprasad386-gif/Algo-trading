@@ -1207,3 +1207,20 @@ def test_blocking_transport_does_not_hold_global_admission_for_other_shard():
     finally:
         BlockingConnectAcrossShardsSocket.release_first.set()
         manager.close()
+
+
+def test_snapshot_separates_raw_route_and_delivery_clocks():
+    registry = InstrumentRegistry()
+    item = descriptor("786")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.register_callback("cash", lambda message: None)
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "786", "exchange_type": 1, "ltp": 100})
+        snapshot = manager.snapshot()
+        assert "1:0" in snapshot["last_raw_frame_age_seconds_by_group"]
+        assert "1:0" in snapshot["last_successful_route_age_seconds_by_group"]
+        assert "1:0" in snapshot["last_successful_delivery_age_seconds_by_group"]
+    finally:
+        manager.close()
