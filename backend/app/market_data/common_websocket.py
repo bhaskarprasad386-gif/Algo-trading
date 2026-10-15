@@ -353,8 +353,26 @@ class CommonWebSocketManager:
                     self._last_successful_delivery_at.pop(group, None)
                     self._socket_generation.pop(group, None)
 
-            for socket in stale_sockets:
-                self._close_socket_bounded(socket)
+            for group, socket in zip(stale_groups, stale_sockets):
+                close_worker = self._close_socket_bounded(
+                    socket, group=group, generation=self._socket_generation_counter.get(group),
+                    reason="obsolete_group",
+                )
+                if close_worker.is_alive():
+                    def _reconcile_after_obsolete_close():
+                        try:
+                            with self._reconcile_lock:
+                                self._reconcile()
+                        except Exception as exc:
+                            app_logger.warning(
+                                "Common feed reconcile after obsolete close failed group=%s: %s",
+                                f"{group.mode}:{group.shard}", exc,
+                            )
+                    self._watch_retired_transport(
+                        close_worker, group=group,
+                        generation=self._socket_generation_counter.get(group),
+                        reason="obsolete_group", on_finished=_reconcile_after_obsolete_close,
+                    )
 
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
@@ -402,10 +420,11 @@ class CommonWebSocketManager:
                         socket = None
                         if close_worker.is_alive():
                             def _resume_after_retired_close(retired_group=group):
-                                with self._lock:
-                                    self._failure_recovery_groups.discard(retired_group)
                                 try:
-                                    self._reconcile()
+                                    with self._reconcile_lock:
+                                        with self._lock:
+                                            self._failure_recovery_groups.discard(retired_group)
+                                        self._reconcile()
                                 except Exception as exc:
                                     app_logger.warning(
                                         "Common feed reconcile after retired close failed group=%s: %s",
@@ -422,6 +441,12 @@ class CommonWebSocketManager:
                         with self._lock:
                             self._failure_recovery_groups.discard(group)
                 if socket is None:
+                    # A timed-out close on any retired shard may still occupy
+                    # one of Angel's global sessions. Do not open a replacement
+                    # until all known retired close workers have exited.
+                    with self._lock:
+                        if self._retired_transports:
+                            continue
                     socket = self._create_socket()
                     subscriptions = self._group_subscriptions(pairs)
                     with self._lock:
@@ -627,10 +652,11 @@ class CommonWebSocketManager:
                         socket, group=group, generation=generation, reason="connect_failure"
                     )
                     def _resume_after_connect_failure(failed_group=group):
-                        with self._lock:
-                            self._failure_recovery_groups.discard(failed_group)
                         try:
-                            self._reconcile()
+                            with self._reconcile_lock:
+                                with self._lock:
+                                    self._failure_recovery_groups.discard(failed_group)
+                                self._reconcile()
                         except Exception as reconcile_exc:
                             app_logger.warning(
                                 "Common feed reconcile after connect failure failed group=%s: %s",
@@ -712,9 +738,10 @@ class CommonWebSocketManager:
                 # reconciliation, so concurrent reconcile calls cannot race
                 # ahead and admit a replacement from stale state.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
-                with self._lock:
-                    self._failure_recovery_groups.discard(group)
-                self._reconcile()
+                with self._reconcile_lock:
+                    with self._lock:
+                        self._failure_recovery_groups.discard(group)
+                    self._reconcile()
             except Exception as exc:
                 runtime_diagnostics.record(
                     component="Common Market Feed",
@@ -809,7 +836,29 @@ class CommonWebSocketManager:
                 self._socket_generation.pop(group, None)
 
         if is_current:
-            self._close_socket_bounded(socket)
+            with self._lock:
+                self._failure_recovery_groups.add(group)
+            close_worker = self._close_socket_bounded(
+                socket, group=group, reason=f"socket_{operation_name}_failure"
+            )
+            def _resume_after_operation_close(failed_group=group):
+                try:
+                    with self._reconcile_lock:
+                        with self._lock:
+                            self._failure_recovery_groups.discard(failed_group)
+                        self._reconcile()
+                except Exception as reconcile_exc:
+                    app_logger.warning(
+                        "Common feed reconcile after socket operation failure failed group=%s: %s",
+                        f"{failed_group.mode}:{failed_group.shard}", reconcile_exc,
+                    )
+            if close_worker.is_alive():
+                self._watch_retired_transport(
+                    close_worker, group=group,
+                    generation=self._socket_generation_counter.get(group),
+                    reason=f"socket_{operation_name}_failure",
+                    on_finished=_resume_after_operation_close,
+                )
 
         if not finished:
             error = TimeoutError(
