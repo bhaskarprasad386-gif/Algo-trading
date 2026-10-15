@@ -3,8 +3,8 @@
 The scanner consumes already-normalized live snapshots. It does not fetch from a
 broker, invent strikes, or mutate storage. A caller supplies the point-in-time
 option chain, future quote, ATM and (for stocks) the permitted NIFTY-50 universe.
-Index scope remains the locked ATM +/- 10 actual chain positions; stock scope is
-ATM +/- 5 actual chain positions.
+Index scope is capped at the 15 nearest actual listed strikes on each side of
+ATM; stock scope remains governed by its existing synthetic strike policy.
 """
 from __future__ import annotations
 
