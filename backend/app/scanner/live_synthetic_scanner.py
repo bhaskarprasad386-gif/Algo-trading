@@ -254,9 +254,9 @@ class LiveSyntheticScanner:
             )
             self._prune(timestamp_ns)
             self._count("scan_evaluations")
-            with self._lock:
-                self._last_successful_calculation_at_ns = time.time_ns()
-                self._last_result_count = len(results)
+            # observe() already holds _lock while evaluating this complete snapshot.
+            self._last_successful_calculation_at_ns = time.time_ns()
+            self._last_result_count = len(results)
             self._count("successful_pairs", len(option_quotes))
             if results:
                 self._count("opportunities_emitted", len(results))
