@@ -601,6 +601,9 @@ class CommonWebSocketManager:
                         return
             except Exception as exc:
                 failure["exception"] = exc
+                # Publish an immediate connect failure before bounded close/reconcile
+                # work; callers must not lose the original error behind cleanup.
+                completed.set()
                 # Keep this exception path non-blocking: _start_socket_connect
                 # waits briefly for immediate failures, so waiting here for the
                 # reconcile lock would hide the original broker error from its
@@ -826,12 +829,6 @@ class CommonWebSocketManager:
         if is_current:
             with self._lock:
                 self._failure_recovery_groups.add(group)
-            close_worker = self._close_socket_tracked(
-                socket, group=group,
-                generation=self._socket_generation_counter.get(group),
-                reason=f"socket_{operation_name}_failure",
-                on_finished=_resume_after_operation_close,
-            )
             def _resume_after_operation_close(failed_group=group):
                 try:
                     with self._reconcile_lock:
@@ -843,6 +840,12 @@ class CommonWebSocketManager:
                         "Common feed reconcile after socket operation failure failed group=%s: %s",
                         f"{failed_group.mode}:{failed_group.shard}", reconcile_exc,
                     )
+            close_worker = self._close_socket_tracked(
+                socket, group=group,
+                generation=self._socket_generation_counter.get(group),
+                reason=f"socket_{operation_name}_failure",
+                on_finished=_resume_after_operation_close,
+            )
             if not close_worker.is_alive():
                 _resume_after_operation_close()
 
