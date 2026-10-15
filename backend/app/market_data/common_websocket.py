@@ -570,6 +570,19 @@ class CommonWebSocketManager:
                     if not _still_current():
                         self._close_socket_bounded(socket)
                         return
+                    # A replacement worker may already be queued for admission
+                    # while another shard's close is still in flight. Re-check
+                    # retirement after acquiring the global lock, not only when
+                    # creating the placeholder socket.
+                    while _still_current():
+                        with self._lock:
+                            retirement_pending = bool(self._retired_transports)
+                        if not retirement_pending:
+                            break
+                        time.sleep(0.05)
+                    if not _still_current():
+                        self._close_socket_bounded(socket)
+                        return
                     if not _wait_for_shared_broker_connect_admission(
                         should_stop=lambda: not _still_current()
                     ):
