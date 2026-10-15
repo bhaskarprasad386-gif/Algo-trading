@@ -64,11 +64,17 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if not future_rows: raise LookupError(f"no current/near {future_type} contracts for {symbol}")
     current = future_rows[0]
     selected_futures = future_rows[:2]
-    target_expiry = _expiry_key(expiry) if expiry else _expiry_key(current.get("expiry"))
-    # Both live scanners subscribe to the same single option expiry for each
-    # underlying. For NIFTY/SENSEX, target_expiry is the nearest genuine weekly
-    # chain; do not add monthly option chains because futures are monthly.
-    option_expiries = (target_expiry,)
+    current_future_expiry = _expiry_key(current.get("expiry"))
+    target_expiry = _expiry_key(expiry) if expiry else current_future_expiry
+    # Synthetic options must expire with the current future. In particular,
+    # never pair weekly NIFTY/SENSEX options with a monthly index future.
+    # Box Spread has its own selector and may independently use weekly chains.
+    if target_expiry != current_future_expiry:
+        raise LookupError(
+            f"synthetic option expiry {target_expiry} does not match "
+            f"current future expiry {current_future_expiry} for {symbol}"
+        )
+    option_expiries = (current_future_expiry,)
     options_by_expiry = {
         exp: [x for x in options if _expiry_key(x.get("expiry")) == exp]
         for exp in option_expiries
