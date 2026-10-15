@@ -88,6 +88,8 @@ class LiveCashFutureCommonRunner:
             "buy_depth_present_without_usable_price": 0,
             "sell_depth_present_without_usable_price": 0,
             "buy_direct_price_present": 0, "sell_direct_price_present": 0,
+            "normalized_crossed_book": 0, "normalized_missing_bid": 0,
+            "normalized_missing_ask": 0, "normalized_missing_both_sides": 0,
         }
         # Provenance counters only; never store the raw broker timestamp value.
         self._timestamp_diagnostics: dict[str, int] = {
@@ -199,6 +201,7 @@ class LiveCashFutureCommonRunner:
         missing_ask = record.ask is None or record.ask <= 0
         buy_examined, buy_usable, buy_direct = self._depth_price_diagnostic(raw, "buy")
         sell_examined, sell_usable, sell_direct = self._depth_price_diagnostic(raw, "sell")
+        reason = raw.get("_quote_normalization_reason")
         with self._quote_diagnostics_lock:
             stats = self._quote_diagnostics
             stats["records"] += 1
@@ -219,6 +222,8 @@ class LiveCashFutureCommonRunner:
             stats["sell_depth_present_without_usable_price"] += int(sell_depth and not sell_usable)
             stats["buy_direct_price_present"] += int(buy_direct)
             stats["sell_direct_price_present"] += int(sell_direct)
+            if reason in {"crossed_book", "missing_bid", "missing_ask", "missing_both_sides"}:
+                stats[f"normalized_{reason}"] += 1
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
         rows = self.instrument_master.download()

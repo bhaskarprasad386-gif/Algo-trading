@@ -379,6 +379,19 @@ def test_quote_diagnostics_distinguish_present_depth_from_usable_ask_price():
     assert diagnostics["sell_depth_present_without_usable_price"] == 1
     assert diagnostics["sell_depth_levels_examined"] >= 4
     assert "best_5_sell_data" not in diagnostics
+    crossed = MarketDataRecord(
+        instrument=key,
+        symbol="ABC-FUT",
+        instrument_type=InstrumentType.FUTURE,
+        timestamp_ns=1_760_000_000_200_000_000,
+        ltp=100.0,
+        bid=None,
+        ask=None,
+        payload={"_quote_normalization_reason": "crossed_book"},
+    )
+    runner._record_quote_diagnostics(crossed, meta)
+    diagnostics = runner.snapshot()["quote_diagnostics"]
+    assert diagnostics["normalized_crossed_book"] == 1
     runner.stop()
 
 

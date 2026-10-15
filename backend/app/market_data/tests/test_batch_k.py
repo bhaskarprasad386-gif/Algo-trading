@@ -151,6 +151,7 @@ def test_crossed_depth_does_not_discard_valid_ltp_and_oi():
     assert record.bid is None
     assert record.ask is None
     assert record.oi == 88
+    assert record.payload["_quote_normalization_reason"] == "crossed_book"
 
 
 def test_price_scale_rejects_non_finite_values():
