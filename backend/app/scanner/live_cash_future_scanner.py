@@ -547,6 +547,11 @@ class LiveCashFutureScanner:
             received_at_ns = time.time_ns()
         max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
         now_ns = time.time_ns()
+        if received_at_ns <= 0 or received_at_ns > now_ns + 5_000_000_000 or now_ns - received_at_ns > max_age_ns:
+            with self._lock:
+                self._increment_stat("stale_quotes")
+                self._increment_stat("dropped")
+            return None
         # Keep receive freshness and exchange/source freshness separate. A
         # recently delivered buffered tick can have a fresh receive time but
         # an old source timestamp; count that condition without dropping it
@@ -559,11 +564,6 @@ class LiveCashFutureScanner:
             )
             if source_age_ns > max_age_ns:
                 self._stats["source_timestamp_older_than_quote_age"] += 1
-        if received_at_ns <= 0 or received_at_ns > now_ns + 5_000_000_000 or now_ns - received_at_ns > max_age_ns:
-            with self._lock:
-                self._increment_stat("stale_quotes")
-                self._increment_stat("dropped")
-            return None
 
         ltp = self._price(payload, "ltp")
         if ltp is None:
