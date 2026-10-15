@@ -428,6 +428,25 @@ def test_live_scanner_counts_invalid_and_stale_input_categories():
 
 
 
+def test_live_scanner_reports_old_source_timestamp_without_gating_pair(monkeypatch):
+    scanner = LiveCashFutureScanner()
+    received = int(time() * 1_000_000_000)
+    source = received - 10_000_000_000
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "AGE", "ltp": 100,
+        "source_timestamp_ns": source, "received_at_ns": received,
+    }) is None
+    signal = scanner.observe({
+        "leg": "FUTURE", "underlying": "AGE", "contract_month": "CURRENT",
+        "ltp": 101, "source_timestamp_ns": source, "received_at_ns": received,
+    })
+    assert signal is not None
+    health = scanner.health()
+    assert health["source_timestamp_older_than_quote_age"] == 2
+    assert health["source_timestamp_age_ns_total"] >= 20_000_000_000
+    assert health["source_timestamp_age_ns_max"] >= 10_000_000_000
+
+
 def test_live_scanner_rejects_far_future_exchange_timestamp_without_crashing():
     scanner = LiveCashFutureScanner()
     assert scanner.observe({
