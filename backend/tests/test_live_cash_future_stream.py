@@ -86,6 +86,24 @@ def test_live_best_side_includes_price_and_quantity():
     assert collector._best_side_detail(message, "best_5_sell_data") == (101.0, 175.0)
 
 
+def test_live_best_side_skips_malformed_top_levels_and_finds_next_valid_level():
+    collector = LiveCashFutureOneSecondCollector(":memory:")
+    message = {
+        "best_5_buy_data": [
+            {"price": "bad", "quantity": "100"},
+            {"price": "0", "quantity": "50"},
+            {"price": "9990", "quantity": "25"},
+        ],
+        "best_5_sell_data": [
+            None,
+            {"price": "10125", "quantity": "bad"},
+        ],
+    }
+    assert collector._best_side_detail(message, "best_5_buy_data") == (99.9, 25.0)
+    assert collector._best_side_detail(message, "best_5_sell_data") == (101.25, None)
+    assert collector._best_side_detail({"best_5_sell_data": [{"price": "nan", "quantity": "10"}]}, "best_5_sell_data") == (None, None)
+
+
 def test_live_persistence_skips_existing_second_bucket_without_conflict():
     catalog = HistoricalCatalog(":memory:")
     record = HistoricalRecord(
