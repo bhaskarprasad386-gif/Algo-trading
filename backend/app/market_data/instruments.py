@@ -1,6 +1,11 @@
+import json
+import os
+import tempfile
+import time
 import requests
+from pathlib import Path
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 
@@ -9,20 +14,28 @@ from app.core.logger import app_logger
 
 
 class InstrumentMaster:
-    """Angel One instrument master manager with process-wide lazy caching."""
+    """Angel One instrument master manager with validated disk fallback."""
 
     MASTER_URL = (
         "https://margincalculator.angelbroking.com/"
         "OpenAPI_File/files/OpenAPIScripMaster.json"
     )
+    CACHE_SCHEMA_VERSION = 1
+    DEFAULT_CACHE_MAX_AGE_HOURS = 12
+    MAX_CACHE_MAX_AGE_HOURS = 72
+    DOWNLOAD_FAILURE_COOLDOWN_SECONDS = 20.0
+    CONNECT_TIMEOUT_SECONDS = 5.0
+    READ_TIMEOUT_SECONDS = 15.0
+
     _cache_lock = Lock()
+    # Serialize network refreshes without holding the snapshot lock during I/O.
+    _download_lock = Lock()
     _cached_instruments: Optional[List[Dict[str, Any]]] = None
     _cached_snapshot_date: Optional[str] = None
+    _last_failed_at_monotonic: Optional[float] = None
+    _last_download_error: Optional[str] = None
 
     def __init__(self):
-        # Each instance remains a cheap view over the process-wide snapshot.
-        # This avoids a download for every WebSocket client while preserving
-        # the existing constructor/API used by tests and other callers.
         self.instruments: List[Dict[str, Any]] = []
         self._loaded = False
         self._symbol_exchange_index = None
@@ -32,50 +45,218 @@ class InstrumentMaster:
             self._loaded = True
 
     @classmethod
+    def _cache_path(cls) -> Path:
+        configured = os.getenv("ANGEL_INSTRUMENT_MASTER_CACHE_PATH")
+        if configured:
+            return Path(configured).expanduser()
+        return Path(__file__).resolve().parents[2] / "data" / "instrument_master_cache.json"
+
+    @classmethod
+    def _cache_max_age(cls) -> timedelta:
+        try:
+            hours = float(os.getenv(
+                "ANGEL_INSTRUMENT_MASTER_MAX_CACHE_AGE_HOURS",
+                str(cls.DEFAULT_CACHE_MAX_AGE_HOURS),
+            ))
+        except (TypeError, ValueError):
+            hours = float(cls.DEFAULT_CACHE_MAX_AGE_HOURS)
+        hours = min(float(cls.MAX_CACHE_MAX_AGE_HOURS), max(1.0, hours))
+        return timedelta(hours=hours)
+
+    @staticmethod
+    def _validate_master_data(data: Any) -> List[Dict[str, Any]]:
+        """Reject empty, non-object, or structurally unusable master responses."""
+        if not isinstance(data, list) or not data:
+            raise ValueError("instrument master must be a non-empty JSON list")
+        object_rows = [row for row in data if isinstance(row, dict)]
+        if not object_rows:
+            raise ValueError("instrument master contains no object rows")
+        valid_rows = [
+            row for row in object_rows
+            if str(row.get("token", "")).strip()
+            and str(row.get("symbol", "")).strip()
+            and str(row.get("exch_seg", "")).strip()
+        ]
+        # Reject truncated/error-shaped payloads while tolerating occasional
+        # optional/incomplete rows from the upstream catalogue.
+        required_valid = max(1, int(len(data) * 0.90 + 0.999999))
+        if len(valid_rows) < required_valid:
+            raise ValueError(
+                f"instrument master structure invalid: {len(valid_rows)}/{len(data)} rows "
+                "have token, symbol and exchange segment"
+            )
+        return object_rows
+
+    @classmethod
+    def _read_disk_cache(cls):
+        path = cls._cache_path()
+        with path.open("r", encoding="utf-8") as handle:
+            envelope = json.load(handle)
+        if not isinstance(envelope, dict) or envelope.get("schema_version") != cls.CACHE_SCHEMA_VERSION:
+            raise ValueError("instrument master cache schema is invalid")
+        fetched_raw = envelope.get("fetched_at")
+        if not isinstance(fetched_raw, str):
+            raise ValueError("instrument master cache timestamp is missing")
+        fetched_at = datetime.fromisoformat(fetched_raw.replace("Z", "+00:00"))
+        if fetched_at.tzinfo is None:
+            raise ValueError("instrument master cache timestamp must include timezone")
+        fetched_at = fetched_at.astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+        if fetched_at > now + timedelta(minutes=5):
+            raise ValueError("instrument master cache timestamp is in the future")
+        age = now - fetched_at
+        if age > cls._cache_max_age():
+            raise ValueError(f"instrument master cache is stale ({age.total_seconds() / 3600:.1f} hours old)")
+        data = cls._validate_master_data(envelope.get("instruments"))
+        snapshot_date = envelope.get("snapshot_date")
+        if not isinstance(snapshot_date, str) or not snapshot_date:
+            snapshot_date = fetched_at.astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        return data, fetched_at, snapshot_date
+
+    @classmethod
+    def _write_disk_cache(cls, data: List[Dict[str, Any]], fetched_at: datetime, snapshot_date: str) -> None:
+        path = cls._cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        envelope = {
+            "schema_version": cls.CACHE_SCHEMA_VERSION,
+            "fetched_at": fetched_at.astimezone(timezone.utc).isoformat(),
+            "snapshot_date": snapshot_date,
+            "instruments": data,
+        }
+        fd, temporary_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(envelope, handle, separators=(",", ":"), ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, path)
+        finally:
+            try:
+                if os.path.exists(temporary_path):
+                    os.unlink(temporary_path)
+            except OSError:
+                pass
+
+    def _publish_snapshot(
+        self,
+        data: List[Dict[str, Any]],
+        snapshot_date: str,
+    ) -> List[Dict[str, Any]]:
+        with self._cache_lock:
+            self.__class__._cached_instruments = data
+            self.__class__._cached_snapshot_date = snapshot_date
+            self.instruments = data
+            self._loaded = True
+            self._symbol_exchange_index = None
+        return self.instruments
+
+    @classmethod
     def _get_cached_snapshot(cls) -> Optional[List[Dict[str, Any]]]:
         with cls._cache_lock:
             if cls._cached_instruments is None:
                 return None
             return cls._cached_instruments
 
-    def download(self, *, force: bool = False) -> List[Dict[str, Any]]:
-        """Download Angel One instrument master at most once per IST day unless forced.
+    def _use_disk_cache(self, reason: str) -> Optional[List[Dict[str, Any]]]:
+        try:
+            data, fetched_at, snapshot_date = self._read_disk_cache()
+            self._publish_snapshot(data, snapshot_date)
+            app_logger.warning(
+                "Instrument master using validated disk cache "
+                f"(age_hours={(datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600:.2f}; "
+                f"reason={reason})"
+            )
+            return self.instruments
+        except Exception as cache_error:
+            app_logger.warning(f"Instrument master disk cache unavailable: {cache_error}")
+            return None
 
-        Daily refresh is intentional because expiry/roll-day contracts can change
-        without a process restart.
-        """
+    def download(self, *, force: bool = False) -> List[Dict[str, Any]]:
+        """Refresh once per IST day; use only a validated, age-bounded disk fallback."""
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
         with self._cache_lock:
-            if not force and self._loaded and self.instruments and self.__class__._cached_snapshot_date == today:
+            if (
+                not force and self._loaded and self.instruments
+                and self.__class__._cached_snapshot_date == today
+            ):
                 return self.instruments
-            if not force and self._cached_instruments is not None and self.__class__._cached_snapshot_date == today:
+            if (
+                not force and self._cached_instruments is not None
+                and self.__class__._cached_snapshot_date == today
+            ):
                 self.instruments = self._cached_instruments
                 self._loaded = True
                 return self.instruments
+
+        # The lock ensures concurrent runners share one refresh attempt. The
+        # snapshot lock is deliberately not held across the HTTP request.
+        with self._download_lock:
+            with self._cache_lock:
+                if (
+                    not force and self._loaded and self.instruments
+                    and self.__class__._cached_snapshot_date == today
+                ):
+                    return self.instruments
+                if (
+                    not force and self._cached_instruments is not None
+                    and self.__class__._cached_snapshot_date == today
+                ):
+                    self.instruments = self._cached_instruments
+                    self._loaded = True
+                    return self.instruments
+                failed_at = self.__class__._last_failed_at_monotonic
+                last_error = self.__class__._last_download_error
+
+            if (
+                failed_at is not None
+                and time.monotonic() - failed_at < self.DOWNLOAD_FAILURE_COOLDOWN_SECONDS
+            ):
+                cached = self._use_disk_cache("recent refresh failure cooldown")
+                if cached is not None:
+                    return cached
+                raise TradingAppException(
+                    "InstrumentMasterDownloadError",
+                    f"Instrument master refresh is cooling down after a recent failure: {last_error or 'unknown error'}",
+                    502,
+                )
+
             try:
-                response = requests.get(self.MASTER_URL, timeout=30)
+                response = requests.get(
+                    self.MASTER_URL,
+                    timeout=(self.CONNECT_TIMEOUT_SECONDS, self.READ_TIMEOUT_SECONDS),
+                )
                 response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, list):
-                    raise TradingAppException(
-                        "InvalidInstrumentMaster",
-                        "Angel One instrument master format is invalid.",
-                        502,
-                    )
-                self.__class__._cached_instruments = data
-                self.__class__._cached_snapshot_date = today
-                self.instruments = data
-                self._loaded = True
-                self._symbol_exchange_index = None
+                data = self._validate_master_data(response.json())
+                fetched_at = datetime.now(timezone.utc)
+                snapshot_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+                try:
+                    self._write_disk_cache(data, fetched_at, snapshot_date)
+                except Exception as cache_error:
+                    # A writable cache is desirable but must not discard a
+                    # valid live response when the deployment filesystem is read-only.
+                    app_logger.warning(f"Could not persist instrument master cache: {cache_error}")
+                with self._cache_lock:
+                    self.__class__._last_failed_at_monotonic = None
+                    self.__class__._last_download_error = None
+                self._publish_snapshot(data, snapshot_date)
                 app_logger.info(
-                    f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
+                    f"Loaded {len(self.instruments)} validated instruments from Angel One instrument master"
                 )
                 return self.instruments
-            except TradingAppException:
-                raise
-            except Exception as e:
-                app_logger.error(f"Failed to download instrument master: {str(e)}")
-                raise TradingAppException("InstrumentMasterDownloadError", str(e), 502)
+            except Exception as error:
+                error_text = str(error)
+                with self._cache_lock:
+                    self.__class__._last_failed_at_monotonic = time.monotonic()
+                    self.__class__._last_download_error = error_text
+                cached = self._use_disk_cache(error_text)
+                if cached is not None:
+                    return cached
+                app_logger.error(f"Failed to download instrument master and no valid cache exists: {error_text}")
+                raise TradingAppException(
+                    "InstrumentMasterDownloadError",
+                    f"Angel One instrument master unavailable and no valid disk cache could be used: {error_text}",
+                    502,
+                ) from error
 
     def search(
         self,
