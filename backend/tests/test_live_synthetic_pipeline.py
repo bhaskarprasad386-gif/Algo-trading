@@ -82,3 +82,56 @@ def test_pipeline_rejects_non_positive_retention_interval():
         assert "retention_interval_seconds" in str(exc)
     else:
         raise AssertionError("expected retention interval validation")
+
+def test_empty_completed_scan_publishes_empty_results_but_incomplete_scan_does_not():
+    class DiagnosticScanner:
+        def __init__(self):
+            self.evaluations = 0
+            self.complete = False
+
+        def diagnostics_snapshot(self):
+            return {"counters": {"scan_evaluations": self.evaluations}}
+
+        def observe(self, _payload):
+            if self.complete:
+                self.evaluations += 1
+            return ()
+
+    scanner = DiagnosticScanner()
+    published = []
+    pipeline = LiveSyntheticScanPipeline(
+        scanner=scanner,
+        on_results=published.append,
+    )
+
+    # An incomplete/missing-leg observation must not clear a valid dashboard.
+    assert pipeline.observe({"leg": "CE"}) == ()
+    assert published == []
+
+    # A completed calculation with no opportunity must clear stale results.
+    scanner.complete = True
+    assert pipeline.observe({"leg": "FUTURE"}) == ()
+    assert published == [()]
+
+
+def test_nonempty_results_are_published_and_empty_completed_results_are_not_persisted_as_alerts():
+    class DiagnosticScanner:
+        def __init__(self, results):
+            self.results = results
+            self.evaluations = 0
+
+        def diagnostics_snapshot(self):
+            return {"counters": {"scan_evaluations": self.evaluations}}
+
+        def observe(self, _payload):
+            self.evaluations += 1
+            return self.results
+
+    result = SimpleNamespace()
+    published = []
+    pipeline = LiveSyntheticScanPipeline(
+        scanner=DiagnosticScanner((result,)),
+        on_results=published.append,
+    )
+    assert pipeline.observe({"leg": "complete"}) == (result,)
+    assert published == [(result,)]
