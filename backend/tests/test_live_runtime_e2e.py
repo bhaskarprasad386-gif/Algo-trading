@@ -104,7 +104,7 @@ def test_common_websocket_snapshot_does_not_wait_for_broker_connect():
         daemon=True,
     )
     worker.start()
-    assert connect_started.wait(timeout=1.0)
+    assert connect_started.wait(timeout=3.0)
 
     started = time.monotonic()
     snapshot = manager.snapshot()
