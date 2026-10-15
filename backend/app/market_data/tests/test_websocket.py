@@ -363,3 +363,30 @@ def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
     assert calls["run_forever"]["ping_interval"] == 10
     assert calls["run_forever"]["ping_timeout"] == 5
     assert calls["callbacks"]["on_open"] is sdk_socket._on_open
+
+
+def test_websocket_close_waits_for_transport_and_reports_orphan(monkeypatch):
+    from threading import Event, Thread
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    release = Event()
+    transport = Thread(target=lambda: release.wait(timeout=2.0), daemon=True)
+    transport.start()
+    client._transport_thread = transport
+    client.websocket = FakeSocket.instances[-1] if FakeSocket.instances else FakeSocket("jwt", "api", "client", "feed")
+
+    client.close()
+    assert client.health["transport_close_timed_out"] is True
+    assert client.health["transport_thread_alive"] is True
+    release.set()
+    transport.join(timeout=1.0)
+    assert not transport.is_alive()
+
+
+def test_initial_subscribe_success_is_reported_separately(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    assert client.health["initial_subscribe_success"] is True
+    client.close()
