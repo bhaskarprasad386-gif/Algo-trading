@@ -1270,3 +1270,42 @@ def test_failed_shard_replacement_waits_for_old_socket_close():
     finally:
         BlockingCloseSocket.release_close.set()
         manager.close()
+
+
+def test_reconcile_disconnected_socket_blocks_replacement_until_close_finishes():
+    class BlockingRetireSocket(FakeSocket):
+        release_close = Event()
+
+        def close(self):
+            type(self).release_close.wait(timeout=4.0)
+            self.closed = True
+            self.connected = False
+
+    registry = InstrumentRegistry()
+    first = descriptor("788")
+    second = descriptor("789")
+    registry.register_many([first, second])
+    BlockingRetireSocket.instances.clear()
+    BlockingRetireSocket.release_close.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingRetireSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original = BlockingRetireSocket.instances[0]
+        original.connected = False
+        manager.subscribe("cash", [second.key])
+
+        assert len(BlockingRetireSocket.instances) == 1
+        assert "1:0" in manager.snapshot()["failure_recovery_groups"]
+
+        BlockingRetireSocket.release_close.set()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            if len(BlockingRetireSocket.instances) == 2:
+                break
+            time.sleep(0.01)
+        assert len(BlockingRetireSocket.instances) == 2
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        BlockingRetireSocket.release_close.set()
+        manager.close()
