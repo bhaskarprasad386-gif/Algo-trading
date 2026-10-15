@@ -87,7 +87,10 @@ class LiveCashFutureScanner:
             "dropped": 0, "persisted": 0, "pair_events": 0,
             "pair_events_persisted": 0, "invalid_payloads": 0,
             "invalid_legs": 0, "invalid_timestamps": 0, "invalid_prices": 0,
-            "stale_quotes": 0, "crossed_cash_quotes": 0,
+            "stale_quotes": 0, "stale_receive_timestamp_invalid": 0,
+            "stale_receive_timestamp_future": 0, "stale_receive_timestamp_old": 0,
+            "stale_cash_counterpart": 0, "stale_future_counterpart": 0,
+            "crossed_cash_quotes": 0,
             "out_of_order_updates": 0, "out_of_order_same_second": 0,
             "out_of_order_older_second": 0, "out_of_order_lag_ns_total": 0,
             "out_of_order_lag_ns_max": 0, "cache_evictions": 0,
@@ -547,9 +550,17 @@ class LiveCashFutureScanner:
             received_at_ns = time.time_ns()
         max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
         now_ns = time.time_ns()
-        if received_at_ns <= 0 or received_at_ns > now_ns + 5_000_000_000 or now_ns - received_at_ns > max_age_ns:
+        stale_receive_reason = None
+        if received_at_ns <= 0:
+            stale_receive_reason = "stale_receive_timestamp_invalid"
+        elif received_at_ns > now_ns + 5_000_000_000:
+            stale_receive_reason = "stale_receive_timestamp_future"
+        elif now_ns - received_at_ns > max_age_ns:
+            stale_receive_reason = "stale_receive_timestamp_old"
+        if stale_receive_reason is not None:
             with self._lock:
                 self._increment_stat("stale_quotes")
+                self._increment_stat(stale_receive_reason)
                 self._increment_stat("dropped")
             return None
         # Keep receive freshness and exchange/source freshness separate. A
@@ -637,11 +648,14 @@ class LiveCashFutureScanner:
             # A fresh incoming leg must never revive a pair whose counterpart
             # has aged out while the socket continued delivering only one side.
             pair_max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
-            if (
-                now_ns - int(cash.get("received_at_ns") or 0) > pair_max_age_ns
-                or now_ns - int(future.get("received_at_ns") or 0) > pair_max_age_ns
-            ):
+            cash_counterpart_stale = now_ns - int(cash.get("received_at_ns") or 0) > pair_max_age_ns
+            future_counterpart_stale = now_ns - int(future.get("received_at_ns") or 0) > pair_max_age_ns
+            if cash_counterpart_stale or future_counterpart_stale:
                 self._increment_stat("stale_quotes")
+                if cash_counterpart_stale:
+                    self._increment_stat("stale_cash_counterpart")
+                if future_counterpart_stale:
+                    self._increment_stat("stale_future_counterpart")
                 self._increment_stat("dropped")
                 return None
             # Cache-bucket proximity is only a lookup aid. Validate the actual
