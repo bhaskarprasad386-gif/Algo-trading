@@ -85,7 +85,7 @@ def test_live_scanner_liquidity_capacity_and_traceability(monkeypatch):
     assert signal.liquidity_qty == 700
     assert signal.capacity_lots == 1000
     assert signal.capacity_notional == 10_000_000
-    assert signal.observation_ref == "ABC:CURRENT:1000000000"
+    assert signal.observation_ref == f"ABC:CURRENT:{ts}"
     assert "LIQUIDITY_MEASURED" in signal.reason_codes
 
 
@@ -101,7 +101,7 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
         })
         return scanner.observe({
             "leg": "FUTURE", "underlying": "ABC", "contract_month": month,
-            "ltp": bid + 0.2, "bid": bid, "ask": bid + 0.2, "lot_size": 10000,
+            "ltp": bid + 0.2, "bid": bid, "ask": bid + 0.2, "lot_size": 30000,
             "source_timestamp_ns": ts,
         })
 
