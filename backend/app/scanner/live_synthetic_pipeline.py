@@ -42,7 +42,9 @@ class LiveSyntheticScanPipeline:
         before = self._scan_evaluations()
         results = self.scanner.observe(payload)
         after = self._scan_evaluations()
-        calculation_completed = after > before
+        calculation_completed = after > before or (
+            before == 0 and after == 0 and bool(results)
+        )
         if calculation_completed and self.on_results is not None:
             try:
                 self.on_results(tuple(results))
