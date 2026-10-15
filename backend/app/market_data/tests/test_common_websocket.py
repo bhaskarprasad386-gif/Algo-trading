@@ -1141,3 +1141,23 @@ def test_single_socket_transport_failure_preserves_other_healthy_shard():
         assert manager._recovery_thread.is_alive()
     finally:
         manager.close()
+
+
+def test_reconcile_replaces_known_disconnected_socket_before_subscription_update():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original = FakeSocket.instances[0]
+        original.connected = False
+        manager.subscribe("cash", [second.key])
+        assert original.closed is True
+        assert len(FakeSocket.instances) == 2
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+        assert set(manager._socket_tokens[SocketGroup(1, 0)]) == {(1, "101"), (1, "102")}
+    finally:
+        manager.close()
