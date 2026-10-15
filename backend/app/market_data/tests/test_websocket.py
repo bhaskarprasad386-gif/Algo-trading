@@ -310,6 +310,22 @@ def test_marking_auth_stale_forces_token_refresh_even_for_young_session():
     assert auth._force_fresh_session is False
 
 
+
+def test_reconnect_without_tokens_always_clears_single_flight_state(monkeypatch):
+    from threading import current_thread
+
+    client = MarketDataWebSocket(auth=make_auth())
+    client._reconnect_thread = current_thread()
+    client._is_reconnecting = True
+    client.exchange_type = None
+    client.tokens = []
+
+    client._reconnect_after_disconnect()
+
+    assert client._reconnect_thread is None
+    assert client._is_reconnecting is False
+
+
 def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
     import ssl
     from app.market_data import websocket as websocket_module
