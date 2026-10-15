@@ -13,7 +13,7 @@ class _Master:
         return self.rows
 
     def resolve_cash_instrument(self, underlying, exchange):
-        if underlying == "NO_CASH":
+        if underlying == "NO_CASH" or underlying.startswith("MISS"):
             raise LookupError("missing cash")
         return {"token": "cash-token", "symbol": f"{underlying}-EQ"}
 

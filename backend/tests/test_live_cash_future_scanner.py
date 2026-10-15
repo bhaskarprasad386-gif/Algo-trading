@@ -23,19 +23,16 @@ def test_live_scanner_pairs_same_second_cash_and_future():
 
 
 def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch):
-    # Leave headroom for test execution time while keeping the later 4s leg gap outside tolerance.
-    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 2.5)
+    # Keep the test deterministic and within receive/source freshness windows.
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 1.0)
     scanner = LiveCashFutureScanner()
-    # Align timestamps to a second boundary so cache-key proximity is
-    # deterministic, while all source timestamps remain recent enough.
-    base = ((int(time() * 1_000_000_000) - 4_000_000_000) // 1_000_000_000) * 1_000_000_000
+    base = ((int(time() * 1_000_000_000) - 2_000_000_000) // 1_000_000_000) * 1_000_000_000
 
-    # The initial legs differ by 1.9s and pair under the 2.5s tolerance.
-    # The later cash tick is only 0.9s from the bucket key but 2.8s from the
-    # actual future timestamp, exercising the actual-leg guard.
+    # Initial legs differ by 0.9s and pair. The later cash update is only
+    # 0.2s from the existing cache bucket but 1.1s from the future leg.
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100,
-        "source_timestamp_ns": base + 2_000_000_000,
+        "source_timestamp_ns": base + 1_000_000_000,
     }) is None
     first_pair = scanner.observe({
         "leg": "FUTURE", "underlying": "SYNC", "contract_month": "CURRENT",
@@ -44,14 +41,12 @@ def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch
     assert first_pair is not None
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100.5,
-        "source_timestamp_ns": base + 2_900_000_000,
+        "source_timestamp_ns": base + 1_200_000_000,
     }) is None
 
     health = scanner.health()
     assert health["pairs_outside_timestamp_tolerance"] == 1
     assert health["pairs"] == 1
-
-
 def test_live_scanner_rejects_pair_beyond_one_second():
     scanner = LiveCashFutureScanner()
     assert scanner.observe({
