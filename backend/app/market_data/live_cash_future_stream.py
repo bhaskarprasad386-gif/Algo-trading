@@ -7,7 +7,8 @@ forward-filled. Live orders are not involved.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time\nimport math
+from datetime import date, datetime, time
+import math
 import threading
 import time as time_module
 from typing import Any, Callable
