@@ -310,3 +310,29 @@ def test_runner_counts_timestamp_provenance_without_retaining_raw_payload():
     }
     assert "payload" not in snapshot["timestamp_diagnostics"]
     runner.stop()
+
+
+
+def test_cash_future_payload_uses_ingress_timestamp_not_callback_time():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored", manager=CommonWebSocketManager(socket_factory=lambda: object())
+    )
+    key = InstrumentKey("NSE", "NSE", "1")
+    tick = MarketDataRecord(
+        instrument=key,
+        symbol="ABC-EQ",
+        instrument_type=InstrumentType.EQUITY,
+        timestamp_ns=1_760_000_000_000_000_000,
+        ltp=100.0,
+        bid=99.9,
+        ask=100.0,
+        payload={"_received_at_ns": 1_760_000_000_123_456_789},
+    )
+    payload = runner._record_payload(
+        tick,
+        {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"},
+    )
+    assert payload["received_at_ns"] == 1_760_000_000_123_456_789
+    runner.stop()
