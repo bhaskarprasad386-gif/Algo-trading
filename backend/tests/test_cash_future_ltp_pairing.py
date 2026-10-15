@@ -19,6 +19,7 @@ def _pair(scanner, *, cash_book=True, future_book=True, cash_qty=1, future_qty=1
         "underlying": "ABC",
         "contract_month": "CURRENT",
         "ltp": 101.5,
+        "lot_size": 6000,
         "source_timestamp_ns": timestamp_ns,
         "received_at_ns": time.time_ns(),
         "volume": 0,
