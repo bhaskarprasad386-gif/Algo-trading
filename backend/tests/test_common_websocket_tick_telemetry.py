@@ -19,7 +19,7 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
     # Model an active socket generation as the production connect callback does.
     manager._sockets[group] = object()
     manager._socket_generation[group] = 1
-    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+    manager._normalizer.normalize = lambda _descriptor, _message, **_kwargs: SimpleNamespace(
         instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
     )
 
