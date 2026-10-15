@@ -538,6 +538,12 @@ class LiveCashFutureScanner:
                 self._increment_stat("dropped")
             return None
 
+        # Health must reflect the latest accepted observation. Previously this
+        # field was initialized but never updated, so a busy scanner could
+        # report last_observation_at=null despite receiving thousands of ticks.
+        with self._lock:
+            self._last_observation_ns = max(self._last_observation_ns or 0, received_at_ns)
+
         ltp = self._price(payload, "ltp")
         if ltp is None:
             ltp = self._price({"x": payload.get("last_traded_price")}, "x", 100.0)
