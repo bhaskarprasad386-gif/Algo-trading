@@ -16,24 +16,24 @@ def test_synthetic_index_scope_is_atm_plus_minus_fifteen():
 def test_synthetic_uses_executable_bid_ask_sides():
     ts = 1_000_000_000
     opts = [option(ts, float(k)) for k in range(90, 111)]
-    fut = FutureQuote(ts, "NIFTY", 20270101, 106.0, 108.0, 50, "INDEX", 100, 1000)
+    fut = FutureQuote(ts, "NIFTY", 20270101, 108.0, 109.0, 50, "INDEX", 100, 1000)
     results = scan_synthetic_snapshot(opts, fut, atm_strike=100.0,
                                       config=SyntheticScanConfig())
     assert results
     # LONG synthetic compares executable future bid with synthetic buy:
-    # strike + CE ask - PE bid = 95 for strike 90, so edge is 9.
+    # strike + CE ask - PE bid = 97 for strike 90, so edge is 11.
     long90 = next(r for r in results if r.strike_distance == 10 and r.strike_side == "LOWER" and r.direction == "LONG")
-    assert long90.executable_edge == 9.0
+    assert long90.executable_edge == 11.0
 
 
 def test_synthetic_threshold_filters_before_results():
     ts = 1_000_000_000
     opts = [option(ts, float(k)) for k in range(99, 102)]
-    fut = FutureQuote(ts, "NIFTY", 20270101, 115.0, 116.0, 50, "INDEX", 100, 1000)
+    fut = FutureQuote(ts, "NIFTY", 20270101, 117.0, 118.0, 50, "INDEX", 100, 1000)
     assert scan_synthetic_snapshot(opts, fut, atm_strike=100.0,
         config=SyntheticScanConfig(min_executable_edge=9.0))
     assert not scan_synthetic_snapshot(opts, fut, atm_strike=100.0,
-        config=SyntheticScanConfig(min_executable_edge=9.1))
+        config=SyntheticScanConfig(min_executable_edge=11.1))
 
 
 def test_synthetic_rejects_timestamp_mismatch():
