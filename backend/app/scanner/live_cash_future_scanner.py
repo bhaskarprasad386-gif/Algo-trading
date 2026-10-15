@@ -806,14 +806,17 @@ class LiveCashFutureScanner:
                 signal for signal in self._signals.values()
                 if signal.received_at_ns >= cutoff
             ]
-        # Emit every fresh synchronized LTP pair. Eligibility, bid/ask quality,
-        # liquidity, and stability remain informational fields rather than
-        # filters that hide the pair from the live scanner.
-        signals = list(fresh_signals)
+        # The ₹5,000 gross-lot threshold is a result-visibility rule only.
+        # Keep observing, pairing, tracking, and persisting every pair above;
+        # hide only rows whose (gap × lot_size) is not strictly greater than ₹5,000.
+        signals = [
+            signal for signal in fresh_signals
+            if signal.gross_lot_value is not None and signal.gross_lot_value > 5000.0
+        ]
         signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
         rank_scores = self._rank(signals)
         by_symbol: dict[str, list[LiveCashFutureSignal]] = {}
-        for signal in fresh_signals:
+        for signal in signals:
             by_symbol.setdefault(signal.symbol, []).append(signal)
 
         data: list[dict] = []
