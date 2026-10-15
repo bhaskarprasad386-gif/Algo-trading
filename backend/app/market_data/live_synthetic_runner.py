@@ -126,6 +126,7 @@ class LiveSyntheticRunner:
         self._atm_tracker: LiveSyntheticAtmTracker | None = None
         self._atm_provider = atm_provider
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
+        self._scanner: LiveSyntheticScanner | None = None
         self._refresh_requested = Event()
         self._stop_requested = Event()
         self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
@@ -328,27 +329,41 @@ class LiveSyntheticRunner:
         else:
             return
 
-        feed = self._ensure_underlying_feed()
-        if feed is None:
-            sleep(30.0)
-            return
+        feed = None
         feed_thread = None
-        self._active_underlying_feed = feed
-        if feed is not None:
-            feed_thread = Thread(
-                target=feed.run_forever,
-                daemon=True,
-                name="synthetic-underlying-feed",
-            )
-            feed_thread.start()
+        self._active_underlying_feed = None
         try:
             while not self._stop_requested.is_set():
+                # Keep this market-hours gate local to Synthetic; the shared feed
+                # manager and other scanner consumers are not modified.
+                if not LiveSyntheticOptionFutureRecorder.market_open():
+                    self._stop_requested.wait(30.0)
+                    continue
+                if feed is None:
+                    feed = self._ensure_underlying_feed()
+                    if feed is None:
+                        self._stop_requested.wait(30.0)
+                        continue
+                    self._active_underlying_feed = feed
+                    feed_thread = Thread(
+                        target=feed.run_forever,
+                        daemon=True,
+                        name="synthetic-underlying-feed",
+                    )
+                    feed_thread.start()
                 try:
                     self._wait_for_live_atm(atm_provider)
                     break
                 except TimeoutError as exc:
-                    app_logger.warning("Synthetic live underlying feed timeout; retrying: {}", exc)
-                    sleep(5.0)
+                    if LiveSyntheticOptionFutureRecorder.market_open():
+                        app_logger.warning("Synthetic live underlying feed timeout; retrying: {}", exc)
+                        self._stop_requested.wait(5.0)
+                    else:
+                        app_logger.info("Synthetic underlying price wait paused outside market hours")
+                        feed.stop()
+                        feed = None
+                        feed_thread = None
+                        self._active_underlying_feed = None
             if self._stop_requested.is_set():
                 return
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
@@ -367,6 +382,7 @@ class LiveSyntheticRunner:
                     atm_provider=atm_provider,
                     config_provider=self.scan_config_provider,
                 )
+                self._scanner = scanner
                 pipeline = self._build_pipeline(scanner)
                 initial_atm = {
                     target.underlying: atm_provider(
@@ -418,6 +434,7 @@ class LiveSyntheticRunner:
             "targets": len(self.targets),
             "underlying_feed": None if feed is None else feed.snapshot(),
             "option_recorder": None if recorder is None else recorder.snapshot(),
+            "scanner_diagnostics": None if self._scanner is None else self._scanner.diagnostics_snapshot(),
         }
 
     def stop(self) -> None:

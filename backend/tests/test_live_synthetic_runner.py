@@ -303,6 +303,11 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
 
     monkeypatch.setattr(runner, "_wait_for_live_atm", fake_wait)
     monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
+        staticmethod(lambda now=None: True),
+    )
+    monkeypatch.setattr(runner._stop_requested, "wait", lambda _seconds: None)
+    monkeypatch.setattr(
         "app.market_data.live_synthetic_runner.sleep",
         lambda seconds: None,
     )
@@ -318,3 +323,30 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
     # The timeout must be retried; it must not terminate the runner on the first failure.
     runner.run_forever()
     assert calls["wait"] == 2
+
+
+
+def test_runner_waits_outside_market_hours_without_starting_synthetic_feed(monkeypatch):
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: None,
+    )
+    created = []
+    monkeypatch.setattr(
+        runner,
+        "_ensure_underlying_feed",
+        lambda: created.append(True),
+    )
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
+        staticmethod(lambda now=None: False),
+    )
+    monkeypatch.setattr(runner._stop_requested, "wait", lambda _seconds: runner.stop())
+
+    runner.run_forever()
+
+    assert created == []
+    assert runner.stop_event.is_set()
