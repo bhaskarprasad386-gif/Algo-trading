@@ -14,7 +14,7 @@ class ScanPolicy:
     stock_box_distances: tuple[int, ...] = (3, 4, 5)
     index_box_distances: tuple[int, ...] = tuple(range(3, 16))
     stock_synthetic_radius: int = 7
-    index_synthetic_radius: int = 10
+    index_synthetic_radius: int = 15
     commodity_synthetic_radius: int = 10
 
     def box_distances(self, instrument_class: InstrumentClass) -> tuple[int, ...]:
@@ -64,7 +64,26 @@ def enumerate_synthetic_strikes(strikes: Iterable[float], *, atm_strike: float,
                                 instrument_class: InstrumentClass,
                                 policy: ScanPolicy | None = None) -> tuple[tuple[float, int, Literal["LOWER","ATM","UPPER"]], ...]:
     policy = policy or ScanPolicy()
-    ordered = ordered_strikes_around_atm(strikes, atm_strike=atm_strike)
+    ordered = tuple(sorted(set(float(s) for s in strikes)))
+    if not ordered:
+        raise ValueError("option chain must contain at least one strike")
+
+    # Index synthetic scope is deliberately bounded: inspect at most the 15
+    # nearest actual listed strikes below ATM and 15 above ATM. Liquidity and
+    # opportunity checks happen downstream; they do not force a fixed result count.
+    # ATM need not itself be a listed strike. Never synthesize missing strikes.
+    if instrument_class == "INDEX":
+        atm = float(atm_strike)
+        lower = [strike for strike in ordered if strike < atm][-15:]
+        upper = [strike for strike in ordered if strike > atm][:15]
+        result = [(strike, len(lower) - index, "LOWER")
+                  for index, strike in enumerate(lower)]
+        result += [(strike, 0, "ATM") for strike in ordered if strike == atm]
+        result += [(strike, index + 1, "UPPER") for index, strike in enumerate(upper)]
+        return tuple(result)
+
+    # Stock scope deliberately retains its existing fixed actual-chain radius.
+    ordered = ordered_strikes_around_atm(ordered, atm_strike=atm_strike)
     atm_index = ordered.index(float(atm_strike))
     radius = policy.synthetic_radius(instrument_class)
     result = []

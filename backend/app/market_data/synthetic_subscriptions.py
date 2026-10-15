@@ -86,6 +86,9 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
         if not expiry_options:
             continue
         actual_strikes = sorted({_strike(x.get("strike")) for x in expiry_options})
+        # Bound subscriptions to the configured actual-strike window. Index:
+        # up to 15 listed strikes on each side of ATM; stock: existing +/-7.
+        # Liquidity/opportunity filtering happens on live CE+PE quotes downstream.
         selected = enumerate_synthetic_strikes(actual_strikes, atm_strike=float(atm_strike),
                                                instrument_class=cls, policy=policy or ScanPolicy())
         selected_strikes = {strike for strike, _, _ in selected}

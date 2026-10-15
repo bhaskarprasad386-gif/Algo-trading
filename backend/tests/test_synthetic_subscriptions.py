@@ -9,21 +9,38 @@ def _master(items):
     return master
 
 
-def test_index_selection_uses_actual_strikes_with_locked_plus_minus_10():
+def test_index_selection_subscribes_actual_chain_for_liquidity_selection():
     items = [
         {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"FUTIDX","expiry":"29OCT2026","token":"900","symbol":"NIFTY29OCT26FUT","lotsize":"65"},
         *[
-            {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"OPTIDX","expiry":"29OCT2026","token":str(i),"symbol":f"NIFTY{i}CE","strike":str(2400000+i*5000),"lotsize":"65"}
-            for i in range(1, 32)
+            {
+                "exch_seg":"NFO",
+                "name":"NIFTY",
+                "instrumenttype":"OPTIDX",
+                "expiry":"29OCT2026",
+                "token":str(i * 2 + offset),
+                "symbol":f"NIFTY{24000 + i * 50}{option_type}",
+                "strike":str(2400000+i*5000),
+                "lotsize":"65",
+            }
+            for i in range(1, 62)
+            for option_type, offset in (("CE", 0), ("PE", 1))
         ],
     ]
     selected = select_synthetic_contracts(
-        _master(items), underlying="NIFTY", instrument_class="INDEX", atm_strike=24150.0,
+        _master(items), underlying="NIFTY", instrument_class="INDEX", atm_strike=25550.0,
         expiry="29OCT2026",
     )
-    strikes = {x.strike for x in selected.subscriptions if x.strike is not None}
-    assert strikes
-    assert max(abs(s-24150.0) for s in strikes) <= 10 * 50
+    options = [x for x in selected.subscriptions if x.option_type in {"CE", "PE"}]
+    strikes = {x.strike for x in options if x.strike is not None}
+    assert len(strikes) == 31  # 15 actual strikes per side plus ATM
+    assert len(options) == 62  # Angel CE + PE token for every selected strike
+    assert {x.option_type for x in options} == {"CE", "PE"}
+    assert 25550.0 in strikes
+    assert min(strikes) == 24800.0
+    assert max(strikes) == 26300.0
+    for strike in strikes:
+        assert {x.option_type for x in options if x.strike == strike} == {"CE", "PE"}
 
 
 def test_stock_selection_requires_configured_nifty50_universe():
