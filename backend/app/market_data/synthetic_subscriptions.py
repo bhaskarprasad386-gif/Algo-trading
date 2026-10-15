@@ -86,16 +86,12 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
         if not expiry_options:
             continue
         actual_strikes = sorted({_strike(x.get("strike")) for x in expiry_options})
-        if cls == "INDEX":
-            # Subscribe the actual listed index chain, not only ATM +/- 10.
-            # Live liquidity is not known at subscription-build time; the scanner
-            # chooses up to ten executable CE+PE pairs per side and can use farther
-            # real strikes when nearer strikes are illiquid.
-            selected_strikes = set(actual_strikes)
-        else:
-            selected = enumerate_synthetic_strikes(actual_strikes, atm_strike=float(atm_strike),
-                                                   instrument_class=cls, policy=policy or ScanPolicy())
-            selected_strikes = {strike for strike, _, _ in selected}
+        # Bound subscriptions to the configured actual-strike window. Index:
+        # up to 15 listed strikes on each side of ATM; stock: existing +/-7.
+        # Liquidity/opportunity filtering happens on live CE+PE quotes downstream.
+        selected = enumerate_synthetic_strikes(actual_strikes, atm_strike=float(atm_strike),
+                                               instrument_class=cls, policy=policy or ScanPolicy())
+        selected_strikes = {strike for strike, _, _ in selected}
         for item in expiry_options:
             if _strike(item.get("strike")) not in selected_strikes:
                 continue
