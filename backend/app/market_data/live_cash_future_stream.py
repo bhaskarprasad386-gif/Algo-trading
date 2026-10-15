@@ -7,7 +7,7 @@ forward-filled. Live orders are not involved.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time\nimport math
 import threading
 import time as time_module
 from typing import Any, Callable
@@ -223,19 +223,28 @@ class LiveCashFutureOneSecondCollector:
 
     @staticmethod
     def _best_side_detail(message: dict[str, Any], key: str) -> tuple[float | None, float | None]:
+        """Return the first usable depth price; malformed top levels must not hide valid depth."""
         levels = message.get(key)
-        if not isinstance(levels, list) or not levels or not isinstance(levels[0], dict):
+        if not isinstance(levels, list):
             return None, None
-        level = levels[0]
-        try:
-            value = float(level.get("price")) / 100.0
-        except (TypeError, ValueError):
-            value = 0.0
-        try:
-            quantity = float(level.get("quantity"))
-        except (TypeError, ValueError):
-            quantity = 0.0
-        return (value if value > 0 else None, quantity if quantity > 0 else None)
+        for level in levels:
+            if not isinstance(level, dict):
+                continue
+            try:
+                raw_price = float(level.get("price"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            # SmartAPI depth prices are paise; normalize to rupees once.
+            value = raw_price / 100.0
+            if not math.isfinite(value) or value <= 0:
+                continue
+            try:
+                raw_quantity = float(level.get("quantity"))
+            except (TypeError, ValueError, OverflowError):
+                raw_quantity = 0.0
+            quantity = raw_quantity if math.isfinite(raw_quantity) and raw_quantity > 0 else None
+            return value, quantity
+        return None, None
 
     @staticmethod
     def _best_side(message: dict[str, Any], key: str) -> float | None:
