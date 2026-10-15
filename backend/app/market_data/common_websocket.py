@@ -95,16 +95,16 @@ def connect_with_shared_broker_admission(
     with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
         if not _wait_for_shared_broker_connect_admission(should_stop):
             return False
-    # Admission may have waited; honor cancellation again before starting I/O.
-    if should_stop is not None and should_stop():
-        return False
-    # Do not hold broker-wide admission while a transport runs indefinitely.
-    try:
-        socket.connect(**connect_kwargs)
-    except Exception as exc:
-        if apply_shared_broker_cooldown(exc, cooldown_seconds):
-            _mark_socket_auth_stale(socket)
-        raise
+        # MarketDataWebSocket.connect returns on handshake success/failure; its
+        # run_forever loop now lives in a separate tracked transport thread.
+        if should_stop is not None and should_stop():
+            return False
+        try:
+            socket.connect(**connect_kwargs)
+        except Exception as exc:
+            if apply_shared_broker_cooldown(exc, cooldown_seconds):
+                _mark_socket_auth_stale(socket)
+            raise
     return True
 
 
@@ -491,9 +491,9 @@ class CommonWebSocketManager:
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
-                # Serialize admission/pacing only, never the transport lifetime.
-                # Production SDK connect() can block in run_forever(); keeping the
-                # global lock around it starves other shards and direct collectors.
+                # Keep broker-wide admission through handshake success/failure.
+                # MarketDataWebSocket.connect now starts run_forever in a tracked
+                # thread and returns once the handshake outcome is known.
                 with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
                     def _still_current() -> bool:
                         with self._lock:
@@ -513,18 +513,12 @@ class CommonWebSocketManager:
                     if not _still_current():
                         self._close_socket_bounded(socket)
                         return
-                # Admission timestamp/cooldown was reserved above. The lock is
-                # deliberately released before connect() so a blocked transport
-                # cannot prevent another shard from being admitted.
-                if not _still_current():
-                    self._close_socket_bounded(socket)
-                    return
-                try:
-                    socket.connect(**connect_kwargs)
-                except Exception as connect_exc:
-                    if self._apply_broker_cooldown(connect_exc):
-                        _mark_socket_auth_stale(socket)
-                    raise
+                    try:
+                        socket.connect(**connect_kwargs)
+                    except Exception as connect_exc:
+                        if self._apply_broker_cooldown(connect_exc):
+                            _mark_socket_auth_stale(socket)
+                        raise
                 # A timed-out connect worker can finish after recovery has
                 # already installed a replacement. Never leave that late,
                 # successfully connected socket alive as an orphan session.
