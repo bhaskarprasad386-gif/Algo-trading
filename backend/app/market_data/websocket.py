@@ -120,11 +120,26 @@ class MarketDataWebSocket:
         # Keep a bounded failure path without invalidating healthy sockets too eagerly.
         self._socket_operation_timeout_seconds = 5.0
         self._connecting = False
+        self._transport_thread: Thread | None = None
+        self._transport_close_timed_out = False
+        self._initial_subscribe_success: bool | None = None
 
     @property
     def health(self) -> dict:
         with self._lock:
-            return {"connected": self._connected, "stopping": self._stopping, "error_count": self._error_count, "reconnect_count": self._reconnect_count, "consecutive_failures": self._consecutive_failures, "last_error": self._last_error}
+            transport_thread = self._transport_thread
+            return {
+                "connected": self._connected,
+                "connecting": self._connecting,
+                "stopping": self._stopping,
+                "error_count": self._error_count,
+                "reconnect_count": self._reconnect_count,
+                "consecutive_failures": self._consecutive_failures,
+                "last_error": self._last_error,
+                "transport_thread_alive": bool(transport_thread and transport_thread.is_alive()),
+                "transport_close_timed_out": self._transport_close_timed_out,
+                "initial_subscribe_success": self._initial_subscribe_success,
+            }
 
     @property
     def connecting(self) -> bool:
@@ -195,6 +210,7 @@ class MarketDataWebSocket:
             with self._lock:
                 self._connected = True
                 self._connecting = False
+                self._initial_subscribe_success = None
             with self._lock:
                 self._consecutive_failures = 0
                 self._last_error = None
@@ -275,7 +291,11 @@ class MarketDataWebSocket:
         finished = completed.wait(timeout=max(0.01, self._socket_operation_timeout_seconds))
         error = failure.get("exception")
         if finished and error is None:
+            with self._lock:
+                self._initial_subscribe_success = True
             return
+        with self._lock:
+            self._initial_subscribe_success = False
         if not finished:
             reason = f"initial subscribe exceeded {self._socket_operation_timeout_seconds:.2f}s"
         else:
@@ -514,16 +534,39 @@ class MarketDataWebSocket:
             socket.unsubscribe(correlation_id, current_mode, [{"exchangeType": exchange_type, "tokens": normalized}])
 
     def close(self):
-        """Stop the socket and disable reconnect/start attempts."""
+        """Stop reconnects, close the SDK socket, and verify transport termination."""
         with self._lock:
             self._stopping = True
             self._connected = False
             self._connecting = False
             socket = self.websocket
             self.websocket = None
+            transport_thread = self._transport_thread
+        close_error = None
         if socket:
             try:
                 socket.close_connection()
-            finally:
-                pass
-        app_logger.info("Angel One WebSocket closed")
+            except Exception as exc:
+                close_error = exc
+        # close_connection can return while run_forever is still unwinding.
+        # Wait only a bounded interval and expose an orphan transport rather than
+        # silently treating registry removal as proof that the broker session died.
+        if (
+            transport_thread is not None
+            and transport_thread is not current_thread()
+            and transport_thread.is_alive()
+        ):
+            transport_thread.join(timeout=1.0)
+        still_alive = bool(transport_thread and transport_thread.is_alive())
+        with self._lock:
+            self._transport_close_timed_out = still_alive
+            if not still_alive:
+                self._transport_thread = None
+        if still_alive:
+            app_logger.error(
+                "Angel WebSocket transport did not terminate within close timeout; "
+                "possible orphan broker session"
+            )
+        if close_error is not None:
+            raise close_error
+        app_logger.info("Angel One WebSocket closed transport_alive=%s", still_alive)
