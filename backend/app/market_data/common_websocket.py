@@ -160,6 +160,10 @@ class CommonWebSocketManager:
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
+        # Keep transport activity, successful routing, and consumer delivery as
+        # separate clocks; a mapping/callback issue must not masquerade as a dead socket.
+        self._last_raw_frame_at_by_group: dict[SocketGroup, float] = {}
+        self._last_successful_route_at: dict[SocketGroup, float] = {}
         self._last_data_at: dict[SocketGroup, float] = {}
         # None means this socket generation has not delivered a tick to any consumer yet.
         self._last_successful_delivery_at: dict[SocketGroup, float | None] = {}
@@ -341,6 +345,8 @@ class CommonWebSocketManager:
                     self._socket_tokens.pop(group, None)
                     self._socket_created_at.pop(group, None)
                     self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                     self._last_successful_delivery_at.pop(group, None)
                     self._socket_generation.pop(group, None)
 
@@ -374,6 +380,8 @@ class CommonWebSocketManager:
                                 self._socket_tokens.pop(group, None)
                                 self._socket_created_at.pop(group, None)
                                 self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                                 self._last_successful_delivery_at.pop(group, None)
                                 self._socket_generation.pop(group, None)
                         self._close_socket_bounded(socket)
@@ -395,6 +403,8 @@ class CommonWebSocketManager:
                         self._socket_tokens[group] = set(pairs)
                         now = time.monotonic()
                         self._socket_created_at[group] = now
+                        self._last_raw_frame_at_by_group[group] = now
+                        self._last_successful_route_at.pop(group, None)
                         self._last_data_at[group] = now
                         self._last_successful_delivery_at[group] = None
                     self._start_socket_connect(
@@ -550,6 +560,8 @@ class CommonWebSocketManager:
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
                         self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                         self._last_successful_delivery_at.pop(group, None)
                         self._socket_generation.pop(group, None)
                     self._connect_failures += 1
@@ -616,6 +628,8 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
                 self._socket_failure_events += 1
@@ -705,6 +719,8 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
 
@@ -855,6 +871,8 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_raw_frame_at_by_group.pop(group, None)
+                self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
@@ -907,7 +925,9 @@ class CommonWebSocketManager:
             if group not in self._sockets:
                 return
             self._raw_frames_received += 1
-            self._last_raw_frame_at = time.monotonic()
+            frame_at = time.monotonic()
+            self._last_raw_frame_at = frame_at
+            self._last_raw_frame_at_by_group[group] = frame_at
             if not isinstance(message, dict):
                 self._invalid_frame_types += 1
                 return
@@ -976,6 +996,7 @@ class CommonWebSocketManager:
             )
             if matching:
                 self._ticks_received += 1
+                self._last_successful_route_at[group] = time.monotonic()
                 routed_exchange_type = (
                     exchange_type
                     if exchange_type is not None
@@ -1122,6 +1143,16 @@ class CommonWebSocketManager:
                     max(0.0, time.monotonic() - self._last_raw_frame_at)
                     if self._last_raw_frame_at is not None else None
                 ),
+                "last_raw_frame_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": max(0.0, time.monotonic() - at)
+                    for group, at in self._last_raw_frame_at_by_group.items()
+                    if group in sockets
+                },
+                "last_successful_route_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": max(0.0, time.monotonic() - at)
+                    for group, at in self._last_successful_route_at.items()
+                    if group in sockets
+                },
                 "last_successful_delivery_age_seconds_by_group": {
                     f"{group.mode}:{group.shard}": (
                         None if delivered_at is None
@@ -1168,6 +1199,8 @@ class CommonWebSocketManager:
                 self._sockets.clear()
                 self._socket_tokens.clear()
                 self._socket_created_at.clear()
+                self._last_raw_frame_at_by_group.clear()
+                self._last_successful_route_at.clear()
                 self._last_data_at.clear()
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
