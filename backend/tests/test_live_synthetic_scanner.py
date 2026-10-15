@@ -260,8 +260,10 @@ def test_live_synthetic_scanner_waits_up_to_three_seconds_for_missing_leg_quote(
     assert scanner.observe(pe_ltp) == ()
     assert scanner.diagnostics_snapshot()["counters"]["waiting_for_executable_quote"] >= 1
 
-    ce_quote = {**ce_ltp, "bid": 1.0, "ask": 2.0}
-    pe_quote = {**pe_ltp, "bid": 1.0, "ask": 2.0}
+    # The executable book may arrive later; it must complete the original LTP
+    # candidate within three seconds without being treated as a new unmatched leg.
+    ce_quote = {**ce_ltp, "bid": 1.0, "ask": 2.0, "source_timestamp_ns": ts + 2_500_000_000}
+    pe_quote = {**pe_ltp, "bid": 1.0, "ask": 2.0, "source_timestamp_ns": ts + 2_500_000_000}
     assert scanner.observe(ce_quote) == ()
     result = scanner.observe(pe_quote)
     assert result
