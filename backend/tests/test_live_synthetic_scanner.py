@@ -201,3 +201,70 @@ def test_live_synthetic_scanner_rejects_non_mapping_payload():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     assert scanner.observe(None) == ()
     assert scanner.diagnostics_snapshot()["counters"]["invalid_payload_or_scope"] == 1
+
+
+def test_live_synthetic_scanner_waits_for_all_three_legs_in_any_arrival_order():
+    ts = 8_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts + 10, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    }
+    ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"}
+    pe = {**_base(ts + 5, 105.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"}
+
+    # Future can arrive first; it remains pending until CE and PE complete the triplet.
+    assert scanner.observe(future) == ()
+    assert scanner.observe(ce) == ()
+    result = scanner.observe(pe)
+    assert result
+    assert result[0].option.strike == 105.0
+    assert result[0].option.timestamp_ns == ts + 10
+    assert result[0].future.timestamp_ns == ts + 10
+
+
+def test_live_synthetic_scanner_skips_timestamp_mismatched_strike_without_blocking_valid_strike():
+    ts = 9_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 95.0)
+    # The 100 strike is synchronized and complete; the 105 strike has an old CE.
+    scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
+    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"})
+    scanner.observe({**_base(ts - 900_000_000, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
+    scanner.observe({**_base(ts + 900_000_000, 105.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"})
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "29OCT2026", "bid": 115.0, "ask": 116.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    # A bad pair is skipped independently; it cannot invalidate the good 100 strike.
+    assert result
+    assert all(r.option.strike == 100.0 for r in result)
+    assert scanner.diagnostics_snapshot()["counters"]["timestamp_mismatch"] >= 1
+
+
+
+def test_live_synthetic_scanner_waits_up_to_three_seconds_for_missing_leg_quote():
+    ts = 10_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    }
+    ce_ltp = {**_base(ts, 105.0, "CE", None, None), "expiry": "29OCT2026", "ltp": 1.0}
+    pe_ltp = {**_base(ts, 105.0, "PE", None, None), "expiry": "29OCT2026", "ltp": 1.0}
+
+    assert scanner.observe(future) == ()
+    assert scanner.observe(ce_ltp) == ()
+    assert scanner.observe(pe_ltp) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["waiting_for_executable_quote"] >= 1
+
+    # The executable book may arrive later; it must complete the original LTP
+    # candidate within three seconds without being treated as a new unmatched leg.
+    ce_quote = {**ce_ltp, "bid": 1.0, "ask": 2.0, "source_timestamp_ns": ts + 2_500_000_000}
+    pe_quote = {**pe_ltp, "bid": 1.0, "ask": 2.0, "source_timestamp_ns": ts + 2_500_000_000}
+    assert scanner.observe(ce_quote) == ()
+    result = scanner.observe(pe_quote)
+    assert result
+    assert result[0].option.strike == 105.0
