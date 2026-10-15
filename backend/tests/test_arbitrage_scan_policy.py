@@ -79,7 +79,7 @@ def test_index_synthetic_selection_takes_ten_actual_liquid_candidates_per_side_w
     upper = [(strike, distance) for strike, distance, side in selected if side == "UPPER"]
     assert len(lower) == 10
     assert len(upper) == 10
-    assert lower[0] == (55.0, 10)
-    assert lower[-1] == (100.0 - 5.0, 1)
+    assert lower[0] == (50.0, 10)
+    assert lower[-1] == (95.0, 1)
     assert upper[0] == (105.0, 1)
     assert upper[-1] == (150.0, 10)
