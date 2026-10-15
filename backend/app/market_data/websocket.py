@@ -410,20 +410,41 @@ class MarketDataWebSocket:
                     return
             try:
                 self.websocket = self._build_socket()
+                self._transport_thread = None
+                self._transport_close_timed_out = False
                 self.websocket.connect()
+                # The SDK transport belongs to the underlying SmartWebSocketV2
+                # instance, while this wrapper owns its lifecycle. Retain the
+                # actual thread reference so close() can verify termination.
                 with self._lock:
+                    self._transport_thread = getattr(self.websocket, "_transport_thread", None)
                     # on_open may report initial-subscription failure before connect returns.
                     if self._connected and self._last_error is None:
                         self._consecutive_failures = 0
                 return
             except Exception as exc:
                 last_error = exc
+                sdk_socket = self.websocket
+                transport_thread = getattr(sdk_socket, "_transport_thread", None) if sdk_socket else None
                 with self._lock:
+                    self._transport_thread = transport_thread
                     self._connected = False
                     self._connecting = False
                     self._error_count += 1
                     self._consecutive_failures += 1
                     self._last_error = str(exc)
+                # Failed handshakes can leave run_forever unwinding after connect()
+                # raises. Request SDK close and wait boundedly before another attempt.
+                if sdk_socket is not None:
+                    try:
+                        sdk_socket.close_connection()
+                    except Exception:
+                        pass
+                if transport_thread is not None and transport_thread is not current_thread():
+                    transport_thread.join(timeout=1.0)
+                if transport_thread is not None and transport_thread.is_alive():
+                    with self._lock:
+                        self._transport_close_timed_out = True
                 app_logger.error(f"WebSocket connection attempt {attempt + 1} failed: {exc}")
                 if attempt < reconnect_attempts:
                     time.sleep(reconnect_delay_seconds * (attempt + 1))
