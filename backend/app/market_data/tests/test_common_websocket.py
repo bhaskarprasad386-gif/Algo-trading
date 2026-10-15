@@ -1161,3 +1161,48 @@ def test_reconcile_replaces_known_disconnected_socket_before_subscription_update
         assert set(manager._socket_tokens[SocketGroup(1, 0)]) == {(1, "101"), (1, "102")}
     finally:
         manager.close()
+
+
+class BlockingConnectAcrossShardsSocket(FakeSocket):
+    first_started = Event()
+    release_first = Event()
+    connect_order = []
+
+    def connect(self, **kwargs):
+        type(self).connect_order.append(len(type(self).connect_order))
+        if len(type(self).connect_order) == 1:
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            type(self).first_started.set()
+            type(self).release_first.wait(timeout=3.0)
+            self.connecting = False
+            self.connected = True
+            return
+        super().connect(**kwargs)
+
+
+def test_blocking_transport_does_not_hold_global_admission_for_other_shard():
+    registry = InstrumentRegistry()
+    items = [descriptor("601"), descriptor("602")]
+    registry.register_many(items)
+    BlockingConnectAcrossShardsSocket.first_started.clear()
+    BlockingConnectAcrossShardsSocket.release_first.clear()
+    BlockingConnectAcrossShardsSocket.connect_order.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingConnectAcrossShardsSocket)
+    manager._max_tokens_per_socket = 1
+    manager._connect_call_wait_seconds = 0.05
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key for item in items])
+        assert BlockingConnectAcrossShardsSocket.first_started.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if len(BlockingConnectAcrossShardsSocket.connect_order) >= 2:
+                break
+            time.sleep(0.01)
+        assert len(BlockingConnectAcrossShardsSocket.connect_order) >= 2, (
+            "a blocked first shard must not hold broker admission and starve the next shard"
+        )
+    finally:
+        BlockingConnectAcrossShardsSocket.release_first.set()
+        manager.close()
