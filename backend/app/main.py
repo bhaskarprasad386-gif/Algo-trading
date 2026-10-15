@@ -31,7 +31,7 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -677,7 +677,7 @@ async def _live_box_spread_loop() -> None:
             name = str(item.get("name", "")).strip().upper()
             if not name:
                 continue
-            if typ == "FUTSTK" and name in NIFTY50_STOCK_SYMBOLS:
+            if typ == "FUTSTK" and name in TOP15_LIQUID_STOCK_SYMBOLS:
                 stock_symbols.add(name)
             elif typ == "FUTIDX" and ((segment == "NFO" and name in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"}) or (segment == "BFO" and name in BSE_BOX_INDEX_SYMBOLS)):
                 index_symbols.add(name)
