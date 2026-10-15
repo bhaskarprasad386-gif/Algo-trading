@@ -313,7 +313,7 @@ def test_live_scanner_history_keeps_100_unique_pairs_when_one_pair_is_very_activ
     engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-adversarial.sqlite3'}")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
     with Session() as db:
         for index in range(1000):
             db.add(LiveCashFutureScannerResult(
