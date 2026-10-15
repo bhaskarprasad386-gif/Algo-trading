@@ -748,9 +748,12 @@ class CommonWebSocketManager:
                     "Common feed failure-triggered recovery failed group=%s; supervisor will retry: %s",
                     group, exc,
                 )
-            finally:
-                with self._lock:
-                    self._failure_recovery_groups.discard(group)
+                # Only clear a failed generation's marker when no replacement
+                # has become current. Never erase a newer generation's failure.
+                with self._reconcile_lock:
+                    with self._lock:
+                        if group not in self._sockets:
+                            self._failure_recovery_groups.discard(group)
 
         def _recover() -> None:
             try:
