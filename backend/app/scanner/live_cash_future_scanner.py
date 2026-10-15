@@ -91,6 +91,7 @@ class LiveCashFutureScanner:
             "out_of_order_updates": 0, "out_of_order_same_second": 0,
             "out_of_order_older_second": 0, "out_of_order_lag_ns_total": 0,
             "out_of_order_lag_ns_max": 0, "cache_evictions": 0,
+            "pairs_outside_timestamp_tolerance": 0,
         }
         self._last_observation_ns: int | None = None
         self._pair_events: deque[dict] = deque(maxlen=2000)
@@ -626,6 +627,13 @@ class LiveCashFutureScanner:
                 or now_ns - int(future.get("received_at_ns") or 0) > pair_max_age_ns
             ):
                 self._increment_stat("stale_quotes")
+                self._increment_stat("dropped")
+                return None
+            # Cache-bucket proximity is only a lookup aid. Validate the actual
+            # timestamps of the selected legs so opposite-side updates near
+            # opposite edges of a bucket cannot create a pair beyond tolerance.
+            if abs(int(cash.get("timestamp_ns") or 0) - int(future.get("timestamp_ns") or 0)) > tolerance_ns:
+                self._increment_stat("pairs_outside_timestamp_tolerance")
                 self._increment_stat("dropped")
                 return None
             self._increment_stat("pairs")
