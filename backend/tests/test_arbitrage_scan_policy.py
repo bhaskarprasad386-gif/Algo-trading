@@ -70,3 +70,16 @@ def test_synthetic_index_and_commodity_radii_are_ten():
     strikes = tuple(range(50, 151))
     assert max(d for _, d, _ in enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="INDEX")) == 10
     assert max(d for _, d, _ in enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="COMMODITY")) == 10
+
+
+def test_index_synthetic_selection_takes_ten_actual_liquid_candidates_per_side_without_atm():
+    strikes = [float(value) for value in range(50, 151, 5) if value != 100]
+    selected = enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="INDEX")
+    lower = [(strike, distance) for strike, distance, side in selected if side == "LOWER"]
+    upper = [(strike, distance) for strike, distance, side in selected if side == "UPPER"]
+    assert len(lower) == 10
+    assert len(upper) == 10
+    assert lower[0] == (55.0, 10)
+    assert lower[-1] == (100.0 - 5.0, 1)
+    assert upper[0] == (105.0, 1)
+    assert upper[-1] == (150.0, 10)
