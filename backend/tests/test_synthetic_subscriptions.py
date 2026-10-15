@@ -17,7 +17,7 @@ def test_index_selection_subscribes_actual_chain_for_liquidity_selection():
                 "exch_seg":"NFO",
                 "name":"NIFTY",
                 "instrumenttype":"OPTIDX",
-                "expiry":"22OCT2026",
+                "expiry":"29OCT2026",
                 "token":str(i * 2 + offset),
                 "symbol":f"NIFTY{24000 + i * 50}{option_type}",
                 "strike":str(2400000+i*5000),
@@ -29,7 +29,7 @@ def test_index_selection_subscribes_actual_chain_for_liquidity_selection():
     ]
     selected = select_synthetic_contracts(
         _master(items), underlying="NIFTY", instrument_class="INDEX", atm_strike=25550.0,
-        expiry="22OCT2026",
+        expiry="29OCT2026",
     )
     options = [x for x in selected.subscriptions if x.option_type in {"CE", "PE"}]
     strikes = {x.strike for x in options if x.strike is not None}
@@ -41,6 +41,17 @@ def test_index_selection_subscribes_actual_chain_for_liquidity_selection():
     assert max(strikes) == 26300.0
     for strike in strikes:
         assert {x.option_type for x in options if x.strike == strike} == {"CE", "PE"}
+
+    # Regression: a weekly chain must never be accepted against the monthly future.
+    try:
+        select_synthetic_contracts(
+            _master(items), underlying="NIFTY", instrument_class="INDEX",
+            atm_strike=25550.0, expiry="22OCT2026",
+        )
+    except LookupError as exc:
+        assert "does not match current future expiry" in str(exc)
+    else:
+        raise AssertionError("weekly options must not be paired with a monthly future")
 
 
 def test_stock_selection_requires_configured_top15_liquid_universe():
