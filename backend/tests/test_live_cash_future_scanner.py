@@ -445,8 +445,8 @@ def test_live_scanner_breaks_down_stale_receive_timestamp_reasons():
     assert health["stale_receive_timestamp_old"] == 1
     assert health["stale_receive_timestamp_future"] == 1
     assert health["stale_receive_timestamp_invalid"] == 1
+    # Aggregate stale count includes all three rejected observations.
     assert health["stale_quotes"] == 3
-    assert health["stale_quotes"] == 1
 
 
 
