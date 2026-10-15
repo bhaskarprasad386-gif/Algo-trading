@@ -93,7 +93,11 @@ class LiveSyntheticUnderlyingFeed:
         return value * 1_000
 
     def _tokens(self) -> dict[str, str]:
-        self.instrument_master.download()
+        # Authoritative concrete tokens need no instrument-master lookup. Avoid
+        # blocking feed startup on an unnecessary external download when every
+        # requested underlying already has its broker token.
+        if any(not self.concrete_tokens.get(symbol) for symbol in self.symbols):
+            self.instrument_master.download()
         result = {}
         for symbol in self.symbols:
             try:

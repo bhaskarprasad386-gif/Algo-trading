@@ -105,7 +105,7 @@ def cash_future_live_fast_scanner(
     # Visibility-only threshold: keep every synchronized pair in scanner state
     # and persistence tracking, but show only pairs whose gross gap value per
     # lot exceeds ₹5,000. Do not apply this as an observation/pairing gate.
-    candidates = live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=500)
+    candidates = live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=5000)
     visible = [
         item for item in candidates
         if item.get("gross_lot_value") is not None
