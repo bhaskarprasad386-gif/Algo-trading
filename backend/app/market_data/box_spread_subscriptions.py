@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from app.backtesting.arbitrage_scan_policy import ScanPolicy, enumerate_box_pairs
+from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import SyntheticSubscription
 
@@ -42,17 +42,12 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
     options = [x for x in options if _expiry(x.get("expiry")) == target]
     if not options: raise LookupError(f"no options for {symbol} {target}")
     strikes = sorted({_strike(x.get("strike")) for x in options})
-    effective_policy = policy or ScanPolicy(
-        stock_box_distances=(3, 4, 5),
-        index_box_distances=tuple(range(3, 16)),
-    )
-    pairs = enumerate_box_pairs(
-        strikes,
-        atm_strike=float(atm_strike),
-        instrument_class=cls,
-        policy=effective_policy,
-    )
-    selected = {s for pair in pairs for s in pair[:2]}
+    # Keep Box Spread on the exact option window also subscribed by Synthetic:
+    # stocks use 7 actual listed strikes either side; NIFTY/SENSEX use 15.
+    ordered = sorted(strikes)
+    atm_index = min(range(len(ordered)), key=lambda i: abs(ordered[i] - float(atm_strike)))
+    radius = 7 if cls == "STOCK" else 15
+    selected = set(ordered[max(0, atm_index - radius):atm_index + radius + 1])
     rows_by_key = {(str(x.get("symbol","")).strip()[-2:].upper(), _strike(x.get("strike"))): x for x in options}
     subscriptions = []
     for strike in sorted(selected):
