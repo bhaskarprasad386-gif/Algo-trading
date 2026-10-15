@@ -246,3 +246,22 @@ def test_normalizer_preserves_websocket_ingress_timestamp():
     )
     assert record.payload["_received_at_ns"] == received_at_ns
     assert record.timestamp_ns == 1720000000123 * 1_000_000
+
+
+def test_normalizer_accepts_direct_bid_ask_aliases_without_depth_arrays():
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 12345,
+            "bid": 12340,
+            "ask": 12350,
+            "bid_qty": 10,
+            "ask_qty": 12,
+        },
+    )
+    assert record.ltp == 123.45
+    assert record.bid == 123.40
+    assert record.ask == 123.50
+    assert record.bid_qty == 10
+    assert record.ask_qty == 12
