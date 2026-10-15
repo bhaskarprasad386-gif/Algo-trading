@@ -2,7 +2,7 @@
 
 The scanner consumes already-normalized live snapshots. It does not fetch from a
 broker, invent strikes, or mutate storage. A caller supplies the point-in-time
-option chain, future quote, ATM and (for stocks) the permitted NIFTY-50 universe.
+option chain, future quote, ATM and (for stocks) the permitted top-15 liquid stock universe.
 Index scope is capped at the 15 nearest actual listed strikes on each side of
 ATM; stock scope remains governed by its existing synthetic strike policy.
 """
@@ -65,9 +65,9 @@ def _validate_universe(
     symbol = future.underlying.strip().upper()
     if future.instrument_class == "STOCK":
         if not allowed_stock_symbols:
-            raise ValueError("NIFTY-50 stock universe is required for stock synthetic scanning")
+            raise ValueError("top-15 liquid stock universe is required for stock synthetic scanning")
         if symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
-            raise ValueError("stock is outside the configured NIFTY-50 universe")
+            raise ValueError("stock is outside the configured top-15 liquid stock universe")
     elif future.instrument_class != "INDEX":
         raise ValueError("synthetic scanner supports only STOCK and INDEX")
 

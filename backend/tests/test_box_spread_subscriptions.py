@@ -47,3 +47,25 @@ def test_box_subscription_uses_bfo_for_sensex_index():
     )
     assert selected.subscriptions
     assert all(item.exchange_type == 4 for item in selected.subscriptions)
+
+
+class WideIndexMaster:
+    instruments = [
+        {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"FUTIDX","expiry":"29OCT2026"},
+    ] + [
+        {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"OPTIDX","expiry":"22OCT2026",
+         "strike":str(strike * 100), "symbol":f"NIFTY{strike}{suffix}",
+         "token":f"{strike}{suffix}", "lotsize":"75"}
+        for strike in range(100, 161) for suffix in ("CE", "PE")
+    ]
+
+
+def test_box_index_subscribes_atm_plus_minus_15_listed_strikes_on_weekly_expiry():
+    selected = select_box_contracts(
+        WideIndexMaster(), underlying="NIFTY", instrument_class="INDEX",
+        atm_strike=130.0, expiry="22OCT2026",
+    )
+    strikes = {item.strike for item in selected.subscriptions}
+    assert strikes == set(float(x) for x in range(115, 146))
+    assert len(selected.subscriptions) == 31 * 2
+    assert {item.expiry for item in selected.subscriptions} == {"22OCT2026"}

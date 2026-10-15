@@ -13,6 +13,17 @@ NIFTY50_STOCK_SYMBOLS = frozenset({
     "TCS", "TECHM", "TITAN", "TRENT", "ULTRACEMCO", "WIPRO",
 })
 
+# Explicit top-15 liquid F&O stock universe used by option strategies.
+# Keep this separate from the full NIFTY 50 membership list.
+TOP15_LIQUID_STOCK_SYMBOLS = frozenset({
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY",
+    "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK",
+    "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL",
+})
+
+# Live option strategies share this narrow index universe.
+OPTION_STRATEGY_INDEX_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
+
 NIFTY50_INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"})
 
-__all__ = ["NIFTY50_STOCK_SYMBOLS", "NIFTY50_INDEX_SYMBOLS"]
+__all__ = ["NIFTY50_STOCK_SYMBOLS", "TOP15_LIQUID_STOCK_SYMBOLS", "OPTION_STRATEGY_INDEX_SYMBOLS", "NIFTY50_INDEX_SYMBOLS"]
