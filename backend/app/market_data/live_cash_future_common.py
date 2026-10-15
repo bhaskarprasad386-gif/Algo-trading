@@ -75,6 +75,26 @@ class LiveCashFutureCommonRunner:
         self._scanner_results = 0
         self._records_missing_executable_quote = 0
         self._scanner_rejections = 0
+        # Stage-by-stage universe accounting; symbol samples are bounded and
+        # contain identifiers/reasons only, never raw broker payloads.
+        self._universe_diagnostics: dict[str, Any] = {
+            "instrument_master_rows": 0,
+            "configured_symbols": 0,
+            "futstk_rows": 0,
+            "eligible_future_contracts": 0,
+            "unique_future_contracts": 0,
+            "cash_resolved_contracts": 0,
+            "cash_resolution_failures": 0,
+            "selected_current_near_contracts": 0,
+            "descriptors_built": 0,
+            "descriptors_accepted": 0,
+            "descriptor_conflicts": 0,
+            "subscription_keys_requested": 0,
+            "subscription_keys_confirmed": 0,
+            "cash_resolution_failure_samples": [],
+            "descriptor_conflict_samples": [],
+            "last_subscription_at_ns": None,
+        }
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -96,12 +116,31 @@ class LiveCashFutureCommonRunner:
             "scanner_rejections": self._scanner_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
+            "universe_diagnostics": dict(self._universe_diagnostics),
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
         rows = self.instrument_master.download()
         configured = {x.strip().upper() for x in settings.LIVE_CASH_FUTURE_SYMBOLS.split(",") if x.strip()}
         universe = configured or None
+        self._universe_diagnostics = {
+            "instrument_master_rows": len(rows),
+            "configured_symbols": len(configured),
+            "futstk_rows": 0,
+            "eligible_future_contracts": 0,
+            "unique_future_contracts": 0,
+            "cash_resolved_contracts": 0,
+            "cash_resolution_failures": 0,
+            "selected_current_near_contracts": 0,
+            "descriptors_built": 0,
+            "descriptors_accepted": 0,
+            "descriptor_conflicts": 0,
+            "subscription_keys_requested": 0,
+            "subscription_keys_confirmed": 0,
+            "cash_resolution_failure_samples": [],
+            "descriptor_conflict_samples": [],
+            "last_subscription_at_ns": None,
+        }
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         futures: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
@@ -110,6 +149,7 @@ class LiveCashFutureCommonRunner:
                 continue
             if str(row.get("instrumenttype", "")).upper() != "FUTSTK":
                 continue
+            self._universe_diagnostics["futstk_rows"] += 1
             underlying = str(row.get("name") or "").strip().upper()
             if not underlying or (universe is not None and underlying not in universe):
                 continue
@@ -123,6 +163,8 @@ class LiveCashFutureCommonRunner:
                 continue
             seen.add(key)
             futures.append({**row, "_underlying": underlying, "_expiry": expiry})
+        self._universe_diagnostics["eligible_future_contracts"] = len(futures)
+        self._universe_diagnostics["unique_future_contracts"] = len(seen)
         futures.sort(key=lambda x: (x["_underlying"], x["_expiry"], str(x.get("symbol"))))
         selected: list[dict[str, Any]] = []
         counts: dict[str, int] = {}
@@ -132,13 +174,19 @@ class LiveCashFutureCommonRunner:
                 continue
             try:
                 cash = self.instrument_master.resolve_cash_instrument(underlying, "NSE")
-            except (LookupError, ValueError):
+            except (LookupError, ValueError) as exc:
+                self._universe_diagnostics["cash_resolution_failures"] += 1
+                samples = self._universe_diagnostics["cash_resolution_failure_samples"]
+                if len(samples) < 20:
+                    samples.append({"underlying": underlying, "reason": type(exc).__name__})
                 continue
+            self._universe_diagnostics["cash_resolved_contracts"] += 1
             item = dict(row)
             item["_cash"] = cash
             item["_month"] = "CURRENT" if counts.get(underlying, 0) == 0 else "NEAR"
             selected.append(item)
             counts[underlying] = counts.get(underlying, 0) + 1
+        self._universe_diagnostics["selected_current_near_contracts"] = len(selected)
 
         descriptors: list[InstrumentDescriptor] = []
         metadata: dict[InstrumentKey, dict[str, Any]] = {}
@@ -168,6 +216,7 @@ class LiveCashFutureCommonRunner:
                 "leg": "FUTURE", "underlying": underlying, "contract_month": row["_month"],
             }
         self._metadata = metadata
+        self._universe_diagnostics["descriptors_built"] = len(descriptors)
         return tuple(descriptors)
 
     def _roll_contracts_if_needed(self) -> None:
@@ -309,6 +358,10 @@ class LiveCashFutureCommonRunner:
                 and existing.segment == descriptor.segment
             )
             if not compatible:
+                self._universe_diagnostics["descriptor_conflicts"] += 1
+                samples = self._universe_diagnostics["descriptor_conflict_samples"]
+                if len(samples) < 20:
+                    samples.append({"instrument": descriptor.key.value, "reason": "incompatible_shared_descriptor"})
                 app_logger.warning(
                     "Cash-Future skipped conflicting shared descriptor for %s; existing=%s/%s/%s requested=%s/%s/%s",
                     descriptor.key.value, existing.instrument_type, existing.exchange, existing.segment,
@@ -323,6 +376,7 @@ class LiveCashFutureCommonRunner:
             )
         if fresh:
             self.manager.registry.register_many(tuple(fresh))
+        self._universe_diagnostics["descriptors_accepted"] = len(accepted)
         return accepted
 
     def run_forever(self) -> None:
@@ -360,8 +414,11 @@ class LiveCashFutureCommonRunner:
             while not self.stop_event.wait(1.0):
                 try:
                     if not subscribed:
-                        self.manager.subscribe(self.CONSUMER, keys, mode=3)
+                        subscriptions = self.manager.subscribe(self.CONSUMER, keys, mode=3)
                         subscribed = True
+                        self._universe_diagnostics["subscription_keys_requested"] = len(keys)
+                        self._universe_diagnostics["subscription_keys_confirmed"] = len(subscriptions)
+                        self._universe_diagnostics["last_subscription_at_ns"] = time.time_ns()
                         self._last_contract_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
                 except Exception as exc:
                     # A transient broker/auth/socket failure must not terminate
