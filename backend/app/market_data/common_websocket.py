@@ -355,6 +355,12 @@ class CommonWebSocketManager:
 
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
+                if socket is None:
+                    # The failed generation is still being closed. Do not admit
+                    # its replacement until the bounded close attempt completes.
+                    with self._lock:
+                        if group in self._failure_recovery_groups:
+                            continue
                 if socket is not None:
                     # A transport can become unusable before its SDK wrapper
                     # publishes the close callback. Never send incremental
@@ -655,6 +661,9 @@ class CommonWebSocketManager:
                 self._close_socket_bounded(
                     socket, group=group, generation=generation, reason="failure_callback"
                 )
+                # Close attempt completed; now replacement admission is safe.
+                with self._lock:
+                    self._failure_recovery_groups.discard(group)
                 # Recover the failed/missing group only. A zero silent-age threshold
                 # marks every healthy connected shard stale and tears down unrelated
                 # sessions whenever just one socket reports a transport error.
