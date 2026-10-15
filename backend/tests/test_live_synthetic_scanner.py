@@ -201,3 +201,43 @@ def test_live_synthetic_scanner_rejects_non_mapping_payload():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     assert scanner.observe(None) == ()
     assert scanner.diagnostics_snapshot()["counters"]["invalid_payload_or_scope"] == 1
+
+
+def test_live_synthetic_scanner_waits_for_all_three_legs_in_any_arrival_order():
+    ts = 8_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "30SEP2026", "bid": 115.0, "ask": 116.0, "lot_size": 1,
+        "source_timestamp_ns": ts + 10, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    }
+    ce = _base(ts, 105.0, "CE", 4.0, 5.0)
+    pe = _base(ts + 5, 105.0, "PE", 4.0, 5.0)
+
+    # Future can arrive first; it remains pending until CE and PE complete the triplet.
+    assert scanner.observe(future) == ()
+    assert scanner.observe(ce) == ()
+    result = scanner.observe(pe)
+    assert result
+    assert result[0].option.strike == 105.0
+    assert result[0].option.timestamp_ns == ts + 10
+    assert result[0].future.timestamp_ns == ts + 10
+
+
+def test_live_synthetic_scanner_skips_timestamp_mismatched_strike_without_blocking_valid_strike():
+    ts = 9_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    # The 100 strike is synchronized and complete; the 105 strike has an old CE.
+    scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
+    scanner.observe(_base(ts - 900_000_000, 105.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts + 900_000_000, 105.0, "PE", 4.0, 5.0))
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "30SEP2026", "bid": 115.0, "ask": 116.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    # A bad pair is skipped independently; it cannot invalidate the good 100 strike.
+    assert result
+    assert all(r.option.strike == 100.0 for r in result)
+    assert scanner.diagnostics_snapshot()["counters"]["timestamp_mismatch"] >= 1
