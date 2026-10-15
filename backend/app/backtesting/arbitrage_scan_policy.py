@@ -76,12 +76,7 @@ def enumerate_synthetic_strikes(strikes: Iterable[float], *, atm_strike: float,
         atm = float(atm_strike)
         lower = [strike for strike in ordered if strike < atm]
         upper = [strike for strike in ordered if strike > atm]
-        selected = (
-            [(strike, len(lower) - index, "LOWER") for index, strike in enumerate(lower[-10:])]
-            + [(strike, 0, "ATM") for strike in ordered if strike == atm]
-            + [(strike, index + 1, "UPPER") for index, strike in enumerate(upper[:10])]
-        )
-        # Lower distances count outward from ATM (1 is nearest); normalize order.
+        # Lower distances count outward from ATM (1 is nearest).
         lower_selected = [(strike, len(lower[-10:]) - index, "LOWER")
                           for index, strike in enumerate(lower[-10:])]
         result = lower_selected + [(strike, 0, "ATM") for strike in ordered if strike == atm]
