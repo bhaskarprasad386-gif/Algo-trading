@@ -26,6 +26,7 @@ class LiveBoxSpreadRunner:
         self.data_db=data_db; self.targets=tuple(targets); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None
+        self._readiness = {"state": "starting", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
 
     def run_forever(self):
         retry_delay = 5.0
@@ -80,10 +81,22 @@ class LiveBoxSpreadRunner:
         Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed").start()
         try:
             while not self.stop_event.is_set():
-                if not all(self.tracker.atm(s,time_ns()) is not None for s in symbols):
-                    sleep(.25); continue
+                atms = {symbol: self.tracker.atm(symbol, time_ns()) for symbol in symbols}
+                ready_targets = tuple(target for target in self.targets if atms.get(target.underlying) is not None)
+                ready_symbols = sorted({target.underlying for target in ready_targets})
+                waiting_symbols = sorted(set(symbols) - set(ready_symbols))
+                self._readiness = {
+                    "state": "ready" if ready_targets else "waiting_for_underlying_ticks",
+                    "ready_symbols": ready_symbols,
+                    "waiting_symbols": waiting_symbols,
+                    "unavailable_symbols": [],
+                }
+                if not ready_targets:
+                    sleep(.25)
+                    continue
                 subs=[]
-                for target in self.targets:
+                unavailable_symbols = []
+                for target in ready_targets:
                     wanted = target.expiry
                     if wanted is None:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
@@ -104,17 +117,30 @@ class LiveBoxSpreadRunner:
                                     continue
                         if expiries:
                             wanted = min(expiries)[1]
-                    sel=select_box_contracts(self.master,underlying=target.underlying,instrument_class=target.instrument_class,
-                        atm_strike=self.tracker.atm(target.underlying,time_ns()),expiry=wanted,
-                        allowed_stock_symbols=self.allowed_stock_symbols,policy=self.policy)
+                    try:
+                        sel=select_box_contracts(self.master,underlying=target.underlying,instrument_class=target.instrument_class,
+                            atm_strike=atms[target.underlying],expiry=wanted,
+                            allowed_stock_symbols=self.allowed_stock_symbols,policy=self.policy)
+                    except (LookupError, ValueError) as exc:
+                        unavailable_symbols.append({"symbol": target.underlying, "reason": str(exc)})
+                        continue
                     subs.extend(sel.subscriptions)
+                self._readiness = {
+                    "state": "ready" if subs else "waiting_for_contracts",
+                    "ready_symbols": ready_symbols,
+                    "waiting_symbols": waiting_symbols,
+                    "unavailable_symbols": unavailable_symbols,
+                }
+                if not subs:
+                    sleep(.25)
+                    continue
                 scanner=LiveBoxSpreadScanner(
                     atm_provider=self.tracker.atm,
                     config_provider=lambda _s: BoxSpreadScanConfig(allowed_stock_symbols=self.allowed_stock_symbols),
                     policy=self.policy,
                 )
                 pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results)
-                initial_atm={s:self.tracker.atm(s,time_ns()) for s in symbols}
+                initial_atm={s:atms[s] for s in ready_symbols}
                 def observe(payload):
                     pipeline.observe(payload)
                     symbol=str(payload.get("underlying") or "").upper()
@@ -135,6 +161,7 @@ class LiveBoxSpreadRunner:
             "targets": len(self.targets),
             "underlying_feed": None if self.feed is None else self.feed.snapshot(),
             "option_recorder": None if self.recorder is None else self.recorder.snapshot(),
+            "readiness": dict(self._readiness),
         }
 
     def stop(self):
