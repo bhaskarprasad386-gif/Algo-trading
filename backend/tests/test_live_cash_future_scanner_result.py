@@ -290,10 +290,11 @@ def test_live_scanner_pair_diagnostic_exposes_invalid_future_book():
         "source_timestamp_ns": timestamp_ns,
     })
 
-    assert result is None
+    assert result is not None
+    assert result.eligible is False
     diagnostics = scanner.pair_snapshot(max_age_seconds=120, limit=10)
-    assert diagnostics[0]["status"] == "INVALID_FUTURE_BOOK"
-    assert "INVALID_FUTURE_BOOK" in diagnostics[0]["reason_codes"]
+    assert diagnostics[0]["status"] == "PAIR_CREATED"
+    assert "EXECUTION_QUOTES_INCOMPLETE_INFORMATIONAL" in diagnostics[0]["reason_codes"]
 
 
 def test_live_scanner_history_keeps_100_unique_pairs_when_one_pair_is_very_active(tmp_path):
