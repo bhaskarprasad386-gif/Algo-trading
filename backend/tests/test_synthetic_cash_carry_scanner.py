@@ -61,9 +61,9 @@ def test_stock_scan_requires_configured_nifty50_universe():
             (stock_option,), stock_future, atm_strike=100,
         )
     except ValueError as exc:
-        assert "NIFTY-50" in str(exc)
+        assert "top-15 liquid" in str(exc)
     else:
-        raise AssertionError("expected NIFTY-50 universe rejection")
+        raise AssertionError("expected top-15 liquid universe rejection")
 
 
 def test_stock_scan_accepts_only_configured_universe_symbol():
