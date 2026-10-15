@@ -204,3 +204,71 @@ def test_cash_future_scanner_does_not_replace_newer_leg_with_out_of_order_tick()
     assert scanner.update(delayed, contract_month="CASH") is None
     assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
     assert scanner.out_of_order_records == 1
+
+
+
+def test_quote_diagnostics_distinguish_missing_depth_from_normalization_failure():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored", manager=CommonWebSocketManager(socket_factory=lambda: object())
+    )
+    key = InstrumentKey("NSE", "NSE", "1")
+    runner._metadata[key] = {
+        "leg": "CASH", "underlying": "ABC", "contract_month": "CASH",
+    }
+    record_with_raw_depth = MarketDataRecord(
+        instrument=key,
+        symbol="ABC-EQ",
+        instrument_type=InstrumentType.EQUITY,
+        timestamp_ns=1_000_000_000,
+        ltp=100.0,
+        bid=None,
+        ask=100.1,
+        underlying="ABC",
+        payload={"best_5_buy_data": [{"price": 9990, "quantity": 10}]},
+    )
+
+    runner._on_record(record_with_raw_depth)
+    diagnostics = runner.snapshot()["quote_diagnostics"]
+    assert diagnostics["records"] == 1
+    assert diagnostics["cash_records"] == 1
+    assert diagnostics["missing_bid"] == 1
+    assert diagnostics["missing_ask"] == 0
+    assert diagnostics["buy_depth_present"] == 1
+    assert diagnostics["buy_depth_present_bid_missing"] == 1
+    assert diagnostics["sell_depth_present"] == 0
+    runner.stop()
+
+
+def test_quote_diagnostics_count_missing_depth_without_retaining_payload():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored", manager=CommonWebSocketManager(socket_factory=lambda: object())
+    )
+    key = InstrumentKey("NFO", "NFO", "2")
+    runner._metadata[key] = {
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+    }
+    tick = MarketDataRecord(
+        instrument=key,
+        symbol="ABC26OCTFUT",
+        instrument_type=InstrumentType.FUTURE,
+        timestamp_ns=1_000_000_000,
+        ltp=103.0,
+        bid=None,
+        ask=None,
+        lot_size=50,
+        underlying="ABC",
+        payload={},
+    )
+
+    runner._on_record(tick)
+    diagnostics = runner.snapshot()["quote_diagnostics"]
+    assert diagnostics["future_records"] == 1
+    assert diagnostics["missing_both_sides"] == 1
+    assert diagnostics["buy_depth_present"] == 0
+    assert diagnostics["sell_depth_present"] == 0
+    assert "payload" not in diagnostics
+    runner.stop()
