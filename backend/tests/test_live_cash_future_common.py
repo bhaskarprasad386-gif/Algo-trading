@@ -336,3 +336,47 @@ def test_cash_future_payload_uses_ingress_timestamp_not_callback_time():
     )
     assert payload["received_at_ns"] == 1_760_000_000_123_456_789
     runner.stop()
+
+
+
+def test_quote_diagnostics_distinguish_present_depth_from_usable_ask_price():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored", manager=CommonWebSocketManager(socket_factory=lambda: object())
+    )
+    key = InstrumentKey("NFO", "NFO", "777")
+    meta = {"leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT"}
+    malformed = MarketDataRecord(
+        instrument=key,
+        symbol="ABC-FUT",
+        instrument_type=InstrumentType.FUTURE,
+        timestamp_ns=1_760_000_000_000_000_000,
+        ltp=100.0,
+        bid=99.0,
+        ask=None,
+        payload={
+            "best_5_buy_data": [{"price": "9900", "quantity": 10}],
+            "best_5_sell_data": [{"price": "bad"}, {"price": 0}, None],
+        },
+    )
+    valid = MarketDataRecord(
+        instrument=key,
+        symbol="ABC-FUT",
+        instrument_type=InstrumentType.FUTURE,
+        timestamp_ns=1_760_000_000_100_000_000,
+        ltp=100.0,
+        bid=99.0,
+        ask=101.0,
+        payload={"best_5_sell_data": [{"price": "10100", "quantity": 10}]},
+    )
+
+    runner._record_quote_diagnostics(malformed, meta)
+    runner._record_quote_diagnostics(valid, meta)
+    diagnostics = runner.snapshot()["quote_diagnostics"]
+    assert diagnostics["sell_depth_present"] == 2
+    assert diagnostics["sell_depth_usable_price"] == 1
+    assert diagnostics["sell_depth_present_without_usable_price"] == 1
+    assert diagnostics["sell_depth_levels_examined"] >= 4
+    assert "best_5_sell_data" not in diagnostics
+    runner.stop()
