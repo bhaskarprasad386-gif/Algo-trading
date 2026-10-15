@@ -40,3 +40,35 @@ def test_shared_stock_option_window_is_identical_for_box_and_synthetic():
 
 def test_top15_liquid_universe_has_exactly_15_symbols():
     assert len(TOP15_LIQUID_STOCK_SYMBOLS) == 15
+
+
+
+def test_nifty_weekly_atm15_option_tokens_are_shared_by_both_scanners():
+    items = [
+        {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "FUTIDX",
+         "expiry": "29OCT2026", "token": "990", "symbol": "NIFTY29OCT26FUT", "lotsize": "75"},
+    ]
+    items += [
+        {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX",
+         "expiry": expiry, "strike": str(strike * 100),
+         "symbol": f"NIFTY{strike}{suffix}", "token": f"{expiry}-{strike}{suffix}", "lotsize": "75"}
+        for expiry in ("22OCT2026", "29OCT2026")
+        for strike in range(100, 161) for suffix in ("CE", "PE")
+    ]
+    master = InstrumentMaster()
+    master.instruments = items
+    master._loaded = True
+
+    box = select_box_contracts(
+        master, underlying="NIFTY", instrument_class="INDEX",
+        atm_strike=130.0, expiry="22OCT2026",
+    )
+    synthetic = select_synthetic_contracts(
+        master, underlying="NIFTY", instrument_class="INDEX",
+        atm_strike=130.0, expiry="22OCT2026",
+    )
+    box_options = {item.token for item in box.subscriptions if item.option_type in {"CE", "PE"}}
+    synthetic_options = {item.token for item in synthetic.subscriptions if item.option_type in {"CE", "PE"}}
+    assert box_options == synthetic_options
+    assert len(box_options) == 31 * 2
+    assert all(token.startswith("22OCT2026-") for token in box_options)
