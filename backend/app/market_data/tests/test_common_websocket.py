@@ -1170,15 +1170,16 @@ class BlockingConnectAcrossShardsSocket(FakeSocket):
 
     def connect(self, **kwargs):
         type(self).connect_order.append(len(type(self).connect_order))
-        if len(type(self).connect_order) == 1:
-            self.connect_calls.append(kwargs)
-            self.connecting = True
-            type(self).first_started.set()
-            type(self).release_first.wait(timeout=3.0)
-            self.connecting = False
-            self.connected = True
-            return
         super().connect(**kwargs)
+        if len(type(self).connect_order) == 1:
+            # Model a successfully opened socket whose long-lived transport loop
+            # remains active. connect() itself must return after handshake.
+            type(self).first_started.set()
+            Thread(
+                target=lambda: type(self).release_first.wait(timeout=3.0),
+                name="fake-blocked-transport",
+                daemon=True,
+            ).start()
 
 
 def test_blocking_transport_does_not_hold_global_admission_for_other_shard():
