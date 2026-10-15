@@ -30,7 +30,7 @@ def cache_path(tmp_path, monkeypatch):
 def sample_master():
     return [
         {"token": "101", "symbol": "ABC-EQ", "exch_seg": "NSE", "instrumenttype": "EQ"},
-        {"token": "201", "symbol": "ABC30OCT26FUT", "exch_seg": "NFO", "instrumenttype": "FUTSTK"},
+        {"token": "201", "symbol": "ABC30OCT26FUT", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30OCT2026"},
     ]
 
 
