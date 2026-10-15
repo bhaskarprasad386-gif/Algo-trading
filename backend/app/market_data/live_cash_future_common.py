@@ -6,7 +6,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from app.core.config import settings
 from app.core.logger import app_logger
@@ -75,6 +75,12 @@ class LiveCashFutureCommonRunner:
         self._scanner_results = 0
         self._records_missing_executable_quote = 0
         self._scanner_rejections = 0
+        # Bounded, in-memory comparison of broker depth shape vs canonical quotes.
+        # Never retain or log complete broker frames.
+        self._depth_diagnostic_lock = threading.Lock()
+        self._depth_diagnostics: dict[str, dict[str, Any]] = {}
+        self._depth_diagnostic_leg_counts = {"CASH": 0, "FUTURE": 0}
+        self._depth_diagnostic_limit_per_leg = 6
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -96,6 +102,7 @@ class LiveCashFutureCommonRunner:
             "scanner_rejections": self._scanner_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
+            "depth_diagnostic": self._depth_diagnostic_snapshot(),
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
@@ -209,6 +216,93 @@ class LiveCashFutureCommonRunner:
             self._metadata = previous_metadata
             app_logger.warning("Cash-Future contract rollover deferred date=%s error=%s", today.isoformat(), exc)
 
+    @staticmethod
+    def _depth_shape(value: Any) -> dict[str, Any] | None:
+        """Describe depth structure without retaining broker prices or quantities."""
+        if isinstance(value, Mapping):
+            return {"type": "mapping", "keys": sorted(str(key) for key in value.keys())[:12]}
+        if isinstance(value, list):
+            first = value[0] if value else None
+            return {
+                "type": "list",
+                "length": len(value),
+                "first_item_type": type(first).__name__ if first is not None else None,
+                "first_item_keys": sorted(str(key) for key in first.keys())[:12]
+                if isinstance(first, Mapping) else [],
+            }
+        return {"type": type(value).__name__} if value is not None else None
+
+    def _on_raw_tick(self, payload: dict[str, Any]) -> None:
+        """Keep only bounded field/shape metadata for comparing raw and normalized ticks."""
+        if not isinstance(payload, dict):
+            return
+        token = str(payload.get("token") or payload.get("symboltoken") or "").strip()
+        try:
+            exchange_type = int(payload.get("exchange_type", payload.get("exchangeType")))
+        except (TypeError, ValueError, OverflowError):
+            return
+        exchange_identity = {1: ("NSE", "NSE"), 2: ("NFO", "NFO")}.get(exchange_type)
+        if not token or exchange_identity is None:
+            return
+        key = InstrumentKey(exchange_identity[0], exchange_identity[1], token)
+        meta = self._metadata.get(key)
+        if meta is None:
+            return
+        identity = key.value
+        depth_names = (
+            "best_5_buy_data", "best_buy_data", "best_buy", "buy",
+            "best_5_sell_data", "best_sell_data", "best_sell", "sell",
+            "buy_price", "sell_price", "buy_quantity", "sell_quantity",
+        )
+        with self._depth_diagnostic_lock:
+            sample = self._depth_diagnostics.get(identity)
+            if sample is None:
+                leg = meta["leg"]
+                if self._depth_diagnostic_leg_counts.get(leg, 0) >= self._depth_diagnostic_limit_per_leg:
+                    return
+                self._depth_diagnostic_leg_counts[leg] = self._depth_diagnostic_leg_counts.get(leg, 0) + 1
+                sample = {
+                    "instrument": identity,
+                    "symbol": str(meta["underlying"]),
+                    "leg": leg,
+                    "raw_top_level_keys": [],
+                    "raw_depth_shapes": {},
+                    "normalized": None,
+                }
+                self._depth_diagnostics[identity] = sample
+            sample["raw_top_level_keys"] = sorted(str(key) for key in payload.keys())[:40]
+            sample["raw_depth_shapes"] = {
+                name: self._depth_shape(payload.get(name))
+                for name in depth_names if name in payload
+            }
+            # Presence-only summary for direct aliases; values are deliberately omitted.
+            sample["direct_quote_fields_present"] = [
+                name for name in ("buy_price", "sell_price", "buy_quantity", "sell_quantity")
+                if payload.get(name) is not None
+            ]
+
+    def _update_depth_diagnostic_record(self, record: MarketDataRecord) -> None:
+        identity = record.instrument.value
+        with self._depth_diagnostic_lock:
+            sample = self._depth_diagnostics.get(identity)
+            if sample is not None:
+                sample["normalized"] = {
+                    "ltp_present": record.ltp is not None,
+                    "bid": record.bid,
+                    "ask": record.ask,
+                    "bid_qty_present": record.bid_qty is not None,
+                    "ask_qty_present": record.ask_qty is not None,
+                }
+
+    def _depth_diagnostic_snapshot(self) -> dict[str, Any]:
+        with self._depth_diagnostic_lock:
+            return {
+                "storage": "bounded in-memory only; no raw values persisted",
+                "sample_limit_per_leg": self._depth_diagnostic_limit_per_leg,
+                "sampled_instruments": len(self._depth_diagnostics),
+                "samples": [dict(sample) for sample in self._depth_diagnostics.values()],
+            }
+
     def _record_payload(self, record: MarketDataRecord, meta: dict[str, Any]) -> dict[str, Any]:
         payload = record.as_dict()
         payload.update({
@@ -239,6 +333,7 @@ class LiveCashFutureCommonRunner:
             app_logger.error("Cash-Future common persistence submit failed: %s", exc)
 
     def _on_record(self, record: MarketDataRecord) -> None:
+        self._update_depth_diagnostic_record(record)
         self._records_received += 1
         meta = self._metadata.get(record.instrument)
         if meta is None:
@@ -339,6 +434,7 @@ class LiveCashFutureCommonRunner:
             app_logger.warning("Common Cash-Future runner found no usable shared instrument descriptors")
             return
         self._metadata = {key: meta for key, meta in self._metadata.items() if key in accepted}
+        self.manager.register_callback(self.CONSUMER, self._on_raw_tick)
         self.manager.register_normalized_callback(self.CONSUMER, self._on_record)
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
             self._repository = DailySQLiteMarketDataRepository(self.data_db)
