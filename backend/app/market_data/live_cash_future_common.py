@@ -83,6 +83,11 @@ class LiveCashFutureCommonRunner:
             "sell_depth_present": 0, "buy_depth_present_bid_missing": 0,
             "sell_depth_present_ask_missing": 0,
         }
+        # Provenance counters only; never store the raw broker timestamp value.
+        self._timestamp_diagnostics: dict[str, int] = {
+            "broker_ns": 0, "broker_ms": 0, "fallback_missing": 0,
+            "fallback_invalid": 0, "invalid": 0, "unknown": 0,
+        }
         # Stage-by-stage universe accounting; symbol samples are bounded and
         # contain identifiers/reasons only, never raw broker payloads.
         self._universe_diagnostics: dict[str, Any] = {
@@ -125,6 +130,7 @@ class LiveCashFutureCommonRunner:
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
             "quote_diagnostics": self._quote_diagnostics_snapshot(),
+            "timestamp_diagnostics": dict(self._timestamp_diagnostics),
             "universe_diagnostics": dict(self._universe_diagnostics),
         }
 
@@ -306,8 +312,10 @@ class LiveCashFutureCommonRunner:
 
     def _record_payload(self, record: MarketDataRecord, meta: dict[str, Any]) -> dict[str, Any]:
         payload = record.as_dict()
+        provenance = record.payload.get("_timestamp_provenance")
         payload.update({
             "source_timestamp_ns": record.timestamp_ns,
+            "timestamp_provenance": provenance if isinstance(provenance, str) and provenance in self._timestamp_diagnostics else "unknown",
             "leg": meta["leg"],
             "underlying": meta["underlying"],
             "contract_month": meta["contract_month"],
@@ -335,6 +343,9 @@ class LiveCashFutureCommonRunner:
 
     def _on_record(self, record: MarketDataRecord) -> None:
         self._records_received += 1
+        provenance = record.payload.get("_timestamp_provenance")
+        provenance_key = provenance if isinstance(provenance, str) and provenance in self._timestamp_diagnostics else "unknown"
+        self._timestamp_diagnostics[provenance_key] += 1
         meta = self._metadata.get(record.instrument)
         if meta is None:
             self._records_missing_metadata += 1

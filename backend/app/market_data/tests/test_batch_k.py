@@ -205,3 +205,32 @@ def test_depth_normalizer_does_not_require_valid_quantity_for_valid_price():
     assert record.bid_qty is None
     assert record.ask == 123.50
     assert record.ask_qty is None
+
+
+
+def test_normalizer_tracks_timestamp_provenance_without_raw_timestamp_diagnostics():
+    normalizer = AngelOneTickNormalizer()
+    broker_ms = normalizer.normalize(
+        descriptor(),
+        {"token": "101", "exchange_timestamp": 1720000000123},
+    )
+    missing = normalizer.normalize(descriptor(), {"token": "101"})
+    invalid = normalizer.normalize(
+        descriptor(),
+        {"token": "101", "exchange_timestamp": "not-a-timestamp"},
+    )
+    explicit_ns = normalizer.normalize(
+        descriptor(),
+        {"token": "101", "exchange_timestamp_ns": 1720000000123000000},
+    )
+    invalid_zero = normalizer.normalize(
+        descriptor(),
+        {"token": "101", "exchange_timestamp_ns": 0},
+    )
+
+    assert broker_ms.payload["_timestamp_provenance"] == "broker_ms"
+    assert explicit_ns.payload["_timestamp_provenance"] == "broker_ns"
+    assert missing.payload["_timestamp_provenance"] == "fallback_missing"
+    assert invalid.payload["_timestamp_provenance"] == "fallback_invalid"
+    assert invalid_zero.payload["_timestamp_provenance"] == "invalid"
+    assert "raw_timestamp_value" not in broker_ms.payload

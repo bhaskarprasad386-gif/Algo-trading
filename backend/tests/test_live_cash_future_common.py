@@ -272,3 +272,41 @@ def test_quote_diagnostics_count_missing_depth_without_retaining_payload():
     assert diagnostics["sell_depth_present"] == 0
     assert "payload" not in diagnostics
     runner.stop()
+
+
+
+def test_runner_counts_timestamp_provenance_without_retaining_raw_payload():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored", manager=CommonWebSocketManager(socket_factory=lambda: object())
+    )
+    key = InstrumentKey("NSE", "NSE", "1")
+    runner._metadata[key] = {
+        "leg": "CASH", "underlying": "ABC", "contract_month": "CASH",
+    }
+    for index, provenance in enumerate(("broker_ms", "fallback_missing", "fallback_invalid", "unknown"), 1):
+        tick = MarketDataRecord(
+            instrument=key,
+            symbol="ABC-EQ",
+            instrument_type=InstrumentType.EQUITY,
+            timestamp_ns=index * 1_000_000_000,
+            ltp=100.0,
+            bid=99.9,
+            ask=100.0,
+            underlying="ABC",
+            payload={"_timestamp_provenance": provenance},
+        )
+        runner._on_record(tick)
+
+    snapshot = runner.snapshot()
+    assert snapshot["timestamp_diagnostics"] == {
+        "broker_ns": 0,
+        "broker_ms": 1,
+        "fallback_missing": 1,
+        "fallback_invalid": 1,
+        "invalid": 0,
+        "unknown": 1,
+    }
+    assert "payload" not in snapshot["timestamp_diagnostics"]
+    runner.stop()

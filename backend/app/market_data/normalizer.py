@@ -63,24 +63,37 @@ class AngelOneTickNormalizer:
         return None if value is None else value / self.price_scale
 
     @staticmethod
-    def _timestamp_ns(payload: Mapping[str, Any]) -> int:
-        value = AngelOneTickNormalizer._number(
-            payload, "exchange_timestamp_ns", "timestamp_ns"
+    def _timestamp_detail(payload: Mapping[str, Any]) -> tuple[int, str]:
+        """Return normalized timestamp plus provenance, without retaining raw values."""
+        ns_names = ("exchange_timestamp_ns", "timestamp_ns")
+        ms_names = ("exchange_timestamp", "exchange_timestamp_ms", "timestamp", "feed_time")
+        saw_timestamp_field = any(
+            name in payload and payload.get(name) is not None and str(payload.get(name)).strip() != ""
+            for name in (*ns_names, *ms_names)
         )
+        value = AngelOneTickNormalizer._number(payload, *ns_names)
         if value is not None:
-            return max(0, int(value))
-        value = AngelOneTickNormalizer._number(
-            payload, "exchange_timestamp", "exchange_timestamp_ms",
-            "timestamp", "feed_time"
-        )
-        if value is None:
-            return time_ns()
-        # SmartAPI exchange timestamps are epoch milliseconds. Values already
-        # in ns are retained to make the boundary tolerant of normalized feeds.
-        integer = int(value)
-        if integer >= 10**16:
-            return integer
-        return integer * 1_000_000
+            if value <= 0:
+                return max(0, int(value)), "invalid"
+            return int(value), "broker_ns"
+        value = AngelOneTickNormalizer._number(payload, *ms_names)
+        if value is not None:
+            integer = int(value)
+            if integer <= 0:
+                return 0, "invalid"
+            # SmartAPI exchange timestamps are epoch milliseconds. Values already
+            # in ns are retained to tolerate normalized upstream feeds.
+            if integer >= 10**16:
+                return integer, "broker_ns"
+            return integer * 1_000_000, "broker_ms"
+        if saw_timestamp_field:
+            return time_ns(), "fallback_invalid"
+        return time_ns(), "fallback_missing"
+
+    @staticmethod
+    def _timestamp_ns(payload: Mapping[str, Any]) -> int:
+        # Compatibility wrapper for existing callers/tests.
+        return AngelOneTickNormalizer._timestamp_detail(payload)[0]
 
     @classmethod
     def _depth_detail(cls, payload: Mapping[str, Any], side: str) -> tuple[Any, Any]:
@@ -150,13 +163,16 @@ class AngelOneTickNormalizer:
             value = str(descriptor.option_type).upper()
             option_type = OptionType(value)
 
+        timestamp_ns, timestamp_provenance = self._timestamp_detail(payload)
+        normalized_payload = dict(payload)
+        normalized_payload["_timestamp_provenance"] = timestamp_provenance
         record = MarketDataRecord(
             instrument=InstrumentKey(
                 descriptor.key.exchange, descriptor.key.segment, token
             ),
             symbol=descriptor.symbol,
             instrument_type=instrument_type,
-            timestamp_ns=self._timestamp_ns(payload),
+            timestamp_ns=timestamp_ns,
             timeframe="1s",
             ltp=self._price(payload, "last_traded_price", "ltp", "lastTradedPrice"),
             bid=bid,
@@ -175,6 +191,6 @@ class AngelOneTickNormalizer:
             option_type=option_type,
             lot_size=descriptor.lot_size,
             tick_size=descriptor.tick_size,
-            payload=dict(payload),
+            payload=normalized_payload,
         )
         return record
