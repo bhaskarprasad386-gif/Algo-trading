@@ -27,11 +27,11 @@ from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
-from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry
+from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, OPTION_STRATEGY_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -531,7 +531,7 @@ async def _live_synthetic_loop() -> None:
         try:
             master.download()
             today = datetime.now(IST).date()
-            top15_stock_symbols: set[str] = set()
+            nifty50_stocks: set[str] = set()
             index_symbols: set[str] = set()
             commodity_symbols: set[str] = set()
             for item in master.instruments:
@@ -555,7 +555,7 @@ async def _live_synthetic_loop() -> None:
                 elif (
                     typ == "FUTIDX"
                     and segment in {"NFO", "BFO"}
-                    and name in OPTION_STRATEGY_INDEX_SYMBOLS
+                    and name in NIFTY50_INDEX_SYMBOLS
                 ):
                     index_symbols.add(name)
                 elif typ == "FUTCOM" and segment == "MCX":
@@ -582,7 +582,12 @@ async def _live_synthetic_loop() -> None:
             targets = []
             missing_expiry = []
             for symbol, instrument_class in target_specs:
-                expiry = select_nearest_option_expiry(
+                expiry_selector = (
+                    select_monthly_option_expiry
+                    if instrument_class == "INDEX"
+                    else select_nearest_option_expiry
+                )
+                expiry = expiry_selector(
                     master.instruments,
                     underlying=symbol,
                     instrument_class=instrument_class,
@@ -600,7 +605,7 @@ async def _live_synthetic_loop() -> None:
                 )
             if not targets:
                 app_logger.warning(
-                    "Synthetic live runner found no eligible top-15 stock/NIFTY/SENSEX option targets; retrying in {:.1f}s",
+                    "Synthetic live runner found no eligible top-15 stock/monthly-index option targets; retrying in {:.1f}s",
                     retry_delay,
                 )
                 await asyncio.sleep(retry_delay)
