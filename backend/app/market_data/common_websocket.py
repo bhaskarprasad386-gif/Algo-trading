@@ -584,16 +584,21 @@ class CommonWebSocketManager:
                         if self._apply_broker_cooldown(connect_exc):
                             _mark_socket_auth_stale(socket)
                         raise
-                # A timed-out connect worker can finish after recovery has
-                # already installed a replacement. Never leave that late,
-                # successfully connected socket alive as an orphan session.
-                with self._lock:
-                    is_current_after_connect = (
-                        self._sockets.get(group) is socket
-                        and self._socket_generation.get(group) == generation
-                    )
-                if not is_current_after_connect:
-                    self._close_socket_bounded(socket)
+                    # Check and retire a late successful handshake before releasing
+                    # global admission; otherwise the next shard could connect while
+                    # this just-opened orphan is still closing.
+                    with self._lock:
+                        is_current_after_connect = (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                        )
+                    if not is_current_after_connect:
+                        self._close_socket_tracked(
+                            socket, group=group, generation=generation,
+                            reason="late_connect_success",
+                            on_finished=lambda: self._reconcile_after_retirement(group),
+                        )
+                        return
             except Exception as exc:
                 failure["exception"] = exc
                 # Keep this exception path non-blocking: _start_socket_connect
@@ -996,8 +1001,13 @@ class CommonWebSocketManager:
             self._recovery_attempts += 1
             self._last_recovery_at = time.time()
 
-        for _, socket, _, _ in stale:
-            self._close_socket_bounded(socket)
+        for stale_group, socket, _, _ in stale:
+            self._close_socket_tracked(
+                socket, group=stale_group,
+                generation=self._socket_generation_counter.get(stale_group),
+                reason="stale_recovery",
+                on_finished=lambda: self._reconcile_after_retirement(stale_group),
+            )
         try:
             self._reconcile()
         except Exception:
@@ -1249,6 +1259,17 @@ class CommonWebSocketManager:
             name=f"common-ws-retire-watch-{group.mode}-{group.shard}",
             daemon=True,
         ).start()
+
+    def _reconcile_after_retirement(self, group: SocketGroup) -> None:
+        """Resume desired-state reconciliation after a retired close completes."""
+        try:
+            with self._reconcile_lock:
+                self._reconcile()
+        except Exception as exc:
+            app_logger.warning(
+                "Common feed reconcile after retired transport close failed group=%s: %s",
+                f"{group.mode}:{group.shard}", exc,
+            )
 
     def _close_socket_tracked(
         self,
