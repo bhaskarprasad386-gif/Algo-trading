@@ -102,10 +102,21 @@ class AngelOneTickNormalizer:
         Broker depth arrays can contain empty or malformed top levels. Skip those
         levels rather than turning an otherwise valid side into a missing quote.
         """
-        direct_price = cls._finite_float(payload.get(f"{side}_price"))
-        if direct_price is not None and direct_price > 0:
-            direct_qty = cls._finite_float(payload.get(f"{side}_quantity"))
-            return direct_price, direct_qty
+        # Some upstream/normalized feeds expose direct bid/ask aliases instead
+        # of Angel depth arrays. Treat these as raw scaled prices at this boundary.
+        direct_names = (
+            f"{side}_price",
+            "bid" if side == "buy" else "ask",
+        )
+        for direct_name in direct_names:
+            direct_price = cls._finite_float(payload.get(direct_name))
+            if direct_price is not None and direct_price > 0:
+                direct_qty = cls._finite_float(
+                    payload.get(f"{side}_quantity")
+                    if payload.get(f"{side}_quantity") is not None
+                    else payload.get("bid_qty" if side == "buy" else "ask_qty")
+                )
+                return direct_price, direct_qty
 
         for key in (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side):
             value = payload.get(key)
