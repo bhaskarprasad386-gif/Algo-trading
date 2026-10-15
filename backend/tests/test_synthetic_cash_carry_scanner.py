@@ -93,3 +93,40 @@ def test_scanner_rejects_mixed_timestamp_snapshot():
         assert "timestamp" in str(exc)
     else:
         raise AssertionError("expected timestamp rejection")
+
+
+
+def test_index_arbitrage_requires_strictly_more_than_ten_points():
+    quote = option(1, 99)
+    assert not scan_synthetic_snapshot(
+        (quote,), future(1, bid=112, ask=113), atm_strike=100,
+    )
+    results = scan_synthetic_snapshot(
+        (quote,), future(1, bid=112.01, ask=113.01), atm_strike=100,
+    )
+    assert results
+    assert all(result.executable_edge > 10 for result in results)
+
+
+def test_any_configured_top15_stock_can_qualify_above_five_points():
+    stock_option = OptionQuote(
+        1, "RELIANCE", 20261231, 99, 8, 9, 6, 7,
+        lot_size=10, instrument_class="STOCK", volume=100, oi=100,
+    )
+    exact_threshold_future = FutureQuote(
+        1, "RELIANCE", 20261231, 107, 108,
+        lot_size=10, instrument_class="STOCK", volume=100, oi=100,
+    )
+    above_threshold_future = FutureQuote(
+        1, "RELIANCE", 20261231, 107.01, 108.01,
+        lot_size=10, instrument_class="STOCK", volume=100, oi=100,
+    )
+    config = SyntheticScanConfig(allowed_stock_symbols=frozenset({"RELIANCE"}))
+    assert not scan_synthetic_snapshot(
+        (stock_option,), exact_threshold_future, atm_strike=100, config=config,
+    )
+    results = scan_synthetic_snapshot(
+        (stock_option,), above_threshold_future, atm_strike=100, config=config,
+    )
+    assert results
+    assert all(result.executable_edge > 5 for result in results)
