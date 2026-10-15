@@ -613,6 +613,9 @@ def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
             time.sleep(0.01)
         assert original.closed is True
         assert original.connected is False
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not replacement.connected:
+            time.sleep(0.01)
         assert replacement.connected is True
         assert len([item for item in LateSuccessfulConnectSocket.instances if not item.closed]) == 1
     finally:
