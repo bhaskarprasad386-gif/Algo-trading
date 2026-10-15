@@ -96,14 +96,18 @@ class AngelOneTickNormalizer:
         return AngelOneTickNormalizer._timestamp_detail(payload)[0]
 
     @classmethod
-    def _depth_detail(cls, payload: Mapping[str, Any], side: str) -> tuple[Any, Any, bool]:
-        """Return the first usable positive price and its own optional quantity.
+    def _depth_detail(
+        cls, payload: Mapping[str, Any], side: str, price_scale: float = 100.0
+    ) -> tuple[Any, Any, bool]:
+        """Return the first usable positive price, quantity, and unit marker.
 
         Broker depth arrays can contain empty or malformed top levels. Skip those
         levels rather than turning an otherwise valid side into a missing quote.
+        Direct bid/ask aliases may be rupees or broker-scaled integers; when LTP is
+        present, compare magnitudes against normalized LTP to distinguish them.
         """
-        # Some upstream/normalized feeds expose direct bid/ask aliases instead
-        # of Angel depth arrays. Treat these as raw scaled prices at this boundary.
+        ltp_raw = cls._number(payload, "last_traded_price", "ltp", "lastTradedPrice")
+        ltp_rupees = ltp_raw / price_scale if ltp_raw is not None and ltp_raw > 0 else None
         direct_names = (
             f"{side}_price",
             "bid" if side == "buy" else "ask",
@@ -116,9 +120,14 @@ class AngelOneTickNormalizer:
                     if payload.get(f"{side}_quantity") is not None
                     else payload.get("bid_qty" if side == "buy" else "ask_qty")
                 )
-                # `bid`/`ask` are canonical aliases in rupees; broker-native
-                # `buy_price`/`sell_price` remain scaled integer prices.
-                return direct_price, direct_qty, direct_name == ("bid" if side == "buy" else "ask")
+                is_bid_ask_alias = direct_name == ("bid" if side == "buy" else "ask")
+                # Without a usable LTP, the semantic bid/ask alias is treated as
+                # canonical rupees. With LTP, values ~100x LTP are broker-scaled.
+                is_canonical = is_bid_ask_alias and (
+                    ltp_rupees is None
+                    or ltp_rupees / 10.0 <= direct_price <= ltp_rupees * 10.0
+                )
+                return direct_price, direct_qty, is_canonical
 
         for key in (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side):
             value = payload.get(key)
@@ -161,8 +170,8 @@ class AngelOneTickNormalizer:
         if instrument_type is None:
             raise ValueError(f"unsupported instrument_type: {descriptor.instrument_type}")
 
-        bid_raw, bid_qty_raw, bid_is_canonical = self._depth_detail(payload, "buy")
-        ask_raw, ask_qty_raw, ask_is_canonical = self._depth_detail(payload, "sell")
+        bid_raw, bid_qty_raw, bid_is_canonical = self._depth_detail(payload, "buy", self.price_scale)
+        ask_raw, ask_qty_raw, ask_is_canonical = self._depth_detail(payload, "sell", self.price_scale)
         bid_value = self._finite_float(bid_raw)
         ask_value = self._finite_float(ask_raw)
         bid_qty_value = self._finite_float(bid_qty_raw)
