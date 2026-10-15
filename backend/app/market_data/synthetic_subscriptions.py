@@ -33,7 +33,7 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if cls not in {"STOCK", "INDEX"}:
         raise ValueError("synthetic scanner supports only STOCK and INDEX")
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
-        raise ValueError("stock is outside the configured NIFTY-50 universe")
+        raise ValueError("stock is outside the configured top-15 liquid stock universe")
 
     expected_exchange = exchange.upper() if exchange else ("MCX" if cls == "COMMODITY" else "NFO")
     future_type = {"STOCK": "FUTSTK", "INDEX": "FUTIDX", "COMMODITY": "FUTCOM"}[cls]
@@ -66,7 +66,13 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     selected_futures = future_rows[:2]
     target_expiry = _expiry_key(expiry) if expiry else _expiry_key(current.get("expiry"))
     future_expiries = tuple(_expiry_key(f.get("expiry")) for f in selected_futures)
-    option_expiries = tuple(dict.fromkeys((target_expiry,) + future_expiries))
+    # NIFTY/SENSEX use only the nearest genuine weekly option expiry. Do not
+    # accidentally add monthly options just because the futures are monthly.
+    option_expiries = (
+        (target_expiry,)
+        if cls == "INDEX" and symbol in {"NIFTY", "SENSEX"}
+        else tuple(dict.fromkeys((target_expiry,) + future_expiries))
+    )
     options_by_expiry = {
         exp: [x for x in options if _expiry_key(x.get("expiry")) == exp]
         for exp in option_expiries
