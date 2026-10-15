@@ -429,12 +429,16 @@ class LiveSyntheticRunner:
         """Return lightweight runtime state for shared-feed diagnostics."""
         feed = self._active_underlying_feed or self.underlying_feed
         recorder = self._recorder
+        scanner_diagnostics = (
+            None if self._scanner is None else self._scanner.diagnostics_snapshot()
+        )
         return {
             "running": not self._stop_requested.is_set(),
             "targets": len(self.targets),
+            "scanner_initialized": self._scanner is not None,
+            "scanner_diagnostics": scanner_diagnostics,
             "underlying_feed": None if feed is None else feed.snapshot(),
             "option_recorder": None if recorder is None else recorder.snapshot(),
-            "scanner_diagnostics": None if self._scanner is None else self._scanner.diagnostics_snapshot(),
         }
 
     def stop(self) -> None:
