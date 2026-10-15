@@ -36,15 +36,21 @@ class LiveSyntheticScanPipeline:
         self._last_retention_cleanup = 0.0
 
     def observe(self, payload: dict) -> tuple:
+        # Publish empty results only when a complete calculation ran. Missing
+        # legs/invalid ticks are not a completed empty scan and must not flicker
+        # valid opportunities off the dashboard.
+        before = self._scan_evaluations()
         results = self.scanner.observe(payload)
+        after = self._scan_evaluations()
+        calculation_completed = after > before
+        if calculation_completed and self.on_results is not None:
+            try:
+                self.on_results(tuple(results))
+            except Exception:
+                pass
         if not results:
             self._maybe_cleanup_retention()
             return ()
-        if self.on_results is not None:
-            try:
-                self.on_results(results)
-            except Exception:
-                pass
         if self.session_factory is None:
             return results
         try:
@@ -55,6 +61,14 @@ class LiveSyntheticScanPipeline:
         except Exception:
             pass
         return results
+
+    def _scan_evaluations(self) -> int:
+        try:
+            snapshot = self.scanner.diagnostics_snapshot()
+            return int(snapshot.get("counters", {}).get("scan_evaluations", 0))
+        except (AttributeError, TypeError, ValueError):
+            # Keep compatibility with simple/custom scanners lacking diagnostics.
+            return 0
 
     
     def _maybe_cleanup_retention(self) -> None:
