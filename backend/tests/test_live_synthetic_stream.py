@@ -501,3 +501,40 @@ def test_recorder_run_forever_logs_unexpected_session_errors(monkeypatch):
 
     assert len(errors) == 1
     assert "Synthetic option/future recorder failed" in errors[0][0]
+
+
+def test_recorder_flushes_completed_second_without_waiting_for_next_token_tick():
+    from types import SimpleNamespace
+
+    collector = _collector()
+    observed = []
+    collector.on_observation = lambda payload: observed.append(payload["source_timestamp_ns"])
+    timestamp = 1_750_000_000_100_000_000
+    record = SimpleNamespace(
+        timestamp_ns=timestamp,
+        symbol="NIFTY30SEP26CE",
+        instrument=SimpleNamespace(exchange="NFO", token="101"),
+        as_dict=lambda: {"ltp": 123.45, "bid": 123.0, "ask": 123.5},
+    )
+    key = ("NFO", "101")
+    collector._latest[key] = ((timestamp // 1_000_000_000) * 1_000_000_000, record)
+
+    flushed = collector._flush_completed_buckets(now_ns=timestamp + 1_100_000_000)
+
+    assert flushed == 1
+    assert observed == [timestamp]
+    assert collector._latest == {}
+    assert collector.snapshot()["observations_emitted"] == 1
+    assert collector.snapshot()["missing_executable_quote"] == 0
+
+
+def test_recorder_does_not_flush_old_quote_as_live():
+    from types import SimpleNamespace
+
+    collector = _collector()
+    timestamp = 1_750_000_000_100_000_000
+    record = SimpleNamespace(timestamp_ns=timestamp, as_dict=lambda: {"bid": 1.0, "ask": 1.1})
+    collector._latest[("NFO", "101")] = ((timestamp // 1_000_000_000) * 1_000_000_000, record)
+
+    assert collector._flush_completed_buckets(now_ns=timestamp + 6_000_000_000) == 0
+    assert ("NFO", "101") in collector._latest
