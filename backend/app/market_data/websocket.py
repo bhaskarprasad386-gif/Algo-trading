@@ -316,10 +316,13 @@ class MarketDataWebSocket:
             correlation_id = self.correlation_id
             on_data = self.on_data
             on_failure = self.on_failure
-        if exchange_type is None or not tokens:
-            return
-        reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
         try:
+            # Keep cleanup in the finally path even when a caller has no
+            # remaining subscriptions; otherwise this client stays permanently
+            # marked as reconnecting and future recovery signals are ignored.
+            if exchange_type is None or not tokens:
+                return
+            reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
             self.connect(
                 subscriptions=reconnect_subscriptions,
                 mode=mode,
