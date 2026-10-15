@@ -449,3 +449,54 @@ def test_market_open_keeps_equity_derivatives_open_until_1540():
     assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 39, 59, tzinfo=ist))
     assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 0, tzinfo=ist))
     assert not LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 1, tzinfo=ist))
+
+
+
+def test_emit_logs_scanner_callback_failure_without_propagating(monkeypatch):
+    from types import SimpleNamespace
+    from app.market_data import live_synthetic_stream as stream
+
+    collector = _collector()
+    errors = []
+    monkeypatch.setattr(stream.app_logger, "exception", lambda *args: errors.append(args))
+
+    def broken_callback(_payload):
+        raise RuntimeError("scanner callback failed")
+
+    collector.on_observation = broken_callback
+    record = SimpleNamespace(
+        as_dict=lambda: {"ltp": 123.45},
+        symbol="NIFTY30SEP26CE",
+        instrument=SimpleNamespace(exchange="NFO", token="101"),
+    )
+    collector._emit(record, 1_750_000_000_000_000_000)
+
+    assert len(errors) == 1
+    assert "Synthetic scanner observation callback failed" in errors[0][0]
+
+
+def test_recorder_run_forever_logs_unexpected_session_errors(monkeypatch):
+    from app.market_data import live_synthetic_stream as stream
+
+    collector = _collector()
+    errors = []
+    monkeypatch.setattr(stream.app_logger, "exception", lambda *args: errors.append(args))
+    monkeypatch.setattr(
+        collector,
+        "_run_session",
+        lambda: (_ for _ in ()).throw(RuntimeError("temporary feed failure")),
+    )
+
+    def stop_after_retry(_seconds):
+        collector.stop_event.set()
+
+    monkeypatch.setattr(stream, "sleep", stop_after_retry)
+    monkeypatch.setattr(
+        stream.LiveSyntheticOptionFutureRecorder,
+        "market_open",
+        staticmethod(lambda now=None: True),
+    )
+    collector.run_forever()
+
+    assert len(errors) == 1
+    assert "Synthetic option/future recorder failed" in errors[0][0]

@@ -163,3 +163,41 @@ def test_live_synthetic_scanner_rejects_commodity_scope():
     payload = _base(6_000_000_000, 105.0, "CE", 4.0, 5.0)
     payload["instrument_class"] = "COMMODITY"
     assert scanner.observe(payload) == ()
+
+
+
+def test_live_synthetic_scanner_rejects_future_epoch_timestamp_and_counts_reason():
+    import time
+
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(time.time_ns() + 60_000_000_000, 100.0, "CE", 4.0, 5.0)
+    assert scanner.observe(payload) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["future_timestamp"] == 1
+
+
+def test_live_synthetic_scanner_rejects_stale_epoch_timestamp_and_counts_reason():
+    import time
+
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(time.time_ns() - 6_000_000_000, 100.0, "CE", 4.0, 5.0)
+    assert scanner.observe(payload) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["stale_timestamp"] == 1
+
+
+def test_live_synthetic_scanner_rejects_malformed_timestamp_without_raising():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base("not-a-timestamp", 100.0, "CE", 4.0, 5.0)
+    assert scanner.observe(payload) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["invalid_timestamp"] == 1
+
+
+def test_live_synthetic_scanner_diagnostics_count_missing_future_leg():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe(_base(7_000_000_000, 100.0, "CE", 4.0, 5.0))
+    assert scanner.diagnostics_snapshot()["counters"]["missing_future_leg"] == 1
+
+
+def test_live_synthetic_scanner_rejects_non_mapping_payload():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    assert scanner.observe(None) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["invalid_payload_or_scope"] == 1

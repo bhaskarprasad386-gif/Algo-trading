@@ -13,6 +13,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
+from app.core.logger import app_logger
 from app.core.config import settings
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.ingestion import BoundedMarketDataIngestor
@@ -186,8 +187,11 @@ class LiveSyntheticOptionFutureRecorder:
         if self.on_observation is not None:
             try:
                 self.on_observation(dict(payload))
-            except Exception:
-                pass
+            except Exception as exc:
+                app_logger.exception(
+                    "Synthetic scanner observation callback failed for symbol {} token {}: {}",
+                    record.symbol, record.instrument.token, exc,
+                )
         if self._ingestor is not None:
             self._ingestor.submit_historical(
                 HistoricalRecord(
@@ -263,7 +267,10 @@ class LiveSyntheticOptionFutureRecorder:
                     self._run_session()
                 else:
                     sleep(5)
-            except Exception:
+            except Exception as exc:
+                app_logger.exception(
+                    "Synthetic option/future recorder failed; retrying in 10s: {}", exc
+                )
                 sleep(10)
 
     def snapshot(self) -> dict[str, Any]:

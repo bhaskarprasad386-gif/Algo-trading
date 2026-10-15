@@ -7,8 +7,10 @@ delegates pricing/ranking to the existing pure synthetic scanner.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from threading import Lock
+import time
 from typing import Callable
 
 from app.backtesting.arbitrage_backtester import FutureQuote, OptionQuote
@@ -29,7 +31,21 @@ class LiveSyntheticScanner:
         self.config_provider = config_provider or (lambda _symbol: SyntheticScanConfig())
         self.on_result = on_result
         self._lock = Lock()
+        self._diagnostics_lock = Lock()
+        self._diagnostics: Counter[str] = Counter()
         self._buckets: dict[tuple[str, int, int], dict] = {}
+
+    def _count(self, reason: str, amount: int = 1) -> None:
+        with self._diagnostics_lock:
+            self._diagnostics[reason] += amount
+
+    def diagnostics_snapshot(self) -> dict:
+        """Return scanner-local counters without exposing cached market payloads."""
+        with self._diagnostics_lock:
+            counters = dict(self._diagnostics)
+        with self._lock:
+            counters["active_buckets"] = len(self._buckets)
+        return {"counters": counters}
 
     @staticmethod
     def _expiry(value: object) -> int:
@@ -50,22 +66,37 @@ class LiveSyntheticScanner:
         return number if number > 0 else None
 
     def observe(self, payload: dict) -> tuple[SyntheticScanResult, ...]:
+        if not isinstance(payload, dict):
+            self._count("invalid_payload_or_scope")
+            return ()
         symbol = str(payload.get("underlying") or "").strip().upper()
         cls = str(payload.get("instrument_class") or "").strip().upper()
         option_type = str(payload.get("option_type") or "").strip().upper()
-        timestamp_ns = int(payload.get("source_timestamp_ns") or 0)
-        # Only wall-clock epoch timestamps are eligible for the live freshness guard.
-        # Compact logical timestamps remain valid for deterministic scanner tests.
-        import time
-        if timestamp_ns >= 1_000_000_000_000_000 and time.time_ns() - timestamp_ns > 5_000_000_000:
+        try:
+            timestamp_ns = int(payload.get("source_timestamp_ns") or 0)
+        except (TypeError, ValueError, OverflowError):
+            self._count("invalid_timestamp")
             return ()
+        if timestamp_ns <= 0:
+            self._count("invalid_timestamp")
+            return ()
+        # Epoch-nanosecond timestamps are checked against wall time. Small logical
+        # timestamps remain supported by deterministic unit tests only.
+        if timestamp_ns >= 1_000_000_000_000_000:
+            now_ns = time.time_ns()
+            if timestamp_ns > now_ns + 5_000_000_000:
+                self._count("future_timestamp")
+                return ()
+            if now_ns - timestamp_ns > 5_000_000_000:
+                self._count("stale_timestamp")
+                return ()
         if not symbol or cls not in {"STOCK", "INDEX"}:
+            self._count("invalid_payload_or_scope")
             return ()
         bid = self._price(payload.get("bid"))
         ask = self._price(payload.get("ask"))
         if bid is None or ask is None or ask < bid:
-            return ()
-        if not payload.get("source_timestamp_ns"):
+            self._count("invalid_quote")
             return ()
 
         def positive_number(value: object) -> float:
@@ -88,7 +119,11 @@ class LiveSyntheticScanner:
                 )
             )
 
-        expiry = self._expiry(payload.get("expiry"))
+        try:
+            expiry = self._expiry(payload.get("expiry"))
+        except ValueError:
+            self._count("invalid_expiry")
+            return ()
         strike = self._price(payload.get("strike"))
         with self._lock:
             key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
@@ -104,15 +139,22 @@ class LiveSyntheticScanner:
                     bucket["future"] = payload
 
             if bucket["future"] is None:
+                self._count("missing_future_leg")
                 self._prune(timestamp_ns)
                 return ()
             future_payload = bucket["future"]
-            future_expiry = self._expiry(future_payload.get("expiry"))
+            try:
+                future_expiry = self._expiry(future_payload.get("expiry"))
+            except ValueError:
+                self._count("invalid_future_expiry")
+                self._prune(timestamp_ns)
+                return ()
             timestamps = [int(future_payload.get("source_timestamp_ns") or 0)]
             for legs in bucket["options"].values():
                 timestamps.extend(int(leg.get("source_timestamp_ns") or 0) for leg in legs.values())
             timestamps = [value for value in timestamps if value > 0]
             if not timestamps or max(timestamps) - min(timestamps) > self.TIMESTAMP_TOLERANCE_NS:
+                self._count("timestamp_mismatch")
                 self._prune(timestamp_ns)
                 return ()
             anchor_timestamp_ns = max(timestamps)
@@ -121,14 +163,21 @@ class LiveSyntheticScanner:
             for option_strike, legs in strikes.items():
                 ce, pe = legs.get("CE"), legs.get("PE")
                 if ce is None or pe is None:
+                    self._count("missing_ce_or_pe_leg")
                     continue
                 # Never combine legs from a different expiry with the future.
-                if (
-                    self._expiry(ce.get("expiry")) != future_expiry
-                    or self._expiry(pe.get("expiry")) != future_expiry
-                ):
+                try:
+                    matching_expiry = (
+                        self._expiry(ce.get("expiry")) == future_expiry
+                        and self._expiry(pe.get("expiry")) == future_expiry
+                    )
+                except ValueError:
+                    matching_expiry = False
+                if not matching_expiry:
+                    self._count("expiry_mismatch")
                     continue
                 if not liquid_leg(ce) or not liquid_leg(pe):
+                    self._count("illiquid_or_incomplete_option_leg")
                     continue
                 ce_bid, ce_ask = self._price(ce.get("bid")), self._price(ce.get("ask"))
                 pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
@@ -136,6 +185,7 @@ class LiveSyntheticScanner:
                     continue
                 lot = int(float(ce.get("lot_size") or future_payload.get("lot_size") or 0))
                 if lot <= 0:
+                    self._count("invalid_option_lot_size")
                     continue
                 option_quotes.append(
                     OptionQuote(
@@ -155,11 +205,13 @@ class LiveSyntheticScanner:
                 )
 
             if not option_quotes:
+                self._count("no_executable_ce_pe_pair")
                 self._prune(timestamp_ns)
                 return ()
 
             future_bid, future_ask = self._price(future_payload.get("bid")), self._price(future_payload.get("ask"))
-            if future_bid is None or future_ask is None:
+            if future_bid is None or future_ask is None or future_ask < future_bid:
+                self._count("invalid_future_quote")
                 self._prune(timestamp_ns)
                 return ()
             future = FutureQuote(
@@ -174,10 +226,12 @@ class LiveSyntheticScanner:
                 oi=int(float(future_payload.get("oi") or 0)),
             )
             if future.lot_size <= 0:
+                self._count("invalid_future_lot_size")
                 self._prune(timestamp_ns)
                 return ()
             atm = self.atm_provider(symbol, timestamp_ns)
             if atm is None:
+                self._count("missing_atm_price")
                 self._prune(timestamp_ns)
                 return ()
             config = self.config_provider(symbol)
@@ -188,6 +242,9 @@ class LiveSyntheticScanner:
                 config=config,
             )
             self._prune(timestamp_ns)
+            self._count("scan_evaluations")
+            if results:
+                self._count("opportunities_emitted", len(results))
         if results and self.on_result is not None:
             self.on_result(results)
         return results
