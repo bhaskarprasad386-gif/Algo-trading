@@ -160,21 +160,37 @@ class LiveSyntheticScanner:
                 self._count("invalid_future_expiry")
                 self._prune(timestamp_ns)
                 return ()
-            timestamps = [int(future_payload.get("source_timestamp_ns") or 0)]
-            for legs in bucket["options"].values():
-                timestamps.extend(int(leg.get("source_timestamp_ns") or 0) for leg in legs.values())
-            timestamps = [value for value in timestamps if value > 0]
-            if not timestamps or max(timestamps) - min(timestamps) > self.TIMESTAMP_TOLERANCE_NS:
-                self._count("timestamp_mismatch")
+            future_timestamp_ns = int(future_payload.get("source_timestamp_ns") or 0)
+            if future_timestamp_ns <= 0:
+                self._count("invalid_future_timestamp")
                 self._prune(timestamp_ns)
                 return ()
-            anchor_timestamp_ns = max(timestamps)
+            # Validate each strike independently. An incomplete or delayed option
+            # at another strike must not block an otherwise synchronized CE+PE+FUT
+            # triplet. The pure scanner requires one snapshot timestamp, so accepted
+            # quotes are normalized to the future tick only after this guard passes.
+            anchor_timestamp_ns = future_timestamp_ns
             strikes = bucket["options"]
             option_quotes: list[OptionQuote] = []
             for option_strike, legs in strikes.items():
                 ce, pe = legs.get("CE"), legs.get("PE")
                 if ce is None or pe is None:
                     self._count("missing_ce_or_pe_leg")
+                    continue
+                try:
+                    ce_timestamp_ns = int(ce.get("source_timestamp_ns") or 0)
+                    pe_timestamp_ns = int(pe.get("source_timestamp_ns") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    self._count("invalid_option_timestamp")
+                    continue
+                if (
+                    ce_timestamp_ns <= 0
+                    or pe_timestamp_ns <= 0
+                    or abs(ce_timestamp_ns - pe_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                    or abs(ce_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                    or abs(pe_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                ):
+                    self._count("timestamp_mismatch")
                     continue
                 # Never combine legs from a different expiry with the future.
                 try:
