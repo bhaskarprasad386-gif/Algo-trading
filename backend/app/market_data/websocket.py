@@ -16,11 +16,12 @@ from app.core.logger import app_logger
 
 
 def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
-    """Run Angel's SDK transport with certificate validation and bounded ping/pong.
+    """Start the transport in a tracked thread and return after handshake outcome.
 
-    smartapi-python disables certificate validation in its connect() method and
-    sets a ping interval without a pong deadline. Reuse its callbacks and headers,
-    but own the transport options so silent dead peers are detected.
+    The shared broker admission lock may cover this function, so it must return
+    after open/error/timeout rather than after the long-lived run_forever loop.
+    This serializes connection establishment while allowing healthy sockets to
+    run independently once their handshake succeeds.
     """
     headers = {
         "Authorization": socket.auth_token,
@@ -28,6 +29,26 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         "x-client-code": socket.client_code,
         "x-feed-token": socket.feed_token,
     }
+    ready = Event()
+    original_open = socket.on_open
+    original_error = socket.on_error
+
+    def on_open_and_signal(wsapp):
+        try:
+            if callable(original_open):
+                original_open(wsapp)
+        finally:
+            ready.set()
+
+    def on_error_and_signal(wsapp, error):
+        try:
+            if callable(original_error):
+                original_error(wsapp, error)
+        finally:
+            ready.set()
+
+    socket.on_open = on_open_and_signal
+    socket.on_error = on_error_and_signal
     socket.wsapp = websocket_client.WebSocketApp(
         socket.ROOT_URI,
         header=headers,
@@ -38,11 +59,31 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         on_ping=socket._on_ping,
         on_pong=socket._on_pong,
     )
-    socket.wsapp.run_forever(
-        sslopt={"cert_reqs": ssl.CERT_REQUIRED},
-        ping_interval=10,
-        ping_timeout=5,
-    )
+
+    def run_transport():
+        try:
+            socket.wsapp.run_forever(
+                sslopt={"cert_reqs": ssl.CERT_REQUIRED},
+                ping_interval=10,
+                ping_timeout=5,
+            )
+        finally:
+            ready.set()
+
+    worker = Thread(target=run_transport, name="angel-ws-transport", daemon=True)
+    socket._transport_thread = worker
+    worker.start()
+    timeout = max(1.0, float(getattr(socket, "_connect_handshake_timeout_seconds", 15.0)))
+    if not ready.wait(timeout=timeout):
+        try:
+            socket.close_connection()
+        finally:
+            raise TimeoutError(f"Angel WebSocket handshake timed out after {timeout:.1f}s")
+    # run_forever may exit before open (e.g. immediate transport error). The
+    # wrapper's on_failure callback records the concrete failure when available.
+    if not getattr(socket, "connected", False) and not getattr(socket, "on_open", None):
+        raise ConnectionError("Angel WebSocket transport exited before open")
+
 
 
 class MarketDataWebSocket:
