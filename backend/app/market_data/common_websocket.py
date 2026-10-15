@@ -1006,7 +1006,7 @@ class CommonWebSocketManager:
                 socket, group=stale_group,
                 generation=self._socket_generation_counter.get(stale_group),
                 reason="stale_recovery",
-                on_finished=lambda: self._reconcile_after_retirement(stale_group),
+                on_finished=lambda retired_group=stale_group: self._reconcile_after_retirement(retired_group),
             )
         try:
             self._reconcile()
