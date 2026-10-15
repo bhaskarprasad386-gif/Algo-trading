@@ -1,5 +1,5 @@
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry
+from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 
 
 def _master():
@@ -350,3 +350,43 @@ def test_runner_waits_outside_market_hours_without_starting_synthetic_feed(monke
 
     assert created == []
     assert runner.stop_event.is_set()
+
+
+
+def test_monthly_index_expiry_matches_real_futures_and_skips_weekly_chain():
+    from datetime import date
+
+    items = [
+        {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "FUTIDX", "expiry": "29OCT2026"},
+        {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "FUTIDX", "expiry": "26NOV2026"},
+        {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "22OCT2026"},
+        {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "29OCT2026"},
+        {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "26NOV2026"},
+    ]
+    selected = select_monthly_option_expiry(
+        items, underlying="NIFTY", instrument_class="INDEX", today=date(2026, 10, 15)
+    )
+    assert selected == "29OCT2026"
+
+
+def test_monthly_index_expiry_uses_bfo_for_sensex_and_bankex():
+    from datetime import date
+
+    for symbol in ("SENSEX", "BANKEX"):
+        items = [
+            {"exch_seg": "BFO", "name": symbol, "instrumenttype": "FUTIDX", "expiry": "29OCT2026"},
+            {"exch_seg": "BFO", "name": symbol, "instrumenttype": "OPTIDX", "expiry": "22OCT2026"},
+            {"exch_seg": "BFO", "name": symbol, "instrumenttype": "OPTIDX", "expiry": "29OCT2026"},
+            {"exch_seg": "NFO", "name": symbol, "instrumenttype": "OPTIDX", "expiry": "29OCT2026"},
+        ]
+        assert select_monthly_option_expiry(
+            items, underlying=symbol, instrument_class="INDEX", today=date(2026, 10, 15)
+        ) == "29OCT2026"
+
+
+def test_monthly_index_universe_contains_all_six_supported_indices():
+    from app.market_data.nifty50_universe import NIFTY50_INDEX_SYMBOLS
+
+    assert NIFTY50_INDEX_SYMBOLS == frozenset(
+        {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+    )

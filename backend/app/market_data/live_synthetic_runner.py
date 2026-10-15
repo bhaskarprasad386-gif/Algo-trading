@@ -70,6 +70,54 @@ def select_nearest_option_expiry(
     return min(candidates, key=lambda item: item[0])[1]
 
 
+def select_monthly_option_expiry(
+    instruments: Iterable[dict],
+    *,
+    underlying: str,
+    instrument_class: str,
+    today,
+) -> str | None:
+    """Return a live option expiry that matches a real listed futures expiry.
+
+    Index option chains not aligned to a futures expiry are weekly chains and
+    are deliberately excluded from Synthetic Future subscriptions.
+    """
+    cls = instrument_class.strip().upper()
+    if cls not in {"STOCK", "INDEX"}:
+        return None
+    symbol = underlying.strip().upper()
+    segment = "BFO" if cls == "INDEX" and symbol in {"SENSEX", "BANKEX"} else "NFO"
+    future_type = "FUTIDX" if cls == "INDEX" else "FUTSTK"
+    option_type = "OPTIDX" if cls == "INDEX" else "OPTSTK"
+
+    def parsed_expiry(row):
+        raw = str(row.get("expiry", "")).strip().upper()
+        for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(raw, fmt).date(), raw
+            except ValueError:
+                continue
+        return None, raw
+
+    future_dates = set()
+    option_by_date = {}
+    for row in instruments:
+        if str(row.get("exch_seg", "")).strip().upper() != segment:
+            continue
+        if str(row.get("name", "")).strip().upper() != symbol:
+            continue
+        typ = str(row.get("instrumenttype", "")).strip().upper()
+        expiry_date, expiry_text = parsed_expiry(row)
+        if expiry_date is None or expiry_date < today:
+            continue
+        if typ == future_type:
+            future_dates.add(expiry_date)
+        elif typ == option_type and expiry_text:
+            option_by_date.setdefault(expiry_date, expiry_text)
+    matches = sorted(future_dates.intersection(option_by_date))
+    return option_by_date[matches[0]] if matches else None
+
+
 @dataclass(frozen=True)
 class SyntheticLiveTarget:
     """One underlying/class to stream from the real Angel One instrument master."""
