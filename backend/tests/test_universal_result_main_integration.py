@@ -54,6 +54,7 @@ print(json.dumps({"status": "ok"}))
     env.update(
         {
             "SECRET_KEY": "ci-test-secret-key-not-for-production",
+            "BACKTESTING_ENABLED": "true",
             "PYTHONPATH": str(backend_dir),
             "DATABASE_URL": f"sqlite:///{tmp_path / 'app.sqlite3'}",
             "BACKTEST_STATUS_DB": str(tmp_path / "status.sqlite3"),
