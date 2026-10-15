@@ -344,6 +344,31 @@ class CommonWebSocketManager:
 
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
+                if socket is not None:
+                    # A transport can become unusable before its SDK wrapper
+                    # publishes the close callback. Never send incremental
+                    # subscribe/unsubscribe operations to a known-dead socket.
+                    with self._lock:
+                        created_at = self._socket_created_at.get(group, time.monotonic())
+                    connected = bool(getattr(socket, "connected", False))
+                    connecting = bool(getattr(socket, "connecting", False))
+                    connect_timed_out = connecting and (
+                        time.monotonic() - created_at >= self._connect_timeout_seconds
+                    )
+                    disconnected = not connected and (
+                        not connecting or connect_timed_out
+                    )
+                    if disconnected:
+                        with self._lock:
+                            if self._sockets.get(group) is socket:
+                                self._sockets.pop(group, None)
+                                self._socket_tokens.pop(group, None)
+                                self._socket_created_at.pop(group, None)
+                                self._last_data_at.pop(group, None)
+                                self._last_successful_delivery_at.pop(group, None)
+                                self._socket_generation.pop(group, None)
+                        self._close_socket_bounded(socket)
+                        socket = None
                 if socket is None:
                     socket = self._create_socket()
                     subscriptions = self._group_subscriptions(pairs)
