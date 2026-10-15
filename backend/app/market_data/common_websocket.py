@@ -201,6 +201,9 @@ class CommonWebSocketManager:
         # remains the fallback, but duplicate SDK callbacks must not spawn a
         # burst of close/recovery workers for the same failed generation.
         self._failure_recovery_groups: set[SocketGroup] = set()
+        # Retired transports remain visible until their close worker actually exits.
+        # Store metadata only; never retain broker frames or authentication payloads.
+        self._retired_transports: dict[str, dict[str, Any]] = {}
         self._recovery_attempts = 0
         self._last_recovery_at = None
 
@@ -398,14 +401,7 @@ class CommonWebSocketManager:
                         )
                         socket = None
                         if close_worker.is_alive():
-                            def _resume_after_retired_close(worker=close_worker, retired_group=group):
-                                while worker.is_alive():
-                                    worker.join(timeout=10.0)
-                                    if worker.is_alive():
-                                        app_logger.error(
-                                            "Common feed retired transport still alive group=%s; replacement remains blocked",
-                                            f"{retired_group.mode}:{retired_group.shard}",
-                                        )
+                            def _resume_after_retired_close(retired_group=group):
                                 with self._lock:
                                     self._failure_recovery_groups.discard(retired_group)
                                 try:
@@ -415,11 +411,13 @@ class CommonWebSocketManager:
                                         "Common feed reconcile after retired close failed group=%s: %s",
                                         f"{retired_group.mode}:{retired_group.shard}", exc,
                                     )
-                            Thread(
-                                target=_resume_after_retired_close,
-                                name=f"common-ws-retire-watch-{group.mode}-{group.shard}",
-                                daemon=True,
-                            ).start()
+                            self._watch_retired_transport(
+                                close_worker,
+                                group=group,
+                                generation=self._socket_generation_counter.get(group),
+                                reason="reconcile_disconnected",
+                                on_finished=_resume_after_retired_close,
+                            )
                             continue
                         with self._lock:
                             self._failure_recovery_groups.discard(group)
@@ -593,6 +591,7 @@ class CommonWebSocketManager:
                         and self._socket_generation.get(group) == generation
                     )
                     if is_current:
+                        self._failure_recovery_groups.add(group)
                         self._sockets.pop(group, None)
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
@@ -624,7 +623,26 @@ class CommonWebSocketManager:
                     group, type(exc).__name__, exc,
                 )
                 if is_current:
-                    self._close_socket_bounded(socket)
+                    close_worker = self._close_socket_bounded(
+                        socket, group=group, generation=generation, reason="connect_failure"
+                    )
+                    def _resume_after_connect_failure(failed_group=group):
+                        with self._lock:
+                            self._failure_recovery_groups.discard(failed_group)
+                        try:
+                            self._reconcile()
+                        except Exception as reconcile_exc:
+                            app_logger.warning(
+                                "Common feed reconcile after connect failure failed group=%s: %s",
+                                f"{failed_group.mode}:{failed_group.shard}", reconcile_exc,
+                            )
+                    if close_worker.is_alive():
+                        self._watch_retired_transport(
+                            close_worker, group=group, generation=generation,
+                            reason="connect_failure", on_finished=_resume_after_connect_failure,
+                        )
+                    else:
+                        _resume_after_connect_failure()
             finally:
                 completed.set()
 
@@ -720,20 +738,10 @@ class CommonWebSocketManager:
                 if close_worker.is_alive():
                     # Keep the shard blocked while close is still in flight. A
                     # watcher resumes recovery only after the old close completes.
-                    def _wait_for_close() -> None:
-                        while close_worker.is_alive():
-                            close_worker.join(timeout=10.0)
-                            if close_worker.is_alive():
-                                app_logger.error(
-                                    "Common feed failed transport still alive group=%s generation=%s; replacement remains blocked",
-                                    f"{group.mode}:{group.shard}", generation,
-                                )
-                        _recover_after_close()
-                    Thread(
-                        target=_wait_for_close,
-                        name=f"common-ws-close-watch-{group.mode}-{group.shard}",
-                        daemon=True,
-                    ).start()
+                    self._watch_retired_transport(
+                        close_worker, group=group, generation=generation,
+                        reason="failure_callback", on_finished=_recover_after_close,
+                    )
                     return
                 _recover_after_close()
             except Exception as exc:
@@ -1160,6 +1168,57 @@ class CommonWebSocketManager:
                     context={"event": "normalized_delivery", "group": f"{group.mode}:{group.shard}", "token": token},
                 )
 
+    def _watch_retired_transport(
+        self,
+        close_worker: Thread,
+        *,
+        group: SocketGroup,
+        generation: int | None,
+        reason: str,
+        on_finished: Callable[[], None] | None = None,
+    ) -> None:
+        """Expose and supervise a retired transport until its close call exits."""
+        key = f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
+        with self._lock:
+            self._retired_transports[key] = {
+                "group": f"{group.mode}:{group.shard}",
+                "generation": generation,
+                "reason": reason,
+                "retired_at": time.time(),
+                "close_worker_alive": bool(close_worker.is_alive()),
+                "last_observed_at": time.time(),
+            }
+
+        def _watch() -> None:
+            while close_worker.is_alive():
+                close_worker.join(timeout=10.0)
+                with self._lock:
+                    record = self._retired_transports.get(key)
+                    if record is not None:
+                        record["close_worker_alive"] = bool(close_worker.is_alive())
+                        record["last_observed_at"] = time.time()
+                if close_worker.is_alive():
+                    app_logger.error(
+                        "Common feed retired transport still alive group=%s generation=%s reason=%s; replacement remains blocked",
+                        f"{group.mode}:{group.shard}", generation, reason,
+                    )
+            with self._lock:
+                self._retired_transports.pop(key, None)
+            if on_finished is not None:
+                try:
+                    on_finished()
+                except Exception as exc:
+                    app_logger.warning(
+                        "Common feed retired transport completion handler failed group=%s reason=%s: %s",
+                        f"{group.mode}:{group.shard}", reason, exc,
+                    )
+
+        Thread(
+            target=_watch,
+            name=f"common-ws-retire-watch-{group.mode}-{group.shard}",
+            daemon=True,
+        ).start()
+
     @staticmethod
     def _close_socket_bounded(
         socket: Any,
@@ -1282,6 +1341,11 @@ class CommonWebSocketManager:
                 "failure_recovery_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in self._failure_recovery_groups
                 ),
+                "retired_transport_count": len(self._retired_transports),
+                "retired_transports": [dict(item) for item in self._retired_transports.values()],
+                "retired_transport_groups": sorted({
+                    str(item.get("group")) for item in self._retired_transports.values()
+                }),
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
             }
