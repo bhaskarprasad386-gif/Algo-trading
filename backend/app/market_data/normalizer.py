@@ -84,23 +84,37 @@ class AngelOneTickNormalizer:
 
     @staticmethod
     def _depth_value(payload: Mapping[str, Any], side: str, field: str) -> Any:
+        """Return the first positive, finite top-of-book value from broker depth.
+
+        SmartAPI depth arrays can contain empty/zero levels before a later valid
+        level. Do not let a zero at level 1 mask a usable price/quantity deeper
+        in the same side; if every level is empty, preserve None (never invent
+        the missing side).
+        """
+        def usable(value: Any) -> bool:
+            number = AngelOneTickNormalizer._finite_float(value)
+            return number is not None and number > 0
+
         direct = payload.get(f"{side}_{field}")
-        if direct is not None and AngelOneTickNormalizer._finite_float(direct) is not None:
+        if usable(direct):
             return direct
+
+        candidates = (
+            field,
+            f"{side}_{field}",
+            "price" if field == "price" else "quantity",
+            "qty" if field == "quantity" else field,
+        )
         for key in (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side):
             value = payload.get(key)
-            if isinstance(value, Mapping):
-                for candidate in (field, f"{side}_{field}", "price" if field == "price" else "quantity", "qty" if field == "quantity" else field):
-                    candidate_value = value.get(candidate)
-                    if candidate_value is not None and AngelOneTickNormalizer._finite_float(candidate_value) is not None:
+            levels = value if isinstance(value, list) else [value]
+            for level in levels:
+                if not isinstance(level, Mapping):
+                    continue
+                for candidate in candidates:
+                    candidate_value = level.get(candidate)
+                    if usable(candidate_value):
                         return candidate_value
-            elif isinstance(value, list) and value:
-                first = value[0]
-                if isinstance(first, Mapping):
-                    for candidate in (field, "price" if field == "price" else "quantity", "qty"):
-                        candidate_value = first.get(candidate)
-                        if candidate_value is not None and AngelOneTickNormalizer._finite_float(candidate_value) is not None:
-                            return candidate_value
         return None
 
     def normalize(self, descriptor: InstrumentDescriptor, payload: Mapping[str, Any]) -> MarketDataRecord:

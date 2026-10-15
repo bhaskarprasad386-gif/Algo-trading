@@ -503,11 +503,18 @@ class LiveCashFutureScanner:
         except (TypeError, ValueError, OverflowError):
             timestamp_ns = 0
         wall_now_ns = time.time_ns()
-        # Reject corrupt far-future exchange timestamps before datetime
-        # conversion/cache indexing; allow a small clock-skew window.
+        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+        # Reject corrupt/far-future timestamps and old source quotes before
+        # they can be paired. Receive-time freshness alone cannot detect a
+        # delayed/replayed quote that has just arrived from the feed.
         if timestamp_ns <= 0 or not symbol or timestamp_ns > wall_now_ns + 300_000_000_000:
             with self._lock:
                 self._increment_stat("invalid_timestamps")
+                self._increment_stat("dropped")
+            return None
+        if wall_now_ns - timestamp_ns > max_age_ns:
+            with self._lock:
+                self._increment_stat("stale_quotes")
                 self._increment_stat("dropped")
             return None
         with self._lock:
@@ -524,13 +531,18 @@ class LiveCashFutureScanner:
             received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
         except (TypeError, ValueError, OverflowError):
             received_at_ns = time.time_ns()
-        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
         now_ns = time.time_ns()
         if received_at_ns <= 0 or received_at_ns > now_ns + 5_000_000_000 or now_ns - received_at_ns > max_age_ns:
             with self._lock:
                 self._increment_stat("stale_quotes")
                 self._increment_stat("dropped")
             return None
+
+        # Health must reflect the latest accepted observation. Previously this
+        # field was initialized but never updated, so a busy scanner could
+        # report last_observation_at=null despite receiving thousands of ticks.
+        with self._lock:
+            self._last_observation_ns = max(self._last_observation_ns or 0, received_at_ns)
 
         ltp = self._price(payload, "ltp")
         if ltp is None:
@@ -806,14 +818,17 @@ class LiveCashFutureScanner:
                 signal for signal in self._signals.values()
                 if signal.received_at_ns >= cutoff
             ]
-        # Emit every fresh synchronized LTP pair. Eligibility, bid/ask quality,
-        # liquidity, and stability remain informational fields rather than
-        # filters that hide the pair from the live scanner.
-        signals = list(fresh_signals)
+        # The ₹5,000 gross-lot threshold is a result-visibility rule only.
+        # Keep observing, pairing, tracking, and persisting every pair above;
+        # hide only rows whose (gap × lot_size) is not strictly greater than ₹5,000.
+        signals = [
+            signal for signal in fresh_signals
+            if signal.gross_lot_value is not None and signal.gross_lot_value > 5000.0
+        ]
         signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
         rank_scores = self._rank(signals)
         by_symbol: dict[str, list[LiveCashFutureSignal]] = {}
-        for signal in fresh_signals:
+        for signal in signals:
             by_symbol.setdefault(signal.symbol, []).append(signal)
 
         data: list[dict] = []

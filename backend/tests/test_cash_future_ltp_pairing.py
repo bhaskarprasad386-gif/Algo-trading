@@ -19,6 +19,7 @@ def _pair(scanner, *, cash_book=True, future_book=True, cash_qty=1, future_qty=1
         "underlying": "ABC",
         "contract_month": "CURRENT",
         "ltp": 101.5,
+        "lot_size": 6000,
         "source_timestamp_ns": timestamp_ns,
         "received_at_ns": time.time_ns(),
         "volume": 0,
@@ -48,6 +49,11 @@ def test_ltp_pair_is_returned_when_bid_ask_are_missing(monkeypatch):
     assert len(rows) == 1
     assert rows[0]["lifecycle"] == "PAIR_ONLY"
     assert "EXECUTION_QUOTES_INCOMPLETE_INFORMATIONAL" in rows[0]["reason_codes"]
+    health = scanner.health()
+    assert health["pairs"] == 1
+    assert health["pairs_missing_quotes"] == 1
+    assert health["pairs_with_quotes"] == 0
+    assert health["last_observation_at"] is not None
 
 
 def test_low_liquidity_and_zero_volume_do_not_block_pair(monkeypatch):

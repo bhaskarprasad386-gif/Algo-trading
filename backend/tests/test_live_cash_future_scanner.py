@@ -9,11 +9,11 @@ def test_live_scanner_pairs_same_second_cash_and_future():
     scanner = LiveCashFutureScanner()
     cash = {
         "leg": "CASH", "underlying": "ABC", "contract_month": None,
-        "ltp": 100.0, "bid": 99.9, "ask": 100.0, "source_timestamp_ns": 1_000_000_000,
+        "ltp": 100.0, "bid": 99.9, "ask": 100.0, "source_timestamp_ns": int(time() * 1_000_000_000),
     }
     future = {
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "bid_qty": 800, "ask_qty": 700, "source_timestamp_ns": 1_000_000_000,
+        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "bid_qty": 800, "ask_qty": 700, "source_timestamp_ns": int(time() * 1_000_000_000),
     }
     assert scanner.observe(cash) is None
     signal = scanner.observe(future)
@@ -26,11 +26,11 @@ def test_live_scanner_rejects_pair_beyond_one_second():
     scanner = LiveCashFutureScanner()
     assert scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100.0,
-        "bid": 99.9, "ask": 100.0, "bid_qty": 1000, "ask_qty": 900, "source_timestamp_ns": 1_000_000_000,
+        "bid": 99.9, "ask": 100.0, "bid_qty": 1000, "ask_qty": 900, "source_timestamp_ns": int(time() * 1_000_000_000),
     }) is None
     assert scanner.observe({
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": 3_000_000_000,
+        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": int(time() * 1_000_000_000) + 2_000_000_000,
     }) is None
 
 
@@ -38,11 +38,11 @@ def test_live_scanner_requires_executable_two_sided_quotes():
     scanner = LiveCashFutureScanner()
     scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100.0,
-        "bid": 99.9, "source_timestamp_ns": 1_000_000_000,
+        "bid": 99.9, "source_timestamp_ns": int(time() * 1_000_000_000),
     })
     signal = scanner.observe({
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": 1_000_000_000,
+        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": int(time() * 1_000_000_000),
     })
     assert signal is not None
     assert signal.cash_ask is None
@@ -52,7 +52,7 @@ def test_live_scanner_requires_executable_two_sided_quotes():
 def test_live_scanner_advanced_metrics(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
     scanner = LiveCashFutureScanner()
-    ts = 1_000_000_000
+    ts = int(time() * 1_000_000_000)
     scanner.observe({"leg":"CASH","underlying":"ABC","ltp":100,"bid":99.9,"ask":100,"source_timestamp_ns":ts})
     signal = scanner.observe({"leg":"FUTURE","underlying":"ABC","contract_month":"CURRENT",
                               "ltp":101,"bid":100.8,"ask":101,"lot_size":100,
@@ -71,7 +71,7 @@ def test_live_scanner_advanced_metrics(monkeypatch):
 def test_live_scanner_liquidity_capacity_and_traceability(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY", 500)
     scanner = LiveCashFutureScanner()
-    ts = 1_000_000_000
+    ts = int(time() * 1_000_000_000)
     scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
         "bid_qty": 1000, "ask_qty": 900, "source_timestamp_ns": ts,
@@ -85,7 +85,7 @@ def test_live_scanner_liquidity_capacity_and_traceability(monkeypatch):
     assert signal.liquidity_qty == 700
     assert signal.capacity_lots == 1000
     assert signal.capacity_notional == 10_000_000
-    assert signal.observation_ref == "ABC:CURRENT:1000000000"
+    assert signal.observation_ref == f"ABC:CURRENT:{ts}"
     assert "LIQUIDITY_MEASURED" in signal.reason_codes
 
 
@@ -101,7 +101,7 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
         })
         return scanner.observe({
             "leg": "FUTURE", "underlying": "ABC", "contract_month": month,
-            "ltp": bid + 0.2, "bid": bid, "ask": bid + 0.2, "lot_size": 1,
+            "ltp": bid + 0.2, "bid": bid, "ask": bid + 0.2, "lot_size": 30000,
             "source_timestamp_ns": ts,
         })
 
@@ -139,7 +139,7 @@ def test_live_scanner_ranking_exposes_multi_factor_score():
         })
         scanner.observe({
             "leg": "FUTURE", "underlying": "ABC", "contract_month": month,
-            "ltp": bid, "bid": bid, "ask": bid + 0.1, "lot_size": 1, "source_timestamp_ns": ts,
+            "ltp": bid, "bid": bid, "ask": bid + 0.1, "lot_size": 3000, "source_timestamp_ns": ts,
         })
     rows = scanner.snapshot(max_age_seconds=10_000, limit=10)
     assert rows
@@ -170,7 +170,7 @@ def test_live_scanner_emits_recovery_event_after_expiry(monkeypatch):
 def test_live_scanner_liquidity_filter_requires_all_four_depth_sides(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY", 100)
     scanner = LiveCashFutureScanner()
-    ts = 1_000_000_000
+    ts = int(time() * 1_000_000_000)
     scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
         "bid_qty": 200, "ask_qty": 200, "source_timestamp_ns": ts,
@@ -189,7 +189,7 @@ def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT", 100.0)
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_ALERT_LOTS", 2)
     scanner = LiveCashFutureScanner()
-    ts = 1_000_000_000
+    ts = int(time() * 1_000_000_000)
     scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
         "source_timestamp_ns": ts,
@@ -222,7 +222,7 @@ def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
 def test_live_scanner_does_not_alert_when_capacity_is_zero(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_CAPITAL", 50.0)
     scanner = LiveCashFutureScanner()
-    ts = 1_000_000_000
+    ts = int(time() * 1_000_000_000)
     scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
         "source_timestamp_ns": ts,
@@ -238,9 +238,10 @@ def test_live_scanner_does_not_alert_when_capacity_is_zero(monkeypatch):
     assert signal.alert_event is None
 
 
-def test_live_scanner_keeps_only_active_day_extremes():
+def test_live_scanner_keeps_only_active_day_extremes(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS", 172800.0)
     scanner = LiveCashFutureScanner()
-    ts = 1_000_000_000
+    ts = int(time() * 1_000_000_000) - 86_400_000_000_000
     scanner.observe({"leg":"CASH","underlying":"OLD","ltp":100,"ask":100,"source_timestamp_ns":ts})
     scanner.observe({"leg":"FUTURE","underlying":"OLD","contract_month":"CURRENT","ltp":101,"bid":100.8,"ask":101,"source_timestamp_ns":ts})
     old_key = next(iter(scanner._session_extremes))
@@ -291,7 +292,7 @@ def test_live_scanner_exposes_absolute_quality_score():
     scanner = LiveCashFutureScanner()
     ts = int(time() * 1_000_000_000)
     scanner.observe({"leg":"CASH","underlying":"ABC","ltp":100,"bid":99.9,"ask":100,"bid_qty":1000,"ask_qty":1000,"source_timestamp_ns":ts})
-    signal = scanner.observe({"leg":"FUTURE","underlying":"ABC","contract_month":"CURRENT","ltp":102,"bid":101,"ask":102,"bid_qty":1000,"ask_qty":1000,"lot_size":1,"source_timestamp_ns":ts})
+    signal = scanner.observe({"leg":"FUTURE","underlying":"ABC","contract_month":"CURRENT","ltp":102,"bid":101,"ask":102,"bid_qty":1000,"ask_qty":1000,"lot_size":3000,"source_timestamp_ns":ts})
     assert signal is not None
     assert 0 <= signal.quality_score <= 100
     row = scanner.snapshot(max_age_seconds=10, limit=1)[0]
@@ -304,11 +305,11 @@ def test_live_scanner_snapshot_excludes_stale_signals():
     now_ns = int(time() * 1_000_000_000)
     scanner.observe({
         "leg": "CASH", "underlying": "FRESH", "ltp": 100, "bid": 99.9, "ask": 100,
-        "source_timestamp_ns": now_ns,
+        "source_timestamp_ns": now_ns, "lot_size": 6000,
     })
     fresh = scanner.observe({
         "leg": "FUTURE", "underlying": "FRESH", "contract_month": "CURRENT",
-        "ltp": 101, "bid": 100.8, "ask": 101, "lot_size": 1,
+        "ltp": 101, "bid": 100.8, "ask": 101, "lot_size": 6000,
         "source_timestamp_ns": now_ns,
     })
     assert fresh is not None
@@ -330,36 +331,53 @@ def test_live_scanner_snapshot_excludes_stale_signals():
     assert [row["symbol"] for row in rows] == ["FRESH"]
 
 
-def test_live_scanner_snapshot_uses_receive_time_not_exchange_timestamp():
+def test_live_scanner_rejects_old_source_timestamp_even_when_just_received():
     scanner = LiveCashFutureScanner()
     source_ts = int(time() * 1_000_000_000) - 10_000_000_000
     received_ts = int(time() * 1_000_000_000)
-    scanner.observe({
+    assert scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
         "source_timestamp_ns": source_ts, "received_at_ns": received_ts,
-    })
-    signal = scanner.observe({
-        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-        "ltp": 101, "bid": 100.8, "ask": 101,
-        "source_timestamp_ns": source_ts, "received_at_ns": received_ts,
-    })
-    assert signal is not None
-    rows = scanner.snapshot(max_age_seconds=5, limit=10)
-    assert rows
-    assert rows[0]["received_at_ns"] == received_ts
+    }) is None
+    health = scanner.health()
+    assert health["stale_quotes"] == 1
+    assert health["dropped"] == 1
 
+def test_live_scanner_snapshot_applies_strict_5000_gross_lot_visibility_only():
+    scanner = LiveCashFutureScanner()
+    ts = int(time() * 1_000_000_000)
+
+    for symbol, lot_size in (("BELOW", 4999), ("BOUNDARY", 5000), ("ABOVE", 5001)):
+        scanner.observe({
+            "leg": "CASH", "underlying": symbol, "ltp": 100,
+            "bid": 99.9, "ask": 100, "source_timestamp_ns": ts,
+        })
+        signal = scanner.observe({
+            "leg": "FUTURE", "underlying": symbol, "contract_month": "CURRENT",
+            "ltp": 101, "bid": 100.8, "ask": 101, "lot_size": lot_size,
+            "source_timestamp_ns": ts,
+        })
+        assert signal is not None
+        assert signal.gross_lot_value == pytest.approx(float(lot_size))
+
+    # Visibility threshold must not block pair observation/tracking.
+    assert len(scanner._signals) == 3
+    rows = scanner.snapshot(max_age_seconds=10, limit=10)
+    assert [row["symbol"] for row in rows] == ["ABOVE"]
+    assert rows[0]["gross_lot_value"] > 5000.0
 
 
 def test_live_scanner_rejects_out_of_order_same_leg_updates_and_counts_reason(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 1.0)
     scanner = LiveCashFutureScanner()
+    base = int(time() * 1_000_000_000)
     assert scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100,
-        "bid": 99.9, "ask": 100, "source_timestamp_ns": 10_000_000_000,
+        "bid": 99.9, "ask": 100, "source_timestamp_ns": base,
     }) is None
     assert scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 99,
-        "bid": 98.9, "ask": 99, "source_timestamp_ns": 9_500_000_000,
+        "bid": 98.9, "ask": 99, "source_timestamp_ns": base - 500_000_000,
     }) is None
     health = scanner.health()
     assert health["out_of_order_updates"] == 1

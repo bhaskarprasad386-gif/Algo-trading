@@ -1,6 +1,7 @@
 from contextlib import contextmanager
+from time import time_ns
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -38,17 +39,21 @@ def test_live_scanner_result_persists_and_cleans_up_after_30_days(monkeypatch, t
             db.close()
 
     scanner = LiveCashFutureScanner()
-    first = _signal(scanner, 1_000_000_000)
+    first_ts = time_ns()
+    first = _signal(scanner, first_ts)
     assert first is not None
     scanner._persist_result(session_factory, first)
 
     with Session() as db:
         row = db.query(LiveCashFutureScannerResult).one()
-        assert row.observed_at.isoformat().startswith("1970-01-01T05:30:01")
+        from zoneinfo import ZoneInfo
+        assert row.timestamp_ns == first_ts
+        assert row.observed_at == datetime.fromtimestamp(first_ts / 1_000_000_000, ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
         row.observed_at = row.observed_at - timedelta(days=91)
         db.commit()
 
-    second = _signal(scanner, 2_000_000_000)
+    second_ts = first_ts + 1_000_000_000
+    second = _signal(scanner, second_ts)
     assert second is not None
     scanner._last_result_cleanup = 0.0
     scanner._persist_result(session_factory, second)
@@ -56,7 +61,7 @@ def test_live_scanner_result_persists_and_cleans_up_after_30_days(monkeypatch, t
     with Session() as db:
         rows = db.query(LiveCashFutureScannerResult).all()
         assert len(rows) == 1
-        assert rows[0].timestamp_ns == second.timestamp_ns
+        assert rows[0].timestamp_ns == second_ts
         assert rows[0].gap_pct == second.gap_pct
 
 
@@ -81,7 +86,8 @@ def test_live_scanner_alert_history_is_retained_for_90_days(monkeypatch, tmp_pat
             db.close()
 
     scanner = LiveCashFutureScanner()
-    signal = _signal(scanner, 3_000_000_000)
+    signal_ts = time_ns()
+    signal = _signal(scanner, signal_ts)
     assert signal is not None
     signal = replace(signal, alert_event="NEW", lot_size=100, alert_lots=1, gross_profit=80.0, net_profit=80.0)
     scanner._persist_alert(session_factory, signal)
@@ -90,11 +96,12 @@ def test_live_scanner_alert_history_is_retained_for_90_days(monkeypatch, tmp_pat
         row = db.query(LiveCashFutureAlertHistory).one()
         assert row.timestamp_ns == signal.timestamp_ns
         assert row.gap == signal.gap
-        assert row.observed_at.isoformat().startswith("1970-01-01T05:30:03")
+        from zoneinfo import ZoneInfo
+        assert row.observed_at == datetime.fromtimestamp(signal_ts / 1_000_000_000, ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
         row.observed_at = row.observed_at - timedelta(days=91)
         db.commit()
 
-    recovered = replace(signal, timestamp_ns=4_000_000_000, alert_event="RECOVERY")
+    recovered = replace(signal, timestamp_ns=signal_ts + 1_000_000_000, alert_event="RECOVERY")
     scanner._persist_alert(session_factory, recovered)
 
     with Session() as db:
