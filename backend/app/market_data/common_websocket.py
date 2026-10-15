@@ -689,12 +689,14 @@ class CommonWebSocketManager:
 
         def _recover_after_close() -> None:
             try:
-                # Only clear the shard's retirement marker once the close worker
-                # actually exits. A timed-out close is not proof that the broker
-                # session has been released, so replacement admission must wait.
+                # Keep admission blocked while the supervisor processes the
+                # failure. Clear the marker only immediately before serialized
+                # reconciliation, so concurrent reconcile calls cannot race
+                # ahead and admit a replacement from stale state.
+                self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
                 with self._lock:
                     self._failure_recovery_groups.discard(group)
-                self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
+                self._reconcile()
             except Exception as exc:
                 runtime_diagnostics.record(
                     component="Common Market Feed",
