@@ -235,7 +235,7 @@ class MarketDataWebSocket:
                 )
                 self._last_error = error_detail
                 failure_callback = self.on_failure
-            app_logger.error("Angel One WebSocket error: %s", error_detail)
+            app_logger.error(f"Angel One WebSocket error: {error_detail}")
             if failure_callback is not None:
                 try:
                     failure_callback(error_detail)
@@ -253,9 +253,7 @@ class MarketDataWebSocket:
             close_code = getattr(wsapp, "close_status_code", None)
             close_reason = getattr(wsapp, "close_reason", None)
             app_logger.warning(
-                "Angel One WebSocket connection closed code=%s reason=%s",
-                close_code,
-                close_reason,
+                f"Angel One WebSocket connection closed code={close_code} reason={close_reason}"
             )
             if not stopping and failure_callback is not None:
                 try:
