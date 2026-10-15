@@ -92,6 +92,9 @@ class LiveCashFutureScanner:
             "out_of_order_older_second": 0, "out_of_order_lag_ns_total": 0,
             "out_of_order_lag_ns_max": 0, "cache_evictions": 0,
             "pairs_outside_timestamp_tolerance": 0,
+            "source_timestamp_older_than_quote_age": 0,
+            "source_timestamp_age_ns_total": 0,
+            "source_timestamp_age_ns_max": 0,
         }
         self._last_observation_ns: int | None = None
         self._pair_events: deque[dict] = deque(maxlen=2000)
@@ -549,6 +552,18 @@ class LiveCashFutureScanner:
                 self._increment_stat("stale_quotes")
                 self._increment_stat("dropped")
             return None
+        # Keep receive freshness and exchange/source freshness separate. A
+        # recently delivered buffered tick can have a fresh receive time but
+        # an old source timestamp; count that condition without dropping it
+        # until live telemetry establishes a safe source-age threshold.
+        source_age_ns = max(0, received_at_ns - timestamp_ns)
+        with self._lock:
+            self._stats["source_timestamp_age_ns_total"] += source_age_ns
+            self._stats["source_timestamp_age_ns_max"] = max(
+                self._stats["source_timestamp_age_ns_max"], source_age_ns
+            )
+            if source_age_ns > max_age_ns:
+                self._stats["source_timestamp_older_than_quote_age"] += 1
 
         ltp = self._price(payload, "ltp")
         if ltp is None:

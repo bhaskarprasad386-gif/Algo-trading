@@ -25,11 +25,13 @@ def test_live_scanner_pairs_same_second_cash_and_future():
 def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 2.0)
     scanner = LiveCashFutureScanner()
-    now = int(time() * 1_000_000_000)
+    # Keep all source timestamps within the scanner's source-age acceptance window
+    # so the test isolates pair tolerance rather than stale-source rejection.
+    now = int(time() * 1_000_000_000) - 4_000_000_000
 
-    # The first cash tick defines the bucket key. The older future tick is
-    # within tolerance of that key, but a later cash update moves the actual
-    # cash/future pair 2 seconds apart while still landing in the same bucket.
+    # The future tick is within tolerance of the cached cash key. A later cash
+    # update is four seconds from that future tick but remains within two
+    # seconds of the cache key, so actual-leg validation must reject it.
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100,
         "source_timestamp_ns": now + 2_000_000_000,
@@ -426,6 +428,25 @@ def test_live_scanner_counts_invalid_and_stale_input_categories():
     assert health["invalid_timestamps"] == 1
     assert health["stale_quotes"] == 1
 
+
+
+def test_live_scanner_reports_old_source_timestamp_without_gating_pair(monkeypatch):
+    scanner = LiveCashFutureScanner()
+    received = int(time() * 1_000_000_000)
+    source = received - 10_000_000_000
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "AGE", "ltp": 100,
+        "source_timestamp_ns": source, "received_at_ns": received,
+    }) is None
+    signal = scanner.observe({
+        "leg": "FUTURE", "underlying": "AGE", "contract_month": "CURRENT",
+        "ltp": 101, "source_timestamp_ns": source, "received_at_ns": received,
+    })
+    assert signal is not None
+    health = scanner.health()
+    assert health["source_timestamp_older_than_quote_age"] == 2
+    assert health["source_timestamp_age_ns_total"] >= 20_000_000_000
+    assert health["source_timestamp_age_ns_max"] >= 10_000_000_000
 
 
 def test_live_scanner_rejects_far_future_exchange_timestamp_without_crashing():
