@@ -32,7 +32,7 @@ def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch
     # cash/future pair 2 seconds apart while still landing in the same bucket.
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100,
-        "source_timestamp_ns": now + 4_000_000_000,
+        "source_timestamp_ns": now + 2_000_000_000,
     }) is None
     first_pair = scanner.observe({
         "leg": "FUTURE", "underlying": "SYNC", "contract_month": "CURRENT",
@@ -41,7 +41,7 @@ def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch
     assert first_pair is not None
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100.5,
-        "source_timestamp_ns": now + 2_000_000_000,
+        "source_timestamp_ns": now + 4_000_000_000,
     }) is None
 
     health = scanner.health()
