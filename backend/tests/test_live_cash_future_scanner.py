@@ -25,11 +25,13 @@ def test_live_scanner_pairs_same_second_cash_and_future():
 def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 2.0)
     scanner = LiveCashFutureScanner()
-    now = int(time() * 1_000_000_000)
+    # Keep exchange timestamps behind wall clock so the test isolates pair
+    # timestamp tolerance rather than any future-clock validation behavior.
+    now = int(time() * 1_000_000_000) - 10_000_000_000
 
-    # The first cash tick defines the bucket key. The older future tick is
-    # within tolerance of that key, but a later cash update moves the actual
-    # cash/future pair 2 seconds apart while still landing in the same bucket.
+    # The future tick is within tolerance of the cached cash key. A later cash
+    # update is four seconds from that future tick but remains within two
+    # seconds of the cache key, so actual-leg validation must reject it.
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100,
         "source_timestamp_ns": now + 2_000_000_000,
