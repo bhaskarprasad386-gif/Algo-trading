@@ -425,11 +425,14 @@ class LiveCashFutureCommonRunner:
             else:
                 self._latest_persisted[record.instrument] = record
         if self.on_payload is not None:
+            # The payload callback is the authoritative scanner path when supplied.
+            # Do not also feed the same record into the legacy opportunity scanner.
             try:
                 self.on_payload(self._record_payload(record, meta))
                 self._payload_callbacks += 1
             except Exception as exc:
                 app_logger.error("Cash-Future payload callback failed: %s", exc)
+            return
         try:
             self._scanner_updates += 1
             result = self.scanner.update(

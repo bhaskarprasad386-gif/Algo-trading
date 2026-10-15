@@ -380,3 +380,43 @@ def test_quote_diagnostics_distinguish_present_depth_from_usable_ask_price():
     assert diagnostics["sell_depth_levels_examined"] >= 4
     assert "best_5_sell_data" not in diagnostics
     runner.stop()
+
+
+def test_authoritative_payload_mode_skips_legacy_scanner_update():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    class LegacyScanner:
+        def __init__(self):
+            self.calls = 0
+
+        def update(self, *args, **kwargs):
+            self.calls += 1
+            raise AssertionError("legacy scanner must not run in authoritative payload mode")
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+        scanner=LegacyScanner(),
+        on_payload=lambda payload: None,
+    )
+    key = InstrumentKey("NSE", "NSE", "123")
+    runner._metadata[key] = {
+        "leg": "CASH", "underlying": "ABC", "contract_month": "CASH",
+    }
+    tick = MarketDataRecord(
+        instrument=key,
+        symbol="ABC-EQ",
+        instrument_type=InstrumentType.EQUITY,
+        timestamp_ns=1_760_000_000_000_000_000,
+        ltp=100.0,
+        bid=99.9,
+        ask=100.0,
+        payload={},
+    )
+
+    runner._on_record(tick)
+
+    assert runner.snapshot()["payload_callbacks"] == 1
+    assert runner.snapshot()["scanner_updates"] == 0
+    assert runner.scanner.calls == 0
+    runner.stop()
