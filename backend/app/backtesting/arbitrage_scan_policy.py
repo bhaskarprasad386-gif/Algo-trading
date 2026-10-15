@@ -5,6 +5,7 @@ price gap. The caller supplies actual contract-master strikes/expiries.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from bisect import bisect_left
 from typing import Iterable, Literal
 
 InstrumentClass = Literal["STOCK", "INDEX", "COMMODITY"]
@@ -83,14 +84,25 @@ def enumerate_synthetic_strikes(strikes: Iterable[float], *, atm_strike: float,
         return tuple(result)
 
     # Stock scope deliberately retains its existing fixed actual-chain radius.
-    ordered = ordered_strikes_around_atm(ordered, atm_strike=atm_strike)
-    atm_index = ordered.index(float(atm_strike))
+    # The live scanner passes only strikes with executable CE+PE quotes.
+    # The actual ATM contract can be absent from that filtered snapshot, so
+    # anchor distances at its insertion position instead of raising. This
+    # still considers only listed strikes and never fabricates an ATM quote.
+    ordered = tuple(sorted(set(float(s) for s in ordered)))
+    atm = float(atm_strike)
+    atm_index = bisect_left(ordered, atm)
+    has_atm = atm_index < len(ordered) and ordered[atm_index] == atm
     radius = policy.synthetic_radius(instrument_class)
     result = []
     for index, strike in enumerate(ordered):
-        distance = index - atm_index
+        if has_atm:
+            distance = index - atm_index
+        elif strike < atm:
+            distance = index - atm_index + 1
+        else:
+            distance = index - atm_index
         if abs(distance) > radius: continue
-        side = "LOWER" if distance < 0 else "UPPER" if distance > 0 else "ATM"
+        side = "LOWER" if strike < atm else "UPPER" if strike > atm else "ATM"
         result.append((strike, abs(distance), side))
     return tuple(result)
 
