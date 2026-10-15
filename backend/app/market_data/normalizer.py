@@ -82,26 +82,40 @@ class AngelOneTickNormalizer:
             return integer
         return integer * 1_000_000
 
-    @staticmethod
-    def _depth_value(payload: Mapping[str, Any], side: str, field: str) -> Any:
-        direct = payload.get(f"{side}_{field}")
-        if direct is not None and AngelOneTickNormalizer._finite_float(direct) is not None:
-            return direct
+    @classmethod
+    def _depth_detail(cls, payload: Mapping[str, Any], side: str) -> tuple[Any, Any]:
+        """Return the first usable positive price and its own optional quantity.
+
+        Broker depth arrays can contain empty or malformed top levels. Skip those
+        levels rather than turning an otherwise valid side into a missing quote.
+        """
+        direct_price = cls._finite_float(payload.get(f"{side}_price"))
+        if direct_price is not None and direct_price > 0:
+            direct_qty = cls._finite_float(payload.get(f"{side}_quantity"))
+            return direct_price, direct_qty
+
         for key in (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side):
             value = payload.get(key)
-            if isinstance(value, Mapping):
-                for candidate in (field, f"{side}_{field}", "price" if field == "price" else "quantity", "qty" if field == "quantity" else field):
-                    candidate_value = value.get(candidate)
-                    if candidate_value is not None and AngelOneTickNormalizer._finite_float(candidate_value) is not None:
-                        return candidate_value
-            elif isinstance(value, list) and value:
-                first = value[0]
-                if isinstance(first, Mapping):
-                    for candidate in (field, "price" if field == "price" else "quantity", "qty"):
-                        candidate_value = first.get(candidate)
-                        if candidate_value is not None and AngelOneTickNormalizer._finite_float(candidate_value) is not None:
-                            return candidate_value
-        return None
+            levels = [value] if isinstance(value, Mapping) else value if isinstance(value, list) else ()
+            for level in levels:
+                if not isinstance(level, Mapping):
+                    continue
+                raw_price = None
+                for candidate in ("price", f"{side}_price"):
+                    candidate_value = cls._finite_float(level.get(candidate))
+                    if candidate_value is not None and candidate_value > 0:
+                        raw_price = level.get(candidate)
+                        break
+                if raw_price is None:
+                    continue
+                raw_quantity = None
+                for candidate in ("quantity", "qty", f"{side}_quantity"):
+                    candidate_value = cls._finite_float(level.get(candidate))
+                    if candidate_value is not None:
+                        raw_quantity = level.get(candidate)
+                        break
+                return raw_price, raw_quantity
+        return None, None
 
     def normalize(self, descriptor: InstrumentDescriptor, payload: Mapping[str, Any]) -> MarketDataRecord:
         if not isinstance(descriptor, InstrumentDescriptor):
@@ -115,10 +129,8 @@ class AngelOneTickNormalizer:
         if instrument_type is None:
             raise ValueError(f"unsupported instrument_type: {descriptor.instrument_type}")
 
-        bid_raw = self._depth_value(payload, "buy", "price")
-        ask_raw = self._depth_value(payload, "sell", "price")
-        bid_qty_raw = self._depth_value(payload, "buy", "quantity")
-        ask_qty_raw = self._depth_value(payload, "sell", "quantity")
+        bid_raw, bid_qty_raw = self._depth_detail(payload, "buy")
+        ask_raw, ask_qty_raw = self._depth_detail(payload, "sell")
         bid_value = self._finite_float(bid_raw)
         ask_value = self._finite_float(ask_raw)
         bid_qty_value = self._finite_float(bid_qty_raw)
