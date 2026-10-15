@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+from math import isfinite
 from dataclasses import replace
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
@@ -82,6 +83,11 @@ class LiveCashFutureCommonRunner:
             "missing_both_sides": 0, "buy_depth_present": 0,
             "sell_depth_present": 0, "buy_depth_present_bid_missing": 0,
             "sell_depth_present_ask_missing": 0,
+            "buy_depth_levels_examined": 0, "sell_depth_levels_examined": 0,
+            "buy_depth_usable_price": 0, "sell_depth_usable_price": 0,
+            "buy_depth_present_without_usable_price": 0,
+            "sell_depth_present_without_usable_price": 0,
+            "buy_direct_price_present": 0, "sell_direct_price_present": 0,
         }
         # Provenance counters only; never store the raw broker timestamp value.
         self._timestamp_diagnostics: dict[str, int] = {
@@ -146,6 +152,39 @@ class LiveCashFutureCommonRunner:
                 return True
         return False
 
+    @staticmethod
+    def _depth_price_diagnostic(payload: Any, side: str) -> tuple[int, bool, bool]:
+        """Return examined level count, usable depth price, and direct-price presence."""
+        if not isinstance(payload, dict):
+            return 0, False, False
+        direct_names = (f"{side}_price", "bid" if side == "buy" else "ask")
+        direct_present = False
+        for name in direct_names:
+            try:
+                value = float(payload.get(name))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if isfinite(value) and value > 0:
+                direct_present = True
+                break
+        keys = (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side)
+        examined = 0
+        for key in keys:
+            value = payload.get(key)
+            levels = [value] if isinstance(value, dict) else value if isinstance(value, list) else ()
+            for level in levels:
+                examined += 1
+                if not isinstance(level, dict):
+                    continue
+                for name in ("price", f"{side}_price"):
+                    try:
+                        price = float(level.get(name))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if isfinite(price) and price > 0:
+                        return examined, True, direct_present
+        return examined, False, direct_present
+
     def _quote_diagnostics_snapshot(self) -> dict[str, int]:
         with self._quote_diagnostics_lock:
             return dict(self._quote_diagnostics)
@@ -158,6 +197,8 @@ class LiveCashFutureCommonRunner:
         missing_ltp = record.ltp is None or record.ltp <= 0
         missing_bid = record.bid is None or record.bid <= 0
         missing_ask = record.ask is None or record.ask <= 0
+        buy_examined, buy_usable, buy_direct = self._depth_price_diagnostic(raw, "buy")
+        sell_examined, sell_usable, sell_direct = self._depth_price_diagnostic(raw, "sell")
         with self._quote_diagnostics_lock:
             stats = self._quote_diagnostics
             stats["records"] += 1
@@ -170,6 +211,14 @@ class LiveCashFutureCommonRunner:
             stats["sell_depth_present"] += int(sell_depth)
             stats["buy_depth_present_bid_missing"] += int(buy_depth and missing_bid)
             stats["sell_depth_present_ask_missing"] += int(sell_depth and missing_ask)
+            stats["buy_depth_levels_examined"] += buy_examined
+            stats["sell_depth_levels_examined"] += sell_examined
+            stats["buy_depth_usable_price"] += int(buy_usable)
+            stats["sell_depth_usable_price"] += int(sell_usable)
+            stats["buy_depth_present_without_usable_price"] += int(buy_depth and not buy_usable)
+            stats["sell_depth_present_without_usable_price"] += int(sell_depth and not sell_usable)
+            stats["buy_direct_price_present"] += int(buy_direct)
+            stats["sell_direct_price_present"] += int(sell_direct)
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
         rows = self.instrument_master.download()
