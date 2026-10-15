@@ -323,6 +323,7 @@ def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
 
         def run_forever(self, **kwargs):
             calls["run_forever"] = kwargs
+            calls["callbacks"]["on_open"](self)
 
     monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
     sdk_socket = SimpleNamespace(
