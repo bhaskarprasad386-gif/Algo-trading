@@ -120,7 +120,7 @@ def test_live_synthetic_scanner_rejects_illiquid_strike():
 def test_live_synthetic_scanner_keeps_current_and_near_expiries_isolated():
     ts = 5_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    for exp, fut in (("30SEP2026", 115.0), ("07OCT2026", 116.0)):
+    for exp, fut in (("30SEP2026", 117.0), ("07OCT2026", 118.0)):
         scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": exp})
         scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": exp})
         scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": exp})
