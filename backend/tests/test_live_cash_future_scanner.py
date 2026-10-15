@@ -476,3 +476,25 @@ def test_live_scanner_rejects_far_future_exchange_timestamp_without_crashing():
         "source_timestamp_ns": 10**30,
     }) is None
     assert scanner.health()["invalid_timestamps"] == 1
+
+def test_pair_quote_diagnostics_count_each_missing_or_crossed_side_without_dropping_pair():
+    scanner = LiveCashFutureScanner()
+    ts = int(time() * 1_000_000_000)
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "QUOTE_DIAG", "ltp": 100,
+        "bid": 99.8, "source_timestamp_ns": ts,
+    }) is None
+    signal = scanner.observe({
+        "leg": "FUTURE", "underlying": "QUOTE_DIAG", "contract_month": "CURRENT",
+        "ltp": 102, "bid": 102.2, "ask": 102.0, "source_timestamp_ns": ts,
+    })
+    assert signal is not None
+    health = scanner.health()
+    assert health["pairs"] == 1
+    assert health["pairs_missing_quotes"] == 1
+    assert health["paired_missing_cash_ask"] == 1
+    assert health["paired_missing_cash_bid"] == 0
+    assert health["paired_missing_future_bid"] == 0
+    assert health["paired_missing_future_ask"] == 0
+    assert health["paired_crossed_future_book"] == 1
+    assert health["paired_crossed_cash_book"] == 0

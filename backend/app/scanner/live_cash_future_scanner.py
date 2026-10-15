@@ -84,6 +84,9 @@ class LiveCashFutureScanner:
         self._stats = {
             "observations": 0, "pairs": 0, "pairs_with_quotes": 0,
             "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0,
+            "paired_missing_cash_bid": 0, "paired_missing_cash_ask": 0,
+            "paired_missing_future_bid": 0, "paired_missing_future_ask": 0,
+            "paired_crossed_cash_book": 0, "paired_crossed_future_book": 0,
             "dropped": 0, "persisted": 0, "pair_events": 0,
             "pair_events_persisted": 0, "invalid_payloads": 0,
             "invalid_legs": 0, "invalid_timestamps": 0, "invalid_prices": 0,
@@ -672,12 +675,26 @@ class LiveCashFutureScanner:
             value is not None and value > 0
             for value in (cash["bid"], cash_ask, future_bid, future["ask"])
         ) and cash["bid"] <= cash_ask and future_bid <= future["ask"]
-        if quote_complete:
-            with self._lock:
+        # Pair-level quote diagnosis: count each missing/crossed side independently.
+        # These are overlapping counters (one pair may miss multiple sides) and
+        # never reject/hide an LTP-synchronized pair.
+        with self._lock:
+            if quote_complete:
                 self._increment_stat("pairs_with_quotes")
-        else:
-            with self._lock:
+            else:
                 self._increment_stat("pairs_missing_quotes")
+            self._increment_stat("paired_missing_cash_bid", int(cash["bid"] is None or cash["bid"] <= 0))
+            self._increment_stat("paired_missing_cash_ask", int(cash_ask is None or cash_ask <= 0))
+            self._increment_stat("paired_missing_future_bid", int(future_bid is None or future_bid <= 0))
+            self._increment_stat("paired_missing_future_ask", int(future["ask"] is None or future["ask"] <= 0))
+            self._increment_stat(
+                "paired_crossed_cash_book",
+                int(cash["bid"] is not None and cash_ask is not None and cash["bid"] > cash_ask),
+            )
+            self._increment_stat(
+                "paired_crossed_future_book",
+                int(future_bid is not None and future["ask"] is not None and future_bid > future["ask"]),
+            )
 
         liquidity_values = [
             cash["bid_qty"], cash["ask_qty"],
