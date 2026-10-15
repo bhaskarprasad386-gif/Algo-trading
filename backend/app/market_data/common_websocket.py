@@ -1350,12 +1350,40 @@ class CommonWebSocketManager:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             sockets = dict(self._sockets)
+            socket_health_by_group: dict[str, dict[str, Any]] = {}
+            for group, socket in sockets.items():
+                try:
+                    health = getattr(socket, "health", {})
+                    if not isinstance(health, dict):
+                        health = {}
+                except Exception as exc:
+                    health = {"health_read_error": f"{type(exc).__name__}: {exc}"}
+                # Expose only lifecycle diagnostics, never auth headers, tokens,
+                # raw broker frames, or subscription payloads.
+                socket_health_by_group[f"{group.mode}:{group.shard}"] = {
+                    key: health[key]
+                    for key in (
+                        "connected",
+                        "connecting",
+                        "stopping",
+                        "error_count",
+                        "reconnect_count",
+                        "consecutive_failures",
+                        "last_error",
+                        "transport_thread_alive",
+                        "transport_close_timed_out",
+                        "initial_subscribe_success",
+                        "health_read_error",
+                    )
+                    if key in health
+                }
             return {
                 "subscriptions": len(self.registry.subscriptions()),
                 "active_instruments": len(self.registry.active_keys()),
                 "socket_groups": len(sockets),
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
+                "socket_health_by_group": socket_health_by_group,
                 "delivery_errors": self._delivery_errors,
                 "missing_callback_routes": self._missing_callback_routes,
                 "missing_descriptor_records": self._missing_descriptor_records,
