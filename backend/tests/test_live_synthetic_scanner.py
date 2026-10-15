@@ -205,7 +205,7 @@ def test_live_synthetic_scanner_rejects_non_mapping_payload():
 
 def test_live_synthetic_scanner_waits_for_all_three_legs_in_any_arrival_order():
     ts = 8_000_000_000
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 105.0)
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     future = {
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
         "expiry": "29OCT2026", "bid": 115.0, "ask": 116.0, "lot_size": 1,
@@ -226,7 +226,7 @@ def test_live_synthetic_scanner_waits_for_all_three_legs_in_any_arrival_order():
 
 def test_live_synthetic_scanner_skips_timestamp_mismatched_strike_without_blocking_valid_strike():
     ts = 9_000_000_000
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 95.0)
     # The 100 strike is synchronized and complete; the 105 strike has an old CE.
     scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
     scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"})
