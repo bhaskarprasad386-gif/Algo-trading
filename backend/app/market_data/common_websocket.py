@@ -658,9 +658,11 @@ class CommonWebSocketManager:
                 )
                 if is_current:
                     def _resume_after_connect_failure(failed_group=group):
-                        with self._reconcile_lock:
-                            with self._lock:
-                                self._failure_recovery_groups.discard(failed_group)
+                        # This callback can run while _reconcile is waiting for
+                        # the connect result; don't acquire its lock or deadlock
+                        # the caller that must receive the original exception.
+                        with self._lock:
+                            self._failure_recovery_groups.discard(failed_group)
                     close_worker = self._close_socket_tracked(
                         socket, group=group, generation=generation, reason="connect_failure",
                         on_finished=_resume_after_connect_failure, timeout=0.1,
@@ -839,9 +841,10 @@ class CommonWebSocketManager:
             with self._lock:
                 self._failure_recovery_groups.add(group)
             def _resume_after_operation_close(failed_group=group):
-                with self._reconcile_lock:
-                    with self._lock:
-                        self._failure_recovery_groups.discard(failed_group)
+                # The current reconcile caller owns _reconcile_lock here; only
+                # clear the state marker and let the caller unwind on the error.
+                with self._lock:
+                    self._failure_recovery_groups.discard(failed_group)
             close_worker = self._close_socket_tracked(
                 socket, group=group,
                 generation=self._socket_generation_counter.get(group),
