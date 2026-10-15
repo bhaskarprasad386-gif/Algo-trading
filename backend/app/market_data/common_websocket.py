@@ -656,17 +656,13 @@ class CommonWebSocketManager:
             group, generation, reason,
         )
 
-        def _recover() -> None:
+        def _recover_after_close() -> None:
             try:
-                self._close_socket_bounded(
-                    socket, group=group, generation=generation, reason="failure_callback"
-                )
-                # Close attempt completed; now replacement admission is safe.
+                # Only clear the shard's retirement marker once the close worker
+                # actually exits. A timed-out close is not proof that the broker
+                # session has been released, so replacement admission must wait.
                 with self._lock:
                     self._failure_recovery_groups.discard(group)
-                # Recover the failed/missing group only. A zero silent-age threshold
-                # marks every healthy connected shard stale and tears down unrelated
-                # sessions whenever just one socket reports a transport error.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
             except Exception as exc:
                 runtime_diagnostics.record(
@@ -680,6 +676,38 @@ class CommonWebSocketManager:
                     group, exc,
                 )
             finally:
+                with self._lock:
+                    self._failure_recovery_groups.discard(group)
+
+        def _recover() -> None:
+            try:
+                close_worker = self._close_socket_bounded(
+                    socket, group=group, generation=generation, reason="failure_callback"
+                )
+                if close_worker.is_alive():
+                    # Keep the shard blocked while close is still in flight. A
+                    # watcher resumes recovery only after the old close completes.
+                    def _wait_for_close() -> None:
+                        close_worker.join()
+                        _recover_after_close()
+                    Thread(
+                        target=_wait_for_close,
+                        name=f"common-ws-close-watch-{group.mode}-{group.shard}",
+                        daemon=True,
+                    ).start()
+                    return
+                _recover_after_close()
+            except Exception as exc:
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={"event": "failure_triggered_recovery", "group": f"{group.mode}:{group.shard}"},
+                )
+                app_logger.warning(
+                    "Common feed failure-triggered recovery failed group=%s; supervisor will retry: %s",
+                    group, exc,
+                )
                 with self._lock:
                     self._failure_recovery_groups.discard(group)
 
@@ -1101,7 +1129,7 @@ class CommonWebSocketManager:
         group: SocketGroup | None = None,
         generation: int | None = None,
         reason: str = "lifecycle_cleanup",
-    ) -> None:
+    ) -> Thread:
         # Close remains bounded, but logs distinguish manager retirement from
         # broker callbacks and include group/generation context when available.
         app_logger.info(
@@ -1125,6 +1153,7 @@ class CommonWebSocketManager:
                 generation if generation is not None else "unknown",
                 reason,
             )
+        return worker
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
