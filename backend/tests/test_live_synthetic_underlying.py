@@ -33,6 +33,9 @@ def test_underlying_feed_accepts_authoritative_index_token_without_cash_lookup()
         tracker=tracker,
         concrete_tokens={"NIFTY": "26000"},
     )
+    feed.instrument_master.download = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("instrument download must not run for authoritative tokens")
+    )
     assert feed._tokens() == {"NIFTY": "26000"}
 
 def test_index_token_resolution_uses_exact_master_entry():
