@@ -856,6 +856,8 @@ class CommonWebSocketManager:
         socket.unsubscribe_groups(cls._by_exchange(pairs))
 
     def _on_data(self, group: SocketGroup, message: Any, generation: int | None = None) -> None:
+        # Capture wall-clock arrival before routing/normalization work adds latency.
+        received_at_ns = time.time_ns()
         with self._lock:
             # Reject callbacks from an older socket after recovery has replaced
             # or removed that group. Never let an orphan socket inflate telemetry.
@@ -973,7 +975,7 @@ class CommonWebSocketManager:
                 )
                 continue
             try:
-                record = self._normalizer.normalize(descriptor, message)
+                record = self._normalizer.normalize(descriptor, message, received_at_ns=received_at_ns)
                 with self._lock:
                     self._normalized_records_emitted += 1
                     self._last_tick = {
