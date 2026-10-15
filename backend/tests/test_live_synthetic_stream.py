@@ -458,7 +458,7 @@ def test_emit_logs_scanner_callback_failure_without_propagating(monkeypatch):
 
     collector = _collector()
     errors = []
-    monkeypatch.setattr(stream.app_logger, "exception", lambda *args: errors.append(args))
+    monkeypatch.setattr(stream, "app_logger", SimpleNamespace(exception=lambda *args: errors.append(args)))
 
     def broken_callback(_payload):
         raise RuntimeError("scanner callback failed")
@@ -476,11 +476,12 @@ def test_emit_logs_scanner_callback_failure_without_propagating(monkeypatch):
 
 
 def test_recorder_run_forever_logs_unexpected_session_errors(monkeypatch):
+    from types import SimpleNamespace
     from app.market_data import live_synthetic_stream as stream
 
     collector = _collector()
     errors = []
-    monkeypatch.setattr(stream.app_logger, "exception", lambda *args: errors.append(args))
+    monkeypatch.setattr(stream, "app_logger", SimpleNamespace(exception=lambda *args: errors.append(args)))
     monkeypatch.setattr(
         collector,
         "_run_session",
