@@ -629,8 +629,6 @@ class LiveCashFutureScanner:
             for stat_name, quote_value in quote_values.items():
                 if quote_value is None or quote_value <= 0:
                     self._increment_stat(stat_name)
-            if cash["bid"] is not None and cash_ask is not None and cash["bid"] > cash_ask:
-                self._increment_stat("crossed_cash_quotes")
             if future_bid is not None and future["ask"] is not None and future_bid > future["ask"]:
                 self._increment_stat("crossed_future_quotes")
 
