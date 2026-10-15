@@ -26,25 +26,25 @@ def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch
     # Leave headroom for test execution time while keeping the later 4s leg gap outside tolerance.
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 2.5)
     scanner = LiveCashFutureScanner()
-    # Keep all source timestamps within the scanner's source-age acceptance window
-    # so the test isolates pair tolerance rather than stale-source rejection.
-    now = int(time() * 1_000_000_000) - 4_000_000_000
+    # Align timestamps to a second boundary so cache-key proximity is
+    # deterministic, while all source timestamps remain recent enough.
+    base = ((int(time() * 1_000_000_000) - 4_000_000_000) // 1_000_000_000) * 1_000_000_000
 
-    # The future tick is within tolerance of the cached cash key. A later cash
-    # update is four seconds from that future tick but remains within two
-    # seconds of the cache key, so actual-leg validation must reject it.
+    # The initial legs differ by 1.9s and pair under the 2.5s tolerance.
+    # The later cash tick is only 0.9s from the bucket key but 2.8s from the
+    # actual future timestamp, exercising the actual-leg guard.
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100,
-        "source_timestamp_ns": now + 2_000_000_000,
+        "source_timestamp_ns": base + 2_000_000_000,
     }) is None
     first_pair = scanner.observe({
         "leg": "FUTURE", "underlying": "SYNC", "contract_month": "CURRENT",
-        "ltp": 101, "source_timestamp_ns": now,
+        "ltp": 101, "source_timestamp_ns": base + 100_000_000,
     })
     assert first_pair is not None
     assert scanner.observe({
         "leg": "CASH", "underlying": "SYNC", "ltp": 100.5,
-        "source_timestamp_ns": now + 4_000_000_000,
+        "source_timestamp_ns": base + 2_900_000_000,
     }) is None
 
     health = scanner.health()
