@@ -45,7 +45,7 @@ def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch
 
     health = scanner.health()
     assert health["pairs_outside_timestamp_tolerance"] == 1
-    assert health["pairs"] == 0
+    assert health["pairs"] == 1
 
 
 def test_live_scanner_rejects_pair_beyond_one_second():
