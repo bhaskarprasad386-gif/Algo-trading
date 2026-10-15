@@ -102,12 +102,21 @@ def cash_future_live_fast_scanner(
     # here avoids a second market-data subscription.
     from app.main import live_cash_future_scanner
     stats = live_cash_future_scanner.health()
+    # Visibility-only threshold: keep every synchronized pair in scanner state
+    # and persistence tracking, but show only pairs whose gross gap value per
+    # lot exceeds ₹5,000. Do not apply this as an observation/pairing gate.
+    candidates = live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=500)
+    visible = [
+        item for item in candidates
+        if item.get("gross_lot_value") is not None
+        and float(item["gross_lot_value"]) > 5000.0
+    ][:int(limit)]
     return {
         "status": "success",
         "scanner": "cash-future",
         "mode": "live-fast",
         "scan_at": stats.get("last_observation_at"),
-        "data": live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=limit),
+        "data": visible,
     }
 
 
