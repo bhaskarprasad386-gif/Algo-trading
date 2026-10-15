@@ -359,14 +359,14 @@ class CommonWebSocketManager:
                     reason="obsolete_group",
                 )
                 if close_worker.is_alive():
-                    def _reconcile_after_obsolete_close():
+                    def _reconcile_after_obsolete_close(obsolete_group=group):
                         try:
                             with self._reconcile_lock:
                                 self._reconcile()
                         except Exception as exc:
                             app_logger.warning(
                                 "Common feed reconcile after obsolete close failed group=%s: %s",
-                                f"{group.mode}:{group.shard}", exc,
+                                f"{obsolete_group.mode}:{obsolete_group.shard}", exc,
                             )
                     self._watch_retired_transport(
                         close_worker, group=group,
@@ -859,6 +859,8 @@ class CommonWebSocketManager:
                     reason=f"socket_{operation_name}_failure",
                     on_finished=_resume_after_operation_close,
                 )
+            else:
+                _resume_after_operation_close()
 
         if not finished:
             error = TimeoutError(
