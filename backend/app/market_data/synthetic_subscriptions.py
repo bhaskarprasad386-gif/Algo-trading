@@ -65,7 +65,6 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     current = future_rows[0]
     selected_futures = future_rows[:2]
     target_expiry = _expiry_key(expiry) if expiry else _expiry_key(current.get("expiry"))
-    future_expiries = tuple(_expiry_key(f.get("expiry")) for f in selected_futures)
     # Both live scanners subscribe to the same single option expiry for each
     # underlying. For NIFTY/SENSEX, target_expiry is the nearest genuine weekly
     # chain; do not add monthly option chains because futures are monthly.
