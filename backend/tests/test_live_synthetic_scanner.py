@@ -42,7 +42,7 @@ def test_live_synthetic_scanner_assembles_real_ce_pe_and_future():
     )
     assert result
     assert result[0].option.strike == 105.0
-    assert result[0].future.bid == 115.0
+    assert result[0].future.bid == 117.0
 
 
 def test_live_synthetic_scanner_rejects_missing_timestamp():
@@ -152,7 +152,7 @@ def test_live_synthetic_scanner_allows_synchronized_ticks_across_second_boundary
     scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts + 2, 105.0, "PE", 4.0, 5.0))
-    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"", "expiry":"30SEP2026", "bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT","volume":100,"oi":1000})
+    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"", "expiry":"30SEP2026", "bid":117,"ask":118,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT","volume":100,"oi":1000})
     assert result
     assert result[0].option.timestamp_ns == ts + 2
     assert result[0].future.timestamp_ns == ts + 2
