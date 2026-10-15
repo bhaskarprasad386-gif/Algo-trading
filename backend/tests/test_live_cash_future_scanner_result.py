@@ -173,12 +173,17 @@ def test_live_fast_scanner_route_uses_process_local_snapshot(monkeypatch):
 
         def snapshot(self, *, max_age_seconds, limit):
             assert max_age_seconds == 5.0
-            assert limit == 500
-            return [
-                {"symbol": "LOW", "contract_month": "CURRENT", "gap_pct": 9.0, "gross_lot_value": 5000.0},
-                {"symbol": "ABC", "contract_month": "CURRENT", "gap_pct": 1.2, "gross_lot_value": 5000.01},
-                {"symbol": "NO_LOT", "contract_month": "CURRENT", "gap_pct": 8.0, "gross_lot_value": None},
-            ]
+            assert limit == 5000
+            # A qualifying pair beyond the first 500 low-value candidates must
+            # remain visible; apply the display threshold before the API limit.
+            return (
+                [{"symbol": f"LOW{index}", "contract_month": "CURRENT", "gap_pct": 9.0,
+                  "gross_lot_value": 5000.0} for index in range(500)]
+                + [
+                    {"symbol": "ABC", "contract_month": "CURRENT", "gap_pct": 1.2, "gross_lot_value": 5000.01},
+                    {"symbol": "NO_LOT", "contract_month": "CURRENT", "gap_pct": 8.0, "gross_lot_value": None},
+                ]
+            )
 
     monkeypatch.setattr("app.main.live_cash_future_scanner", StubScanner())
     response = cash_future_live_fast_scanner(max_age_seconds=5.0, limit=10)
