@@ -503,11 +503,18 @@ class LiveCashFutureScanner:
         except (TypeError, ValueError, OverflowError):
             timestamp_ns = 0
         wall_now_ns = time.time_ns()
-        # Reject corrupt far-future exchange timestamps before datetime
-        # conversion/cache indexing; allow a small clock-skew window.
+        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+        # Reject corrupt/far-future timestamps and old source quotes before
+        # they can be paired. Receive-time freshness alone cannot detect a
+        # delayed/replayed quote that has just arrived from the feed.
         if timestamp_ns <= 0 or not symbol or timestamp_ns > wall_now_ns + 300_000_000_000:
             with self._lock:
                 self._increment_stat("invalid_timestamps")
+                self._increment_stat("dropped")
+            return None
+        if wall_now_ns - timestamp_ns > max_age_ns:
+            with self._lock:
+                self._increment_stat("stale_quotes")
                 self._increment_stat("dropped")
             return None
         with self._lock:
@@ -524,7 +531,6 @@ class LiveCashFutureScanner:
             received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
         except (TypeError, ValueError, OverflowError):
             received_at_ns = time.time_ns()
-        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
         now_ns = time.time_ns()
         if received_at_ns <= 0 or received_at_ns > now_ns + 5_000_000_000 or now_ns - received_at_ns > max_age_ns:
             with self._lock:
