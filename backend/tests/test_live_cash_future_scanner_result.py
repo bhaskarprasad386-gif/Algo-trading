@@ -173,13 +173,17 @@ def test_live_fast_scanner_route_uses_process_local_snapshot(monkeypatch):
 
         def snapshot(self, *, max_age_seconds, limit):
             assert max_age_seconds == 5.0
-            assert limit == 10
-            return [{"symbol": "ABC", "contract_month": "CURRENT", "gap_pct": 1.2}]
+            assert limit == 500
+            return [
+                {"symbol": "LOW", "contract_month": "CURRENT", "gap_pct": 9.0, "gross_lot_value": 5000.0},
+                {"symbol": "ABC", "contract_month": "CURRENT", "gap_pct": 1.2, "gross_lot_value": 5000.01},
+                {"symbol": "NO_LOT", "contract_month": "CURRENT", "gap_pct": 8.0, "gross_lot_value": None},
+            ]
 
     monkeypatch.setattr("app.main.live_cash_future_scanner", StubScanner())
     response = cash_future_live_fast_scanner(max_age_seconds=5.0, limit=10)
     assert response["mode"] == "live-fast"
-    assert response["data"][0]["symbol"] == "ABC"
+    assert [item["symbol"] for item in response["data"]] == ["ABC"]
 
 
 def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
