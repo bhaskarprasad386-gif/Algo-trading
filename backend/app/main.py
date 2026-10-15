@@ -31,7 +31,7 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS
+from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS, OPTION_STRATEGY_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -550,12 +550,12 @@ async def _live_synthetic_loop() -> None:
                         continue
                 if expiry < today:
                     continue
-                if typ == "FUTSTK" and segment == "NFO" and name in NIFTY50_STOCK_SYMBOLS:
+                if typ == "FUTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
                     nifty50_stocks.add(name)
                 elif (
                     typ == "FUTIDX"
                     and segment in {"NFO", "BFO"}
-                    and name in NIFTY50_INDEX_SYMBOLS
+                    and name in OPTION_STRATEGY_INDEX_SYMBOLS
                 ):
                     index_symbols.add(name)
                 elif typ == "FUTCOM" and segment == "MCX":
@@ -679,13 +679,27 @@ async def _live_box_spread_loop() -> None:
                 continue
             if typ == "FUTSTK" and name in TOP15_LIQUID_STOCK_SYMBOLS:
                 stock_symbols.add(name)
-            elif typ == "FUTIDX" and ((segment == "NFO" and name in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"}) or (segment == "BFO" and name in BSE_BOX_INDEX_SYMBOLS)):
+            elif typ == "FUTIDX" and name in OPTION_STRATEGY_INDEX_SYMBOLS and ((segment == "NFO" and name == "NIFTY") or (segment == "BFO" and name == "SENSEX")):
                 index_symbols.add(name)
         stock_symbols = sorted(stock_symbols)
-        targets = tuple(
-            [BoxSpreadLiveTarget(x, "STOCK") for x in stock_symbols]
-            + [BoxSpreadLiveTarget(x, "INDEX") for x in sorted(index_symbols)]
-        )
+        # Resolve option expiry independently of future expiry; this selects the
+        # nearest genuine weekly option chain for NIFTY and SENSEX.
+        targets_list = []
+        for symbol in stock_symbols:
+            expiry = select_nearest_option_expiry(
+                master.instruments, underlying=symbol,
+                instrument_class="STOCK", today=today,
+            )
+            if expiry:
+                targets_list.append(BoxSpreadLiveTarget(symbol, "STOCK", expiry=expiry))
+        for symbol in sorted(index_symbols):
+            expiry = select_nearest_option_expiry(
+                master.instruments, underlying=symbol,
+                instrument_class="INDEX", today=today,
+            )
+            if expiry:
+                targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=expiry))
+        targets = tuple(targets_list)
         if not targets:
             app_logger.warning("Box Spread live runner found no current F&O targets")
             return
