@@ -104,6 +104,9 @@ class LiveSyntheticOptionFutureRecorder:
         self._latest: dict[tuple[str, str], tuple[int, Any]] = {}
         self._lock = Lock()
         self._metadata: dict[tuple[str, str], SyntheticSubscription] = {}
+        self._records_received = 0
+        self._observations_emitted = 0
+        self._missing_executable_quote = 0
 
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
@@ -169,6 +172,11 @@ class LiveSyntheticOptionFutureRecorder:
 
     def _emit(self, record, timestamp_ns: int) -> None:
         payload = record.as_dict()
+        with self._lock:
+            self._observations_emitted += 1
+            bid, ask = payload.get("bid"), payload.get("ask")
+            if bid is None or ask is None or bid <= 0 or ask <= 0 or bid > ask:
+                self._missing_executable_quote += 1
         payload["timestamp_ns"] = timestamp_ns
         payload["source_timestamp_ns"] = timestamp_ns
         meta = self._metadata.get(
@@ -204,6 +212,8 @@ class LiveSyntheticOptionFutureRecorder:
             )
 
     def _on_record(self, record) -> None:
+        with self._lock:
+            self._records_received += 1
         key = (record.instrument.exchange.strip().upper(), record.instrument.token.strip())
         second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
         with self._lock:
@@ -219,6 +229,27 @@ class LiveSyntheticOptionFutureRecorder:
             # beginning-of-second bucket key. Multiple ticks in one second
             # must coalesce to the newest tick without falsifying its time.
             self._emit(previous[1], previous[1].timestamp_ns)
+
+    def _flush_completed_buckets(self, now_ns: int | None = None) -> int:
+        """Emit completed one-second buckets without waiting for the same token's next tick.
+
+        Only flush recent buckets; stale broker quotes must not be made fresh by
+        the recorder. Old buffered records remain available for final shutdown flush.
+        """
+        from time import time_ns as _time_ns
+
+        now = _time_ns() if now_ns is None else int(now_ns)
+        current_second = (now // 1_000_000_000) * 1_000_000_000
+        ready = []
+        with self._lock:
+            for key, (second, record) in tuple(self._latest.items()):
+                age = now - int(record.timestamp_ns)
+                if second < current_second and 0 <= age <= 5_000_000_000:
+                    ready.append(record)
+                    self._latest.pop(key, None)
+        for record in ready:
+            self._emit(record, record.timestamp_ns)
+        return len(ready)
 
     def _run_session(self) -> int:
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
@@ -238,6 +269,7 @@ class LiveSyntheticOptionFutureRecorder:
         self._feed.start(self._descriptors(), self._on_record)
         try:
             while self.market_open() and not self.stop_event.is_set():
+                self._flush_completed_buckets()
                 sleep(self.poll_seconds)
             with self._lock:
                 latest = list(self._latest.values())
@@ -282,6 +314,9 @@ class LiveSyntheticOptionFutureRecorder:
             "running": not self.stop_event.is_set(),
             "subscriptions": len(self.subscriptions),
             "latest_instruments": latest,
+            "records_received": self._records_received,
+            "observations_emitted": self._observations_emitted,
+            "missing_executable_quote": self._missing_executable_quote,
             "feed": None if feed is None else feed.snapshot(),
         }
 
