@@ -7,10 +7,10 @@ def option(ts, strike):
     return OptionQuote(ts, "NIFTY", 20270101, strike, 9.0, 11.0, 4.0, 6.0, 50, "INDEX", 100, 1000)
 
 
-def test_synthetic_index_scope_is_atm_plus_minus_ten():
+def test_synthetic_index_scope_is_atm_plus_minus_fifteen():
     p = ScanPolicy()
     assert p.stock_synthetic_radius == 7
-    assert p.index_synthetic_radius == 10
+    assert p.index_synthetic_radius == 15
 
 
 def test_synthetic_uses_executable_bid_ask_sides():
