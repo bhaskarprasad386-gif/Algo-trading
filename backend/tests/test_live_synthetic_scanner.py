@@ -208,7 +208,7 @@ def test_live_synthetic_scanner_waits_for_all_three_legs_in_any_arrival_order():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     future = {
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-        "expiry": "29OCT2026", "bid": 115.0, "ask": 116.0, "lot_size": 1,
+        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 1,
         "source_timestamp_ns": ts + 10, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
     }
     ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"}
@@ -241,3 +241,28 @@ def test_live_synthetic_scanner_skips_timestamp_mismatched_strike_without_blocki
     assert result
     assert all(r.option.strike == 100.0 for r in result)
     assert scanner.diagnostics_snapshot()["counters"]["timestamp_mismatch"] >= 1
+
+
+
+def test_live_synthetic_scanner_waits_up_to_three_seconds_for_missing_leg_quote():
+    ts = 10_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    }
+    ce_ltp = {**_base(ts, 105.0, "CE", None, None), "expiry": "29OCT2026", "ltp": 1.0}
+    pe_ltp = {**_base(ts, 105.0, "PE", None, None), "expiry": "29OCT2026", "ltp": 1.0}
+
+    assert scanner.observe(future) == ()
+    assert scanner.observe(ce_ltp) == ()
+    assert scanner.observe(pe_ltp) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["waiting_for_executable_quote"] >= 1
+
+    ce_quote = {**ce_ltp, "bid": 1.0, "ask": 2.0}
+    pe_quote = {**pe_ltp, "bid": 1.0, "ask": 2.0}
+    assert scanner.observe(ce_quote) == ()
+    result = scanner.observe(pe_quote)
+    assert result
+    assert result[0].option.strike == 105.0
