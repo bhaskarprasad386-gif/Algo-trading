@@ -44,6 +44,14 @@ def test_live_scanner_validates_actual_leg_timestamps_not_bucket_key(monkeypatch
         "source_timestamp_ns": base + 1_200_000_000,
     }) is None
 
+    # Pair validation is triggered by the next FUTURE observation; reusing
+    # the same future timestamp is allowed (not out-of-order) and forces the
+    # scanner to compare the current cash quote with the actual future quote.
+    assert scanner.observe({
+        "leg": "FUTURE", "underlying": "SYNC", "contract_month": "CURRENT",
+        "ltp": 101, "source_timestamp_ns": base + 100_000_000,
+    }) is None
+
     health = scanner.health()
     assert health["pairs_outside_timestamp_tolerance"] == 1
     assert health["pairs"] == 1
