@@ -158,7 +158,10 @@ class LiveSyntheticScanner:
                 current_bid = self._price(current.get("bid"))
                 current_ask = self._price(current.get("ask"))
                 age_ns = time.monotonic_ns() - int(
-                    bucket.get("first_seen_monotonic_ns", time.monotonic_ns())
+                    bucket.get(
+                        "quote_wait_started_ns",
+                        bucket.get("first_seen_monotonic_ns", time.monotonic_ns()),
+                    )
                 )
                 if (
                     (previous_bid is None or previous_ask is None)
@@ -266,8 +269,11 @@ class LiveSyntheticScanner:
                     )
                 )
 
+            quote_wait_started_ns = bucket.get("quote_wait_started_ns")
             bucket_age_ns = time.monotonic_ns() - int(
-                bucket.get("first_seen_monotonic_ns", time.monotonic_ns())
+                quote_wait_started_ns
+                if quote_wait_started_ns is not None
+                else bucket.get("first_seen_monotonic_ns", time.monotonic_ns())
             )
             if not option_quotes:
                 # LTP-complete CE+PE legs form a candidate even if one executable
@@ -284,21 +290,26 @@ class LiveSyntheticScanner:
                     )
                     for legs in strikes.values()
                 )
-                if pending_quote_pair and bucket_age_ns < 3_000_000_000:
-                    self._count("waiting_for_executable_quote")
-                    return ()
+                if pending_quote_pair:
+                    if bucket.get("quote_wait_started_ns") is None:
+                        bucket["quote_wait_started_ns"] = time.monotonic_ns()
+                        bucket_age_ns = 0
+                    if bucket_age_ns < 3_000_000_000:
+                        self._count("waiting_for_executable_quote")
+                        return ()
                 self._count("no_executable_ce_pe_pair")
                 self._prune(timestamp_ns)
                 return ()
 
             future_bid, future_ask = self._price(future_payload.get("bid")), self._price(future_payload.get("ask"))
             if future_bid is None or future_ask is None or future_ask < future_bid:
-                if (
-                    self._price(future_payload.get("ltp") or future_payload.get("last_traded_price")) is not None
-                    and bucket_age_ns < 3_000_000_000
-                ):
-                    self._count("waiting_for_executable_quote")
-                    return ()
+                if self._price(future_payload.get("ltp") or future_payload.get("last_traded_price")) is not None:
+                    if bucket.get("quote_wait_started_ns") is None:
+                        bucket["quote_wait_started_ns"] = time.monotonic_ns()
+                        bucket_age_ns = 0
+                    if bucket_age_ns < 3_000_000_000:
+                        self._count("waiting_for_executable_quote")
+                        return ()
                 self._count("invalid_future_quote")
                 self._prune(timestamp_ns)
                 return ()
@@ -346,9 +357,9 @@ class LiveSyntheticScanner:
     TIMESTAMP_TOLERANCE_NS = 1_000_000_000
 
     def _matching_bucket_key(self, symbol: str, timestamp_ns: int, expiry: int) -> tuple[str, int, int]:
-        # Keep expiry isolated, but allow synchronized ticks to straddle a
-        # wall-clock second boundary. The later timestamp validation remains
-        # the final guard against pairing genuinely stale legs.
+        # Keep expiry isolated and allow a delayed executable-book tick to rejoin
+        # its LTP candidate for up to three seconds. The per-leg timestamp guard
+        # still rejects unrelated or genuinely mismatched legs.
         candidates = [
             key
             for key in self._buckets
