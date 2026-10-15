@@ -629,8 +629,6 @@ class CommonWebSocketManager:
                         "failed_at_ns": time.time_ns(),
                         "subscriptions": len(pairs),
                     }
-                # Publish failure state and original exception before close/reconcile.
-                completed.set()
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type=type(exc).__name__,
@@ -647,22 +645,18 @@ class CommonWebSocketManager:
                 )
                 if is_current:
                     def _resume_after_connect_failure(failed_group=group):
-                        try:
-                            with self._reconcile_lock:
-                                with self._lock:
-                                    self._failure_recovery_groups.discard(failed_group)
-                                self._reconcile()
-                        except Exception as reconcile_exc:
-                            app_logger.warning(
-                                "Common feed reconcile after connect failure failed group=%s: %s",
-                                f"{failed_group.mode}:{failed_group.shard}", reconcile_exc,
-                            )
+                        with self._reconcile_lock:
+                            with self._lock:
+                                self._failure_recovery_groups.discard(failed_group)
                     close_worker = self._close_socket_tracked(
                         socket, group=group, generation=generation, reason="connect_failure",
-                        on_finished=_resume_after_connect_failure,
+                        on_finished=_resume_after_connect_failure, timeout=0.1,
                     )
                     if not close_worker.is_alive():
                         _resume_after_connect_failure()
+                # Return the connect exception after state and close gating are set,
+                # without waiting for any later supervisor reconciliation.
+                completed.set()
             finally:
                 completed.set()
 
@@ -832,16 +826,9 @@ class CommonWebSocketManager:
             with self._lock:
                 self._failure_recovery_groups.add(group)
             def _resume_after_operation_close(failed_group=group):
-                try:
-                    with self._reconcile_lock:
-                        with self._lock:
-                            self._failure_recovery_groups.discard(failed_group)
-                        self._reconcile()
-                except Exception as reconcile_exc:
-                    app_logger.warning(
-                        "Common feed reconcile after socket operation failure failed group=%s: %s",
-                        f"{failed_group.mode}:{failed_group.shard}", reconcile_exc,
-                    )
+                with self._reconcile_lock:
+                    with self._lock:
+                        self._failure_recovery_groups.discard(failed_group)
             close_worker = self._close_socket_tracked(
                 socket, group=group,
                 generation=self._socket_generation_counter.get(group),
