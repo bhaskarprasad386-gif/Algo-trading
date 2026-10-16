@@ -21,8 +21,7 @@ def _log_transport_thread_stack(thread: Thread, *, phase: str) -> None:
         frame = sys._current_frames().get(thread.ident)
         if frame is None:
             app_logger.error(
-                "Angel WebSocket transport thread alive but no Python frame available phase=%s",
-                phase,
+                f"Angel WebSocket transport thread alive but no Python frame available phase={phase}",
             )
             return
         stack = "".join(traceback.format_stack(frame, limit=24))
@@ -31,7 +30,7 @@ def _log_transport_thread_stack(thread: Thread, *, phase: str) -> None:
             f"name={thread.name} ident={thread.ident}\\n{stack}"
         )
     except Exception as exc:
-        app_logger.error("Unable to inspect Angel WebSocket transport thread phase=%s: %s", phase, exc)
+        app_logger.error(f"Unable to inspect Angel WebSocket transport thread phase={phase}: {exc}")
 
 
 
@@ -329,7 +328,7 @@ class MarketDataWebSocket:
             reason = f"initial subscribe exceeded {self._socket_operation_timeout_seconds:.2f}s"
         else:
             reason = f"initial subscribe failed: {type(error).__name__}: {error}"
-        app_logger.error("Angel One WebSocket %s", reason)
+        app_logger.error(f"Angel One WebSocket {reason}")
         with self._lock:
             self._connected = False
             self._last_error = reason
@@ -346,7 +345,7 @@ class MarketDataWebSocket:
         try:
             socket.close_connection()
         except Exception as exc:
-            app_logger.warning("Angel One WebSocket close after initial-subscribe failure failed: %s", exc)
+            app_logger.warning(f"Angel One WebSocket close after initial-subscribe failure failed: {exc}")
         if self._auto_reconnect:
             self._schedule_reconnect()
 
