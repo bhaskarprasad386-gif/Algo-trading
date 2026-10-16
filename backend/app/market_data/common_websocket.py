@@ -623,8 +623,18 @@ class CommonWebSocketManager:
                     try:
                         socket.connect(**connect_kwargs)
                     except Exception as connect_exc:
-                        if self._apply_broker_cooldown(connect_exc):
-                            _mark_socket_auth_stale(socket)
+                        # A timed-out/retired connect worker may fail after a
+                        # newer generation has replaced it. Only the current
+                        # generation is allowed to affect shared broker cooldown
+                        # or authentication state.
+                        with self._lock:
+                            is_current_failure = (
+                                self._sockets.get(group) is socket
+                                and self._socket_generation.get(group) == generation
+                                and not self._closed
+                            )
+                            if is_current_failure and self._apply_broker_cooldown(connect_exc):
+                                _mark_socket_auth_stale(socket)
                         raise
                     # Check and retire a late successful handshake before releasing
                     # global admission; otherwise the next shard could connect while
