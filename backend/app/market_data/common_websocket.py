@@ -992,8 +992,14 @@ class CommonWebSocketManager:
                     continue
                 if connected and not connecting:
                     timeout = self._silent_feed_timeout_seconds if silent_age_seconds is None else silent_age_seconds
-                    last_data_at = self._last_data_at.get(group, created_at)
-                    if timeout < 0 or now - last_data_at < float(timeout):
+                    # Silence recovery is a transport-liveness decision, so use
+                    # raw frame activity rather than successful consumer delivery.
+                    # A routing/callback failure must be diagnosed as a data-path
+                    # problem, not trigger needless broker reconnects.
+                    last_transport_activity_at = self._last_raw_frame_at_by_group.get(
+                        group, created_at
+                    )
+                    if timeout < 0 or now - last_transport_activity_at < float(timeout):
                         continue
                 stale.append((group, socket, tokens, created_at))
 

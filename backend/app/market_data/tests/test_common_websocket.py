@@ -1029,6 +1029,36 @@ def test_matched_frame_only_refreshes_silence_timer_after_successful_delivery():
         manager.close()
 
 
+def test_raw_unmatched_frames_prevent_transport_silence_reconnect():
+    registry = InstrumentRegistry()
+    item = descriptor("782")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("consumer", [item.key])
+        group = SocketGroup(1, 0)
+        original = manager._sockets[group]
+        with manager._lock:
+            manager._socket_created_at[group] -= 2.0
+            manager._last_data_at[group] -= 120.0
+        before_attempts = manager.snapshot()["recovery_attempts"]
+
+        # The transport is active, but this token cannot be routed to the
+        # subscription. This is a mapping/data-path problem, not socket silence.
+        manager._on_data(group, {"token": "unregistered", "exchange_type": 1})
+        assert manager.snapshot()["unmatched_frames"] == 1
+        assert manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=1.0
+        ) == 0
+
+        assert manager._sockets[group] is original
+        assert len(FakeSocket.instances) == 1
+        assert manager.snapshot()["recovery_attempts"] == before_attempts
+    finally:
+        manager.close()
+
+
 def test_non_integer_subscription_mode_is_rejected_before_broker_io():
     registry = InstrumentRegistry()
     item = descriptor("783")
