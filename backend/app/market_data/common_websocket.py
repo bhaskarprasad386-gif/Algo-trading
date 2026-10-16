@@ -192,6 +192,9 @@ class CommonWebSocketManager:
         # One connect worker per current socket generation. Recovery and the
         # periodic supervisor can race to request the same generation.
         self._connect_started_generation: dict[SocketGroup, int] = {}
+        # Track sockets waiting for broker-wide connect admission so reconcile
+        # does not mistake a queued handshake for a confirmed disconnect.
+        self._connect_pending_generation: dict[SocketGroup, int] = {}
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -465,9 +468,16 @@ class CommonWebSocketManager:
                     connect_timed_out = connecting and (
                         time.monotonic() - created_at >= self._connect_timeout_seconds
                     )
+                    with self._lock:
+                        pending_generation = self._connect_pending_generation.get(group)
+                        current_generation = self._socket_generation.get(group)
+                    connect_pending = (
+                        pending_generation == current_generation
+                        and time.monotonic() - created_at < self._connect_timeout_seconds
+                    )
                     disconnected = connected_state is False and (
                         not connecting or connect_timed_out
-                    )
+                    ) and not connect_pending
                     if disconnected:
                         with self._lock:
                             if self._sockets.get(group) is socket:
@@ -623,6 +633,7 @@ class CommonWebSocketManager:
             if self._connect_started_generation.get(group) == generation:
                 return
             self._connect_started_generation[group] = generation
+            self._connect_pending_generation[group] = generation
 
         completed = Event()
         failure: dict[str, Exception] = {}
@@ -701,11 +712,16 @@ class CommonWebSocketManager:
                             and self._socket_generation.get(group) == generation
                         )
                     if not is_current_after_connect:
-                        self._close_socket_tracked(
+                        close_worker = self._close_socket_tracked(
                             socket, group=group, generation=generation,
                             reason="late_connect_success",
                             on_finished=lambda: self._reconcile_after_retirement(group),
                         )
+                        # Fast close workers have no watcher, so their completion
+                        # callback will not run. Reconcile explicitly in that path
+                        # or the replacement may wait for the periodic supervisor.
+                        if not close_worker.is_alive():
+                            self._reconcile_after_retirement(group)
                         return
             except Exception as exc:
                 failure["exception"] = exc
@@ -768,6 +784,9 @@ class CommonWebSocketManager:
                 # without waiting for any later supervisor reconciliation.
                 completed.set()
             finally:
+                with self._lock:
+                    if self._connect_pending_generation.get(group) == generation:
+                        self._connect_pending_generation.pop(group, None)
                 completed.set()
 
         worker = Thread(
