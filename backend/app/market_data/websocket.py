@@ -632,4 +632,4 @@ class MarketDataWebSocket:
             _log_transport_thread_stack(transport_thread, phase="graceful-close-timeout")
         if close_error is not None:
             raise close_error
-        app_logger.info("Angel One WebSocket closed transport_alive=%s", still_alive)
+        app_logger.info(f"Angel One WebSocket closed transport_alive={still_alive}")
