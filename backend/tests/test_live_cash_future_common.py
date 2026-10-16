@@ -104,6 +104,41 @@ def test_runner_stop_is_idempotent_under_concurrent_shutdown():
     assert runner._repository is None
 
 
+def test_authoritative_payload_mode_skips_legacy_scanner_update():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    class LegacyScanner:
+        def __init__(self):
+            self.updates = 0
+
+        def update(self, *args, **kwargs):
+            self.updates += 1
+
+    scanner = LegacyScanner()
+    payloads = []
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+        scanner=scanner,
+        on_payload=payloads.append,
+    )
+    key = InstrumentKey("NSE", "NSE", "1")
+    runner._metadata[key] = {
+        "leg": "CASH",
+        "underlying": "ABC",
+        "contract_month": "CASH",
+    }
+
+    runner._on_record(
+        record(key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100, underlying="ABC")
+    )
+
+    assert len(payloads) == 1
+    assert payloads[0]["underlying"] == "ABC"
+    assert scanner.updates == 0
+    assert runner._scanner_updates == 0
+
+
 def test_runner_persistence_coalesces_multiple_ticks_within_one_second(monkeypatch):
     from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
     from app.core.config import settings
