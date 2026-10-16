@@ -211,3 +211,23 @@ def test_cash_future_source_timestamp_requires_original_provider_timestamp():
     assert has_timestamp({}) is False
     assert has_timestamp({"exchange_timestamp": None, "timestamp": "invalid"}) is False
     assert has_timestamp({"exchange_timestamp": float("nan")}) is False
+
+    runner = LiveCashFutureCommonRunner(
+        "unused.sqlite", instrument_master=object(), manager=object(), scanner=object()
+    )
+    meta = {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"}
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {"token": "101", "last_traded_price": 12345},
+    )
+    missing = runner._record_payload(record, meta)
+    assert missing["timestamp_ns"] > 0  # canonical fallback remains available
+    assert missing["source_timestamp_ns"] == 0  # but is not mislabeled as exchange time
+
+    raw_timestamp = 1720000000123
+    record_with_timestamp = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {"token": "101", "exchange_timestamp": raw_timestamp, "last_traded_price": 12345},
+    )
+    present = runner._record_payload(record_with_timestamp, meta)
+    assert present["source_timestamp_ns"] == raw_timestamp * 1_000_000
