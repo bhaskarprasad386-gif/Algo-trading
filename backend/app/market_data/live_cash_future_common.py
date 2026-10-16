@@ -376,10 +376,10 @@ class LiveCashFutureCommonRunner:
                     continue
                 try:
                     self._roll_contracts_if_needed()
-                    # Keep the scanner independent of a stale broker session. The
-                    # common manager preserves the same subscriptions and rebuilds
-                    # only sockets that have remained disconnected long enough.
-                    self.manager.recover_disconnected(min_age_seconds=10.0)
+                    # CommonWebSocketManager owns socket recovery. Do not invoke
+                    # recover_disconnected() here: this runner loops every second
+                    # and would bypass the manager supervisor's market-hours
+                    # silence guard, causing off-hours reconnect churn.
                 except Exception as exc:
                     # Recovery is best-effort; preserve the runner so another
                     # cycle can recreate missing/disconnected common-feed sockets.
