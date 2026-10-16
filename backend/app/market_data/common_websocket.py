@@ -701,11 +701,16 @@ class CommonWebSocketManager:
                             and self._socket_generation.get(group) == generation
                         )
                     if not is_current_after_connect:
-                        self._close_socket_tracked(
+                        close_worker = self._close_socket_tracked(
                             socket, group=group, generation=generation,
                             reason="late_connect_success",
                             on_finished=lambda: self._reconcile_after_retirement(group),
                         )
+                        # Fast close workers have no watcher, so their completion
+                        # callback will not run. Reconcile explicitly in that path
+                        # or the replacement may wait for the periodic supervisor.
+                        if not close_worker.is_alive():
+                            self._reconcile_after_retirement(group)
                         return
             except Exception as exc:
                 failure["exception"] = exc
