@@ -280,6 +280,11 @@ class CommonWebSocketManager:
         with self._lock:
             if self._closed:
                 raise RuntimeError("CommonWebSocketManager is closed")
+            before = {
+                sub.key: sub.mode
+                for sub in self.registry.subscriptions()
+                if consumer in sub.consumers
+            }
             for key in keys:
                 if not isinstance(key, InstrumentKey):
                     raise TypeError("keys must contain InstrumentKey values")
@@ -287,6 +292,21 @@ class CommonWebSocketManager:
                     raise KeyError(f"instrument is not registered: {key.value}")
             for key in keys:
                 self.registry.subscribe(consumer, key, mode=mode)
+            after = {
+                sub.key: sub.mode
+                for sub in self.registry.subscriptions()
+                if consumer in sub.consumers
+            }
+            added = len(after.keys() - before.keys())
+            removed = len(before.keys() - after.keys())
+            changed_mode = sum(1 for key in before.keys() & after.keys() if before[key] != after[key])
+            if added or removed or changed_mode:
+                app_logger.info(
+                    "Common feed subscription mutation operation=subscribe consumer=%s "
+                    "added=%d removed=%d mode_changed=%d consumer_subscriptions=%d total_subscriptions=%d",
+                    consumer, added, removed, changed_mode, len(after),
+                    len(self.registry.subscriptions()),
+                )
         self._ensure_recovery_supervisor()
         self._reconcile()
         with self._lock:
@@ -295,17 +315,44 @@ class CommonWebSocketManager:
     def unsubscribe(self, consumer: str, keys: list[InstrumentKey] | None = None) -> None:
         consumer = self._consumer_name(consumer)
         with self._lock:
+            before = {
+                sub.key: sub.mode
+                for sub in self.registry.subscriptions()
+                if consumer in sub.consumers
+            }
             targets = keys if keys is not None else list(self.registry.active_keys())
             for key in targets:
                 self.registry.unsubscribe(consumer, key)
+            after = {
+                sub.key: sub.mode
+                for sub in self.registry.subscriptions()
+                if consumer in sub.consumers
+            }
+            removed = len(before.keys() - after.keys())
+            changed_mode = sum(1 for key in before.keys() & after.keys() if before[key] != after[key])
+            if removed or changed_mode:
+                app_logger.info(
+                    "Common feed subscription mutation operation=unsubscribe consumer=%s "
+                    "added=0 removed=%d mode_changed=%d consumer_subscriptions=%d total_subscriptions=%d",
+                    consumer, removed, changed_mode, len(after),
+                    len(self.registry.subscriptions()),
+                )
         self._reconcile()
 
     def clear_consumer(self, consumer: str) -> None:
         consumer = self._consumer_name(consumer)
         with self._lock:
-            self.registry.clear_consumer(consumer)
+            before = sum(1 for sub in self.registry.subscriptions() if consumer in sub.consumers)
+            removed = self.registry.clear_consumer(consumer)
             self._callbacks.pop(consumer, None)
             self._record_callbacks.pop(consumer, None)
+            total = len(self.registry.subscriptions())
+            if removed:
+                app_logger.info(
+                    "Common feed subscription mutation operation=clear_consumer consumer=%s "
+                    "removed=%d consumer_subscriptions_before=%d total_subscriptions_after=%d",
+                    consumer, removed, before, total,
+                )
         self._reconcile()
 
     def _reconcile(self) -> None:
