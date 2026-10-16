@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+from math import isfinite
 from dataclasses import replace
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
@@ -209,10 +210,36 @@ class LiveCashFutureCommonRunner:
             self._metadata = previous_metadata
             app_logger.warning("Cash-Future contract rollover deferred date=%s error=%s", today.isoformat(), exc)
 
+    @staticmethod
+    def _has_provider_timestamp(payload: dict[str, Any]) -> bool:
+        """Return whether the original broker frame carries a usable timestamp.
+
+        The shared normalizer falls back to local time when timestamps are
+        absent. That fallback is useful for generic consumers, but it must not
+        be mislabeled as an exchange timestamp by the Cash-Future scanner.
+        """
+        for name in (
+            "exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
+            "exchange_timestamp_ms", "timestamp", "feed_time",
+        ):
+            value = payload.get(name)
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if isfinite(number):
+                return True
+        return False
+
     def _record_payload(self, record: MarketDataRecord, meta: dict[str, Any]) -> dict[str, Any]:
         payload = record.as_dict()
+        provider_payload = record.payload if isinstance(record.payload, dict) else {}
+        # Do not pass the normalizer's local-clock fallback off as exchange time.
+        source_timestamp_ns = (
+            record.timestamp_ns if self._has_provider_timestamp(provider_payload) else 0
+        )
         payload.update({
-            "source_timestamp_ns": record.timestamp_ns,
+            "source_timestamp_ns": source_timestamp_ns,
             "leg": meta["leg"],
             "underlying": meta["underlying"],
             "contract_month": meta["contract_month"],
