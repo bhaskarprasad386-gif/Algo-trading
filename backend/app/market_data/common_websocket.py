@@ -302,10 +302,9 @@ class CommonWebSocketManager:
             changed_mode = sum(1 for key in before.keys() & after.keys() if before[key] != after[key])
             if added or removed or changed_mode:
                 app_logger.info(
-                    "Common feed subscription mutation operation=subscribe consumer=%s "
-                    "added=%d removed=%d mode_changed=%d consumer_subscriptions=%d total_subscriptions=%d",
-                    consumer, added, removed, changed_mode, len(after),
-                    len(self.registry.subscriptions()),
+                    f"Common feed subscription mutation operation=subscribe consumer={consumer} "
+                    f"added={added} removed={removed} mode_changed={changed_mode} "
+                    f"consumer_subscriptions={len(after)} total_subscriptions={len(self.registry.subscriptions())}"
                 )
         self._ensure_recovery_supervisor()
         self._reconcile()
@@ -332,10 +331,9 @@ class CommonWebSocketManager:
             changed_mode = sum(1 for key in before.keys() & after.keys() if before[key] != after[key])
             if removed or changed_mode:
                 app_logger.info(
-                    "Common feed subscription mutation operation=unsubscribe consumer=%s "
-                    "added=0 removed=%d mode_changed=%d consumer_subscriptions=%d total_subscriptions=%d",
-                    consumer, removed, changed_mode, len(after),
-                    len(self.registry.subscriptions()),
+                    f"Common feed subscription mutation operation=unsubscribe consumer={consumer} "
+                    f"added=0 removed={removed} mode_changed={changed_mode} "
+                    f"consumer_subscriptions={len(after)} total_subscriptions={len(self.registry.subscriptions())}"
                 )
         self._reconcile()
 
@@ -349,9 +347,8 @@ class CommonWebSocketManager:
             total = len(self.registry.subscriptions())
             if removed:
                 app_logger.info(
-                    "Common feed subscription mutation operation=clear_consumer consumer=%s "
-                    "removed=%d consumer_subscriptions_before=%d total_subscriptions_after=%d",
-                    consumer, removed, before, total,
+                    f"Common feed subscription mutation operation=clear_consumer consumer={consumer} "
+                    f"removed={removed} consumer_subscriptions_before={before} total_subscriptions_after={total}"
                 )
         self._reconcile()
 
@@ -413,13 +410,11 @@ class CommonWebSocketManager:
                         for consumer in sub.consumers:
                             consumer_counts[consumer] += 1
                     app_logger.info(
-                        "Common feed reconcile obsolete groups=%s desired_groups=%s "
-                        "existing_groups=%s subscriptions=%d consumer_counts=%s",
-                        sorted(f"{group.mode}:{group.shard}" for group in stale_groups),
-                        sorted(f"{group.mode}:{group.shard}" for group in desired_tokens),
-                        sorted(f"{group.mode}:{group.shard}" for group in self._sockets),
-                        len(self.registry.subscriptions()),
-                        dict(sorted(consumer_counts.items())),
+                        f"Common feed reconcile obsolete groups={sorted(f'{group.mode}:{group.shard}' for group in stale_groups)} "
+                        f"desired_groups={sorted(f'{group.mode}:{group.shard}' for group in desired_tokens)} "
+                        f"existing_groups={sorted(f'{group.mode}:{group.shard}' for group in self._sockets)} "
+                        f"subscriptions={len(self.registry.subscriptions())} "
+                        f"consumer_counts={dict(sorted(consumer_counts.items()))}"
                     )
                 stale_sockets = [self._sockets.pop(group) for group in stale_groups]
                 for group in stale_groups:
