@@ -529,11 +529,23 @@ class CommonWebSocketManager:
     def _handle_socket_failure(
         self, group: SocketGroup, socket: Any, generation: int, reason: Any
     ) -> None:
-        # Callback failures may be asynchronous; set cooldown before scheduling
-        # invalidation/recovery so recovery cannot immediately reconnect.
-        if self._apply_broker_cooldown(reason):
-            _mark_socket_auth_stale(socket)
-        self._schedule_socket_failure_recovery(group, socket, generation, str(reason))
+        # Serialize the generation check with invalidation/reconciliation. A late
+        # failure callback from a retired socket must not impose a broker cooldown
+        # or mark the current authentication session stale.
+        with self._reconcile_lock:
+            with self._lock:
+                is_current = (
+                    not self._closed
+                    and self._sockets.get(group) is socket
+                    and self._socket_generation.get(group) == generation
+                )
+            if not is_current:
+                return
+            # Set cooldown before scheduling invalidation/recovery so a current
+            # generation's 429 cannot be followed by an immediate reconnect.
+            if self._apply_broker_cooldown(reason):
+                _mark_socket_auth_stale(socket)
+            self._schedule_socket_failure_recovery(group, socket, generation, str(reason))
 
     def _start_socket_connect(
         self,
