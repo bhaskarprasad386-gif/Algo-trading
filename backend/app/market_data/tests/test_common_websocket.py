@@ -472,6 +472,30 @@ def test_blocking_subscription_call_is_bounded_and_socket_is_recovered():
         BlockingSubscribeSocket.subscribe_attempts = 0
 
 
+def test_stale_failure_callback_cannot_trigger_broker_cooldown():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.subscribe("cash", [d.key])
+
+    group = SocketGroup(1, 0)
+    socket = FakeSocket.instances[0]
+    generation = manager._socket_generation[group]
+    # Simulate the callback arriving after a newer generation has been recorded.
+    with manager._lock:
+        manager._socket_generation[group] = generation + 1
+
+    manager._handle_socket_failure(
+        group, socket, generation, "429 Connection Limit Exceeded"
+    )
+
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        assert common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL == 0.0
+    assert manager._sockets[group] is socket
+    assert manager.snapshot()["socket_groups"] == 1
+
+
 def test_angel_failure_callback_triggers_immediate_recovery_and_rejects_old_generation_ticks():
     registry = InstrumentRegistry()
     d = descriptor("101")
