@@ -385,6 +385,35 @@ def test_websocket_close_waits_for_transport_and_reports_orphan(monkeypatch):
     assert not transport.is_alive()
 
 
+def test_websocket_close_aborts_sdk_transport_before_connect_returns(monkeypatch):
+    from threading import Event, Thread
+
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    release = Event()
+    transport = Thread(target=lambda: release.wait(timeout=10.0), daemon=True)
+    transport.start()
+
+    class LowLevelSocket:
+        def abort(self):
+            release.set()
+
+    sdk_socket = SimpleNamespace(
+        close_connection=lambda: None,
+        _transport_thread=transport,
+        wsapp=SimpleNamespace(sock=LowLevelSocket()),
+    )
+    # Simulate connect() still waiting before it can copy this thread to
+    # client._transport_thread; close must discover it from the SDK socket.
+    client.websocket = sdk_socket
+    client._transport_thread = None
+
+    client.close()
+
+    assert not transport.is_alive()
+    assert client.health["transport_close_timed_out"] is False
+    assert client.health["transport_thread_alive"] is False
+
+
 def test_initial_subscribe_success_is_reported_separately(monkeypatch):
     monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
     client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
