@@ -270,21 +270,27 @@ class LiveCashFutureCommonRunner:
         leg = str(meta.get("leg") or "").strip().lower()
         if leg not in {"cash", "future"}:
             return
-        provider_payload = record.payload if isinstance(record.payload, dict) else {}
-        source_has = {
-            "bid": AngelOneTickNormalizer._depth_value(provider_payload, "buy", "price") is not None,
-            "ask": AngelOneTickNormalizer._depth_value(provider_payload, "sell", "price") is not None,
-        }
         normalized_has = {
             "bid": record.bid is not None and record.bid > 0,
             "ask": record.ask is not None and record.ask > 0,
         }
+        # Most live ticks have both sides. Avoid re-walking raw depth arrays and
+        # taking the telemetry lock unless a normalized side is actually missing.
+        missing_sides = [side for side, present in normalized_has.items() if not present]
+        if not missing_sides:
+            return
+        provider_payload = record.payload if isinstance(record.payload, dict) else {}
+        source_has = {
+            side: AngelOneTickNormalizer._depth_value(
+                provider_payload, "buy" if side == "bid" else "sell", "price"
+            ) is not None
+            for side in missing_sides
+        }
         with self._quote_side_lock:
-            for side in ("bid", "ask"):
-                if not normalized_has[side]:
-                    self._quote_side_counts[f"{leg}_{side}_missing"] += 1
-                    kind = "normalization_missing" if source_has[side] else "source_missing"
-                    self._quote_side_source_counts[f"{leg}_{side}_{kind}"] += 1
+            for side in missing_sides:
+                self._quote_side_counts[f"{leg}_{side}_missing"] += 1
+                kind = "normalization_missing" if source_has[side] else "source_missing"
+                self._quote_side_source_counts[f"{leg}_{side}_{kind}"] += 1
 
     def _quote_side_snapshot(self) -> dict[str, int]:
         with self._quote_side_lock:
