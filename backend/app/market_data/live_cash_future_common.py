@@ -76,6 +76,7 @@ class LiveCashFutureCommonRunner:
         self._scanner_results = 0
         self._records_missing_executable_quote = 0
         # Aggregate quote-side counters only; never retain raw broker frames.
+        self._quote_side_lock = threading.Lock()
         self._quote_side_counts = {
             f"{leg}_{side}_missing": 0
             for leg in ("cash", "future")
@@ -100,7 +101,7 @@ class LiveCashFutureCommonRunner:
             "scanner_updates": self._scanner_updates,
             "scanner_results": self._scanner_results,
             "records_missing_executable_quote": self._records_missing_executable_quote,
-            "quote_side_counts": dict(self._quote_side_counts),
+            "quote_side_counts": self._quote_side_snapshot(),
             "scanner_rejections": self._scanner_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
@@ -259,10 +260,15 @@ class LiveCashFutureCommonRunner:
         leg = str(meta.get("leg") or "").strip().lower()
         if leg not in {"cash", "future"}:
             return
-        if record.bid is None or record.bid <= 0:
-            self._quote_side_counts[f"{leg}_bid_missing"] += 1
-        if record.ask is None or record.ask <= 0:
-            self._quote_side_counts[f"{leg}_ask_missing"] += 1
+        with self._quote_side_lock:
+            if record.bid is None or record.bid <= 0:
+                self._quote_side_counts[f"{leg}_bid_missing"] += 1
+            if record.ask is None or record.ask <= 0:
+                self._quote_side_counts[f"{leg}_ask_missing"] += 1
+
+    def _quote_side_snapshot(self) -> dict[str, int]:
+        with self._quote_side_lock:
+            return dict(self._quote_side_counts)
 
     def _persist_record(self, record: MarketDataRecord, meta: dict[str, Any]) -> None:
         if self._ingestor is None:
