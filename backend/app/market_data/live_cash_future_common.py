@@ -264,11 +264,15 @@ class LiveCashFutureCommonRunner:
             else:
                 self._latest_persisted[record.instrument] = record
         if self.on_payload is not None:
+            # The callback is the authoritative scanner path. Do not also run
+            # the legacy in-runner scanner: doing both duplicates per-tick work
+            # on the WebSocket transport callback and can delay frame handling.
             try:
                 self.on_payload(self._record_payload(record, meta))
                 self._payload_callbacks += 1
             except Exception as exc:
                 app_logger.error("Cash-Future payload callback failed: %s", exc)
+            return
         try:
             self._scanner_updates += 1
             result = self.scanner.update(
