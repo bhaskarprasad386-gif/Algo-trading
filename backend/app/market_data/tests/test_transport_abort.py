@@ -1,4 +1,5 @@
 from threading import Event, Thread
+from time import sleep
 from types import SimpleNamespace
 
 from app.market_data.websocket import MarketDataWebSocket
@@ -11,6 +12,12 @@ class AbortableLowLevelSocket:
 
     def abort(self):
         self.abort_called = True
+        # Simulate websocket-client still unwinding its bounded select/poll wait
+        # after abort() has closed the underlying descriptor.
+        Thread(target=self._release_after_poll, daemon=True).start()
+
+    def _release_after_poll(self):
+        sleep(1.2)
         self.release.set()
 
 
