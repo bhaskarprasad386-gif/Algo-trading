@@ -75,6 +75,12 @@ class LiveCashFutureCommonRunner:
         self._scanner_updates = 0
         self._scanner_results = 0
         self._records_missing_executable_quote = 0
+        # Aggregate quote-side counters only; never retain raw broker frames.
+        self._quote_side_counts = {
+            f"{leg}_{side}_missing": 0
+            for leg in ("cash", "future")
+            for side in ("bid", "ask")
+        }
         self._scanner_rejections = 0
 
     @property
@@ -94,6 +100,7 @@ class LiveCashFutureCommonRunner:
             "scanner_updates": self._scanner_updates,
             "scanner_results": self._scanner_results,
             "records_missing_executable_quote": self._records_missing_executable_quote,
+            "quote_side_counts": dict(self._quote_side_counts),
             "scanner_rejections": self._scanner_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
@@ -247,6 +254,16 @@ class LiveCashFutureCommonRunner:
         })
         return payload
 
+    def _record_quote_side_quality(self, record: MarketDataRecord, meta: dict[str, Any]) -> None:
+        """Count missing normalized quote sides by leg without retaining broker payloads."""
+        leg = str(meta.get("leg") or "").strip().lower()
+        if leg not in {"cash", "future"}:
+            return
+        if record.bid is None or record.bid <= 0:
+            self._quote_side_counts[f"{leg}_bid_missing"] += 1
+        if record.ask is None or record.ask <= 0:
+            self._quote_side_counts[f"{leg}_ask_missing"] += 1
+
     def _persist_record(self, record: MarketDataRecord, meta: dict[str, Any]) -> None:
         if self._ingestor is None:
             return
@@ -271,6 +288,7 @@ class LiveCashFutureCommonRunner:
         if meta is None:
             self._records_missing_metadata += 1
             return
+        self._record_quote_side_quality(record, meta)
         # The broker tick usually contains no underlying field. The runner's
         # instrument-master mapping is authoritative and must be attached before
         # the scanner pairs cash symbols with their current/near futures.
