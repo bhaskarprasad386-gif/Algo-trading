@@ -626,22 +626,42 @@ class MarketDataWebSocket:
             self._connecting = False
             socket = self.websocket
             self.websocket = None
-            transport_thread = self._transport_thread
+            # connect() may still be waiting for the SDK handshake and therefore
+            # has not copied the SDK's transport thread onto this wrapper yet.
+            # Read the SDK-owned thread directly so close can retire it now.
+            transport_thread = self._transport_thread or getattr(socket, "_transport_thread", None)
+            if transport_thread is not None:
+                self._transport_thread = transport_thread
         close_error = None
         if socket:
             try:
                 socket.close_connection()
             except Exception as exc:
                 close_error = exc
-        # close_connection can return while run_forever is still unwinding.
-        # Wait only a bounded interval and expose an orphan transport rather than
-        # silently treating registry removal as proof that the broker session died.
+        # close_connection can return while run_forever is still unwinding. Give
+        # it a short graceful window, then abort the underlying TCP socket. This
+        # is especially important when close races with connect(): the manager
+        # must not wait forever for a retired handshake while holding admission.
         if (
             transport_thread is not None
             and transport_thread is not current_thread()
             and transport_thread.is_alive()
         ):
             transport_thread.join(timeout=1.0)
+        if (
+            transport_thread is not None
+            and transport_thread is not current_thread()
+            and transport_thread.is_alive()
+        ):
+            wsapp = getattr(socket, "wsapp", None) if socket is not None else None
+            low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
+            abort = getattr(low_level_socket, "abort", None)
+            if callable(abort):
+                try:
+                    abort()
+                except Exception as abort_exc:
+                    app_logger.error(f"Angel WebSocket transport abort failed during close: {abort_exc}")
+                transport_thread.join(timeout=6.0)
         still_alive = bool(transport_thread and transport_thread.is_alive())
         with self._lock:
             self._transport_close_timed_out = still_alive
