@@ -360,6 +360,20 @@ class CommonWebSocketManager:
                 # Otherwise a recovery from an unexpected group can temporarily
                 # exceed Angel One's global three-session limit.
                 stale_groups = [group for group in self._sockets if group not in desired_tokens]
+                if stale_groups:
+                    consumer_counts: dict[str, int] = defaultdict(int)
+                    for sub in self.registry.subscriptions():
+                        for consumer in sub.consumers:
+                            consumer_counts[consumer] += 1
+                    app_logger.info(
+                        "Common feed reconcile obsolete groups=%s desired_groups=%s "
+                        "existing_groups=%s subscriptions=%d consumer_counts=%s",
+                        sorted(f"{group.mode}:{group.shard}" for group in stale_groups),
+                        sorted(f"{group.mode}:{group.shard}" for group in desired_tokens),
+                        sorted(f"{group.mode}:{group.shard}" for group in self._sockets),
+                        len(self.registry.subscriptions()),
+                        dict(sorted(consumer_counts.items())),
+                    )
                 stale_sockets = [self._sockets.pop(group) for group in stale_groups]
                 for group in stale_groups:
                     self._socket_tokens.pop(group, None)
