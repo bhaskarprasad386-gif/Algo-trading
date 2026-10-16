@@ -224,7 +224,34 @@ def test_cash_future_quote_side_telemetry_counts_missing_sides_without_raw_frame
         "future_bid_missing": 0,
         "future_ask_missing": 1,
     }
+    source_stats = runner.snapshot()["quote_side_source_counts"]
+    assert source_stats["cash_ask_source_missing"] == 1
+    assert source_stats["future_ask_source_missing"] == 1
+    assert source_stats["cash_bid_source_missing"] == 0
+    assert source_stats["cash_bid_normalization_missing"] == 0
     assert not hasattr(runner, "_raw_payloads")
+
+
+def test_cash_future_quote_side_telemetry_identifies_normalization_gap():
+    runner = LiveCashFutureCommonRunner(
+        "unused.sqlite", instrument_master=object(), manager=object(), scanner=object()
+    )
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 12345,
+            "best_5_buy_data": [{"price": 12500, "quantity": 4}],
+            "best_5_sell_data": [{"price": 12300, "quantity": 5}],
+        },
+    )
+    assert record.bid is None and record.ask is None  # crossed book is rejected
+    runner._record_quote_side_quality(record, {"leg": "CASH"})
+    stats = runner.snapshot()["quote_side_source_counts"]
+    assert stats["cash_bid_normalization_missing"] == 1
+    assert stats["cash_ask_normalization_missing"] == 1
+    assert stats["cash_bid_source_missing"] == 0
+    assert stats["cash_ask_source_missing"] == 0
 
 
 def test_cash_future_source_timestamp_requires_original_provider_timestamp():
