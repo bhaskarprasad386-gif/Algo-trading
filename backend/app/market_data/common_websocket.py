@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, time as datetime_time
 from math import isfinite
 from threading import Event, Lock, RLock, Thread, current_thread
 import time
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
@@ -106,6 +108,21 @@ def connect_with_shared_broker_admission(
                 _mark_socket_auth_stale(socket)
             raise
     return True
+
+
+_INDIA_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _is_regular_trading_window(now: datetime | None = None) -> bool:
+    """Whether NSE's regular weekday session is scheduled by the clock.
+
+    Tick silence is evidence of a broken feed only during regular market hours.
+    Outside that window, a healthy WebSocket can legitimately receive no ticks.
+    This is deliberately a clock-window guard, not an exchange-holiday calendar.
+    """
+    current = (now or datetime.now(_INDIA_TIMEZONE)).astimezone(_INDIA_TIMEZONE)
+    local_time = current.timetz().replace(tzinfo=None)
+    return current.weekday() < 5 and datetime_time(9, 15) <= local_time <= datetime_time(15, 30)
 
 
 class CommonWebSocketManager:
@@ -903,9 +920,17 @@ class CommonWebSocketManager:
             if not has_intent:
                 continue
             try:
+                # Before/after the regular session, tick silence is expected;
+                # don't churn otherwise-connected sockets every 30 seconds.
+                # Explicit close/error callbacks and stuck handshakes still recover.
+                silent_timeout = (
+                    self._silent_feed_timeout_seconds
+                    if _is_regular_trading_window()
+                    else -1.0
+                )
                 self.recover_disconnected(
                     min_age_seconds=0.0,
-                    silent_age_seconds=self._silent_feed_timeout_seconds,
+                    silent_age_seconds=silent_timeout,
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 if cooldown_remaining > 0.0:
