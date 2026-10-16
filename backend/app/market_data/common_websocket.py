@@ -1350,25 +1350,23 @@ class CommonWebSocketManager:
         # Close remains bounded, but logs distinguish manager retirement from
         # broker callbacks and include group/generation context when available.
         app_logger.info(
-            "Common feed socket close requested group=%s generation=%s reason=%s",
-            f"{group.mode}:{group.shard}" if group is not None else "unknown",
-            generation if generation is not None else "unknown",
-            reason,
+            "Common feed socket close requested "
+            f"group={f'{group.mode}:{group.shard}' if group is not None else 'unknown'} "
+            f"generation={generation if generation is not None else 'unknown'} reason={reason}"
         )
         def _close() -> None:
             try:
                 socket.close()
             except Exception as exc:
-                app_logger.debug("Common feed socket close raised: %s", exc)
+                app_logger.debug(f"Common feed socket close raised: {exc}")
         worker = Thread(target=_close, name="common-ws-close", daemon=True)
         worker.start()
         worker.join(timeout=max(0.1, float(timeout)))
         if worker.is_alive():
             app_logger.error(
-                "Common feed socket close timed out group=%s generation=%s reason=%s",
-                f"{group.mode}:{group.shard}" if group is not None else "unknown",
-                generation if generation is not None else "unknown",
-                reason,
+                "Common feed socket close timed out "
+                f"group={f'{group.mode}:{group.shard}' if group is not None else 'unknown'} "
+                f"generation={generation if generation is not None else 'unknown'} reason={reason}"
             )
         return worker
 
