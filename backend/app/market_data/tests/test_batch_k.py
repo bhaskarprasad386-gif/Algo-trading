@@ -2,6 +2,7 @@ from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataR
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.normalizer import AngelOneTickNormalizer
 from app.market_data.registry import InstrumentDescriptor
+from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 
 
 def descriptor(token="101", exchange="NSE", segment="EQ", instrument_type="equity"):
@@ -198,3 +199,15 @@ def test_depth_keeps_quote_missing_when_every_level_is_empty():
     assert record.ltp == 123.45
     assert record.bid is None
     assert record.ask is None
+
+
+
+def test_cash_future_source_timestamp_requires_original_provider_timestamp():
+    has_timestamp = LiveCashFutureCommonRunner._has_provider_timestamp
+
+    assert has_timestamp({"exchange_timestamp": 1720000000123}) is True
+    assert has_timestamp({"exchange_timestamp_ns": 1720000000123000000}) is True
+    assert has_timestamp({"timestamp": "1720000000123"}) is True
+    assert has_timestamp({}) is False
+    assert has_timestamp({"exchange_timestamp": None, "timestamp": "invalid"}) is False
+    assert has_timestamp({"exchange_timestamp": float("nan")}) is False
