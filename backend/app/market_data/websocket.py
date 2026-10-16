@@ -480,8 +480,32 @@ class MarketDataWebSocket:
                 if transport_thread is not None and transport_thread is not current_thread():
                     transport_thread.join(timeout=1.0)
                 if transport_thread is not None and transport_thread.is_alive():
+                    # Failed handshakes use this retry path directly (they do not
+                    # necessarily pass through MarketDataWebSocket.close()). Apply
+                    # the same low-level abort fallback here so a stuck poll does
+                    # not strand the retry loop with a live transport thread.
+                    wsapp = getattr(sdk_socket, "wsapp", None) if sdk_socket is not None else None
+                    low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
+                    abort = getattr(low_level_socket, "abort", None)
+                    if callable(abort):
+                        try:
+                            abort()
+                        except Exception as abort_exc:
+                            app_logger.error(
+                                f"Angel WebSocket handshake-failure transport abort failed: {abort_exc}"
+                            )
+                        transport_thread.join(timeout=6.0)
+                if transport_thread is not None and transport_thread.is_alive():
                     with self._lock:
                         self._transport_close_timed_out = True
+                    app_logger.error(
+                        f"Angel WebSocket transport still alive after failed handshake cleanup; "
+                        f"attempt={attempt + 1}"
+                    )
+                    _log_transport_thread_stack(
+                        transport_thread,
+                        phase="handshake-failure-after-abort",
+                    )
                     # Do not create another socket while the previous transport
                     # may still own a broker session.
                     break
