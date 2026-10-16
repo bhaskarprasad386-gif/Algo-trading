@@ -33,6 +33,16 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     outcome: dict[str, Any] = {}
     original_open = getattr(socket, "_on_open", None)
     original_error = getattr(socket, "_on_error", None)
+    original_close = getattr(socket, "_on_close", None)
+
+    # websocket-client invokes on_close(wsapp, close_status_code, close_msg),
+    # while some SmartWebSocketV2 releases define _on_close(self, wsapp).
+    # Adapt the callback at the boundary so a normal broker close cannot turn
+    # into a TypeError and bypass the manager's single-owner recovery path.
+    def on_close_compatible(wsapp, *close_details):
+        if callable(original_close):
+            return original_close(wsapp)
+        return None
 
     def on_open_and_signal(wsapp):
         try:
@@ -57,7 +67,7 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         header=headers,
         on_open=socket._on_open,
         on_error=socket._on_error,
-        on_close=socket._on_close,
+        on_close=on_close_compatible,
         on_data=socket._on_data,
         on_ping=socket._on_ping,
         on_pong=socket._on_pong,
