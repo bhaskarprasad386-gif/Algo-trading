@@ -1,4 +1,6 @@
 import app.market_data.common_websocket as common_websocket_module
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.contracts import InstrumentKey
@@ -1388,3 +1390,17 @@ def test_snapshot_exposes_safe_per_socket_lifecycle_health():
         assert "auth_token" not in health
     finally:
         manager.close()
+
+
+def test_silent_feed_recovery_is_limited_to_regular_market_window():
+    ist = ZoneInfo("Asia/Kolkata")
+
+    assert common_websocket_module._is_regular_trading_window(
+        datetime(2026, 10, 16, 5, 45, tzinfo=ist)
+    ) is False
+    assert common_websocket_module._is_regular_trading_window(
+        datetime(2026, 10, 16, 10, 0, tzinfo=ist)
+    ) is True
+    assert common_websocket_module._is_regular_trading_window(
+        datetime(2026, 10, 17, 10, 0, tzinfo=ist)
+    ) is False
