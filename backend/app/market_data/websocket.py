@@ -27,8 +27,8 @@ def _log_transport_thread_stack(thread: Thread, *, phase: str) -> None:
             return
         stack = "".join(traceback.format_stack(frame, limit=24))
         app_logger.error(
-            "Angel WebSocket transport thread stack phase=%s name=%s ident=%s\\n%s",
-            phase, thread.name, thread.ident, stack,
+            f"Angel WebSocket transport thread stack phase={phase} "
+            f"name={thread.name} ident={thread.ident}\\n{stack}"
         )
     except Exception as exc:
         app_logger.error("Unable to inspect Angel WebSocket transport thread phase=%s: %s", phase, exc)
