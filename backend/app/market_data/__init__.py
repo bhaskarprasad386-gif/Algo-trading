@@ -5,7 +5,7 @@ def _install_transport_abort_fallback() -> None:
     from threading import current_thread
 
     from app.core.logger import app_logger
-    from app.market_data.websocket import MarketDataWebSocket
+    from app.market_data.websocket import MarketDataWebSocket, _log_transport_thread_stack
 
     original_close = MarketDataWebSocket.close
     if getattr(MarketDataWebSocket, "_transport_abort_fallback_installed", False):
@@ -44,6 +44,7 @@ def _install_transport_abort_fallback() -> None:
                 self._transport_thread = None
         if still_alive:
             app_logger.error("Angel WebSocket transport remained alive after low-level abort")
+            _log_transport_thread_stack(transport_thread, phase="after-low-level-abort")
         else:
             app_logger.info("Angel WebSocket transport terminated after low-level abort")
 
