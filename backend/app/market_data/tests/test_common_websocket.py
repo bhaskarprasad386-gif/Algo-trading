@@ -623,6 +623,14 @@ def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
     manager._connect_call_wait_seconds = 0.05
     manager._connect_timeout_seconds = 1.0
     manager._recovery_interval_seconds = 60.0
+    reconcile_calls = []
+    original_reconcile_after_retirement = manager._reconcile_after_retirement
+
+    def track_reconcile(group):
+        reconcile_calls.append(group)
+        original_reconcile_after_retirement(group)
+
+    manager._reconcile_after_retirement = track_reconcile
     try:
         manager.subscribe("cash", [d.key])
         original = LateSuccessfulConnectSocket.instances[0]
@@ -634,6 +642,13 @@ def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
 
         LateSuccessfulConnectSocket.release_first_connect.set()
         assert LateSuccessfulConnectSocket.late_connect_finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not reconcile_calls:
+            time.sleep(0.01)
+        assert reconcile_calls == [SocketGroup(1, 0)], (
+            "a fast close of a late successful handshake must trigger reconciliation "
+            "without waiting for the periodic recovery supervisor"
+        )
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline and original.connected:
             time.sleep(0.01)
