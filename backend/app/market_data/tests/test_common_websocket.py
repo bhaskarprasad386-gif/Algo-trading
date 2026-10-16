@@ -1514,3 +1514,45 @@ def test_missing_shard_does_not_repeat_recovery_while_retired_transport_is_alive
     finally:
         release.set()
         manager.close()
+
+
+
+def test_stale_connect_exception_cannot_trigger_broker_cooldown():
+    started = Event()
+    release = Event()
+    failed = Event()
+
+    class Late429Socket(FakeSocket):
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=3.0)
+            self.connecting = False
+            failed.set()
+            raise RuntimeError("429 Connection Limit Exceeded")
+
+    registry = InstrumentRegistry()
+    item = descriptor("993")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=Late429Socket)
+    manager._connect_call_wait_seconds = 0.02
+    try:
+        manager.subscribe("cash", [item.key])
+        assert started.wait(timeout=1.0)
+        group = SocketGroup(1, 0)
+        with manager._lock:
+            old_generation = manager._socket_generation[group]
+            manager._socket_generation[group] = old_generation + 1
+
+        release.set()
+        assert failed.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and manager.snapshot()["broker_cooldown_remaining_seconds"] > 0:
+            time.sleep(0.01)
+
+        assert manager.snapshot()["broker_cooldown_remaining_seconds"] == 0
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        release.set()
+        manager.close()
