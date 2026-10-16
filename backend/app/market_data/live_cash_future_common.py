@@ -20,6 +20,7 @@ from app.market_data.historical import HistoricalDataClient
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+from app.market_data.normalizer import AngelOneTickNormalizer
 
 
 def _expiry(value: Any) -> date | None:
@@ -82,6 +83,14 @@ class LiveCashFutureCommonRunner:
             for leg in ("cash", "future")
             for side in ("bid", "ask")
         }
+        # Compare raw-frame side availability with canonical output so a missing
+        # broker side can be distinguished from a side discarded at normalization.
+        self._quote_side_source_counts = {
+            f"{leg}_{side}_{kind}": 0
+            for leg in ("cash", "future")
+            for side in ("bid", "ask")
+            for kind in ("source_missing", "normalization_missing")
+        }
         self._scanner_rejections = 0
 
     @property
@@ -102,6 +111,7 @@ class LiveCashFutureCommonRunner:
             "scanner_results": self._scanner_results,
             "records_missing_executable_quote": self._records_missing_executable_quote,
             "quote_side_counts": self._quote_side_snapshot(),
+            "quote_side_source_counts": self._quote_side_source_snapshot(),
             "scanner_rejections": self._scanner_rejections,
             "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
             "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
@@ -256,19 +266,33 @@ class LiveCashFutureCommonRunner:
         return payload
 
     def _record_quote_side_quality(self, record: MarketDataRecord, meta: dict[str, Any]) -> None:
-        """Count missing normalized quote sides by leg without retaining broker payloads."""
+        """Count source-vs-normalized quote-side gaps without retaining raw frames."""
         leg = str(meta.get("leg") or "").strip().lower()
         if leg not in {"cash", "future"}:
             return
+        provider_payload = record.payload if isinstance(record.payload, dict) else {}
+        source_has = {
+            "bid": AngelOneTickNormalizer._depth_value(provider_payload, "buy", "price") is not None,
+            "ask": AngelOneTickNormalizer._depth_value(provider_payload, "sell", "price") is not None,
+        }
+        normalized_has = {
+            "bid": record.bid is not None and record.bid > 0,
+            "ask": record.ask is not None and record.ask > 0,
+        }
         with self._quote_side_lock:
-            if record.bid is None or record.bid <= 0:
-                self._quote_side_counts[f"{leg}_bid_missing"] += 1
-            if record.ask is None or record.ask <= 0:
-                self._quote_side_counts[f"{leg}_ask_missing"] += 1
+            for side in ("bid", "ask"):
+                if not normalized_has[side]:
+                    self._quote_side_counts[f"{leg}_{side}_missing"] += 1
+                    kind = "normalization_missing" if source_has[side] else "source_missing"
+                    self._quote_side_source_counts[f"{leg}_{side}_{kind}"] += 1
 
     def _quote_side_snapshot(self) -> dict[str, int]:
         with self._quote_side_lock:
             return dict(self._quote_side_counts)
+
+    def _quote_side_source_snapshot(self) -> dict[str, int]:
+        with self._quote_side_lock:
+            return dict(self._quote_side_source_counts)
 
     def _persist_record(self, record: MarketDataRecord, meta: dict[str, Any]) -> None:
         if self._ingestor is None:
