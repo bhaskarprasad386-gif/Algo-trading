@@ -1,6 +1,8 @@
 import math
 import ssl
+import sys
 import time
+import traceback
 from threading import Event, Lock, Thread, current_thread
 from typing import Any, Callable, Optional
 
@@ -11,6 +13,25 @@ from app.algo.auth import AngelOneAuth
 from app.core.config import settings
 from app.core.exceptions import TradingAppException
 from app.core.logger import app_logger
+
+
+def _log_transport_thread_stack(thread: Thread, *, phase: str) -> None:
+    """Log the blocked transport thread's Python stack without dumping locals/payloads."""
+    try:
+        frame = sys._current_frames().get(thread.ident)
+        if frame is None:
+            app_logger.error(
+                "Angel WebSocket transport thread alive but no Python frame available phase=%s",
+                phase,
+            )
+            return
+        stack = "".join(traceback.format_stack(frame, limit=24))
+        app_logger.error(
+            "Angel WebSocket transport thread stack phase=%s name=%s ident=%s\\n%s",
+            phase, thread.name, thread.ident, stack,
+        )
+    except Exception as exc:
+        app_logger.error("Unable to inspect Angel WebSocket transport thread phase=%s: %s", phase, exc)
 
 
 
@@ -608,6 +629,7 @@ class MarketDataWebSocket:
                 "Angel WebSocket transport did not terminate within close timeout; "
                 "possible orphan broker session"
             )
+            _log_transport_thread_stack(transport_thread, phase="graceful-close-timeout")
         if close_error is not None:
             raise close_error
         app_logger.info("Angel One WebSocket closed transport_alive=%s", still_alive)
