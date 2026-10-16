@@ -1017,6 +1017,12 @@ class CommonWebSocketManager:
             # Compare identities, not only counts: a stale/unexpected group can
             # make the count look complete while a required shard is missing.
             missing_groups = set(self._sockets) != expected_socket_groups
+            # Reconciliation intentionally blocks new broker sessions while any
+            # retired transport is still alive. If the only remaining issue is a
+            # missing shard, don't count/re-run a recovery attempt on every
+            # supervisor tick: the retirement watcher will reconcile when the
+            # old transport actually exits.
+            retirement_pending = bool(self._retired_transports)
 
             for group, _, _, _ in stale:
                 self._sockets.pop(group, None)
@@ -1028,6 +1034,8 @@ class CommonWebSocketManager:
                 self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
+            return 0
+        if not stale and missing_groups and retirement_pending:
             return 0
 
         with self._lock:
