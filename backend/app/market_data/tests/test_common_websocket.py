@@ -1404,3 +1404,59 @@ def test_silent_feed_recovery_is_limited_to_regular_market_window():
     assert common_websocket_module._is_regular_trading_window(
         datetime(2026, 10, 17, 10, 0, tzinfo=ist)
     ) is False
+
+
+
+def test_missing_shard_does_not_repeat_recovery_while_retired_transport_is_alive():
+    registry = InstrumentRegistry()
+    items = [descriptor("991"), descriptor("992")]
+    registry.register_many(items)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    release = Event()
+    try:
+        manager.subscribe("cash", [item.key for item in items])
+        assert len(FakeSocket.instances) == 2
+
+        missing = SocketGroup(1, 1)
+        with manager._lock:
+            retired_socket = manager._sockets.pop(missing)
+            manager._socket_tokens.pop(missing, None)
+            manager._socket_created_at.pop(missing, None)
+            manager._last_data_at.pop(missing, None)
+            manager._socket_generation.pop(missing, None)
+
+        blocked_close = Thread(
+            target=lambda: release.wait(timeout=4.0),
+            name="test-missing-shard-retired-transport",
+            daemon=True,
+        )
+        blocked_close.start()
+        manager._watch_retired_transport(
+            blocked_close,
+            group=missing,
+            generation=99,
+            reason="test_missing_shard_wait",
+            on_finished=manager._reconcile,
+        )
+
+        before = manager.snapshot()["recovery_attempts"]
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+        snapshot = manager.snapshot()
+        assert snapshot["retired_transport_count"] == 1
+        assert snapshot["recovery_attempts"] == before
+        assert len(FakeSocket.instances) == 2
+
+        release.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if manager.snapshot()["socket_groups"] == 2 and manager.snapshot()["retired_transport_count"] == 0:
+                break
+            time.sleep(0.01)
+        assert manager.snapshot()["socket_groups"] == 2
+        assert manager.snapshot()["retired_transport_count"] == 0
+    finally:
+        release.set()
+        manager.close()
