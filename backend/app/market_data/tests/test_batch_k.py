@@ -202,6 +202,31 @@ def test_depth_keeps_quote_missing_when_every_level_is_empty():
 
 
 
+def test_cash_future_quote_side_telemetry_counts_missing_sides_without_raw_frames():
+    runner = LiveCashFutureCommonRunner(
+        "unused.sqlite", instrument_master=object(), manager=object(), scanner=object()
+    )
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 12345,
+            "best_5_buy_data": [{"price": 12300, "quantity": 4}],
+            "best_5_sell_data": [{"price": 0, "quantity": 0}],
+        },
+    )
+    runner._record_quote_side_quality(record, {"leg": "CASH"})
+    runner._record_quote_side_quality(record, {"leg": "FUTURE"})
+    stats = runner.snapshot()["quote_side_counts"]
+    assert stats == {
+        "cash_bid_missing": 0,
+        "cash_ask_missing": 1,
+        "future_bid_missing": 0,
+        "future_ask_missing": 1,
+    }
+    assert not hasattr(runner, "_raw_payloads")
+
+
 def test_cash_future_source_timestamp_requires_original_provider_timestamp():
     has_timestamp = LiveCashFutureCommonRunner._has_provider_timestamp
 
