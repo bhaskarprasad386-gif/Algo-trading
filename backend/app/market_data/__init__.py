@@ -33,10 +33,14 @@ def _install_transport_abort_fallback() -> None:
             abort()
             app_logger.warning("Angel WebSocket transport required low-level abort after graceful close timeout")
         except Exception as exc:
-            app_logger.error("Angel WebSocket low-level transport abort failed: %s", exc)
+            app_logger.error(f"Angel WebSocket low-level transport abort failed: {exc}")
             return
 
-        transport_thread.join(timeout=1.0)
+        # websocket-client's dispatcher may be sleeping in select(ping_timeout=5)
+        # when abort() runs; allow that bounded poll to unwind before declaring
+        # an orphan. This is not a reconnect delay for healthy sockets: this path
+        # runs only after graceful close already exceeded its timeout.
+        transport_thread.join(timeout=6.0)
         still_alive = transport_thread.is_alive()
         with self._lock:
             self._transport_close_timed_out = still_alive
