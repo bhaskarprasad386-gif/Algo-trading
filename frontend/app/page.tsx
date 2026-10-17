@@ -377,10 +377,10 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="dashboard-page space-y-5">
-      <div className="mb-3 flex flex-col gap-2 rounded-2xl border theme-border theme-surface-2 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg theme-accent-bg theme-accent"><LayoutDashboard size={18} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Operational telemetry only — feed connectivity does not confirm valid quotes or a trade opportunity." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && !runtimeTelemetryStale && !dashboardStreamStale && commonSocketState === "CONNECTED" && effectiveFeedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" ? "SERVER OFFLINE" : apiStatus === "degraded" ? "SERVER DEGRADED" : apiStatus !== "connected" ? "CHECKING SERVER" : runtimeTelemetryStale ? "RUNTIME TELEMETRY STALE" : dashboardStreamStale ? "DASHBOARD STREAM STALE" : commonSocketState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : commonSocketState === "DEGRADED" ? "WEBSOCKET DEGRADED" : commonSocketState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : effectiveFeedStatus === "stale" ? "MARKET DATA STALE" : effectiveFeedStatus === "live" && commonSocketState === "CONNECTED" ? "FEED CONNECTED • SIGNAL NOT CONFIRMED" : "NO LIVE MARKET DATA"}</div></div>
+    <div className="dashboard-page space-y-3">
+      <div className="mb-2 flex flex-col gap-1.5 rounded-xl border theme-border theme-surface-2 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg theme-accent-bg theme-accent"><LayoutDashboard size={16} /></span><div className="min-w-0"><div className="text-[9px] font-bold uppercase tracking-[0.16em] theme-accent">ALGO TRADING · LIVE MARKET OPERATIONS</div><h1 className="text-base font-bold leading-tight sm:text-lg">Trading Dashboard</h1><p className="mt-0.5 text-[10px] leading-4 theme-subtle">Connectivity does not confirm valid quotes or a trade opportunity.</p></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && !runtimeTelemetryStale && !dashboardStreamStale && commonSocketState === "CONNECTED" && effectiveFeedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" ? "SERVER OFFLINE" : apiStatus === "degraded" ? "SERVER DEGRADED" : apiStatus !== "connected" ? "CHECKING SERVER" : runtimeTelemetryStale ? "RUNTIME TELEMETRY STALE" : dashboardStreamStale ? "DASHBOARD STREAM STALE" : commonSocketState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : commonSocketState === "DEGRADED" ? "WEBSOCKET DEGRADED" : commonSocketState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : effectiveFeedStatus === "stale" ? "MARKET DATA STALE" : effectiveFeedStatus === "live" && commonSocketState === "CONNECTED" ? "FEED CONNECTED • SIGNAL NOT CONFIRMED" : "NO LIVE MARKET DATA"}</div></div>
       <section aria-label="Market and connection status">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: "NSE EQUITY", value: effectiveMarketSession, detail: "09:15–15:30 IST", Icon: Activity },
             { label: "MCX COMMODITIES", value: effectiveMcxSession, detail: "Session from market API", Icon: Activity },
@@ -390,8 +390,8 @@ export default function HomePage() {
             const Icon = item.Icon;
             const positive = item.label === "API SERVER" ? apiStatus === "connected" : item.label === "COMMON WEBSOCKET" ? commonSocketState === "CONNECTED" : item.label === "NSE EQUITY" || item.label === "MCX COMMODITIES" ? item.value === "OPEN" : false;
             const warning = item.value === "CLOSED" || item.value === "UNKNOWN" || item.value === "DEGRADED" || item.value === "UNKNOWN" || item.value === "NO SUBSCRIPTIONS" || item.value === "CHECKING";
-            return <Card key={item.label} className="flex min-h-[74px] items-center gap-3 rounded-xl border theme-border theme-surface-2 p-3">
-              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${positive ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Icon size={18} /></span>
+            return <Card key={item.label} className="flex min-h-[62px] items-center gap-2 rounded-lg border theme-border theme-surface-2 px-2.5 py-2">
+              <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${positive ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Icon size={15} /></span>
               <div className="min-w-0">
                 <div className="text-[9px] font-bold uppercase tracking-[0.12em] theme-subtle">{item.label}</div>
                 <div className={`mt-1 text-[12px] font-extrabold ${positive ? "theme-success" : warning ? "theme-warning" : "theme-danger"}`}>{item.value}</div>
@@ -400,7 +400,7 @@ export default function HomePage() {
             </Card>;
           })}
         </div>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border theme-border theme-surface-2 px-3 py-2">
+        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 rounded-lg border theme-border theme-surface-2 px-2.5 py-1.5">
           <div className="text-[9px] leading-4 theme-subtle">Exchange session is schedule-based. API response time is not the same as exchange tick time. Cash-Future freshness uses its server observation timestamp; other scanner ages reflect browser-observed counter movement.</div>
           <div className={`inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold ${feedLabel === "LIVE" ? "theme-success-bg theme-success" : feedLabel === "CLOSED" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Radio size={12} /> {feedLabel === "LIVE" ? "Market feed LIVE" : feedLabel === "CLOSED" ? "NSE MARKET CLOSED" : `Market feed ${feedLabel.toLowerCase()}`}</div>
         </div>
@@ -408,7 +408,7 @@ export default function HomePage() {
 
       <section aria-label="Market overview">
         <div className="mb-2 flex items-center gap-2"><Activity size={14} className="theme-accent" /><h2 className="text-[13px] font-semibold">Market Overview</h2></div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-2 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid max-w-full grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-6">
           {markets.map((symbol) => {
             const quote = indexLtps[symbol];
             const quoteAvailable = !marketOverviewError && marketDataAge != null && marketDataAge <= 15 && (effectiveMarketSession === "OPEN" ? quote?.status === "LIVE" : effectiveMarketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
@@ -417,17 +417,17 @@ export default function HomePage() {
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
             return (
-                <Card key={symbol} className="relative min-w-0 overflow-hidden rounded-lg p-1.5 sm:p-2">
+                <Card key={symbol} className="relative min-w-0 overflow-hidden rounded-md p-1 sm:p-1.5">
                   <span className="absolute inset-y-0 left-0 w-1 theme-accent-bg" />
                   <div className="pl-1">
                     <div className="flex items-center justify-between"><span className="text-[11px] font-bold tracking-wide">{symbol}</span>{effectiveMarketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
                     <div className="mt-1 flex items-center justify-between gap-1">
-                      <div className={"break-words text-xs font-bold sm:text-sm " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? quoteUnavailableReason : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      <div className={"break-words text-[11px] font-bold sm:text-xs " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? quoteUnavailableReason : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       {(!quoteAvailable || quote?.ltp == null) && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
                     </div>
-                    <div className={"mt-1 text-[11px] font-bold sm:text-[12px] " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
-                    <div className="mt-1 break-words text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? (quoteAvailable ? "Previous close unavailable" : quoteUnavailableReason) : effectiveMarketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                    <div className="mt-1 flex items-center justify-between gap-1 border-t theme-border pt-1 text-[8px] font-semibold theme-muted">
+                    <div className={"mt-0.5 text-[10px] font-bold sm:text-[11px] " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
+                    <div className="mt-0.5 break-words text-[9px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? (quoteAvailable ? "Previous close unavailable" : quoteUnavailableReason) : effectiveMarketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-0.5 flex items-center justify-between gap-1 border-t theme-border pt-0.5 text-[8px] font-semibold theme-muted">
                       <span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "Last trading close" : "Broker quote returned") : quoteUnavailableReason}</span><span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "LAST CLOSE" : "QUOTE RESPONSE") : marketOverviewError ? "API ERROR" : marketDataAge == null || marketDataAge > 15 ? "STALE" : "NO DATA"}</span>
                     </div>
                   </div>
