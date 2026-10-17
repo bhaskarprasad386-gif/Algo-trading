@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time
 from threading import Event, Lock
-from time import sleep
+from time import sleep, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -314,7 +314,7 @@ class LiveSyntheticOptionFutureRecorder:
             if self._feed:
                 self._feed.stop()
                 self._feed = None
-            now_ns = __import__("time").time_ns()
+            now_ns = time_ns()
             with self._lock:
                 latest = list(self._latest.values())
                 self._latest.clear()
@@ -323,7 +323,9 @@ class LiveSyntheticOptionFutureRecorder:
                     age = now_ns - int(record.timestamp_ns)
                     if age > 5_000_000_000:
                         self._stale_buffer_discards += 1
-                    elif age < -5_000_000_000:
+                    elif age < 0:
+                        # Normal polling waits for small clock skew to clear;
+                        # shutdown cannot wait, so count and discard it.
                         self._future_buffer_discards += 1
                     else:
                         eligible.append((second, record))
