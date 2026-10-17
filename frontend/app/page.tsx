@@ -267,7 +267,7 @@ export default function HomePage() {
 
       <section aria-label="Market overview">
         <div className="mb-3 flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Overview</h2></div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           {markets.map((symbol) => {
             const quote = indexLtps[symbol];
             const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
@@ -330,7 +330,7 @@ export default function HomePage() {
         </section>
         </div>
         <aside className="min-w-0 space-y-4" aria-label="Live scanner panel">
-          <section aria-label="Scanner status" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
+          <section aria-label="Scanner status" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
         <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Database size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Feed Snapshot</h2></div><div className="grid grid-cols-2 gap-2">{[["Live ticks",runtime.ticks.toLocaleString("en-IN")],["Active instruments",runtime.activeInstruments.toLocaleString("en-IN")],["Socket groups",runtime.connectedGroups+"/"+runtime.maxSocketSessions],["Feed age",feedAgeLabel]].map(([label,value])=><div key={label} className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div></Card>
         </aside>
       </div>
