@@ -145,6 +145,11 @@ function pairCell(slug: string, column: string, row: Row) {
   if (column === "State") {
     const edge = numberValue(row, "executable_edge", "long_edge", "short_edge");
     if (slug === "calendar-spread") return row.qualifies === true || edge > 0 ? "OPPORTUNITY" : "NO SIGNAL";
+    if (slug === "synthetic-arbitrage") {
+      const state = typeof row.state === "string" ? row.state.replaceAll("_", " ") : (edge > 0 ? "EDGE" : "NO EDGE");
+      const reason = typeof row.reason === "string" && row.reason ? " · " + row.reason.replaceAll("_", " ") : "";
+      return state + reason;
+    }
     return edge > 0 ? "EDGE" : "NO EDGE";
   }
   return formatValue(raw);
