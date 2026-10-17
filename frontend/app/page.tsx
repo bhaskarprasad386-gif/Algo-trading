@@ -72,6 +72,8 @@ export default function HomePage() {
         try {
           const message = JSON.parse(event.data);
           if (message?.type !== "dashboard_snapshot") return;
+          const serverSnapshotTime = message?.timestamp == null ? NaN : new Date(message.timestamp).getTime();
+          if (!Number.isFinite(serverSnapshotTime)) return;
           setLastDashboardMessageAt(Date.now());
           setSnapshot({
             calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
@@ -175,7 +177,8 @@ export default function HomePage() {
         if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
         if (cancelled) return;
-        const feed = body?.common_feed ?? {};
+        if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
+        const feed = body.common_feed;
         setRuntimeLastSuccessAt(Date.now());
         const runners = body?.runners ?? {};
         const currentCounters = {
@@ -255,6 +258,7 @@ export default function HomePage() {
         const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store" });
         if (!response.ok) throw new Error("diagnostics");
         const body = await response.json();
+        if (!body || typeof body !== "object" || !Array.isArray(body.errors)) throw new Error("diagnostics schema incomplete");
         if (!cancelled) {
           setDiagnosticsLastSuccessAt(Date.now());
           setDiagnosticsFetchFailed(false);
