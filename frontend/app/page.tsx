@@ -17,7 +17,8 @@ const strategies = [
 ];
 
 export default function HomePage() {
-  const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
+  const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "degraded" | "error">("checking");
+  const [apiDetail, setApiDetail] = useState("Waiting for health response");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null, cashFutureObservedAt: null as string | null });
   const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }>>({});
@@ -43,10 +44,18 @@ export default function HomePage() {
     const checkServer = async () => {
       try {
         const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", { cache: "no-store" });
-        if (!response.ok) throw new Error("health");
-        if (!cancelled) setApiStatus("connected");
-      } catch {
-        if (!cancelled) setApiStatus("error");
+        if (!response.ok) throw new Error("health HTTP " + response.status);
+        const body = await response.json();
+        const healthy = body?.status === "ok" && String(body?.database ?? "").toLowerCase() === "connected";
+        if (!cancelled) {
+          setApiStatus(healthy ? "connected" : "degraded");
+          setApiDetail(healthy ? "API and database healthy" : "API responding; database/status degraded (" + String(body?.database ?? body?.status ?? "unknown") + ")");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setApiStatus("error");
+          setApiDetail(error instanceof Error ? error.message : "Health endpoint unreachable");
+        }
       }
     };
     void checkServer();
@@ -281,7 +290,7 @@ export default function HomePage() {
   }, []);
 
 
-  const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
+  const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
   const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
   const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
   const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
@@ -306,13 +315,13 @@ export default function HomePage() {
 
   return (
     <div className="dashboard-page space-y-5">
-      <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && !runtimeTelemetryStale && !dashboardStreamStale && commonSocketState === "CONNECTED" && feedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" ? "SERVER OFFLINE" : apiStatus !== "connected" ? "CHECKING SERVER" : runtimeTelemetryStale ? "RUNTIME TELEMETRY STALE" : dashboardStreamStale ? "DASHBOARD STREAM STALE" : commonSocketState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : commonSocketState === "DEGRADED" ? "WEBSOCKET DEGRADED" : commonSocketState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : feedStatus === "stale" ? "MARKET DATA STALE" : feedStatus === "live" && commonSocketState === "CONNECTED" ? "SYSTEM LIVE" : "NO LIVE MARKET DATA"}</div></div>
+      <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && !runtimeTelemetryStale && !dashboardStreamStale && commonSocketState === "CONNECTED" && feedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" ? "SERVER OFFLINE" : apiStatus === "degraded" ? "SERVER DEGRADED" : apiStatus !== "connected" ? "CHECKING SERVER" : runtimeTelemetryStale ? "RUNTIME TELEMETRY STALE" : dashboardStreamStale ? "DASHBOARD STREAM STALE" : commonSocketState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : commonSocketState === "DEGRADED" ? "WEBSOCKET DEGRADED" : commonSocketState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : feedStatus === "stale" ? "MARKET DATA STALE" : feedStatus === "live" && commonSocketState === "CONNECTED" ? "SYSTEM LIVE" : "NO LIVE MARKET DATA"}</div></div>
       <section aria-label="Market and connection status">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: "NSE EQUITY", value: effectiveMarketSession, detail: "09:15–15:30 IST", Icon: Activity },
             { label: "MCX COMMODITIES", value: effectiveMcxSession, detail: "Session from market API", Icon: Activity },
-            { label: "API SERVER", value: apiStatus === "connected" ? "ONLINE" : apiStatus === "error" ? "OFFLINE" : "CHECKING", detail: "FastAPI /health endpoint", Icon: Database },
+            { label: "API SERVER", value: apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "OFFLINE" : "CHECKING", detail: apiDetail, Icon: Database },
             { label: "COMMON WEBSOCKET", value: commonSocketState, detail: `${runtime.connectedGroups}/${runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount} required groups connected • ${runtime.socketGroups} active sockets • cap ${runtime.maxSocketSessions}`, Icon: Radio },
           ].map((item) => {
             const Icon = item.Icon;
@@ -389,7 +398,7 @@ export default function HomePage() {
                   const optionsAge = boxAge != null && calendarAge != null ? Math.min(boxAge, calendarAge) : boxAge ?? calendarAge;
                   const cashScannerAge = observationAge;
                   const rows = [
-                    {name:"API SERVER", state:serverDown ? "OFFLINE" : apiStatus === "connected" ? "ONLINE" : "CHECKING", updates:0, age:apiStatus === "connected" ? "Health endpoint responding" : "No response", flow:serverDown ? "SERVER UNREACHABLE" : apiStatus === "connected" ? "HTTP HEALTH OK" : "CHECKING", position:"FastAPI /health"},
+                    {name:"API SERVER", state:serverDown ? "OFFLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "connected" ? "ONLINE" : "CHECKING", updates:0, age:apiStatus === "connected" || apiStatus === "degraded" ? "Health endpoint responding" : "No response", flow:serverDown ? "SERVER UNREACHABLE" : apiStatus === "degraded" ? "DATABASE / SERVER DEGRADED" : apiStatus === "connected" ? "API + DATABASE HEALTHY" : "CHECKING", position:apiDetail},
                     {name:"OVERALL COMMON FEED", state:serverDown ? "SERVER OFFLINE" : wsState, updates:runtime.ticks, age:feedAgeLabel, flow:overallFlow, position:runtime.activeInstruments.toLocaleString("en-IN")+" active instruments • "+runtime.connectedGroups+"/"+(runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount)+" required groups • "+runtime.socketGroups+" active sockets • cap "+runtime.maxSocketSessions},
                     {name:"CASH MARKET DATA", state:serverDown ? "SERVER OFFLINE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.connectedGroups === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : freshness(cashAge), updates:runtime.runners.cash_future?.payloads ?? 0, age:ageText(cashAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.connectedGroups === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(cashAge), position:runtime.runners.cash_future?.instruments ? runtime.runners.cash_future.instruments.toLocaleString("en-IN")+" instruments • "+(runtime.runners.cash_future?.payloads ?? 0).toLocaleString("en-IN")+" cumulative payloads" : "No instrument count"},
                     {name:"OPTIONS DATA", state:serverDown ? "SERVER OFFLINE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.connectedGroups === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : runnerState(Boolean(runtime.runners.box_spread?.running || runtime.runners.calendar_spread?.running), optionsAge), updates:(runtime.runners.box_spread?.payloads ?? 0)+(runtime.runners.calendar_spread?.payloads ?? 0), age:ageText(optionsAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.connectedGroups === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(optionsAge), position:"Box + Calendar • cumulative counters alone do not prove fresh data"},
@@ -469,7 +478,7 @@ export default function HomePage() {
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               {[
-                ["FastAPI", apiLabel],
+                ["FastAPI", apiLabel + " • " + apiDetail],
                 ["Dashboard WebSocket", wsLabel],
                 ["Common Market Data Feed", feedLabel],
                 ["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],
