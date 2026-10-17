@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Event, Thread
-from time import sleep, time_ns
+from time import monotonic, sleep, time_ns
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Callable, Iterable
@@ -446,10 +446,16 @@ class LiveSyntheticRunner:
             if active_feed is not None:
                 active_feed.stop()
             # Do not drop the thread reference or permit a replacement feed
-            # while the old feed is still alive. A timeout is not a shutdown.
+            # while the old feed is still alive. During final shutdown, allow a
+            # bounded grace period for stop() to unblock a slow feed thread.
+            shutdown_deadline = monotonic() + 5.0 if self._stop_requested.is_set() else None
             while active_thread is not None and active_thread.is_alive():
                 active_thread.join(timeout=0.5)
-                if active_thread.is_alive() and self._stop_requested.is_set():
+                if (
+                    active_thread.is_alive()
+                    and shutdown_deadline is not None
+                    and monotonic() >= shutdown_deadline
+                ):
                     return False
             feed = None
             feed_thread = None
