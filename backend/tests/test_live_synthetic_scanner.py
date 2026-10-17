@@ -20,11 +20,13 @@ def test_live_scanner_derives_time_to_expiry_and_passes_config(monkeypatch):
         config_provider=lambda _s: SyntheticScanConfig(rate=0.055, fees_per_unit=1.25),
     )
     import time
+    from datetime import date, timedelta
     ts = time.time_ns()
-    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
-    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"})
+    expiry = (date.today() + timedelta(days=30)).strftime("%d%b%Y").upper()
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
     scanner.observe({"underlying":"NIFTY", "instrument_class":"INDEX", "option_type":"",
-        "expiry":"29OCT2026", "bid":117.0, "ask":118.0, "lot_size":1,
+        "expiry":expiry, "bid":117.0, "ask":118.0, "lot_size":1,
         "source_timestamp_ns":ts, "symbol":"NIFTYFUT", "volume":100, "oi":1000})
     assert captured["config"].rate == 0.055
     assert captured["config"].fees_per_unit == 1.25
