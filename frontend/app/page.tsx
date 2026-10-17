@@ -244,26 +244,32 @@ export default function HomePage() {
   return (
     <div className="space-y-5">
       <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "connected" && wsStatus === "connected" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "connected" && wsStatus === "connected" ? "SYSTEM CONNECTED" : "CHECKING CONNECTIONS"}</div></div>
-      <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]">
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              {label:"NSE EQUITY", value:marketSession, detail:"09:15–15:30 IST"},
-              {label:"MCX COMMODITIES", value:mcxSession, detail:"Session from market API"},
-            ].map((item) => <div key={item.label} className="rounded-xl border theme-border px-3 py-2">
-              <div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">{item.label}</div>
-              <div className={"mt-1 text-[13px] font-extrabold " + (item.value === "OPEN" ? "theme-success" : item.value === "CLOSED" ? "theme-warning" : "theme-muted")}>{item.value}</div>
-              <div className="mt-0.5 text-[9px] theme-subtle">{item.detail}</div>
-            </div>)}
-            <div className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">COMMON WEBSOCKET</div><div className={"mt-1 text-[13px] font-extrabold " + (runtime.connectedGroups > 0 ? "theme-success" : "theme-danger")}>{runtime.connectedGroups > 0 ? "CONNECTED" : "DISCONNECTED"}</div><div className="mt-0.5 text-[9px] theme-subtle">{runtime.connectedGroups}/{runtime.maxSocketSessions} socket groups</div></div>
-            <div className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">LIVE BROKER ORDERS</div><div className="mt-1 text-[13px] font-extrabold theme-warning">OFF</div><div className="mt-0.5 text-[9px] theme-subtle">Market data only</div></div>
-          </div>
-          <div className="mt-2 text-[9px] theme-subtle">Exchange session is schedule-based. Quote status confirms an API response, not the exchange tick timestamp. Scanner counters are cumulative; only Cash-Future flow is marked live when its last observation is within 5 seconds.</div>
-        </Card>
-        <div className="flex flex-wrap items-start justify-end gap-2">
-          <div className={"inline-flex items-center gap-2 rounded-full border theme-border px-3 py-1.5 text-[11px] font-semibold " + (feedLabel === "LIVE" ? "theme-success-bg theme-success" : "theme-warning-bg theme-warning")}><Radio size={13} /> {feedLabel === "LIVE" ? "Market feed LIVE" : feedLabel === "CLOSED" ? "Market CLOSED" : `Market feed ${feedLabel.toLowerCase()}`}</div>
+      <section aria-label="Market and connection status">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: "NSE EQUITY", value: marketSession, detail: "09:15–15:30 IST", Icon: Activity },
+            { label: "MCX COMMODITIES", value: mcxSession, detail: "Session from market API", Icon: Activity },
+            { label: "COMMON WEBSOCKET", value: runtime.connectedGroups > 0 ? "CONNECTED" : "DISCONNECTED", detail: `${runtime.connectedGroups}/${runtime.maxSocketSessions} socket groups`, Icon: Radio },
+            { label: "LIVE BROKER ORDERS", value: "OFF", detail: "Market data only", Icon: Database },
+          ].map((item) => {
+            const Icon = item.Icon;
+            const positive = item.label === "COMMON WEBSOCKET" ? runtime.connectedGroups > 0 : item.label === "NSE EQUITY" || item.label === "MCX COMMODITIES" ? item.value === "OPEN" : false;
+            const warning = item.label === "LIVE BROKER ORDERS" || item.value === "CLOSED" || item.value === "UNKNOWN";
+            return <Card key={item.label} className="flex min-h-[74px] items-center gap-3 rounded-xl border theme-border theme-surface-2 p-3">
+              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${positive ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Icon size={18} /></span>
+              <div className="min-w-0">
+                <div className="text-[9px] font-bold uppercase tracking-[0.12em] theme-subtle">{item.label}</div>
+                <div className={`mt-1 text-[12px] font-extrabold ${positive ? "theme-success" : warning ? "theme-warning" : "theme-danger"}`}>{item.value}</div>
+                <div className="mt-0.5 text-[9px] theme-subtle">{item.detail}</div>
+              </div>
+            </Card>;
+          })}
         </div>
-      </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border theme-border theme-surface-2 px-3 py-2">
+          <div className="text-[9px] leading-4 theme-subtle">Exchange session is schedule-based. Quote status confirms an API response, not the exchange tick timestamp. Cash-Future is live only when its last observation is within 5 seconds.</div>
+          <div className={`inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold ${feedLabel === "LIVE" ? "theme-success-bg theme-success" : feedLabel === "CLOSED" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Radio size={12} /> {feedLabel === "LIVE" ? "Market feed LIVE" : feedLabel === "CLOSED" ? "Market CLOSED" : `Market feed ${feedLabel.toLowerCase()}`}</div>
+        </div>
+      </section>
 
       <section aria-label="Market overview">
         <div className="mb-3 flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Overview</h2></div>
@@ -355,27 +361,20 @@ export default function HomePage() {
           </div>
         </Card>
       </section>
-      <div className="mt-5 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-        <section aria-label="Strategy workspaces" className="rounded-2xl border theme-border theme-surface-2 p-4">
-          <div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Strategy Workspaces</h2></div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {strategies.map((strategy) => { const Icon = strategy.icon; return <Link key={strategy.name} href={strategy.href} className="block"><Card className="min-h-[95px] rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg theme-accent-bg theme-accent"><Icon size={15} /></span><div className="text-[12px] font-semibold">{strategy.name}</div></div><div className="mt-2 text-[10px] theme-subtle">{strategy.detail} —</div></Card></Link>; })}
+      <div className="mt-3 grid gap-3 xl:grid-cols-[1.6fr_1fr]">
+        <section aria-label="Operations" className="rounded-xl border theme-border theme-surface-2 p-3">
+          <div className="mb-3 flex items-center gap-2"><Zap size={15} className="theme-accent" /><h2 className="text-[13px] font-semibold">Operations</h2></div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Link href="/scanner"><Card className="rounded-lg p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-success" /><div><div className="text-[11px] font-semibold">Cash Future</div><div className="text-[9px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
+            <Link href="/custom-alert"><Card className="rounded-lg p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[11px] font-semibold">Custom Alerts</div><div className="text-[9px] theme-subtle">Manage alerts</div></div></div></Card></Link>
+            <Link href="/history"><Card className="rounded-lg p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Clock3 size={16} className="theme-accent" /><div><div className="text-[11px] font-semibold">History</div><div className="text-[9px] theme-subtle">Trade history & logs</div></div></div></Card></Link>
           </div>
         </section>
-        <div className="space-y-4">
-
-          <section aria-label="Operations" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Cash Future</div><div className="text-[10px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
-            <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
-            <Link href="/history"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Clock3 size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">History</div><div className="text-[10px] theme-subtle">Trade history & logs</div></div></div></Card></Link>
-          </div></section>
-        </div>
+        <Card className="flex flex-col justify-between gap-3 rounded-xl border theme-border theme-surface-2 p-3 sm:flex-row sm:items-center xl:flex-col xl:items-start">
+          <div className="flex min-w-0 items-start gap-3"><Database size={16} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[12px] font-semibold">Integration Boundary</div><div className="mt-1 text-[10px] leading-4 theme-subtle">External broker orders remain OFF. FastAPI market data runs independently of broker order routing.</div></div></div>
+          <button type="button" onClick={() => setConnectionsOpen(true)} className="shrink-0 rounded-lg theme-accent-bg px-3 py-2 text-[10px] font-bold theme-accent">View Connections →</button>
+        </Card>
       </div>
-
-      <Card className="mt-6 flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3"><Database size={17} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[13px] font-semibold">Integration Boundary</div><div className="text-[11px] theme-subtle">External broker orders remain OFF. FastAPI market data runs independently of broker order routing.</div></div></div>
-        <button type="button" onClick={() => setConnectionsOpen(true)} className="shrink-0 rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">View Connections</button>
-      </Card>
       {connectionsOpen ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="connections-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionsOpen(false); }}>
           <Card className="w-full max-w-xl rounded-2xl border theme-border theme-surface-2 p-5 shadow-2xl">

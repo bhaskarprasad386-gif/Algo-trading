@@ -24,62 +24,50 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen theme-bg theme-text">
       <header className="sticky top-0 z-40 border-b theme-border theme-surface backdrop-blur">
-        <div className="flex h-16 items-center justify-between px-4 sm:px-6">
+        <div className="flex h-[52px] items-center justify-between px-3 sm:px-5">
           <div className="flex items-center gap-3">
-            <button
-              className="rounded-lg border theme-border p-2 theme-muted lg:hidden"
-              onClick={() => setMobileOpen((v) => !v)}
-              aria-label="Toggle navigation"
-            >
-              {mobileOpen ? <X size={19} /> : <Menu size={19} />}
+            <button className="rounded-lg border theme-border p-2 theme-muted lg:hidden" onClick={() => setMobileOpen((v) => !v)} aria-label="Toggle navigation">
+              {mobileOpen ? <X size={18} /> : <Menu size={18} />}
             </button>
-            <Link href="/" className="flex items-center gap-3" onClick={() => setMobileOpen(false)}>
-              <span className="grid h-9 w-9 place-items-center rounded-xl theme-accent-bg theme-accent">
-                <ChartNoAxesCombined size={20} />
+            <Link href="/" className="flex items-center gap-2.5" onClick={() => setMobileOpen(false)}>
+              <span className="grid h-8 w-8 place-items-center rounded-lg theme-accent-bg theme-accent">
+                <ChartNoAxesCombined size={19} />
               </span>
               <div>
-                <div className="text-sm font-semibold theme-text">ALGO TRADING</div>
-                <div className="text-[10px] uppercase tracking-[0.18em] theme-subtle">Live Market Monitor</div>
+                <div className="text-[13px] font-bold tracking-wide theme-text">ALGO TRADING</div>
+                <div className="text-[10px] leading-3 theme-subtle">Live Market Monitor</div>
               </div>
             </Link>
           </div>
 
           <div className="hidden items-center gap-3 sm:flex">
+            <span className="inline-flex items-center gap-2 border-r theme-border pr-4 text-[10px] font-semibold theme-muted">
+              <span className="h-1.5 w-1.5 rounded-full theme-success-bg" /> Live Market Operations
+            </span>
             <ThemePicker theme={theme} setTheme={setTheme} />
-            <Link href="/" className="text-xs font-medium theme-muted">
-              Live status
-            </Link>
-            <div className="rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs font-semibold theme-warning">
-              SCANNER MODE · LIVE ORDERS OFF
+            <div className="rounded-full border theme-border theme-warning-bg px-3 py-1.5 text-[10px] font-bold theme-warning">
+              LIVE BROKER ORDERS · OFF
             </div>
           </div>
-          <button className="min-h-10 min-w-10 rounded-lg p-2 theme-muted" aria-label="Settings">
-            <Settings2 size={19} />
+          <button className="min-h-9 min-w-9 rounded-lg p-2 theme-muted" aria-label="Settings">
+            <Settings2 size={17} />
           </button>
         </div>
       </header>
 
       <div className="flex">
-        <aside className="fixed inset-y-16 left-0 z-30 hidden w-64 border-r theme-border theme-surface lg:block">
+        <aside className="fixed inset-y-[52px] left-0 z-30 hidden w-[228px] border-r theme-border theme-surface lg:block">
           <Navigation pathname={pathname} />
         </aside>
 
-        <div
-          className={`fixed inset-16 inset-x-0 z-20 theme-overlay transition-opacity duration-200 lg:hidden ${mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
-          onClick={() => setMobileOpen(false)}
-          aria-hidden={!mobileOpen}
-        >
-          <aside
-            className={`h-full w-[min(18rem,86vw)] border-r theme-border theme-surface theme-shadow transition-transform duration-200 ease-out ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
-            onClick={(e) => e.stopPropagation()}
-            aria-label="Mobile navigation"
-          >
+        <div className={`fixed inset-x-0 bottom-0 top-[52px] z-20 theme-overlay transition-opacity duration-200 lg:hidden ${mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => setMobileOpen(false)} aria-hidden={!mobileOpen}>
+          <aside className={`h-full w-[min(18rem,86vw)] border-r theme-border theme-surface theme-shadow transition-transform duration-200 ease-out ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`} onClick={(e) => e.stopPropagation()} aria-label="Mobile navigation">
             <Navigation pathname={pathname} onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
 
-        <main className="min-h-[calc(100vh-4rem)] w-full min-w-0 lg:ml-64">
-          <div className="mx-auto w-full max-w-[1600px] p-4 pb-24 sm:p-6 lg:p-8">{children}</div>
+        <main className="min-h-[calc(100vh-3.25rem)] w-full min-w-0 lg:ml-[228px]">
+          <div className="mx-auto w-full max-w-[1800px] p-3 pb-24 sm:p-4 lg:p-4">{children}</div>
         </main>
       </div>
 
@@ -88,12 +76,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {nav.slice(0, 5).map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
-            return (
-              <Link key={item.href} href={item.href} className={`flex min-h-11 min-w-14 flex-col items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] ${active ? "theme-accent" : "theme-muted"}`}>
-                <Icon size={18} />
-                <span>{item.label.split(" ")[0]}</span>
-              </Link>
-            );
+            return <Link key={item.href} href={item.href} className={`flex min-h-11 min-w-14 flex-col items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] ${active ? "theme-accent" : "theme-muted"}`}><Icon size={18} /><span>{item.label.split(" ")[0]}</span></Link>;
           })}
         </div>
       </nav>
@@ -101,21 +84,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-
 function ThemePicker({ theme, setTheme }: { theme: ThemeName; setTheme: (theme: ThemeName) => void }) {
   return (
-    <label className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface-2 px-2.5 py-1.5 text-xs">
-      <Settings2 size={14} className="theme-accent" aria-hidden="true" />
+    <label className="inline-flex items-center gap-2 rounded-lg border theme-border theme-surface-2 px-2 py-1 text-[10px]">
+      <Settings2 size={13} className="theme-accent" aria-hidden="true" />
       <span className="theme-subtle">Theme</span>
-      <select
-        value={theme}
-        onChange={(event) => setTheme(event.target.value as ThemeName)}
-        className="min-h-8 border-0 bg-transparent px-1 py-0 text-xs font-semibold theme-text outline-none"
-        aria-label="Choose visual theme"
-      >
-        {themeOptions.map((item) => (
-          <option key={item.id} value={item.id}>{item.symbol} {item.label}</option>
-        ))}
+      <select value={theme} onChange={(event) => setTheme(event.target.value as ThemeName)} className="min-h-7 border-0 bg-transparent px-1 py-0 text-[10px] font-semibold theme-text outline-none" aria-label="Choose visual theme">
+        {themeOptions.map((item) => <option key={item.id} value={item.id}>{item.symbol} {item.label}</option>)}
       </select>
     </label>
   );
@@ -123,28 +98,18 @@ function ThemePicker({ theme, setTheme }: { theme: ThemeName; setTheme: (theme: 
 
 function Navigation({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
   return (
-    <nav className="flex h-full flex-col p-4">
-      <div className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.18em] theme-subtle">Workspace</div>
+    <nav className="flex h-full flex-col p-3">
+      <div className="mb-2 px-2.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] theme-subtle">Workspace</div>
       <div className="space-y-1">
         {nav.map((item) => {
           const Icon = item.icon;
           const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onNavigate}
-              className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition ${active ? "theme-accent-bg theme-accent" : "theme-muted"}`}
-            >
-              <Icon size={18} />
-              <span>{item.label}</span>
-            </Link>
-          );
+          return <Link key={item.href} href={item.href} onClick={onNavigate} className={`flex items-center gap-3 rounded-lg px-2.5 py-2.5 text-[12px] transition ${active ? "theme-accent-bg theme-accent" : "theme-muted hover:theme-surface-2"}`}><Icon size={17} /><span>{item.label}</span></Link>;
         })}
       </div>
-      <div className="mt-auto rounded-2xl border theme-border theme-surface-2 p-4">
-        <div className="text-xs font-medium theme-text">System foundation</div>
-        <p className="mt-1 text-xs leading-5 theme-muted">Frontend shell only. Trading logic remains in the existing FastAPI backend.</p>
+      <div className="mt-auto rounded-xl border theme-border theme-surface-2 p-3">
+        <div className="text-[11px] font-semibold theme-text">System foundation</div>
+        <p className="mt-1 text-[10px] leading-4 theme-muted">Frontend shell only. Trading logic remains in the existing FastAPI backend.</p>
       </div>
     </nav>
   );
