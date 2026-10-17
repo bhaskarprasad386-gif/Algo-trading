@@ -218,7 +218,7 @@ class LiveSyntheticScanner:
             and (
                 symbol_suffix[0].isdigit()
                 if option_type in {"CE", "PE"}
-                else symbol_suffix == "FUT" or symbol_suffix[0].isdigit()
+                else symbol_suffix.startswith("FUT") or symbol_suffix[0].isdigit()
             )
         )
         if not valid_symbol_boundary:
