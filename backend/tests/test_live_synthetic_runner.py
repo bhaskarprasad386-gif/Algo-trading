@@ -479,3 +479,16 @@ def test_runner_restarts_recorder_after_market_session_ends(monkeypatch):
 
     assert len(recorder_calls) == 2
     assert runner.stop_event.is_set()
+
+
+def test_runner_snapshot_does_not_claim_running_before_run_forever():
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    snapshot = runner.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["scanner_initialized"] is False
