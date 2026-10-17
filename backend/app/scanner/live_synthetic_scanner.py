@@ -39,7 +39,9 @@ class LiveSyntheticScanner:
         self.on_result = on_result
         # Logical timestamps exist only for deterministic unit tests. Production
         # instances reject non-epoch-nanosecond values by default.
-        self._allow_logical_timestamps = bool(allow_logical_timestamps)
+        if type(allow_logical_timestamps) is not bool:
+            raise TypeError("allow_logical_timestamps must be a bool")
+        self._allow_logical_timestamps = allow_logical_timestamps
         self._lock = Lock()
         self._diagnostics_lock = Lock()
         self._diagnostics: Counter[str] = Counter()

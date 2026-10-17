@@ -1091,3 +1091,22 @@ def test_live_scanner_logical_timestamps_require_explicit_opt_in():
     )
     assert test_scanner.observe(payload) == ()
     assert test_scanner.diagnostics_snapshot()["counters"].get("invalid_timestamp_unit", 0) == 0
+
+
+def test_live_scanner_rejects_non_boolean_logical_timestamp_configuration():
+    import pytest
+
+    for invalid_value in ("false", "true", 0, 1, None, [], {}):
+        with pytest.raises(TypeError, match="allow_logical_timestamps must be a bool"):
+            _LiveSyntheticScanner(
+                atm_provider=lambda _s, _t: 100.0,
+                allow_logical_timestamps=invalid_value,
+            )
+
+
+def test_live_scanner_accepts_explicit_boolean_logical_timestamp_configuration():
+    scanner = _LiveSyntheticScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        allow_logical_timestamps=False,
+    )
+    assert scanner.diagnostics_snapshot()["counters"].get("invalid_timestamp_unit", 0) == 0
