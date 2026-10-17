@@ -207,6 +207,31 @@ def test_partial_reconcile_failure_is_recovered_on_next_cycle():
         PartialFailureSocket.created = 0
 
 
+def test_partial_connect_failure_does_not_prevent_later_required_shard_attempts():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(2001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=PartialFailureSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key for d in descriptors])
+        except RuntimeError as exc:
+            assert "second-shard" in str(exc)
+        else:
+            raise AssertionError("expected the failed middle shard to remain visible")
+
+        snapshot = manager.snapshot()
+        # Shard 1 fails, but shard 2 must still be attempted and connected.
+        assert snapshot["required_socket_groups"] == ["1:0", "1:1", "1:2"]
+        assert snapshot["connected_groups"] == ["1:0", "1:2"]
+        assert snapshot["missing_socket_groups"] == ["1:1"]
+        assert len(PartialFailureSocket.instances) >= 3
+    finally:
+        manager.close()
+        PartialFailureSocket.created = 0
+
+
 def test_recovery_supervisor_rebuilds_missing_socket_without_strategy_runner():
     registry = InstrumentRegistry()
     descriptors = [descriptor(str(i)) for i in range(1001)]
