@@ -541,10 +541,7 @@ class LiveSyntheticRunner:
                         app_logger.warning("Synthetic expiry refresh failed; retaining last valid targets: %s", exc)
                     if expiry_changed:
                         if feed is not None:
-                            feed.stop()
-                            feed = None
-                            feed_thread = None
-                            self._active_underlying_feed = None
+                            stop_underlying_feed()
                         if self._atm_provider is None:
                             self._atm_tracker = None
                             try:
