@@ -566,6 +566,29 @@ def test_live_scanner_contains_result_callback_failure(monkeypatch):
 
 
 
+def test_bucket_matching_does_not_merge_unrelated_snapshots_but_keeps_pending_quote_wait():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = 20_000_000_000
+    expiry = 20261029
+    scanner._buckets[("NIFTY", ts, expiry)] = {
+        "future": None,
+        "options": {},
+        "first_seen_monotonic_ns": __import__("time").monotonic_ns(),
+    }
+
+    # A normal snapshot 2.5s later must not be merged into a completed/non-pending
+    # bucket merely because it falls inside the wider delayed-quote horizon.
+    assert scanner._matching_bucket_key("NIFTY", ts + 2_500_000_000, expiry) == (
+        "NIFTY", ts + 2_500_000_000, expiry
+    )
+
+    # The same wider horizon remains available when executable quotes are pending.
+    scanner._buckets[("NIFTY", ts, expiry)]["quote_wait_started_ns"] = __import__("time").monotonic_ns()
+    assert scanner._matching_bucket_key("NIFTY", ts + 2_500_000_000, expiry) == (
+        "NIFTY", ts, expiry
+    )
+
+
 def test_synthetic_bucket_pruning_does_not_move_backwards_on_delayed_tick():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     scanner._buckets = {
