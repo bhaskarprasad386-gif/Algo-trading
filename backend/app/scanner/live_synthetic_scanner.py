@@ -116,6 +116,12 @@ class LiveSyntheticScanner:
         if timestamp_ns <= 0:
             self._count("invalid_timestamp")
             return ()
+        # Epoch milliseconds (roughly 13 digits) are not valid nanoseconds. Treat
+        # them as malformed rather than letting them bypass the epoch-ns freshness
+        # guard as if they were deterministic test timestamps.
+        if 1_000_000_000_000 <= timestamp_ns < 1_000_000_000_000_000:
+            self._count("invalid_timestamp_unit")
+            return ()
         # Epoch-nanosecond timestamps are checked against wall time. Small logical
         # timestamps remain supported by deterministic unit tests only.
         if timestamp_ns >= 1_000_000_000_000_000:
@@ -602,13 +608,19 @@ class LiveSyntheticScanner:
                             # Match scanner eligibility: executable two-sided depth is
                             # required, but missing volume/OI metadata alone is not a
                             # blocker. Reporting it as incomplete would contradict live results.
-                        try:
-                            ce_lot = int(float(ce.get("lot_size") or 0))
-                            pe_lot = int(float(pe.get("lot_size") or 0))
-                            future_lot = int(float(future.get("lot_size") or 0))
-                        except (TypeError, ValueError, OverflowError):
-                            ce_lot = pe_lot = future_lot = 0
-                        if min(ce_lot, pe_lot, future_lot) <= 0:
+                        def monitor_lot(value):
+                            try:
+                                number = float(value or 0)
+                            except (TypeError, ValueError, OverflowError):
+                                return None
+                            if not math.isfinite(number) or number <= 0 or not number.is_integer():
+                                return None
+                            return int(number)
+
+                        ce_lot = monitor_lot(ce.get("lot_size"))
+                        pe_lot = monitor_lot(pe.get("lot_size"))
+                        future_lot = monitor_lot(future.get("lot_size"))
+                        if ce_lot is None or pe_lot is None or future_lot is None:
                             missing.append("INVALID_LOT_SIZE")
                         elif ce_lot != pe_lot or ce_lot != future_lot:
                             missing.append("LOT_SIZE_MISMATCH")
