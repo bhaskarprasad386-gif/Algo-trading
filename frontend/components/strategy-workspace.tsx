@@ -38,7 +38,7 @@ const configs: Record<string, WorkspaceConfig> = {
     slug: "synthetic-arbitrage",
     title: "Synthetic Arbitrage",
     description: "Dedicated synthetic future/cash-carry scanner with the live option + future universe.",
-    universe: "INDEX + NIFTY 50",
+    universe: "SUPPORTED INDEX + NIFTY TOP 15 LIQUID F&O STOCKS",
     columns: ["Underlying", "Expiry", "Strike", "Option", "Future", "Executable Edge", "Liquidity", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
