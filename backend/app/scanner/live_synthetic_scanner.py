@@ -184,6 +184,9 @@ class LiveSyntheticScanner:
         # it shares the same underlying/expiry bucket and could create a false
         # synthetic triplet. Every non-option leg must identify itself as a future.
         instrument_symbol = str(payload.get("symbol") or "").strip().upper()
+        if option_type in {"CE", "PE"} and not instrument_symbol.endswith(option_type):
+            self._count("invalid_option_instrument")
+            return ()
         if option_type not in {"CE", "PE"} and "FUT" not in instrument_symbol:
             self._count("invalid_future_instrument")
             return ()
