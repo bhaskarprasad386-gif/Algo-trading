@@ -473,3 +473,57 @@ def test_live_scanner_handles_non_finite_volume_and_oi_without_crashing():
     })
     assert isinstance(result, tuple)
     assert scanner.diagnostics_snapshot()["counters"].get("scan_evaluations", 0) <= 1
+
+
+
+def test_live_scanner_contains_atm_provider_failure():
+    ts = 1_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: (_ for _ in ()).throw(RuntimeError("ATM unavailable")))
+    expiry = "30SEP2026"
+    scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": expiry})
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    assert result == ()
+    assert scanner.diagnostics_snapshot()["counters"]["atm_provider_errors"] == 1
+
+
+def test_live_scanner_contains_config_provider_failure():
+    ts = 1_000_000_000
+    scanner = LiveSyntheticScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        config_provider=lambda _s: (_ for _ in ()).throw(RuntimeError("config unavailable")),
+    )
+    expiry = "30SEP2026"
+    scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": expiry})
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    assert result == ()
+    assert scanner.diagnostics_snapshot()["counters"]["config_provider_errors"] == 1
+
+
+def test_live_scanner_contains_result_callback_failure(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+    monkeypatch.setattr(scanner_module, "scan_synthetic_snapshot", lambda *_a, **_k: ("safe-result",))
+    scanner = LiveSyntheticScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        on_result=lambda _results: (_ for _ in ()).throw(RuntimeError("callback unavailable")),
+    )
+    ts = 1_000_000_000
+    expiry = "30SEP2026"
+    scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": expiry})
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    assert result == ("safe-result",)
+    assert scanner.diagnostics_snapshot()["counters"]["result_callback_errors"] == 1
