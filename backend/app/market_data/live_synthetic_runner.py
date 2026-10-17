@@ -440,16 +440,21 @@ class LiveSyntheticRunner:
         feed_thread = None
         self._active_underlying_feed = None
 
-        def stop_underlying_feed() -> None:
+        def stop_underlying_feed() -> bool:
             nonlocal feed, feed_thread
             active_feed, active_thread = feed, feed_thread
             if active_feed is not None:
                 active_feed.stop()
-            if active_thread is not None and active_thread.is_alive():
-                active_thread.join(timeout=2.0)
+            # Do not drop the thread reference or permit a replacement feed
+            # while the old feed is still alive. A timeout is not a shutdown.
+            while active_thread is not None and active_thread.is_alive():
+                active_thread.join(timeout=0.5)
+                if active_thread.is_alive() and self._stop_requested.is_set():
+                    return False
             feed = None
             feed_thread = None
             self._active_underlying_feed = None
+            return True
 
         self._running = True
         try:
