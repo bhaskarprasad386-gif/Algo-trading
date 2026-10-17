@@ -97,11 +97,37 @@ class LiveSyntheticScanner:
 
     @staticmethod
     def _price(value: object) -> float | None:
+        if isinstance(value, bool):
+            return None
         try:
             number = float(value)
         except (TypeError, ValueError, OverflowError):
             return None
         return number if math.isfinite(number) and number > 0 else None
+
+    @staticmethod
+    def _timestamp_ns(value: object) -> int | None:
+        """Parse a positive integral timestamp without bool/fraction truncation."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        try:
+            timestamp = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return timestamp if timestamp > 0 else None
+
+    @classmethod
+    def _quote_timestamp_ns(cls, leg: dict) -> int | None:
+        """Return the actual broker timestamp, not a pending-pairing anchor."""
+        if "_quote_source_timestamp_ns" in leg:
+            return cls._timestamp_ns(leg.get("_quote_source_timestamp_ns"))
+        return cls._timestamp_ns(leg.get("source_timestamp_ns"))
 
     def observe(self, payload: dict) -> tuple[SyntheticScanResult, ...]:
         self._count("observations_received")
@@ -164,6 +190,8 @@ class LiveSyntheticScanner:
             return ()
 
         def positive_number(value: object) -> float:
+            if isinstance(value, bool):
+                return 0.0
             try:
                 number = float(value)
             except (TypeError, ValueError, OverflowError):
@@ -171,11 +199,13 @@ class LiveSyntheticScanner:
             return max(number, 0.0) if math.isfinite(number) else 0.0
 
         def nonnegative_int(value: object) -> int:
+            if isinstance(value, bool):
+                return 0
             try:
                 number = float(value or 0)
             except (TypeError, ValueError, OverflowError):
                 return 0
-            if not math.isfinite(number) or number <= 0:
+            if not math.isfinite(number) or number <= 0 or not number.is_integer():
                 return 0
             return int(number)
 
@@ -250,14 +280,11 @@ class LiveSyntheticScanner:
                 # may be normalized to the pending bucket anchor for pairing, and
                 # must not erase ordering information for subsequent ticks.
                 current = dict(current)
-                try:
-                    current["_quote_source_timestamp_ns"] = int(
-                        current.get("_quote_source_timestamp_ns")
-                        or current.get("source_timestamp_ns")
-                        or 0
-                    )
-                except (TypeError, ValueError, OverflowError):
-                    current["_quote_source_timestamp_ns"] = 0
+                # Never trust a private timestamp supplied in the incoming payload.
+                # This field is owned by the scanner and records the actual source time.
+                current["_quote_source_timestamp_ns"] = (
+                    self._timestamp_ns(current.get("source_timestamp_ns")) or 0
+                )
                 if previous is None:
                     return current
                 previous_bid = self._price(previous.get("bid"))
@@ -290,16 +317,8 @@ class LiveSyntheticScanner:
                 if previous is None:
                     return preserve_pending_anchor(previous, current)
                 try:
-                    previous_ns = int(
-                        previous.get("_quote_source_timestamp_ns")
-                        or previous.get("source_timestamp_ns")
-                        or 0
-                    )
-                    current_ns = int(
-                        current.get("_quote_source_timestamp_ns")
-                        or current.get("source_timestamp_ns")
-                        or 0
-                    )
+                    previous_ns = self._quote_timestamp_ns(previous) or 0
+                    current_ns = self._timestamp_ns(current.get("source_timestamp_ns")) or 0
                 except (TypeError, ValueError, OverflowError):
                     previous_ns = current_ns = 0
                 if previous_ns > current_ns > 0:
@@ -339,12 +358,14 @@ class LiveSyntheticScanner:
                 self._count("invalid_future_expiry")
                 self._prune(timestamp_ns)
                 return ()
-            future_timestamp_ns = int(future_payload.get("source_timestamp_ns") or 0)
+            future_timestamp_ns = self._quote_timestamp_ns(future_payload) or 0
             if future_timestamp_ns <= 0:
                 self._count("invalid_future_timestamp")
                 self._prune(timestamp_ns)
                 return ()
             try:
+                if isinstance(future_payload.get("lot_size"), bool):
+                    raise ValueError("future lot size must be a positive integer")
                 raw_future_lot_size = float(future_payload.get("lot_size") or 0)
                 if (
                     not math.isfinite(raw_future_lot_size)
@@ -369,16 +390,13 @@ class LiveSyntheticScanner:
                 if ce is None or pe is None:
                     self._count("missing_ce_or_pe_leg")
                     continue
-                try:
-                    ce_timestamp_ns = int(ce.get("source_timestamp_ns") or 0)
-                    pe_timestamp_ns = int(pe.get("source_timestamp_ns") or 0)
-                except (TypeError, ValueError, OverflowError):
+                ce_timestamp_ns = self._quote_timestamp_ns(ce) or 0
+                pe_timestamp_ns = self._quote_timestamp_ns(pe) or 0
+                if ce_timestamp_ns <= 0 or pe_timestamp_ns <= 0:
                     self._count("invalid_option_timestamp")
                     continue
                 if (
-                    ce_timestamp_ns <= 0
-                    or pe_timestamp_ns <= 0
-                    or abs(ce_timestamp_ns - pe_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                    abs(ce_timestamp_ns - pe_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
                     or abs(ce_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
                     or abs(pe_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
                 ):
@@ -405,6 +423,8 @@ class LiveSyntheticScanner:
                 # The contract lot must agree across CE, PE and FUT. Falling
                 # back to one leg's lot can silently misstate executable P&L.
                 def contract_lot(leg: dict) -> int | None:
+                    if isinstance(leg.get("lot_size"), bool):
+                        return None
                     try:
                         raw = float(leg.get("lot_size") or 0)
                     except (TypeError, ValueError, OverflowError):
@@ -498,7 +518,9 @@ class LiveSyntheticScanner:
                 oi=nonnegative_int(future_payload.get("oi")),
             )
             try:
-                atm = self.atm_provider(symbol, timestamp_ns)
+                # ATM must be looked up at the future's actual snapshot timestamp,
+                # not whichever option tick happened to arrive last.
+                atm = self.atm_provider(symbol, future_timestamp_ns)
             except Exception:
                 self._count("atm_provider_errors")
                 self._prune(timestamp_ns)
@@ -607,34 +629,35 @@ class LiveSyntheticScanner:
                         missing.append("MISSING_CALL")
                     if not pe:
                         missing.append("MISSING_PUT")
-                    if future and ce and pe:
-                        try:
-                            stamps = [int(x.get("source_timestamp_ns") or 0) for x in (future, ce, pe)]
-                            if min(stamps) <= 0:
-                                missing.append("INVALID_TIMESTAMP")
-                            elif max(stamps) - min(stamps) > self.TIMESTAMP_TOLERANCE_NS:
-                                missing.append("TIMESTAMP_MISMATCH")
-                        except (TypeError, ValueError, OverflowError):
-                            missing.append("INVALID_TIMESTAMP")
-                    try:
-                        leg_timestamps = [
-                            int(x.get("source_timestamp_ns") or 0)
-                            for x in (future, ce, pe)
-                        ]
-                    except (TypeError, ValueError, OverflowError):
-                        leg_timestamps = []
-                        if "INVALID_TIMESTAMP" not in missing:
-                            missing.append("INVALID_TIMESTAMP")
+                    available_legs = [leg for leg in (future, ce, pe) if leg]
+                    actual_timestamps = [
+                        self._quote_timestamp_ns(leg) for leg in available_legs
+                    ]
+                    anchor_timestamps = [
+                        self._timestamp_ns(leg.get("source_timestamp_ns"))
+                        for leg in available_legs
+                    ]
                     latest_timestamp = (
-                        max(leg_timestamps)
-                        if leg_timestamps and max(leg_timestamps) > 0
+                        max(value for value in actual_timestamps if value is not None)
+                        if actual_timestamps and any(value is not None for value in actual_timestamps)
                         else bucket_ts
                     )
+                    if (
+                        any(value is None for value in anchor_timestamps)
+                        or any(value is None for value in actual_timestamps)
+                    ):
+                        missing.append("INVALID_TIMESTAMP")
+                    elif future and ce and pe and max(actual_timestamps) - min(actual_timestamps) > self.TIMESTAMP_TOLERANCE_NS:
+                        # Pending bucket anchors are for association only; actual
+                        # broker times determine whether a triplet is synchronized.
+                        missing.append("TIMESTAMP_MISMATCH")
 
                     def positive(value):
+                        if isinstance(value, bool):
+                            return False
                         try:
                             number = float(value)
-                            return number > 0
+                            return math.isfinite(number) and number > 0
                         except (TypeError, ValueError, OverflowError):
                             return False
 
@@ -661,6 +684,8 @@ class LiveSyntheticScanner:
                             # required, but missing volume/OI metadata alone is not a
                             # blocker. Reporting it as incomplete would contradict live results.
                         def monitor_lot(value):
+                            if isinstance(value, bool):
+                                return None
                             try:
                                 number = float(value or 0)
                             except (TypeError, ValueError, OverflowError):
@@ -677,7 +702,10 @@ class LiveSyntheticScanner:
                         elif ce_lot != pe_lot or ce_lot != future_lot:
                             missing.append("LOT_SIZE_MISMATCH")
                         try:
-                            monitor_atm = self.atm_provider(symbol, latest_timestamp)
+                            # Use the future snapshot time, matching live evaluation.
+                            monitor_atm = self.atm_provider(
+                                symbol, self._quote_timestamp_ns(future) or latest_timestamp
+                            )
                         except Exception:
                             self._count("monitor_atm_provider_errors")
                             monitor_atm = None
