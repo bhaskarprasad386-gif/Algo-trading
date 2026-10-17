@@ -1484,6 +1484,21 @@ class CommonWebSocketManager:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             sockets = dict(self._sockets)
+            # Distinguish the broker session cap from the number of groups the
+            # current subscription set actually requires. A partial reconcile can
+            # leave a required shard absent from _sockets, so len(sockets) alone
+            # must never be used as the health denominator.
+            pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
+            for sub in self.registry.subscriptions():
+                pairs_by_mode[sub.mode].add(
+                    (self._resolve_exchange_type(sub.key), sub.key.token.strip())
+                )
+            required_groups: set[SocketGroup] = set()
+            for mode, pairs in pairs_by_mode.items():
+                for index, _ in enumerate(sorted(pairs)):
+                    required_groups.add(
+                        SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
+                    )
             socket_health_by_group: dict[str, dict[str, Any]] = {}
             for group, socket in sockets.items():
                 try:
@@ -1515,6 +1530,17 @@ class CommonWebSocketManager:
                 "subscriptions": len(self.registry.subscriptions()),
                 "active_instruments": len(self.registry.active_keys()),
                 "socket_groups": len(sockets),
+                "required_socket_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in required_groups
+                ),
+                "required_socket_group_count": len(required_groups),
+                "missing_socket_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in required_groups if group not in sockets
+                ),
+                "unconnected_required_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in required_groups
+                    if group not in sockets or not bool(getattr(sockets.get(group), "connected", False))
+                ),
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
                 "socket_health_by_group": socket_health_by_group,
