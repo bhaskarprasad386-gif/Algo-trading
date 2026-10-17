@@ -39,6 +39,9 @@ class LiveSyntheticScanner:
         self._lock = Lock()
         self._diagnostics_lock = Lock()
         self._diagnostics: Counter[str] = Counter()
+        # Separate transport activity from accepted market observations: a
+        # stream of stale/invalid ticks must not make scanner health look fresh.
+        self._last_payload_received_at_ns: int | None = None
         self._last_observation_at_ns: int | None = None
         self._last_successful_calculation_at_ns: int | None = None
         self._last_result_count = 0
@@ -69,6 +72,7 @@ class LiveSyntheticScanner:
             with self._diagnostics_lock:
                 counters = dict(self._diagnostics)
             counters["active_buckets"] = len(self._buckets)
+            counters["last_payload_received_at_ns"] = self._last_payload_received_at_ns
             counters["last_observation_at_ns"] = self._last_observation_at_ns
             counters["last_successful_calculation_at_ns"] = self._last_successful_calculation_at_ns
             counters["last_result_count"] = self._last_result_count
@@ -94,9 +98,9 @@ class LiveSyntheticScanner:
 
     def observe(self, payload: dict) -> tuple[SyntheticScanResult, ...]:
         self._count("observations_received")
-        observed_at_ns = time.time_ns()
+        received_at_ns = time.time_ns()
         with self._lock:
-            self._last_observation_at_ns = observed_at_ns
+            self._last_payload_received_at_ns = received_at_ns
         if not isinstance(payload, dict):
             self._count("invalid_payload_or_scope")
             return ()
@@ -172,6 +176,10 @@ class LiveSyntheticScanner:
         except ValueError:
             self._count("invalid_expiry")
             return ()
+        # This timestamp means a payload passed freshness, scope, quote and
+        # contract validation—not merely that a callback arrived.
+        with self._lock:
+            self._last_observation_at_ns = time.time_ns()
         strike = self._price(payload.get("strike"))
         with self._lock:
             key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
