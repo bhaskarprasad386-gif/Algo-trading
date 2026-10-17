@@ -160,7 +160,7 @@ export default function HomePage() {
         const feed = body?.common_feed ?? {};
         const runners = body?.runners ?? {};
         const runnerDetail = (value: any) => {
-          if (!value) return { running: false, detail: "UNAVAILABLE" };
+          if (!value) return { running: false, detail: "UNAVAILABLE", updates: 0, instruments: 0 };
           const running = Boolean(value.running);
           const nestedFeed = value.underlying_feed ?? value.feed ?? null;
           const instruments = Number(value.registered_instruments ?? value.active_instruments ?? nestedFeed?.active_instruments ?? nestedFeed?.subscriptions ?? 0);
