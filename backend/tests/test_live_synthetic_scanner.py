@@ -926,3 +926,24 @@ def test_live_synthetic_scanner_rejects_leg_symbol_from_different_underlying():
     assert scanner.observe(payload) == ()
     assert scanner._buckets == {}
     assert scanner.diagnostics_snapshot()["counters"]["underlying_symbol_mismatch"] == 1
+
+
+def test_live_scanner_rejects_malformed_future_lot_size_without_raising():
+    import math
+
+    for bad_lot_size in (float("nan"), float("inf"), "not-a-lot", 1.5):
+        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+        ts = 40_000_000_000
+        expiry = "29OCT2026"
+        scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+        scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+        result = scanner.observe({
+            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+            "expiry": expiry, "bid": 117.0, "ask": 118.0,
+            "lot_size": bad_lot_size, "source_timestamp_ns": ts,
+            "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+        })
+        assert result == ()
+        counters = scanner.diagnostics_snapshot()["counters"]
+        assert counters["invalid_future_lot_size"] == 1
+        assert counters.get("scan_evaluations", 0) == 0

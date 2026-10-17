@@ -431,21 +431,30 @@ class LiveSyntheticScanner:
                 self._count("invalid_future_quote")
                 self._prune(timestamp_ns)
                 return ()
+            try:
+                raw_future_lot_size = float(future_payload.get("lot_size") or 0)
+                if (
+                    not math.isfinite(raw_future_lot_size)
+                    or raw_future_lot_size <= 0
+                    or not raw_future_lot_size.is_integer()
+                ):
+                    raise ValueError("future lot size must be a positive integer")
+                future_lot_size = int(raw_future_lot_size)
+            except (TypeError, ValueError, OverflowError):
+                self._count("invalid_future_lot_size")
+                self._prune(timestamp_ns)
+                return ()
             future = FutureQuote(
                 timestamp_ns=anchor_timestamp_ns,
                 underlying=symbol,
                 expiry=future_expiry,
                 bid=future_bid,
                 ask=future_ask,
-                lot_size=int(float(future_payload.get("lot_size") or 0)),
+                lot_size=future_lot_size,
                 instrument_class=cls,
                 volume=nonnegative_int(future_payload.get("volume")),
                 oi=nonnegative_int(future_payload.get("oi")),
             )
-            if future.lot_size <= 0:
-                self._count("invalid_future_lot_size")
-                self._prune(timestamp_ns)
-                return ()
             try:
                 atm = self.atm_provider(symbol, timestamp_ns)
             except Exception:
