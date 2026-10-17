@@ -902,6 +902,7 @@ def market_data_runtime_health():
     calendar_counts = live_calendar_spread_scanner.counts_snapshot()
     return {
         "status": "ok",
+        "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
         "common_feed": manager.snapshot(),
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
