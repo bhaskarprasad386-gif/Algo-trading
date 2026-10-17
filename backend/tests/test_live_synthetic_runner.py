@@ -767,6 +767,7 @@ def test_same_second_out_of_order_tick_does_not_replace_newer_quote():
     recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
     recorder._lock = Lock()
     recorder._latest = {}
+    recorder._accept_records = True
     recorder._metadata = {}
     recorder._records_received = 0
     recorder._observations_emitted = 0
@@ -782,3 +783,25 @@ def test_same_second_out_of_order_tick_does_not_replace_newer_quote():
 
     assert len(emitted) == 1
     assert emitted[0]["source_timestamp_ns"] == 1_000_000_300
+
+
+
+def test_synthetic_recorder_rejects_callback_after_session_closes():
+    from threading import Lock
+    from types import SimpleNamespace
+    from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
+
+    recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
+    recorder._lock = Lock()
+    recorder._latest = {}
+    recorder._accept_records = False
+    recorder._records_received = 0
+    record = SimpleNamespace(
+        timestamp_ns=1_000_000_100,
+        instrument=SimpleNamespace(exchange="NFO", token="123"),
+    )
+
+    recorder._on_record(record)
+
+    assert recorder._latest == {}
+    assert recorder._records_received == 0
