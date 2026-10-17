@@ -82,12 +82,9 @@ def test_runner_requires_live_atm_when_automatic_tracker_has_no_price():
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
     )
-    try:
-        runner.build_subscriptions()
-    except LookupError as exc:
-        assert "live ATM price" in str(exc)
-    else:
-        raise AssertionError("expected LookupError")
+    # A valid listed strike chain can initialize before the first underlying tick.
+    # The runner must stay alive and simply wait for ATM readiness.
+    assert runner.build_subscriptions() == ()
 
 
 def test_runner_exposes_concrete_atm_strikes_from_master():
@@ -128,6 +125,8 @@ def test_runner_refreshes_authoritative_stock_universe_before_selection():
         instrument_master=master,
     )
     assert runner.allowed_stock_symbols == frozenset()
+    runner._refresh_stock_universe()
+    assert runner.allowed_stock_symbols == frozenset({"ABC"})
 
 
 def test_missing_atm_for_one_symbol_does_not_block_ready_symbol():
@@ -161,8 +160,6 @@ def test_expiry_refresh_replaces_expired_target_with_listed_matching_expiry():
     )
     assert runner._refresh_target_expiries() is True
     assert runner.targets[0].expiry == expected_expiry
-    runner._refresh_stock_universe()
-    assert runner.allowed_stock_symbols == frozenset({"ABC"})
 
 
 def test_runner_stock_path_uses_provider_and_only_real_plus_minus_7_positions():
