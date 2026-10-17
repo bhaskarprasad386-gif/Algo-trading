@@ -311,15 +311,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [isCustom, c.historyEndpoint]);
 
   useEffect(() => {
-    if (isCustom) return;
-    if (!c.pairEndpoint) {
-      setPairRows(rows);
-      return;
-    }
+    if (isCustom || c.pairEndpoint) return;
+    setPairRows(rows);
+  }, [isCustom, c.pairEndpoint, rows]);
+
+  useEffect(() => {
+    if (isCustom || !c.pairEndpoint) return;
     void loadPairs();
     const timer = window.setInterval(() => void loadPairs(), 1500);
     return () => window.clearInterval(timer);
-  }, [isCustom, c.pairEndpoint, rows]);
+  }, [isCustom, c.pairEndpoint]);
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") {
