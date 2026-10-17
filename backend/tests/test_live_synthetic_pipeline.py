@@ -132,6 +132,48 @@ def test_alert_queue_overflow_is_counted_not_blocking_market_data():
         assert pipeline.close(timeout=2)
 
 
+def test_close_drains_pending_primary_and_overflow_alerts():
+    release = Event()
+    alerts = _Alerts(notify_event=release)
+    pipeline = LiveSyntheticScanPipeline(
+        scanner=_Scanner((SimpleNamespace(),)),
+        session_factory=_session_factory([]),
+        alerts=alerts,
+        alert_queue_size=1,
+    )
+    try:
+        assert pipeline.observe({"tick": 1})
+        from time import monotonic, sleep
+        deadline = monotonic() + 1
+        while not alerts.persist_calls and monotonic() < deadline:
+            sleep(0.005)
+        assert alerts.persist_calls
+
+        # With the worker blocked on the first notification, one job lands in
+        # each bounded queue. close() must later drain both before stopping.
+        assert pipeline.observe({"tick": 2})
+        assert pipeline.observe({"tick": 3})
+        snapshot = pipeline.diagnostics_snapshot()
+        assert snapshot["alert_queue_primary_depth"] == 1
+        assert snapshot["alert_queue_overflow_depth"] == 1
+        assert snapshot["counters"]["alert_jobs_dropped"] == 0
+
+        release.set()
+        assert pipeline.close(timeout=2)
+
+        snapshot = pipeline.diagnostics_snapshot()
+        assert not snapshot["alert_worker_alive"]
+        assert snapshot["alert_queue_depth"] == 0
+        assert snapshot["counters"]["alert_jobs_enqueued"] == 3
+        assert snapshot["counters"]["alert_jobs_completed"] == 3
+        assert snapshot["counters"]["alert_jobs_dropped"] == 0
+        assert len(alerts.notify_calls) == 3
+    finally:
+        release.set()
+        if pipeline.diagnostics_snapshot()["alert_worker_alive"]:
+            assert pipeline.close(timeout=2)
+
+
 def test_pipeline_rejects_non_positive_retention_interval_and_queue_size():
     for kwargs, expected in (
         ({"retention_interval_seconds": 0}, "retention_interval_seconds"),
@@ -258,4 +300,3 @@ def test_transient_alert_failure_is_retried_with_fresh_session():
         assert snapshot["counters"]["alert_jobs_completed"] == 1
     finally:
         assert pipeline.close(timeout=2)
-
