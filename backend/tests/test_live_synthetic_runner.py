@@ -23,6 +23,18 @@ def _master():
     return master
 
 
+def test_runner_skips_targets_until_monthly_expiry_is_resolved():
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, None)],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: 100.0,
+    )
+
+    assert runner.build_subscriptions() == ()
+
+
 def test_runner_builds_concrete_real_tokens_without_duplicates():
     master = _master()
     runner = LiveSyntheticRunner(
