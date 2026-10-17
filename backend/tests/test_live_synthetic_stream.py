@@ -104,6 +104,9 @@ def test_normalize_rejects_invalid_or_non_positive_quote_levels_to_none():
 
 def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_bucket(tmp_path, monkeypatch):
     from app.market_data import live_synthetic_stream as stream
+    from time import time_ns
+
+    base_timestamp = time_ns() - 2_500_000_000
 
     collector = LiveSyntheticOptionFutureRecorder(
         str(tmp_path / "synthetic.db"),
@@ -137,13 +140,13 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1750000000000000000",
+                "exchange_timestamp": "base_timestamp",
                 "last_traded_price": "12345",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1750000001000000000",
+                "exchange_timestamp": "base_timestamp + 1_000_000_000",
                 "last_traded_price": "12355",
             })
 
@@ -185,6 +188,9 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
 
 def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypatch):
     from app.market_data import live_synthetic_stream as stream
+    from time import time_ns
+
+    base_timestamp = time_ns() - 2_500_000_000
 
     collector = LiveSyntheticOptionFutureRecorder(
         str(tmp_path / "synthetic.db"),
@@ -223,7 +229,7 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
                 on_data({
                     "token": token,
                     "symbol": symbol,
-                    "exchange_timestamp": "1750000000000000000",
+                    "exchange_timestamp": "base_timestamp",
                     "last_traded_price": price,
                 })
             for token, symbol, price in (
@@ -233,7 +239,7 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
                 on_data({
                     "token": token,
                     "symbol": symbol,
-                    "exchange_timestamp": "1750000001000000000",
+                    "exchange_timestamp": "base_timestamp + 1_000_000_000",
                     "last_traded_price": price,
                 })
 
@@ -289,6 +295,9 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
 
 def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
     from app.market_data import live_synthetic_stream as stream
+    from time import time_ns
+
+    base_timestamp = time_ns() - 2_500_000_000
 
     collector = LiveSyntheticOptionFutureRecorder(
         str(tmp_path / "synthetic.db"),
@@ -323,25 +332,25 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1750000000000000000",
+                "exchange_timestamp": "base_timestamp",
                 "last_traded_price": "12345",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1750000000900000000",
+                "exchange_timestamp": "base_timestamp + 900_000_000",
                 "last_traded_price": "12456",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1750000001000000000",
+                "exchange_timestamp": "base_timestamp + 1_000_000_000",
                 "last_traded_price": "12567",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1750000002000000000",
+                "exchange_timestamp": "base_timestamp + 2_000_000_000",
                 "last_traded_price": "12678",
             })
             collector.stop_event.set()
@@ -537,7 +546,8 @@ def test_recorder_does_not_flush_old_quote_as_live():
     collector._latest[("NFO", "101")] = ((timestamp // 1_000_000_000) * 1_000_000_000, record)
 
     assert collector._flush_completed_buckets(now_ns=timestamp + 6_000_000_000) == 0
-    assert ("NFO", "101") in collector._latest
+    assert ("NFO", "101") not in collector._latest
+    assert collector.snapshot()["stale_buffer_discards"] == 1
 
 
 def test_synthetic_fallback_socket_disables_private_reconnect(monkeypatch):
