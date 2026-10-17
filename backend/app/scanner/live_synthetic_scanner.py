@@ -360,12 +360,26 @@ class LiveSyntheticScanner:
                 self._count("invalid_future_lot_size")
                 self._prune(timestamp_ns)
                 return ()
-            atm = self.atm_provider(symbol, timestamp_ns)
+            try:
+                atm = self.atm_provider(symbol, timestamp_ns)
+            except Exception:
+                self._count("atm_provider_errors")
+                self._prune(timestamp_ns)
+                return ()
             if atm is None:
                 self._count("missing_atm_price")
                 self._prune(timestamp_ns)
                 return ()
-            config = self.config_provider(symbol)
+            try:
+                config = self.config_provider(symbol)
+            except Exception:
+                self._count("config_provider_errors")
+                self._prune(timestamp_ns)
+                return ()
+            if not isinstance(config, SyntheticScanConfig):
+                self._count("invalid_scanner_config")
+                self._prune(timestamp_ns)
+                return ()
             # Derive carry horizon from this contract's actual expiry, not a static default.
             expiry_text = str(future.expiry or "").strip().upper()
             expiry_date = None
@@ -383,12 +397,20 @@ class LiveSyntheticScanner:
             expiry_at = datetime.combine(expiry_date, datetime_time(15, 30), tzinfo=tz)
             time_to_expiry_years = max(0.0, (expiry_at - datetime.now(tz)).total_seconds() / (365.25 * 24 * 60 * 60))
             config = replace(config, time_to_expiry_years=time_to_expiry_years)
-            results = scan_synthetic_snapshot(
-                option_quotes,
-                future,
-                atm_strike=float(atm),
-                config=config,
-            )
+            try:
+                atm_strike = float(atm)
+                if not math.isfinite(atm_strike) or atm_strike <= 0:
+                    raise ValueError("ATM strike must be a finite positive number")
+                results = scan_synthetic_snapshot(
+                    option_quotes,
+                    future,
+                    atm_strike=atm_strike,
+                    config=config,
+                )
+            except Exception:
+                self._count("scan_calculation_errors")
+                self._prune(timestamp_ns)
+                return ()
             self._prune(timestamp_ns)
             self._count("scan_evaluations")
             # observe() already holds _lock while evaluating this complete snapshot.
@@ -400,7 +422,11 @@ class LiveSyntheticScanner:
             else:
                 self._count("empty_calculations")
         if results and self.on_result is not None:
-            self.on_result(results)
+            try:
+                self.on_result(results)
+            except Exception:
+                # A downstream alert/storage callback must not break the feed consumer.
+                self._count("result_callback_errors")
         return results
 
     def pair_monitor_snapshot(self, limit: int = 200) -> dict:
