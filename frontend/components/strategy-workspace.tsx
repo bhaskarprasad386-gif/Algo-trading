@@ -188,7 +188,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") return;
     let cancelled = false;
-    const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+    const base = appConfig.apiBaseUrl.replace(/\/$/, "");
     void fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
@@ -207,7 +207,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       return;
     }
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
