@@ -150,6 +150,13 @@ def test_recovery_rebuilds_missing_socket_shard():
         manager._socket_tokens.pop(missing, None)
         manager._socket_created_at.pop(missing, None)
 
+    # Required groups come from desired subscriptions, not only live socket objects.
+    partial = manager.snapshot()
+    assert partial["socket_groups"] == 1
+    assert partial["required_socket_group_count"] == 2
+    assert partial["required_socket_groups"] == ["1:0", "1:1"]
+    assert partial["missing_socket_groups"] == ["1:1"]
+
     recovered = manager.recover_disconnected(min_age_seconds=10.0)
 
     assert recovered == 0
