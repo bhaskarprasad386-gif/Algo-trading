@@ -745,3 +745,40 @@ def test_runner_waits_for_slow_underlying_feed_exit_before_clearing_reference(mo
     assert feed_thread_ref["thread"].is_alive() is False
     assert runner._active_underlying_feed is None
 
+
+
+def test_same_second_out_of_order_tick_does_not_replace_newer_quote():
+    from threading import Lock
+    from types import SimpleNamespace
+    from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
+
+    def record(timestamp_ns):
+        return SimpleNamespace(
+            timestamp_ns=timestamp_ns,
+            symbol="NIFTY",
+            instrument=SimpleNamespace(exchange="NFO", token="123"),
+            as_dict=lambda: {
+                "bid": 100.0,
+                "ask": 101.0,
+                "underlying": "NIFTY",
+            },
+        )
+
+    recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
+    recorder._lock = Lock()
+    recorder._latest = {}
+    recorder._metadata = {}
+    recorder._records_received = 0
+    recorder._observations_emitted = 0
+    recorder._missing_executable_quote = 0
+    recorder._ingestor = None
+    emitted = []
+    recorder.on_observation = emitted.append
+
+    recorder._on_record(record(1_000_000_100))
+    recorder._on_record(record(1_000_000_300))
+    recorder._on_record(record(1_000_000_200))  # Late tick in the same second.
+    recorder._on_record(record(2_000_000_100))  # Completes the previous bucket.
+
+    assert len(emitted) == 1
+    assert emitted[0]["source_timestamp_ns"] == 1_000_000_300
