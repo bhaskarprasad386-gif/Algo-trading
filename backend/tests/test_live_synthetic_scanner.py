@@ -215,6 +215,8 @@ def test_live_synthetic_scanner_rejects_stale_epoch_timestamp_and_counts_reason(
     assert scanner.observe(payload) == ()
     counters = scanner.diagnostics_snapshot()["counters"]
     assert counters["stale_timestamp"] == 1
+    assert counters["last_payload_received_at_ns"] > 0
+    assert counters["last_observation_at_ns"] is None
     assert counters["source_latency_samples"] == 1
     assert counters["source_latency_over_5s"] == 1
 
@@ -621,3 +623,15 @@ def test_live_synthetic_scanner_counts_negative_source_latency_without_retaining
     assert counters["source_latency_samples"] == 1
     assert counters["source_latency_negative"] == 1
     assert "payload" not in counters
+
+
+
+def test_live_synthetic_scanner_does_not_mark_invalid_tick_as_accepted_observation():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(8_000_000_000, 100.0, "CE", 4.0, 5.0)
+    payload["expiry"] = "not-an-expiry"
+
+    assert scanner.observe(payload) == ()
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["last_payload_received_at_ns"] > 0
+    assert counters["last_observation_at_ns"] is None
