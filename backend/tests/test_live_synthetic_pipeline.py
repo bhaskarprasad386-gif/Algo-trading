@@ -120,7 +120,13 @@ def test_alert_queue_overflow_is_counted_not_blocking_market_data():
             sleep(0.005)
         assert pipeline.observe({"tick": 2})
         assert pipeline.observe({"tick": 3})
-        assert pipeline.diagnostics_snapshot()["counters"]["alert_jobs_dropped"] >= 1
+        snapshot = pipeline.diagnostics_snapshot()
+        assert snapshot["alert_queue_overflow_depth"] == 1
+        assert snapshot["counters"]["alert_jobs_dropped"] == 0
+        # Both bounded buffers are full; further work is dropped rather than
+        # blocking the market-data callback or growing memory without limit.
+        assert pipeline.observe({"tick": 4})
+        assert pipeline.diagnostics_snapshot()["counters"]["alert_jobs_dropped"] == 1
     finally:
         release.set()
         assert pipeline.close(timeout=2)
