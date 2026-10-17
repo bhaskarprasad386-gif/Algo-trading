@@ -34,10 +34,13 @@ def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
+    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
 
     result = routes.get_market_overview()
 
     assert result["status"] == "success"
+    assert result["nse_market_session"] == "OPEN"
+    assert result["mcx_market_session"] == "OPEN"
     assert {row["symbol"] for row in result["indices"]} >= {"NIFTY", "BANKNIFTY", "SENSEX"}
     assert {row["symbol"] for row in result["commodities"]} >= {"GOLD", "SILVER", "CRUDEOIL", "NATURALGAS"}
     assert all(row["status"] == "LIVE" for row in result["indices"] + result["commodities"])
