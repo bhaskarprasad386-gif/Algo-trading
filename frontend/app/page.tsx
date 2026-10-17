@@ -316,14 +316,18 @@ export default function HomePage() {
   const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
   const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
   const feedAgeLabel = feedAge == null ? "Not available" : feedAge >= 3600 ? `${Math.floor(feedAge / 3600)}h ${Math.floor((feedAge % 3600) / 60)}m` : feedAge >= 60 ? `${Math.floor(feedAge / 60)}m ${Math.floor(feedAge % 60)}s` : `${feedAge.toFixed(1)}s`;
-  const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
+  const snapshotTime = snapshot.timestamp == null ? NaN : new Date(snapshot.timestamp).getTime();
+  // Do not clamp a future timestamp to age zero; that would falsely look like a fresh heartbeat.
+  const snapshotAge = Number.isFinite(snapshotTime) && snapshotTime <= Date.now() ? (Date.now() - snapshotTime) / 1000 : null;
   const dashboardMessageAge = lastDashboardMessageAt == null ? null : Math.max(0, (Date.now() - lastDashboardMessageAt) / 1000);
   const runtimeTelemetryAge = runtimeLastSuccessAt == null ? null : Math.max(0, (Date.now() - runtimeLastSuccessAt) / 1000);
   const runtimeTelemetryStale = runtimeTelemetryAge == null || runtimeTelemetryAge > 8;
   const dashboardStreamStale = wsStatus !== "connected" || dashboardMessageAge == null || dashboardMessageAge > 15;
   const commonSocketState = runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.requiredSocketGroupCount == null ? "UNKNOWN" : runtime.requiredSocketGroupCount === 0 ? "DISCONNECTED" : runtime.requiredSocketGroups.length === runtime.requiredSocketGroupCount && runtime.requiredSocketGroups.every((group) => runtime.connectedGroupNames.includes(group)) && runtime.socketGroups === runtime.requiredSocketGroupCount && runtime.disconnectedGroups.length === 0 ? "CONNECTED" : runtime.connectedGroups > 0 ? "DEGRADED" : "DISCONNECTED";
   const connectedRequiredGroupCount = runtime.requiredSocketGroups.filter((group) => runtime.connectedGroupNames.includes(group)).length;
-  const observationAge = snapshot.cashFutureObservedAt ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000) : null;
+  const observationTime = snapshot.cashFutureObservedAt == null ? NaN : new Date(snapshot.cashFutureObservedAt).getTime();
+  // Future observation timestamps are unknown, not age-zero/fresh observations.
+  const observationAge = Number.isFinite(observationTime) && observationTime <= Date.now() ? (Date.now() - observationTime) / 1000 : null;
   const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const feedHealthAge = feedHealthCheckedAt ? Math.max(0, (Date.now() - new Date(feedHealthCheckedAt).getTime()) / 1000) : null;
