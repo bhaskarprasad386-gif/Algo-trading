@@ -43,7 +43,7 @@ export default function HomePage() {
     let cancelled = false;
     const checkServer = async () => {
       try {
-        const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", { cache: "no-store" });
+        const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", { cache: "no-store", signal: AbortSignal.timeout(4000) });
         if (!response.ok) throw new Error("health HTTP " + response.status);
         const body = await response.json();
         const healthy = body?.status === "ok" && String(body?.database ?? "").toLowerCase() === "connected";
@@ -117,7 +117,7 @@ export default function HomePage() {
     let cancelled = false;
     const loadMarketOverview = async () => {
       try {
-        const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store" });
+        const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store", signal: AbortSignal.timeout(4500) });
         if (!response.ok) throw new Error("market overview");
         const body = await response.json();
         const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }> = {};
@@ -155,7 +155,7 @@ export default function HomePage() {
     const loadFeedHealth = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(`${base}/api/v1/market-data/live-health`, { cache: "no-store" });
+        const response = await fetch(`${base}/api/v1/market-data/live-health`, { cache: "no-store", signal: AbortSignal.timeout(4500) });
         if (!response.ok) throw new Error("feed health");
         const body = await response.json();
         if (cancelled) return;
@@ -182,7 +182,7 @@ export default function HomePage() {
     const loadRuntimeHealth = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store" });
+        const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store", signal: AbortSignal.timeout(1200) });
         if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
         if (cancelled) return;
@@ -269,7 +269,7 @@ export default function HomePage() {
     const loadDiagnosticErrors = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store" });
+        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store", signal: AbortSignal.timeout(1600) });
         if (!response.ok) throw new Error("diagnostics");
         const body = await response.json();
         if (!body || typeof body !== "object" || !Array.isArray(body.errors)) throw new Error("diagnostics schema incomplete");
