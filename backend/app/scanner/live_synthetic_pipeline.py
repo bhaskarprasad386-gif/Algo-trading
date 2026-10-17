@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from queue import Full, Queue
 from threading import Lock, Thread
-from time import monotonic
+from time import monotonic, sleep
 from typing import Callable
 
 from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
@@ -52,7 +52,10 @@ class LiveSyntheticScanPipeline:
             "alert_jobs_completed": 0,
             "alert_jobs_dropped": 0,
             "alert_job_errors": 0,
+            "alert_job_retries": 0,
+            "alert_jobs_failed": 0,
         }
+        self._max_job_attempts = 3
         self._worker = None
         if self.session_factory is not None:
             self._worker = Thread(
@@ -102,20 +105,33 @@ class LiveSyntheticScanPipeline:
             try:
                 if job is self._STOP:
                     return
-                try:
-                    with self.session_factory() as db:
+                succeeded = False
+                for attempt in range(self._max_job_attempts):
+                    try:
+                        # Use a fresh DB session on each attempt; a failed SQL
+                        # transaction may have left the previous session unusable.
+                        with self.session_factory() as db:
+                            if job is None:
+                                self.alerts.persist(db, ())
+                            else:
+                                self.alerts.persist(db, job)
+                                self.alerts.notify_users(db, job)
                         if job is None:
-                            self.alerts.persist(db, ())
-                        else:
-                            self.alerts.persist(db, job)
-                            self.alerts.notify_users(db, job)
-                    if job is None:
-                        self._last_retention_cleanup = monotonic()
+                            self._last_retention_cleanup = monotonic()
+                        succeeded = True
+                        with self._state_lock:
+                            self._counters["alert_jobs_completed"] += 1
+                        break
+                    except Exception:
+                        with self._state_lock:
+                            self._counters["alert_job_errors"] += 1
+                            if attempt + 1 < self._max_job_attempts:
+                                self._counters["alert_job_retries"] += 1
+                        if attempt + 1 < self._max_job_attempts:
+                            sleep(0.05 * (2 ** attempt))
+                if not succeeded:
                     with self._state_lock:
-                        self._counters["alert_jobs_completed"] += 1
-                except Exception:
-                    with self._state_lock:
-                        self._counters["alert_job_errors"] += 1
+                        self._counters["alert_jobs_failed"] += 1
             finally:
                 self._queue.task_done()
 
