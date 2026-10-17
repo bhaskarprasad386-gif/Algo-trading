@@ -312,7 +312,7 @@ export default function HomePage() {
 
 
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
-  const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
+  const wsLabel = wsStatus === "connected" && lastDashboardMessageAt != null && Date.now() - lastDashboardMessageAt <= 15_000 ? "CONNECTED" : wsStatus === "error" ? "ERROR" : wsStatus === "connected" ? "STALE (NO RECENT SNAPSHOT)" : "CONNECTING";
   const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
   const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
   const feedAgeLabel = feedAge == null ? "Not available" : feedAge >= 3600 ? `${Math.floor(feedAge / 3600)}h ${Math.floor((feedAge % 3600) / 60)}m` : feedAge >= 60 ? `${Math.floor(feedAge / 60)}m ${Math.floor(feedAge % 60)}s` : `${feedAge.toFixed(1)}s`;
