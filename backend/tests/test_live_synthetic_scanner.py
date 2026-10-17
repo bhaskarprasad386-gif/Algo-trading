@@ -434,3 +434,42 @@ def test_live_scanner_rejects_mismatched_ce_pe_future_lot_sizes():
     counters = scanner.diagnostics_snapshot()["counters"]
     assert counters["lot_size_mismatch"] == 1
     assert counters.get("scan_evaluations", 0) == 0
+
+
+
+def test_live_scanner_rejects_non_finite_executable_quotes():
+    ts = 1_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "30SEP2026"
+    scanner.observe({**_base(ts, 100.0, "CE", float("inf"), 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": float("nan"), "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters.get("scan_evaluations", 0) == 0
+    assert counters.get("invalid_quote", 0) >= 1
+
+
+def test_live_scanner_handles_non_finite_volume_and_oi_without_crashing():
+    ts = 1_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "30SEP2026"
+    scanner.observe({
+        **_base(ts, 100.0, "CE", 4.0, 5.0),
+        "expiry": expiry, "volume": float("nan"), "oi": 1000,
+    })
+    scanner.observe({
+        **_base(ts, 100.0, "PE", 4.0, 5.0),
+        "expiry": expiry, "volume": 100, "oi": 1000,
+    })
+    result = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+        "volume": float("inf"), "oi": float("nan"),
+    })
+    assert isinstance(result, tuple)
+    assert scanner.diagnostics_snapshot()["counters"].get("scan_evaluations", 0) <= 1
