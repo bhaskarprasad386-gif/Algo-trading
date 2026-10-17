@@ -241,7 +241,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen theme-bg theme-text p-1">
-      <PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Verified market quotes, feed freshness and scanner activity at a glance." />
+      <PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Broker quote responses, feed freshness and scanner activity at a glance." />
       <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]">
         <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -256,7 +256,7 @@ export default function HomePage() {
             <div className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">COMMON WEBSOCKET</div><div className={"mt-1 text-[13px] font-extrabold " + (runtime.connectedGroups > 0 ? "theme-success" : "theme-danger")}>{runtime.connectedGroups > 0 ? "CONNECTED" : "DISCONNECTED"}</div><div className="mt-0.5 text-[9px] theme-subtle">{runtime.connectedGroups}/{runtime.maxSocketSessions} socket groups</div></div>
             <div className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">LIVE BROKER ORDERS</div><div className="mt-1 text-[13px] font-extrabold theme-warning">OFF</div><div className="mt-0.5 text-[9px] theme-subtle">Market data only</div></div>
           </div>
-          <div className="mt-2 text-[9px] theme-subtle">Exchange session shows scheduled hours; verified quote/feed status below is the live-data indicator.</div>
+          <div className="mt-2 text-[9px] theme-subtle">Exchange session is schedule-based. Quote status confirms an API response, not the exchange tick timestamp; feed freshness comes from runtime telemetry.</div>
         </Card>
         <div className="flex flex-wrap items-start justify-end gap-2">
           <div className={"inline-flex items-center gap-2 rounded-full border theme-border px-3 py-1.5 text-[11px] font-semibold " + (feedLabel === "LIVE" ? "theme-success-bg theme-success" : "theme-warning-bg theme-warning")}><Radio size={13} /> {feedLabel === "LIVE" ? "Market feed LIVE" : feedLabel === "CLOSED" ? "Market CLOSED" : `Market feed ${feedLabel.toLowerCase()}`}</div>
@@ -278,13 +278,13 @@ export default function HomePage() {
                   <div className="pl-1">
                     <div className="flex items-center justify-between"><span className="text-[12px] font-bold tracking-wide">{symbol}</span>{marketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
                     <div className="mt-3 flex items-center justify-between gap-2">
-                      <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? (marketSession === "CLOSED" ? "Last close unavailable" : "No verified quote") : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? (marketSession === "CLOSED" ? "Last close unavailable" : "No broker quote") : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       {(!quoteAvailable || quote?.ltp == null) && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
                     </div>
                     <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
                     <div className="mt-1 text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-muted">
-                      <span>{quoteAvailable ? "Verified quote" : "Awaiting verified quote"}</span><span>{marketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "LIVE" : "NO DATA"}</span>
+                      <span>{quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{marketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
                     </div>
                   </div>
                 </Card>
