@@ -363,7 +363,10 @@ class LiveSyntheticScanner:
                 if bucket_ts >= 1_000_000_000_000_000 and now_ns - bucket_ts > 5_000_000_000:
                     continue
                 future = bucket.get("future") or {}
-                future_expiry = self._expiry(future.get("expiry")) if future.get("expiry") else expiry
+                try:
+                    future_expiry = self._expiry(future.get("expiry")) if future.get("expiry") else expiry
+                except ValueError:
+                    future_expiry = None
                 for strike, legs in bucket.get("options", {}).items():
                     ce, pe = legs.get("CE") or {}, legs.get("PE") or {}
                     if future and future_expiry != expiry:
@@ -382,10 +385,10 @@ class LiveSyntheticScanner:
                                 missing.append("TIMESTAMP_MISMATCH")
                         except (TypeError, ValueError, OverflowError):
                             missing.append("INVALID_TIMESTAMP")
+                    leg_timestamps = [int(x.get("source_timestamp_ns") or 0) for x in (future, ce, pe)]
+                    latest_timestamp = max(leg_timestamps) if max(leg_timestamps, default=0) > 0 else bucket_ts
                     rows.append({
-                        "timestamp_ns": max(
-                            [int(x.get("source_timestamp_ns") or 0) for x in (future, ce, pe)] or [bucket_ts]
-                        ),
+                        "timestamp_ns": latest_timestamp,
                         "underlying": symbol,
                         "expiry": expiry,
                         "strike": strike,
