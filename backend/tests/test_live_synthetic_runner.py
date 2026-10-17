@@ -146,14 +146,21 @@ def test_missing_atm_for_one_symbol_does_not_block_ready_symbol():
 
 
 def test_expiry_refresh_replaces_expired_target_with_listed_matching_expiry():
+    from datetime import date, timedelta
+
     master = _master()
+    expected_expiry = (date.today() + timedelta(days=30)).strftime("%d%b%Y").upper()
+    expired_expiry = (date.today() - timedelta(days=1)).strftime("%d%b%Y").upper()
+    for item in master.instruments:
+        if item.get("instrumenttype") in {"FUTIDX", "OPTIDX"}:
+            item["expiry"] = expected_expiry
     runner = LiveSyntheticRunner(
-        ":memory:", [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "01OCT2026")],
+        ":memory:", [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, expired_expiry)],
         allowed_stock_symbols=frozenset(), instrument_master=master,
         atm_provider=lambda _s, _t: 100.0,
     )
     assert runner._refresh_target_expiries() is True
-    assert runner.targets[0].expiry == "29OCT2026"
+    assert runner.targets[0].expiry == expected_expiry
     runner._refresh_stock_universe()
     assert runner.allowed_stock_symbols == frozenset({"ABC"})
 
