@@ -608,7 +608,6 @@ def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
             self.stop_event = Event()
             self.on_observation = kwargs["on_observation"]
             self.stop_calls = 0
-            self.stop_event.set if False else None
             type(self).instances.append(self)
 
         def run_forever(self):
