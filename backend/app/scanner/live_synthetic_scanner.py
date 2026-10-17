@@ -634,7 +634,7 @@ class LiveSyntheticScanner:
                     def positive(value):
                         try:
                             number = float(value)
-                            return number > 0
+                            return math.isfinite(number) and number > 0
                         except (TypeError, ValueError, OverflowError):
                             return False
 
