@@ -385,8 +385,20 @@ class LiveSyntheticScanner:
                                 missing.append("TIMESTAMP_MISMATCH")
                         except (TypeError, ValueError, OverflowError):
                             missing.append("INVALID_TIMESTAMP")
-                    leg_timestamps = [int(x.get("source_timestamp_ns") or 0) for x in (future, ce, pe)]
-                    latest_timestamp = max(leg_timestamps) if max(leg_timestamps, default=0) > 0 else bucket_ts
+                    try:
+                        leg_timestamps = [
+                            int(x.get("source_timestamp_ns") or 0)
+                            for x in (future, ce, pe)
+                        ]
+                    except (TypeError, ValueError, OverflowError):
+                        leg_timestamps = []
+                        if "INVALID_TIMESTAMP" not in missing:
+                            missing.append("INVALID_TIMESTAMP")
+                    latest_timestamp = (
+                        max(leg_timestamps)
+                        if leg_timestamps and max(leg_timestamps) > 0
+                        else bucket_ts
+                    )
                     rows.append({
                         "timestamp_ns": latest_timestamp,
                         "underlying": symbol,
