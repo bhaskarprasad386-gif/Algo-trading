@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap, LayoutDashboard } from "lucide-react";
+import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import Link from "next/link";
 import { Card } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
