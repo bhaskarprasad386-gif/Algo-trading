@@ -177,6 +177,7 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
         "timestamp_ns", "underlying", "expiry", "strike",
         "future_bid", "future_ask", "call_bid", "call_ask",
         "put_bid", "put_ask", "lot_size", "state", "reason",
+        "readiness_scope", "opportunity_confirmed", "qualification_status",
     )
     rows = [
         {key: row.get(key) for key in allowed}
