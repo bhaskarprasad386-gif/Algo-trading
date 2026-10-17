@@ -11,6 +11,7 @@ from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+TOKEN_REFRESH_SECONDS = 30.0
 
 
 def filter_resolvable_index_symbols(instrument_master: InstrumentMaster, symbols) -> tuple[str, ...]:
@@ -93,32 +94,32 @@ class LiveSyntheticUnderlyingFeed:
         return value * 1_000
 
     def _tokens(self) -> dict[str, str]:
+        """Resolve every configured symbol without dropping unresolved targets.
+
+        Empty token values are intentionally retained so the Synthetic runner
+        keeps the target in its logical universe and can recover it after the
+        instrument master becomes resolvable again.
+        """
         self.instrument_master.download()
         result = {}
         for symbol in self.symbols:
+            token = ""
             try:
-                token = self.concrete_tokens.get(symbol)
-                if token:
-                    result[symbol] = token
-                elif symbol in self.index_symbols:
+                token = self.concrete_tokens.get(symbol, "")
+                if not token and symbol in self.index_symbols:
                     exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
-                    token = self.instrument_master.resolve_index_token(symbol, exchange)
-                    if token:
-                        result[symbol] = token
-                elif symbol in self.commodity_symbols:
+                    token = self.instrument_master.resolve_index_token(symbol, exchange) or ""
+                elif not token and symbol in self.commodity_symbols:
                     token = self.instrument_master.get_token(symbol, "MCX") or ""
-                    if token:
-                        result[symbol] = token
-                else:
-                    token = self.instrument_master.resolve_cash_token(symbol, "NSE")
-                    if token:
-                        result[symbol] = token
+                elif not token:
+                    token = self.instrument_master.resolve_cash_token(symbol, "NSE") or ""
             except (LookupError, ValueError) as exc:
                 app_logger.warning(
-                    "Synthetic underlying skipped unresolved symbol {}: {}",
+                    "Synthetic underlying unresolved symbol {}: {}",
                     symbol,
                     exc,
                 )
+            result[symbol] = str(token).strip()
         return result
 
     def _exchange_type(self, symbol: str) -> int:
@@ -128,6 +129,8 @@ class LiveSyntheticUnderlyingFeed:
     def _subscription_groups(self, tokens: dict[str, str]) -> dict[int, list[str]]:
         groups = {}
         for symbol, token in tokens.items():
+            if not token:
+                continue
             groups.setdefault(self._exchange_type(symbol), []).append(token)
         return groups
 
@@ -136,6 +139,8 @@ class LiveSyntheticUnderlyingFeed:
         tokens = self._tokens()
         descriptors = []
         for symbol, token in tokens.items():
+            if not token:
+                continue
             if symbol in self.commodity_symbols:
                 exchange = "MCX"
             elif symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols:
@@ -164,18 +169,33 @@ class LiveSyntheticUnderlyingFeed:
             self.on_price(symbol, price, timestamp_ns)
 
     def run_forever(self) -> None:
+        """Keep retrying the instrument master so temporarily missing tokens recover."""
         self._feed = CommonStrategyMarketFeed(
             self.consumer,
             auth=self.auth,
         )
-        descriptors = self._descriptors()
-        if not descriptors:
-            app_logger.warning("Synthetic underlying feed found no resolvable live symbols")
-            return
-        self._feed.start(descriptors, self._on_record)
+        active_tokens: dict[str, str] = {}
         try:
-            while not self.stop_event.wait(1.0):
-                pass
+            while not self.stop_event.is_set():
+                descriptors = self._descriptors()
+                resolved_tokens = {
+                    descriptor.token: descriptor.symbol
+                    for descriptor in descriptors
+                }
+                current_token_set = {
+                    symbol: token for symbol, token in self._tokens().items() if token
+                }
+                if not descriptors:
+                    app_logger.warning("Synthetic underlying feed found no resolvable live symbols; retrying")
+                    self.stop_event.wait(TOKEN_REFRESH_SECONDS)
+                    continue
+                if current_token_set != active_tokens:
+                    if active_tokens:
+                        self._feed.stop()
+                    self._feed.start(descriptors, self._on_record)
+                    active_tokens = current_token_set
+                if self.stop_event.wait(TOKEN_REFRESH_SECONDS):
+                    break
         finally:
             if self._feed:
                 self._feed.stop()
