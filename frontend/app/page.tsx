@@ -190,7 +190,7 @@ export default function HomePage() {
         if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
         if (cancelled) return;
-        if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
+        if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Array.isArray(body.common_feed.required_socket_groups) || !Number.isFinite(Number(body.common_feed.required_socket_group_count)) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
         const feed = body.common_feed;
         setRuntimeLastSuccessAt(Date.now());
         const runners = body?.runners ?? {};
@@ -309,7 +309,7 @@ export default function HomePage() {
   const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const feedHealthAge = feedHealthCheckedAt ? Math.max(0, (Date.now() - new Date(feedHealthCheckedAt).getTime()) / 1000) : null;
-  const effectiveMarketSession = marketDataAge != null && marketDataAge <= 15 ? marketSession : feedHealthAge != null && feedHealthAge <= 10 ? feedMarketSession : "UNKNOWN";
+  const effectiveMarketSession = marketDataAge != null && marketDataAge <= 15 && marketSession !== "UNKNOWN" ? marketSession : feedHealthAge != null && feedHealthAge <= 10 ? feedMarketSession : "UNKNOWN";
   const effectiveMcxSession = marketDataAge != null && marketDataAge <= 15 ? mcxSession : "UNKNOWN";
   const scannerStatus = [
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
