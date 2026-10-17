@@ -11,22 +11,25 @@ export const themeOptions: Array<{ id: ThemeName; label: string; symbol: string 
   { id: "dark", label: "Premium Dark", symbol: "🌑" },
 ];
 
-const STORAGE_KEY = "algo-trading-theme";
+const STORAGE_KEY = "algo-trading-theme-v2";
+const LEGACY_STORAGE_KEY = "algo-trading-theme";
 
 const ThemeContext = createContext<{
   theme: ThemeName;
   setTheme: (theme: ThemeName) => void;
 }>({
-  theme: "white",
+  theme: "dark",
   setTheme: () => undefined,
 });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeName>("white");
+  const [theme, setThemeState] = useState<ThemeName>("dark");
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY) as ThemeName | null;
-    const next = themeOptions.some((item) => item.id === saved) ? saved! : "white";
+    const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY) as ThemeName | null;
+    const candidate = saved ?? (legacy && legacy !== "white" ? legacy : null);
+    const next = themeOptions.some((item) => item.id === candidate) ? candidate! : "dark";
     setThemeState(next);
     document.documentElement.dataset.theme = next;
   }, []);

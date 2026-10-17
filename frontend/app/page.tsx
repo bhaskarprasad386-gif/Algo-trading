@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap, LayoutDashboard } from "lucide-react";
+import { Activity, BarChart3, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Wallet, Zap } from "lucide-react";
 import Link from "next/link";
-import { Card, PageTitle } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
 const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
@@ -36,404 +36,158 @@ export default function HomePage() {
     fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", { cache: "no-store", signal: controller.signal })
       .then((response) => { if (!response.ok) throw new Error("health"); setApiStatus("connected"); })
       .catch(() => setApiStatus("error"));
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let socket: WebSocket | null = null;
-    let retryTimer: number | null = null;
-    let retryMs = 1000;
-
-    const connect = () => {
-      if (cancelled) return;
-      setWsStatus("connecting");
-      socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
-      socket.onopen = () => {
-        retryMs = 1000;
-        setWsStatus("connected");
-      };
-      socket.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          if (message?.type !== "dashboard_snapshot") return;
-          setSnapshot({
-            calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
-            synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
-            box: Number(message?.integration?.box_spread?.count ?? 0),
-            opportunities: Number(message?.scanner?.opportunity_count ?? 0),
-            timestamp: message?.timestamp ?? null,
-            cashFutureObservedAt: message?.scanner?.health?.last_observation_at ?? null,
-          });
-        } catch {
-          // Ignore malformed dashboard messages without losing the last valid snapshot.
-        }
-      };
-      socket.onerror = () => setWsStatus("error");
-      socket.onclose = () => {
-        if (cancelled) return;
-        setWsStatus("error");
-        retryTimer = window.setTimeout(connect, retryMs);
-        retryMs = Math.min(retryMs * 2, 10000);
-      };
-    };
-
-    connect();
-    return () => {
-      cancelled = true;
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
-      socket?.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadMarketOverview = async () => {
-      try {
-        const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store" });
-        if (!response.ok) throw new Error("market overview");
-        const body = await response.json();
-        const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }> = {};
-        const sessionValue = body?.nse_market_session ?? body?.market_session;
-        const session = sessionValue === "OPEN" ? "OPEN" : sessionValue === "CLOSED" ? "CLOSED" : "UNKNOWN";
-        const mcxValue = body?.mcx_market_session;
-        const mcx = mcxValue === "OPEN" ? "OPEN" : mcxValue === "CLOSED" ? "CLOSED" : "UNKNOWN";
-        for (const row of Array.isArray(body?.indices) ? body.indices : []) {
-          if (row?.symbol) {
-            const ltp = row?.ltp == null ? null : Number(row.ltp);
-            const previousClose = row?.close == null ? null : Number(row.close);
-            const changePercent = ltp != null && previousClose != null && previousClose !== 0 ? ((ltp - previousClose) / previousClose) * 100 : null;
-            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent, status: String(row?.status ?? "NO_QUOTE").toUpperCase() };
-          }
-        }
-        if (!cancelled) {
-          setMarketSession(session);
-          setMcxSession(mcx);
-          setMarketCheckedAt(new Date().toISOString());
-          setIndexLtps(next);
-        }
-      } catch {
-        // Keep the last successful overview snapshot during transient API/quote failures.
-      }
-    };
-    loadMarketOverview();
-    const timer = window.setInterval(loadMarketOverview, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadFeedHealth = async () => {
-      try {
-        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(`${base}/api/v1/market-data/live-health`, { cache: "no-store" });
-        if (!response.ok) throw new Error("feed health");
-        const body = await response.json();
-        if (cancelled) return;
-        const status = String(body?.feed_status ?? "").toUpperCase();
-        const session = String(body?.market_session ?? "").toUpperCase();
-        const age = body?.runtime_feed?.age_seconds ?? body?.age_seconds;
-        setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
-        if (session === "CLOSED") setFeedStatus("closed");
-        else if (session !== "OPEN") setFeedStatus("no-data");
-        else if (status === "LIVE" && age != null && Number.isFinite(Number(age)) && Number(age) >= 0 && Number(age) <= 5) setFeedStatus("live");
-        else if (status === "STALE" || (age != null && Number.isFinite(Number(age)) && Number(age) > 5)) setFeedStatus("stale");
-        else setFeedStatus("no-data");
-      } catch {
-        if (!cancelled) setFeedStatus("error");
-      }
-    };
-    void loadFeedHealth();
-    const timer = window.setInterval(loadFeedHealth, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadRuntimeHealth = async () => {
-      try {
-        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store" });
-        if (!response.ok) throw new Error("runtime health");
-        const body = await response.json();
-        if (cancelled) return;
-        const feed = body?.common_feed ?? {};
-        const runners = body?.runners ?? {};
-        const runnerDetail = (value: any) => {
-          if (!value) return { running: false, detail: "UNAVAILABLE", updates: 0, payloads: 0, instruments: 0 };
-          const running = Boolean(value.running);
-          const nestedFeed = value.underlying_feed ?? value.feed ?? null;
-          const instruments = Number(value.registered_instruments ?? value.active_instruments ?? nestedFeed?.active_instruments ?? nestedFeed?.subscriptions ?? 0);
-          const payloads = Number(value.records_received ?? value.payload_callbacks ?? value.callbacks ?? 0);
-          const updates = Number(value.scanner_updates ?? value.scanner_results ?? value.observations ?? value.signals ?? 0);
-          const connected = nestedFeed?.connected_groups?.length ?? 0;
-          const parts = [running ? "RUNNING" : "STOPPED"];
-          if (Number.isFinite(instruments) && instruments > 0) parts.push(instruments.toLocaleString("en-IN") + " instruments");
-          if (Number.isFinite(payloads) && payloads > 0) parts.push(payloads.toLocaleString("en-IN") + " payloads");
-          if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " scanner updates");
-          if (connected > 0) parts.push(connected + " feed socket" + (connected === 1 ? "" : "s"));
-          return { running, detail: parts.join(" • "), updates: Number.isFinite(updates) ? updates : 0, payloads: Number.isFinite(payloads) ? payloads : 0, instruments: Number.isFinite(instruments) ? instruments : 0 };
-        };
-        setRuntime({
-          ticks: Number(feed.ticks_received ?? 0),
-          runtimeStartedAt: feed.runtime_started_at == null ? null : Number(feed.runtime_started_at),
-          activeInstruments: Number(feed.active_instruments ?? 0),
-          socketGroups: Number(feed.socket_groups ?? 0),
-          connectedGroups: Array.isArray(feed.connected_groups) ? feed.connected_groups.length : 0,
-          maxSocketSessions: Number(feed.max_socket_sessions ?? 3),
-          consumers: Array.isArray(feed.consumers) ? feed.consumers : [],
-          deliveryErrors: Number(feed.delivery_errors ?? 0),
-          normalizerErrors: Number(feed.normalizer_errors ?? 0),
-          runners: {
-            cash_future: runnerDetail(runners.cash_future),
-            synthetic_arbitrage: runnerDetail(runners.synthetic_arbitrage),
-            box_spread: runnerDetail(runners.box_spread),
-            calendar_spread: runnerDetail(runners.calendar_spread),
-          },
-        });
-      } catch {
-        // Keep the last successful runtime snapshot during transient API failures.
-      }
-    };
-    void loadRuntimeHealth();
-    const timer = window.setInterval(loadRuntimeHealth, 1500);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadDiagnosticErrors = async () => {
-      try {
-        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store" });
-        if (!response.ok) throw new Error("diagnostics");
-        const body = await response.json();
-        if (!cancelled) {
-          setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);
-          setDiagnosticCount(Number.isFinite(Number(body?.count)) ? Number(body.count) : (Array.isArray(body?.errors) ? body.errors.length : 0));
-        }
-      } catch {
-        // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
-      }
-    };
-    void loadDiagnosticErrors();
-    const timer = window.setInterval(loadDiagnosticErrors, 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
-
-
-  const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
-  const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
-  const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
-  const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
-  const feedAgeLabel = feedAge == null ? "Not available" : feedAge >= 3600 ? `${Math.floor(feedAge / 3600)}h ${Math.floor((feedAge % 3600) / 60)}m` : feedAge >= 60 ? `${Math.floor(feedAge / 60)}m ${Math.floor(feedAge % 60)}s` : `${feedAge.toFixed(1)}s`;
-  const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
-  const observationAge = snapshot.cashFutureObservedAt ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000) : null;
-  const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
-  const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
-  const scannerStatus = [
-    { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
-    { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
-    { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
-    { label: "Orders", value: "Not reported" },
-    { label: "Fills", value: "Not reported" },
-    { label: "Backend Errors", value: "Not reported" },
-    { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
-  ];
-
-  return (
-    <div className="space-y-5">
-      <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "connected" && wsStatus === "connected" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "connected" && wsStatus === "connected" ? "SYSTEM CONNECTED" : "CHECKING CONNECTIONS"}</div></div>
-      <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]">
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              {label:"NSE EQUITY", value:marketSession, detail:"09:15–15:30 IST"},
-              {label:"MCX COMMODITIES", value:mcxSession, detail:"Session from market API"},
-            ].map((item) => <div key={item.label} className="rounded-xl border theme-border px-3 py-2">
-              <div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">{item.label}</div>
-              <div className={"mt-1 text-[13px] font-extrabold " + (item.value === "OPEN" ? "theme-success" : item.value === "CLOSED" ? "theme-warning" : "theme-muted")}>{item.value}</div>
-              <div className="mt-0.5 text-[9px] theme-subtle">{item.detail}</div>
-            </div>)}
-            <div className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">COMMON WEBSOCKET</div><div className={"mt-1 text-[13px] font-extrabold " + (runtime.connectedGroups > 0 ? "theme-success" : "theme-danger")}>{runtime.connectedGroups > 0 ? "CONNECTED" : "DISCONNECTED"}</div><div className="mt-0.5 text-[9px] theme-subtle">{runtime.connectedGroups}/{runtime.maxSocketSessions} socket groups</div></div>
-            <div className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">LIVE BROKER ORDERS</div><div className="mt-1 text-[13px] font-extrabold theme-warning">OFF</div><div className="mt-0.5 text-[9px] theme-subtle">Market data only</div></div>
+    return (
+    <main className="min-w-0 space-y-6 pb-8">
+      <section className="relative overflow-hidden rounded-3xl border theme-border theme-surface-2 p-5 sm:p-7">
+        <div className="pointer-events-none absolute -right-12 -top-16 h-56 w-56 rounded-full opacity-20 blur-3xl theme-accent-bg" />
+        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full border theme-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] theme-accent"><span className="h-1.5 w-1.5 animate-pulse rounded-full theme-accent-bg" /> Trading Terminal</span>
+              <span className="rounded-full border theme-border px-3 py-1.5 text-[10px] font-semibold theme-muted">MARKET DATA ONLY</span>
+            </div>
+            <h1 className="text-3xl font-black tracking-tight theme-text sm:text-4xl">Market <span className="theme-accent">Command</span></h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 theme-muted">One workspace for index movement, scanner opportunities and live infrastructure health.</p>
           </div>
-          <div className="mt-2 text-[9px] theme-subtle">Exchange session is schedule-based. Quote status confirms an API response, not the exchange tick timestamp. Scanner counters are cumulative; only Cash-Future flow is marked live when its last observation is within 5 seconds.</div>
-        </Card>
-        <div className="flex flex-wrap items-start justify-end gap-2">
-          <div className={"inline-flex items-center gap-2 rounded-full border theme-border px-3 py-1.5 text-[11px] font-semibold " + (feedLabel === "LIVE" ? "theme-success-bg theme-success" : "theme-warning-bg theme-warning")}><Radio size={13} /> {feedLabel === "LIVE" ? "Market feed LIVE" : feedLabel === "CLOSED" ? "Market CLOSED" : `Market feed ${feedLabel.toLowerCase()}`}</div>
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <div className="min-w-32 rounded-2xl border theme-border theme-surface px-4 py-3">
+              <div className="text-[9px] font-bold uppercase tracking-[0.15em] theme-subtle">API</div>
+              <div className={"mt-1 flex items-center gap-2 text-xs font-bold " + (apiStatus === "connected" ? "theme-success" : apiStatus === "error" ? "theme-danger" : "theme-warning")}><span className="h-2 w-2 rounded-full theme-success-bg" />{apiLabel}</div>
+            </div>
+            <div className="min-w-32 rounded-2xl border theme-border theme-surface px-4 py-3">
+              <div className="text-[9px] font-bold uppercase tracking-[0.15em] theme-subtle">Dashboard WS</div>
+              <div className={"mt-1 flex items-center gap-2 text-xs font-bold " + (wsStatus === "connected" ? "theme-success" : wsStatus === "error" ? "theme-danger" : "theme-warning")}><span className="h-2 w-2 rounded-full theme-accent-bg" />{wsLabel}</div>
+            </div>
+          </div>
         </div>
-      </div>
+        <div className="relative mt-6 grid grid-cols-2 gap-3 border-t theme-border pt-5 sm:grid-cols-4">
+          <div><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">NSE Session</div><div className={"mt-1 text-lg font-black " + (marketSession === "OPEN" ? "theme-success" : marketSession === "CLOSED" ? "theme-warning" : "theme-muted")}>{marketSession}</div><div className="text-[10px] theme-subtle">Equity market</div></div>
+          <div><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">MCX Session</div><div className={"mt-1 text-lg font-black " + (mcxSession === "OPEN" ? "theme-success" : mcxSession === "CLOSED" ? "theme-warning" : "theme-muted")}>{mcxSession}</div><div className="text-[10px] theme-subtle">Commodity market</div></div>
+          <div><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">Market Feed</div><div className={"mt-1 text-lg font-black " + (feedStatus === "live" ? "theme-success" : feedStatus === "error" || feedStatus === "stale" ? "theme-danger" : "theme-warning")}>{feedLabel}</div><div className="text-[10px] theme-subtle">Age: {feedAgeLabel}</div></div>
+          <div><div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">Broker Orders</div><div className="mt-1 text-lg font-black theme-warning">OFF</div><div className="text-[10px] theme-subtle">No live order routing</div></div>
+        </div>
+      </section>
 
       <section aria-label="Market overview">
-        <div className="mb-3 flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Overview</h2></div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-accent">01 / Markets</div><h2 className="mt-1 text-lg font-bold">Index Overview</h2></div>
+          <span className="text-[10px] theme-subtle">{marketDataAge == null ? "Waiting for overview" : "Updated " + Math.round(marketDataAge) + "s ago"}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
           {markets.map((symbol) => {
             const quote = indexLtps[symbol];
             const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
             const change = quoteAvailable ? quote?.changePercent : null;
-            const positive = change != null && change > 0;
-            const negative = change != null && change < 0;
+            const positive = change != null && change >= 0;
             return (
-                <Card key={symbol} className="relative overflow-hidden rounded-2xl p-4">
-                  <span className="absolute inset-y-0 left-0 w-1 theme-accent-bg" />
-                  <div className="pl-1">
-                    <div className="flex items-center justify-between"><span className="text-[12px] font-bold tracking-wide">{symbol}</span>{marketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
-                    <div className="mt-3 flex items-center justify-between gap-2">
-                      <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? (marketSession === "CLOSED" ? "Last close unavailable" : "No broker quote") : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                      {(!quoteAvailable || quote?.ltp == null) && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
-                    </div>
-                    <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
-                    <div className="mt-1 text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                    <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-muted">
-                      <span>{marketSession === "CLOSED" ? "Last trading close" : quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{marketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
-                    </div>
-                  </div>
-                </Card>
+              <Card key={symbol} className="group relative overflow-hidden rounded-2xl border theme-border theme-surface-2 p-4 transition duration-200 hover:-translate-y-0.5">
+                <div className={"absolute inset-x-0 top-0 h-0.5 " + (change == null ? "theme-border" : positive ? "theme-success-bg" : "theme-danger-bg")} />
+                <div className="flex items-center justify-between gap-2"><span className="text-xs font-extrabold tracking-wide">{symbol}</span><span className="h-2 w-2 rounded-full" style={{ backgroundColor: quoteAvailable ? (positive ? "#10B981" : "#EF4444") : "#64748B" }} /></div>
+                <div className="mt-4 text-xl font-black tabular-nums tracking-tight">{quoteAvailable && quote?.ltp != null ? quote.ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}</div>
+                <div className={"mt-2 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold " + (change == null ? "theme-surface theme-muted" : positive ? "theme-success-bg theme-success" : "theme-danger-bg theme-danger")}>
+                  {change == null ? "QUOTE UNAVAILABLE" : <>{positive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}{change > 0 ? "+" : ""}{change.toFixed(2)}%</>}
+                </div>
+              </Card>
             );
           })}
         </div>
       </section>
 
-      <div className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.8fr)]">
-        <div className="min-w-0">
-        <section aria-label="System health">
-          <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div><div className="text-[10px] theme-subtle">Auto-refreshing live telemetry</div></div>
-          <Card className="overflow-hidden rounded-2xl border theme-border theme-surface-2 p-0 shadow-sm">
-            <div className="overflow-x-auto"><table className="w-full min-w-[1080px] border-collapse text-left">
-              <thead className="theme-surface"><tr className="border-b theme-border text-[9px] uppercase tracking-[0.12em] theme-subtle">
-                <th className="px-3 py-3 font-bold">Feed / Scanner</th><th className="px-3 py-3 font-bold">WebSocket / State</th><th className="px-3 py-3 font-bold">Live ticks / updates</th><th className="px-3 py-3 font-bold">Tick age</th><th className="px-3 py-3 font-bold">Data flow</th><th className="px-3 py-3 font-bold">Scanner position</th>
-              </tr></thead><tbody>
-                {[
-                  {name:"OVERALL COMMON FEED", state:runtime.connectedGroups > 0 ? "CONNECTED" : "DISCONNECTED", updates:runtime.ticks, age:feedAgeLabel, flow:feedLabel, position:runtime.activeInstruments.toLocaleString("en-IN")+" active instruments"},
-                  {name:"CASH MARKET DATA", state:runtime.runners.cash_future?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.cash_future?.payloads ?? 0, age:feedAgeLabel, flow:(runtime.runners.cash_future?.payloads ?? 0)>0 ? "COUNTER > 0" : "NO UPDATES", position:runtime.runners.cash_future?.instruments ? runtime.runners.cash_future.instruments.toLocaleString("en-IN")+" instruments" : "No instrument count"},
-                  {name:"OPTIONS DATA", state:(runtime.runners.box_spread?.running || runtime.runners.calendar_spread?.running) ? "RUNNING" : "STOPPED", updates:(runtime.runners.box_spread?.payloads ?? 0)+(runtime.runners.calendar_spread?.payloads ?? 0), age:feedAgeLabel, flow:((runtime.runners.box_spread?.payloads ?? 0)+(runtime.runners.calendar_spread?.payloads ?? 0))>0 ? "COUNTER > 0" : "NO UPDATES", position:"Box + Calendar feed"},
-                  {name:"FUTURES DATA", state:runtime.runners.synthetic_arbitrage?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.synthetic_arbitrage?.payloads ?? 0, age:feedAgeLabel, flow:(runtime.runners.synthetic_arbitrage?.payloads ?? 0)>0 ? "COUNTER > 0" : "NO UPDATES", position:"Synthetic feed"},
-                  {name:"CASH-FUTURE SCANNER", state:runtime.runners.cash_future?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.cash_future?.updates ?? 0, age:observationAge == null ? "—" : observationAge < 60 ? Math.round(observationAge)+"s" : Math.round(observationAge/60)+"m", flow:observationAge != null && observationAge <= 5 ? "RECEIVING" : observationAge != null && observationAge <= 30 ? "STALE" : "NO RECENT OBSERVATION", position:runtime.runners.cash_future?.detail ?? "UNAVAILABLE"},
-                  {name:"SYNTHETIC ARBITRAGE", state:runtime.runners.synthetic_arbitrage?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.synthetic_arbitrage?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.synthetic_arbitrage?.updates ?? 0)>0 ? "COUNTER > 0" : "NO UPDATES", position:runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"},
-                  {name:"BOX SPREAD SCANNER", state:runtime.runners.box_spread?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.box_spread?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.box_spread?.updates ?? 0)>0 ? "COUNTER > 0" : "NO UPDATES", position:runtime.runners.box_spread?.detail ?? "UNAVAILABLE"},
-                  {name:"CALENDAR SPREAD SCANNER", state:runtime.runners.calendar_spread?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.calendar_spread?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.calendar_spread?.updates ?? 0)>0 ? "COUNTER > 0" : "NO UPDATES", position:runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"},
-                ].map((row) => {
-                  const healthy = row.state === "CONNECTED" || row.flow === "LIVE" || row.flow === "RECEIVING";
-                  return <tr key={row.name} className="border-b theme-border last:border-0">
-                    <td className="px-3 py-3 text-[10px] font-bold">{row.name}</td><td className="px-3 py-3"><span className={"rounded-full px-2 py-1 text-[9px] font-bold "+(healthy ? "theme-success-bg theme-success" : "theme-warning-bg theme-warning")}>{row.state}</span></td>
-                    <td className="px-3 py-3 text-[11px] font-bold tabular-nums">{Number(row.updates).toLocaleString("en-IN")}</td><td className="px-3 py-3 text-[10px] font-semibold theme-muted">{row.age}</td>
-                    <td className="px-3 py-3 text-[9px] font-bold"><span className={row.flow === "RECEIVING" || row.flow === "LIVE" ? "theme-success" : "theme-warning"}>{row.flow}</span></td><td className="max-w-[360px] px-3 py-3 text-[10px] theme-muted">{row.position}</td>
-                  </tr>;
-                })}
-              </tbody></table></div>
-          </Card>
-          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{[
-            ["Overall live ticks", runtime.ticks.toLocaleString("en-IN")],["Active instruments", runtime.activeInstruments.toLocaleString("en-IN")],
-            ["Connected sockets", runtime.connectedGroups+"/"+runtime.maxSocketSessions],["Delivery / normalizer errors", runtime.deliveryErrors+" / "+runtime.normalizerErrors],
-          ].map(([label,value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-3 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div>
-        </section>
-        </div>
-        <aside className="min-w-0 space-y-4" aria-label="Live scanner panel">
-          <section aria-label="Scanner status" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Database size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Feed Snapshot</h2></div><div className="grid grid-cols-2 gap-2">{[["Live ticks",runtime.ticks.toLocaleString("en-IN")],["Active instruments",runtime.activeInstruments.toLocaleString("en-IN")],["Socket groups",runtime.connectedGroups+"/"+runtime.maxSocketSessions],["Feed age",feedAgeLabel]].map(([label,value])=><div key={label} className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div></Card>
-        </aside>
-      </div>
+      <section aria-label="Quick stats" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-wider theme-subtle">Cash-Future Signals</span><Radio size={16} className="theme-accent" /></div><div className="mt-3 text-3xl font-black tabular-nums">{snapshot.opportunities.toLocaleString("en-IN")}</div><div className="mt-1 text-[10px] theme-muted">Latest dashboard snapshot</div></Card>
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-wider theme-subtle">Common Feed Ticks</span><Activity size={16} className="theme-accent" /></div><div className="mt-3 text-3xl font-black tabular-nums">{runtime.ticks.toLocaleString("en-IN")}</div><div className="mt-1 text-[10px] theme-muted">{runtime.connectedGroups}/{runtime.maxSocketSessions} socket groups connected</div></Card>
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-wider theme-subtle">Active Instruments</span><Gauge size={16} className="theme-accent" /></div><div className="mt-3 text-3xl font-black tabular-nums">{runtime.activeInstruments.toLocaleString("en-IN")}</div><div className="mt-1 text-[10px] theme-muted">Common feed subscriptions</div></Card>
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-wider theme-subtle">Runtime Errors</span><TriangleAlert size={16} className={diagnosticCount > 0 ? "theme-danger" : "theme-success"} /></div><div className={"mt-3 text-3xl font-black tabular-nums " + (diagnosticCount > 0 ? "theme-danger" : "theme-success")}>{diagnosticCount.toLocaleString("en-IN")}</div><div className="mt-1 text-[10px] theme-muted">Recorded since API process start</div></Card>
+      </section>
 
-      <section aria-label="Error Diagnostics" className="mt-4">
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
-          <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className={diagnosticErrors.length ? "grid h-10 w-10 shrink-0 place-items-center rounded-xl theme-danger-bg theme-danger" : "grid h-10 w-10 shrink-0 place-items-center rounded-xl theme-success-bg theme-success"}>
-                <TriangleAlert size={18} />
-              </span>
-              <div className="min-w-0">
-                <div className="text-[13px] font-bold">Error Diagnostics</div>
-                <div className="mt-0.5 text-[10px] theme-subtle">
-                  {diagnosticCount ? `${diagnosticCount.toLocaleString("en-IN")} runtime errors recorded since API process start (not an active-error count)` : "No errors recorded by this endpoint since API process start"}
-                </div>
-              </div>
+      <section aria-label="Scanner and strategies" className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.85fr)]">
+        <Card className="min-w-0 rounded-3xl border theme-border theme-surface-2 p-4 sm:p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-accent">02 / Opportunities</div><h2 className="mt-1 text-lg font-bold">Live Scanner</h2></div>
+            <Link href="/scanner" className="rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">Open scanner ↗</Link>
+          </div>
+          <div className="rounded-2xl border theme-border theme-surface p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><Radio size={20} /></span><div><div className="text-sm font-bold">Cash-Future Scanner</div><div className="mt-1 text-[10px] theme-muted">NSE cash vs near/current futures</div></div></div>
+              <span className={"rounded-full px-2.5 py-1 text-[9px] font-extrabold " + (runtime.runners.cash_future?.running ? "theme-success-bg theme-success" : "theme-warning-bg theme-warning")}>{runtime.runners.cash_future?.running ? "RUNNING" : "STATUS UNKNOWN / STOPPED"}</span>
             </div>
-            <Link href="/errors" className="inline-flex min-h-10 items-center justify-center rounded-xl theme-accent-bg px-4 text-[11px] font-bold theme-accent">
-              View Errors
-            </Link>
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border theme-border px-3 py-3"><div className="text-[9px] uppercase tracking-wider theme-subtle">Signals</div><div className="mt-1 text-2xl font-black">{snapshot.opportunities.toLocaleString("en-IN")}</div></div>
+              <div className="rounded-xl border theme-border px-3 py-3"><div className="text-[9px] uppercase tracking-wider theme-subtle">Observed</div><div className="mt-1 text-2xl font-black">{runtime.runners.cash_future?.updates.toLocaleString("en-IN") ?? "—"}</div></div>
+              <div className="col-span-2 rounded-xl border theme-border px-3 py-3 sm:col-span-1"><div className="text-[9px] uppercase tracking-wider theme-subtle">Last Observation</div><div className="mt-2 text-xs font-bold">{observationAgeLabel}</div></div>
+            </div>
+            <div className="mt-3 text-[10px] leading-5 theme-muted">{runtime.runners.cash_future?.detail ?? "Runner health unavailable from the latest runtime response."}</div>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Link href="/strategies/calendar-spread" className="rounded-2xl border theme-border p-3 transition hover:theme-surface"><div className="flex items-center gap-2"><Activity size={16} className="theme-accent" /><span className="text-xs font-bold">Calendar Spread</span></div><div className="mt-3 text-2xl font-black">{snapshot.calendar.toLocaleString("en-IN")}</div><div className="text-[10px] theme-subtle">Integration rows ↗</div></Link>
+            <Link href="/strategies/synthetic-arbitrage" className="rounded-2xl border theme-border p-3 transition hover:theme-surface"><div className="flex items-center gap-2"><Zap size={16} className="theme-accent" /><span className="text-xs font-bold">Synthetic Arb.</span></div><div className="mt-3 text-2xl font-black">{snapshot.synthetic.toLocaleString("en-IN")}</div><div className="text-[10px] theme-subtle">Integration rows ↗</div></Link>
+            <Link href="/strategies/box-spread" className="rounded-2xl border theme-border p-3 transition hover:theme-surface"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><span className="text-xs font-bold">Box Spread</span></div><div className="mt-3 text-2xl font-black">{snapshot.box.toLocaleString("en-IN")}</div><div className="text-[10px] theme-subtle">Integration rows ↗</div></Link>
           </div>
         </Card>
-      </section>
-      <div className="mt-5 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-        <section aria-label="Strategy workspaces" className="rounded-2xl border theme-border theme-surface-2 p-4">
-          <div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Strategy Workspaces</h2></div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {strategies.map((strategy) => { const Icon = strategy.icon; return <Link key={strategy.name} href={strategy.href} className="block"><Card className="min-h-[95px] rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg theme-accent-bg theme-accent"><Icon size={15} /></span><div className="text-[12px] font-semibold">{strategy.name}</div></div><div className="mt-2 text-[10px] theme-subtle">{strategy.detail} —</div></Card></Link>; })}
-          </div>
-        </section>
+
         <div className="space-y-4">
+          <Card className="rounded-3xl border theme-border theme-surface-2 p-4 sm:p-5">
+            <div className="mb-4 flex items-center gap-2"><Wallet size={17} className="theme-accent" /><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-accent">03 / Portfolio</div><h2 className="mt-1 text-lg font-bold">Paper Portfolio</h2></div></div>
+            <div className="rounded-2xl border theme-border theme-surface p-4">
+              <div className="flex items-center justify-between gap-3"><span className="text-xs theme-muted">Execution mode</span><span className="rounded-full theme-warning-bg theme-warning px-2.5 py-1 text-[9px] font-extrabold">ORDERS OFF</span></div>
+              <div className="mt-3 text-sm font-bold">Safe monitoring mode</div>
+              <p className="mt-2 text-[11px] leading-5 theme-muted">No verified paper-position or P&amp;L snapshot is connected. Portfolio values are intentionally not fabricated.</p>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2"><Link href="/history" className="rounded-xl border theme-border px-3 py-3 text-center text-[11px] font-bold">History ↗</Link><Link href="/scanner" className="rounded-xl border theme-border px-3 py-3 text-center text-[11px] font-bold">Scanner ↗</Link></div>
+          </Card>
 
-          <section aria-label="Operations" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Cash Future</div><div className="text-[10px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
-            <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
-            <Link href="/history"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Clock3 size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">History</div><div className="text-[10px] theme-subtle">Trade history & logs</div></div></div></Card></Link>
-          </div></section>
+          <Card className="rounded-3xl border theme-border theme-surface-2 p-4 sm:p-5">
+            <div className="mb-3 flex items-center gap-2"><Bell size={17} className="theme-accent" /><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-accent">04 / Alerts</div><h2 className="mt-1 text-lg font-bold">Recent Alerts</h2></div></div>
+            {diagnosticErrors.length === 0 ? <div className="rounded-2xl border theme-border theme-surface p-4"><div className="flex items-center gap-2 text-xs font-bold theme-success"><Activity size={15} /> No errors in latest response</div><p className="mt-2 text-[10px] leading-5 theme-muted">This only reflects the diagnostics endpoint response; it does not prove every subsystem is fault-free.</p></div> : <div className="max-h-52 space-y-2 overflow-y-auto">{diagnosticErrors.slice(0, 4).map((error, index) => <div key={error.id ?? error.time ?? index} className="rounded-xl border theme-border theme-surface p-3"><div className="flex flex-wrap justify-between gap-2 text-[10px] font-bold"><span>{error.component ?? "Runtime"} · {error.severity ?? "ERROR"}</span><span className="theme-subtle">{error.time ? new Date(error.time).toLocaleTimeString("en-IN") : "Time unavailable"}</span></div><p className="mt-1 break-words text-[11px] theme-muted">{error.message ?? error.error_type ?? "Diagnostic event returned without a message"}</p></div>)}</div>}
+            <Link href="/errors" className="mt-3 inline-flex text-[11px] font-bold theme-accent">Open diagnostics ↗</Link>
+          </Card>
         </div>
-      </div>
+      </section>
 
-      <Card className="mt-6 flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3"><Database size={17} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[13px] font-semibold">Integration Boundary</div><div className="text-[11px] theme-subtle">External broker orders remain OFF. FastAPI market data runs independently of broker order routing.</div></div></div>
-        <button type="button" onClick={() => setConnectionsOpen(true)} className="shrink-0 rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">View Connections</button>
-      </Card>
+      <section aria-label="Market performance and system status" className="grid min-w-0 gap-4 xl:grid-cols-2">
+        <Card className="min-w-0 rounded-3xl border theme-border theme-surface-2 p-4 sm:p-5">
+          <div className="mb-1 flex items-center gap-2"><BarChart3 size={17} className="theme-accent" /><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-accent">05 / Performance</div><h2 className="mt-1 text-lg font-bold">Market Performance</h2></div></div>
+          <p className="mb-5 text-[10px] leading-5 theme-subtle">Index percentage change from the latest market-overview response; not historical price data.</p>
+          <div className="space-y-4">{markets.map((symbol) => {
+            const quote = indexLtps[symbol];
+            const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
+            const change = quoteAvailable ? quote?.changePercent : null;
+            const width = change == null ? 0 : Math.min(48, Math.abs(change) * 12);
+            const positive = change != null && change >= 0;
+            return <div key={symbol} className="grid grid-cols-[78px_minmax(0,1fr)_68px] items-center gap-3"><span className="text-[10px] font-bold">{symbol}</span><div className="relative h-2 overflow-hidden rounded-full theme-surface"><span className="absolute inset-y-0 left-1/2 w-px" style={{ backgroundColor: "var(--app-border)" }} />{change != null ? <span className={"absolute top-0 h-full rounded-full " + (positive ? "theme-success-bg" : "theme-danger-bg")} style={{ width: width + "%", left: positive ? "50%" : "calc(50% - " + width + "%)" }} /> : null}</div><span className={"text-right text-[10px] font-bold tabular-nums " + (change == null ? "theme-muted" : positive ? "theme-success" : "theme-danger")}>{change == null ? "—" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</span></div>;
+          })}</div>
+          <div className="mt-5 border-t theme-border pt-3 text-[10px] theme-subtle">{marketDataAge == null ? "Waiting for market overview response." : "Overview checked " + Math.round(marketDataAge) + "s ago"} · {marketSession === "CLOSED" ? "Last-close status" : "Live session quote status required"}</div>
+        </Card>
+
+        <Card className="min-w-0 rounded-3xl border theme-border theme-surface-2 p-4 sm:p-5">
+          <div className="mb-4 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Database size={17} className="theme-accent" /><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-accent">06 / Infrastructure</div><h2 className="mt-1 text-lg font-bold">System Status</h2></div></div><button type="button" onClick={() => setConnectionsOpen(true)} className="rounded-xl border theme-border px-3 py-2 text-[10px] font-bold">Details ↗</button></div>
+          <div className="space-y-2">
+            {[["FastAPI", apiLabel, apiStatus === "connected"], ["Dashboard WebSocket", wsLabel, wsStatus === "connected"], ["Common Market Feed", feedLabel, feedStatus === "live"], ["Cash-Future Runner", runtime.runners.cash_future?.running ? "RUNNING" : "NOT CONFIRMED", Boolean(runtime.runners.cash_future?.running)], ["Calendar Runner", runtime.runners.calendar_spread?.running ? "RUNNING" : "NOT CONFIRMED", Boolean(runtime.runners.calendar_spread?.running)], ["Synthetic Runner", runtime.runners.synthetic_arbitrage?.running ? "RUNNING" : "NOT CONFIRMED", Boolean(runtime.runners.synthetic_arbitrage?.running)], ["Box Spread Runner", runtime.runners.box_spread?.running ? "RUNNING" : "NOT CONFIRMED", Boolean(runtime.runners.box_spread?.running)]].map(([label, value, healthy]) => <div key={String(label)} className="flex items-center justify-between gap-3 rounded-xl border theme-border theme-surface px-3 py-3"><span className="text-[11px] theme-muted">{label}</span><span className={"inline-flex items-center gap-2 text-[10px] font-extrabold " + (healthy ? "theme-success" : "theme-warning")}><span className={"h-1.5 w-1.5 rounded-full " + (healthy ? "theme-success-bg" : "theme-warning-bg")} />{value}</span></div>)}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2"><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wider theme-subtle">Delivery Errors</div><div className="mt-1 text-lg font-black">{runtime.deliveryErrors.toLocaleString("en-IN")}</div></div><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wider theme-subtle">Normalizer Errors</div><div className="mt-1 text-lg font-black">{runtime.normalizerErrors.toLocaleString("en-IN")}</div></div></div>
+        </Card>
+      </section>
+
+      <section aria-label="Custom alerts and workspaces" className="grid gap-4 md:grid-cols-2">
+        <Card className="flex items-center justify-between gap-4 rounded-2xl border theme-border theme-surface-2 p-4"><div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl theme-accent-bg theme-accent"><Bell size={18} /></span><div><h2 className="text-sm font-bold">Custom Alerts</h2><p className="mt-1 text-[10px] theme-muted">Manage configured scanner alerts.</p></div></div><Link href="/custom-alert" className="shrink-0 rounded-xl border theme-border px-3 py-2.5 text-[10px] font-bold">Manage ↗</Link></Card>
+        <Card className="flex items-center justify-between gap-4 rounded-2xl border theme-border theme-surface-2 p-4"><div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl theme-accent-bg theme-accent"><Clock3 size={18} /></span><div><h2 className="text-sm font-bold">Quick Navigation</h2><p className="mt-1 text-[10px] theme-muted">Jump straight to a workspace.</p></div></div><div className="flex flex-wrap justify-end gap-2"><Link href="/scanner" className="rounded-lg border theme-border px-2.5 py-2 text-[10px] font-semibold">Scanner</Link><Link href="/strategies/calendar-spread" className="rounded-lg border theme-border px-2.5 py-2 text-[10px] font-semibold">Calendar</Link><Link href="/strategies/synthetic-arbitrage" className="rounded-lg border theme-border px-2.5 py-2 text-[10px] font-semibold">Synthetic</Link></div></Card>
+      </section>
+
+      <footer className="flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3"><Database size={17} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-xs font-bold">Execution Safety Boundary</div><div className="mt-1 text-[10px] leading-5 theme-muted">External broker orders remain OFF. FastAPI market data and scanner telemetry remain separate from order routing.</div></div></div>
+        <div className="flex flex-wrap items-center gap-2"><span className="rounded-full border theme-border px-3 py-1.5 text-[9px] font-bold theme-warning">LIVE ORDERS OFF</span><span className="rounded-full border theme-border px-3 py-1.5 text-[9px] font-bold theme-muted">SESSION START {tickRuntimeLabel}</span></div>
+      </footer>
+
       {connectionsOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="connections-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionsOpen(false); }}>
-          <Card className="w-full max-w-xl rounded-2xl border theme-border theme-surface-2 p-5 shadow-2xl">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div id="connections-title" className="text-[14px] font-bold">Connections</div>
-                <div className="mt-1 text-[10px] theme-subtle">Current frontend connection state</div>
-              </div>
-              <button type="button" onClick={() => setConnectionsOpen(false)} className="rounded-lg px-2 py-1 text-xs theme-muted" aria-label="Close connections">✕</button>
-            </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {[
-                ["FastAPI", apiLabel],
-                ["Dashboard WebSocket", wsLabel],
-                ["Common Market Data Feed", feedLabel],
-                ["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],
-                ["Tick Counter", runtime.runtimeStartedAt ? `Session • ${tickRuntimeLabel}` : "—"],
-                ["Cash Future Runner", runtime.runners.cash_future?.detail ?? "UNAVAILABLE"],
-                ["Synthetic Future Runner", runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"],
-                ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"],
-                ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
-                ["Broker Orders", "OFF"],
-                ["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
-                ["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],
-                ["Last Feed Tick Age", feedAgeLabel],
-                ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors],
-                ["NSE Session", marketSession],
-                ["MCX Session", mcxSession],
-              ].map(([name, value]) => (
-                <div key={name} className="flex items-center justify-between rounded-xl border theme-border theme-surface-2 px-3 py-2.5">
-                  <span className="text-[11px] theme-muted">{name}</span>
-                  <span className="text-[10px] font-bold theme-accent">{value}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 rounded-xl border theme-border theme-surface-2 p-3">
-              <div className="text-[10px] font-bold uppercase tracking-wide">Runtime Errors Recorded Since API Process Start</div>
-              {diagnosticErrors.length === 0 ? <div className="mt-2 text-[10px] theme-muted">No error records returned in the latest sample. This does not independently prove zero active faults.</div> : (
-                <div className="mt-2 max-h-48 space-y-2 overflow-auto">
-                  {diagnosticErrors.map((error) => (
-                    <div key={error.id} className="rounded-lg border theme-border px-2.5 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold">{error.component} • {error.severity}</span>
-                        <span className="text-[9px] theme-subtle">{new Date(error.time).toLocaleString("en-IN")}</span>
-                      </div>
-                      <div className="mt-1 text-[10px]">{error.message}</div>
-                      <div className="mt-1 text-[9px] theme-subtle">{[error.error_type && "Type: " + error.error_type, error.endpoint && "Endpoint: " + error.endpoint, error.status_code && "HTTP: " + error.status_code].filter(Boolean).join(" • ")}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="mt-4 rounded-xl border theme-border theme-accent-bg p-3"><div className="text-[10px] font-bold uppercase tracking-wide theme-accent">Common Feed Diagnostics • Session Counters</div><div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4"><span>Consumers: <b>{runtime.consumers.length}</b></span><span>Delivery errors: <b>{runtime.deliveryErrors}</b></span><span>Normalizer errors: <b>{runtime.normalizerErrors}</b></span><span>Market: <b>{marketSession}</b></span></div></div><div className="mt-4 flex justify-end">
-              <Link href="/scanner" onClick={() => setConnectionsOpen(false)} className="rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">Open Scanner</Link>
-            </div>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="connections-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionsOpen(false); }}>
+          <Card className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border theme-border theme-surface-2 p-5 shadow-2xl sm:p-6">
+            <div className="flex items-center justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-accent">Runtime telemetry</div><h2 id="connections-title" className="mt-1 text-xl font-black">Connection Details</h2></div><button type="button" onClick={() => setConnectionsOpen(false)} className="rounded-xl border theme-border px-3 py-2 text-sm" aria-label="Close connections">✕</button></div>
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">{[["FastAPI", apiLabel], ["Dashboard WebSocket", wsLabel], ["Common Market Feed", feedLabel], ["Ticks Received", runtime.ticks.toLocaleString("en-IN")], ["Runtime Started", tickRuntimeLabel], ["Cash-Future Runner", runtime.runners.cash_future?.detail ?? "UNAVAILABLE"], ["Synthetic Runner", runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"], ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"], ["Calendar Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"], ["Broker Orders", "OFF"], ["Active Instruments", runtime.activeInstruments.toLocaleString("en-IN")], ["Socket Groups", runtime.connectedGroups + "/" + runtime.maxSocketSessions], ["Last Feed Tick Age", feedAgeLabel], ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors], ["NSE Session", marketSession], ["MCX Session", mcxSession]].map(([name, value]) => <div key={String(name)} className="flex items-center justify-between gap-3 rounded-xl border theme-border theme-surface px-3 py-3"><span className="text-[10px] theme-muted">{name}</span><span className="text-right text-[10px] font-bold theme-accent">{value}</span></div>)}</div>
+            <div className="mt-4 rounded-2xl border theme-border theme-surface p-4"><div className="text-[10px] font-bold uppercase tracking-wider">Runtime errors recorded since API process start</div>{diagnosticErrors.length === 0 ? <p className="mt-2 text-[10px] leading-5 theme-muted">No error records returned in the latest sample. This does not independently prove zero active faults.</p> : <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">{diagnosticErrors.slice(0, 10).map((error, index) => <div key={error.id ?? error.time ?? index} className="rounded-xl border theme-border p-3"><div className="flex flex-wrap justify-between gap-2 text-[10px] font-bold"><span>{error.component ?? "Runtime"} · {error.severity ?? "ERROR"}</span><span className="theme-subtle">{error.time ? new Date(error.time).toLocaleString("en-IN") : "Time unavailable"}</span></div><p className="mt-1 break-words text-[11px] theme-muted">{error.message ?? error.error_type ?? "Diagnostic event"}</p></div>)}</div>}</div>
+            <div className="mt-5 flex justify-end"><Link href="/scanner" onClick={() => setConnectionsOpen(false)} className="rounded-xl theme-accent-bg px-4 py-2.5 text-[11px] font-bold theme-accent">Open Scanner ↗</Link></div>
           </Card>
         </div>
       ) : null}
-    </div>
+    </main>
   );
 }
