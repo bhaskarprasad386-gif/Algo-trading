@@ -48,6 +48,20 @@ class LiveSyntheticScanner:
         with self._diagnostics_lock:
             self._diagnostics[reason] += amount
 
+    def _record_source_latency(self, latency_ns: int) -> None:
+        """Record bounded source-to-scanner latency buckets; never retain quote data."""
+        self._count("source_latency_samples")
+        if latency_ns < 0:
+            self._count("source_latency_negative")
+        elif latency_ns <= 250_000_000:
+            self._count("source_latency_0_250ms")
+        elif latency_ns <= 1_000_000_000:
+            self._count("source_latency_250ms_1s")
+        elif latency_ns <= 5_000_000_000:
+            self._count("source_latency_1_5s")
+        else:
+            self._count("source_latency_over_5s")
+
     def diagnostics_snapshot(self) -> dict:
         """Return scanner-local counters without exposing cached market payloads."""
         # Keep lock order consistent with observe(): scanner state before counters.
@@ -100,7 +114,10 @@ class LiveSyntheticScanner:
         # Epoch-nanosecond timestamps are checked against wall time. Small logical
         # timestamps remain supported by deterministic unit tests only.
         if timestamp_ns >= 1_000_000_000_000_000:
+            # Measure latency before freshness rejection so stale samples remain
+            # observable. Counters are aggregate-only; no raw payload is kept.
             now_ns = time.time_ns()
+            self._record_source_latency(now_ns - timestamp_ns)
             if timestamp_ns > now_ns + 5_000_000_000:
                 self._count("future_timestamp")
                 return ()
