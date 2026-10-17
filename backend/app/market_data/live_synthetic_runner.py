@@ -343,6 +343,19 @@ class LiveSyntheticRunner:
         self.targets = tuple(refreshed)
         return changed
 
+    def _subscribed_underlyings(self, subscriptions) -> set[str]:
+        """Return only underlyings represented by the active recorder subscriptions."""
+        symbols = {
+            str(getattr(item, "underlying", "") or "").strip().upper()
+            for item in subscriptions
+            if str(getattr(item, "underlying", "") or "").strip()
+        }
+        # Compatibility for lightweight recorder doubles without subscription
+        # metadata; production SyntheticSubscription entries always carry it.
+        if not symbols:
+            return {target.underlying.strip().upper() for target in self.targets}
+        return symbols
+
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
         self._refresh_stock_universe()
@@ -647,11 +660,13 @@ class LiveSyntheticRunner:
                 )
                 self._scanner = scanner
                 pipeline = self._build_pipeline(scanner)
+                subscribed_underlyings = self._subscribed_underlyings(subscriptions)
                 initial_atm = {
                     target.underlying: atm_provider(
                         target.underlying, time_ns()
                     )
                     for target in self.targets
+                    if target.underlying.strip().upper() in subscribed_underlyings
                 }
 
                 recorder_holder: dict[str, LiveSyntheticOptionFutureRecorder | None] = {"recorder": None}
