@@ -179,8 +179,13 @@ class LiveSyntheticScanner:
         if option_type in {"CE", "PE"} and strike is None:
             self._count("invalid_strike")
             return ()
-        if option_type not in {"CE", "PE", ""} and "FUT" not in str(payload.get("symbol") or "").upper():
-            self._count("invalid_payload_or_scope")
+        # An empty option_type is the legacy future-leg representation. Do not
+        # let a cash/underlying quote with no option_type occupy the future slot:
+        # it shares the same underlying/expiry bucket and could create a false
+        # synthetic triplet. Every non-option leg must identify itself as a future.
+        instrument_symbol = str(payload.get("symbol") or "").strip().upper()
+        if option_type not in {"CE", "PE"} and "FUT" not in instrument_symbol:
+            self._count("invalid_future_instrument")
             return ()
         with self._lock:
             key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
