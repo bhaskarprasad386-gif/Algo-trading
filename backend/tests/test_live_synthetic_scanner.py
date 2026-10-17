@@ -128,7 +128,7 @@ def test_live_synthetic_scanner_rejects_illiquid_strike():
     ts = 4_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
-    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "volume": 0, "oi": 0})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "bid_qty": 0, "ask_qty": 0})
     result = scanner.observe(
         {
             "underlying": "NIFTY",
@@ -861,7 +861,7 @@ def test_live_synthetic_scanner_rejects_non_future_symbol_containing_fut():
         "ask": 118.0,
         "lot_size": 1,
         "source_timestamp_ns": 35_000_000_000,
-        "symbol": "FUTNIFTY",
+        "symbol": "NIFTYFUTX",
     }
 
     assert scanner.observe(payload) == ()
