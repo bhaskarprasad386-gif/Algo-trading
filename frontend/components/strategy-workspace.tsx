@@ -176,6 +176,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK",
     "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL",
   ]);
+  const [universeAvailability, setUniverseAvailability] = useState<{
+    eligible_future_symbols?: string[]; missing_future_symbols?: string[];
+    eligible_target_symbols?: string[]; missing_option_expiry_symbols?: string[]; checked_at?: string | null;
+  } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
@@ -202,6 +206,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         if (!cancelled && Array.isArray(body?.top15_stock_symbols)) {
           setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
         }
+        if (!cancelled && body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load synthetic universe");
@@ -227,6 +232,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (Array.isArray(body?.top15_stock_symbols)) {
         setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
       }
+      if (body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Universe update failed");
@@ -435,6 +441,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               <p className="mt-1 theme-muted">Only the selected index is scanned. No fallback to stocks or other indices.</p>
             )}
             {control === "TOP15" && <p className="mt-1 theme-success">TOP15 scans the configured stock basket automatically. No individual stock selection is required; only stocks with eligible current futures and matching option expiry can be scanned.</p>}
+            {(control === "TOP15" || control === "ALL") && universeAvailability && (
+              <div className="mt-2 space-y-1 border-t theme-border pt-2">
+                <p className="theme-text">Eligible futures ({universeAvailability.eligible_future_symbols?.length ?? 0}/15): {(universeAvailability.eligible_future_symbols ?? []).join(" • ") || "Not yet checked"}</p>
+                <p className="theme-muted">Missing futures ({universeAvailability.missing_future_symbols?.length ?? 0}): {(universeAvailability.missing_future_symbols ?? []).join(" • ") || "None reported"}</p>
+                <p className="theme-text">Scan-ready targets ({universeAvailability.eligible_target_symbols?.filter((symbol) => top15StockSymbols.includes(symbol)).length ?? 0}/15): {(universeAvailability.eligible_target_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "Not yet checked"}</p>
+                <p className="theme-muted">Missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "None reported"}</p>
+                <p className="theme-muted">Availability is from the last backend universe check, not a guarantee of live quotes.</p>
+              </div>
+            )}
           </div>
         )}
       </Card>
