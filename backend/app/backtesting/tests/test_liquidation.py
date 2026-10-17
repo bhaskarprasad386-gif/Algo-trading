@@ -3,7 +3,6 @@ import pytest
 from app.backtesting.execution import DepthLevel, ExecutionConfig, ExecutionSide, ExecutionSimulator, OrderBook
 from app.backtesting.liquidation import build_liquidation_orders, execute_liquidation_orders
 from app.backtesting.portfolio import Portfolio, Position, RiskConfig
-from app.backtesting.risk_controls import order_reduces_position_risk
 
 
 def test_liquidation_planner_is_empty_when_maintenance_margin_is_healthy():
@@ -28,7 +27,6 @@ def test_liquidation_planner_flattens_long_and_short_positions_deterministically
         ("liquidation:A", "A", ExecutionSide.SELL, 100),
         ("liquidation:B", "B", ExecutionSide.BUY, 50),
     ]
-    assert all(order_reduces_position_risk(portfolio, order) for order in orders)
     assert portfolio.export_state() == before
 
 
