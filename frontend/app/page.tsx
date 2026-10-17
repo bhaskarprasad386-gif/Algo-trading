@@ -222,7 +222,7 @@ export default function HomePage() {
         const previousSampleAt = runnerCounterSampleAtRef.current;
         if (previousCounters && previousSampleAt != null && receivedAt > previousSampleAt) {
           const elapsedSeconds = (receivedAt - previousSampleAt) / 1000;
-          const rate = (key: string) => Math.max(0, (currentCounters[key as keyof typeof currentCounters] - (previousCounters[key] ?? 0)) / elapsedSeconds);
+          const rate = (key: string) => { const current = currentCounters[key as keyof typeof currentCounters]; const previous = previousCounters[key]; return !Number.isFinite(current) || !Number.isFinite(previous) || current < previous ? Number.NaN : (current - previous) / elapsedSeconds; };
           setRunnerTps({ commonTicks: rate("commonTicks"), cashPayloads: rate("cashPayloads"), syntheticPayloads: rate("syntheticPayloads"), boxPayloads: rate("boxPayloads"), calendarPayloads: rate("calendarPayloads") });
         }
         runnerCounterSampleAtRef.current = receivedAt;
