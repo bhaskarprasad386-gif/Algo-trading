@@ -250,10 +250,29 @@ class LiveSyntheticScanner:
                 pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
                 if None in (ce_bid, ce_ask, pe_bid, pe_ask):
                     continue
-                lot = int(float(ce.get("lot_size") or future_payload.get("lot_size") or 0))
-                if lot <= 0:
+                # The contract lot must agree across CE, PE and FUT. Falling
+                # back to one leg's lot can silently misstate executable P&L.
+                def contract_lot(leg: dict) -> int | None:
+                    try:
+                        raw = float(leg.get("lot_size") or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        return None
+                    if raw != raw or raw in (float("inf"), float("-inf")):
+                        return None
+                    if raw <= 0 or not raw.is_integer():
+                        return None
+                    return int(raw)
+
+                ce_lot = contract_lot(ce)
+                pe_lot = contract_lot(pe)
+                future_lot = contract_lot(future_payload)
+                if ce_lot is None or pe_lot is None or future_lot is None:
                     self._count("invalid_option_lot_size")
                     continue
+                if ce_lot != pe_lot or ce_lot != future_lot:
+                    self._count("lot_size_mismatch")
+                    continue
+                lot = ce_lot
                 option_quotes.append(
                     OptionQuote(
                         timestamp_ns=anchor_timestamp_ns,
