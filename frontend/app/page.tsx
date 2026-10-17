@@ -242,20 +242,7 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="min-h-screen theme-bg theme-text flex">
-      <aside className="hidden w-[220px] shrink-0 border-r theme-border theme-surface-2 p-4 lg:flex lg:flex-col">
-        <div className="mb-8 flex items-center gap-3 px-2"><span className="grid h-9 w-9 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={19} /></span><div><div className="text-[11px] font-extrabold tracking-wide">ALGO TRADING</div><div className="text-[9px] theme-subtle">MARKET TERMINAL</div></div></div>
-        <div className="mb-2 px-3 text-[9px] font-bold uppercase tracking-[0.16em] theme-subtle">Workspace</div>
-        <nav className="space-y-1">
-          <Link href="/" aria-current="page" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[11px] font-semibold theme-accent-bg theme-accent"><LayoutDashboard size={15} />Dashboard</Link>
-          <Link href="/scanner" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[11px] font-semibold theme-muted"><Radio size={15} />Cash Future</Link>
-          <Link href="/custom-alert" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[11px] font-semibold theme-muted"><Bell size={15} />Custom Alerts</Link>
-          <Link href="/history" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[11px] font-semibold theme-muted"><Clock3 size={15} />History</Link>
-        </nav>
-        <div className="mt-auto rounded-xl border theme-border p-3"><div className="text-[9px] font-bold uppercase tracking-wide theme-subtle">Market Feed</div><div className={"mt-2 flex items-center gap-2 text-[11px] font-bold " + (feedLabel === "LIVE" ? "theme-success" : "theme-warning")}><span className={"h-2 w-2 rounded-full " + (feedLabel === "LIVE" ? "theme-success-bg" : "theme-warning-bg")} />{feedLabel}</div><div className="mt-1 text-[9px] theme-subtle">Age: {feedAgeLabel}</div></div>
-      </aside>
-      <main className="min-w-0 flex-1">
-      <div className="min-h-screen theme-bg theme-text p-1 sm:p-3 lg:p-5">
+    <div className="space-y-5">
       <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "connected" && wsStatus === "connected" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "connected" && wsStatus === "connected" ? "SYSTEM CONNECTED" : "CHECKING CONNECTIONS"}</div></div>
       <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]">
         <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
@@ -447,8 +434,6 @@ export default function HomePage() {
           </Card>
         </div>
       ) : null}
-      </div>
-      </main>
     </div>
   );
 }
