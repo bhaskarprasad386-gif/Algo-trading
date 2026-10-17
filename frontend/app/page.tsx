@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap } from "lucide-react";
+import { Activity, BarChart3, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Wallet, Zap } from "lucide-react";
 import Link from "next/link";
 import { Card } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
@@ -381,6 +381,109 @@ export default function HomePage() {
           </div></section>
         </div>
       </div>
+
+      <section aria-label="Strategy opportunities and quick stats" className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Strategy Opportunities</h2></div>
+            <Link href="/scanner" className="text-[11px] font-bold theme-accent">Open scanner →</Link>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border theme-border theme-surface px-3 py-3">
+              <div className="text-[10px] theme-subtle">Cash-Future signals</div>
+              <div className="mt-2 text-xl font-bold tabular-nums">{snapshot.opportunities.toLocaleString("en-IN")}</div>
+              <div className="mt-1 text-[10px] theme-muted">Latest dashboard snapshot</div>
+            </div>
+            <div className="rounded-xl border theme-border theme-surface px-3 py-3">
+              <div className="text-[10px] theme-subtle">Calendar rows</div>
+              <div className="mt-2 text-xl font-bold tabular-nums">{snapshot.calendar.toLocaleString("en-IN")}</div>
+              <div className="mt-1 text-[10px] theme-muted">Integration snapshot</div>
+            </div>
+            <div className="rounded-xl border theme-border theme-surface px-3 py-3 col-span-2 sm:col-span-1">
+              <div className="text-[10px] theme-subtle">Synthetic / Box rows</div>
+              <div className="mt-2 text-xl font-bold tabular-nums">{(snapshot.synthetic + snapshot.box).toLocaleString("en-IN")}</div>
+              <div className="mt-1 text-[10px] theme-muted">No orders routed</div>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] theme-muted">
+            <span className="rounded-full border theme-border px-2.5 py-1">Market feed: {feedLabel}</span>
+            <span className="rounded-full border theme-border px-2.5 py-1">Paper / live broker orders: OFF</span>
+            <span className="rounded-full border theme-border px-2.5 py-1">{snapshot.timestamp ? "Snapshot " + new Date(snapshot.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "Awaiting dashboard snapshot"}</span>
+          </div>
+        </Card>
+
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4">
+          <div className="mb-3 flex items-center gap-2"><Wallet size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Paper Portfolio</h2></div>
+          <div className="rounded-xl border theme-border theme-surface p-3">
+            <div className="flex items-center justify-between gap-3"><span className="text-[11px] theme-muted">Execution mode</span><span className="rounded-full theme-warning-bg theme-warning px-2.5 py-1 text-[9px] font-bold">ORDERS OFF</span></div>
+            <div className="mt-2 text-sm font-semibold">Safe market-monitoring mode</div>
+            <p className="mt-1 text-[11px] leading-5 theme-muted">This dashboard has no verified paper-position or P&amp;L snapshot connected. Values are intentionally not fabricated.</p>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Link href="/history" className="rounded-xl border theme-border px-3 py-2.5 text-[11px] font-semibold transition hover:theme-surface">View history <span className="theme-accent">→</span></Link>
+            <Link href="/scanner" className="rounded-xl border theme-border px-3 py-2.5 text-[11px] font-semibold transition hover:theme-surface">Open scanner <span className="theme-accent">→</span></Link>
+          </div>
+        </Card>
+      </section>
+
+      <section aria-label="Market performance chart and recent alerts" className="mt-4 grid gap-4 xl:grid-cols-2">
+        <Card className="min-w-0 rounded-2xl border theme-border theme-surface-2 p-4">
+          <div className="mb-1 flex items-center gap-2"><BarChart3 size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Performance</h2></div>
+          <p className="mb-4 text-[10px] theme-subtle">Verified index change from the latest market-overview response; not a historical price chart.</p>
+          <div className="space-y-3">
+            {markets.map((symbol) => {
+              const quote = indexLtps[symbol];
+              const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
+              const change = quoteAvailable ? quote?.changePercent : null;
+              const width = change == null ? 0 : Math.min(100, Math.abs(change) * 12);
+              const positive = change != null && change >= 0;
+              return <div key={symbol} className="grid grid-cols-[76px_minmax(0,1fr)_72px] items-center gap-3">
+                <span className="text-[10px] font-bold">{symbol}</span>
+                <div className="relative h-2 overflow-hidden rounded-full theme-surface">
+                  <span className={"absolute inset-y-0 left-1/2 w-px " + "theme-border"} />
+                  {change != null ? <span className={"absolute top-0 h-full rounded-full " + (positive ? "theme-success-bg" : "theme-danger-bg")} style={{ width: width + "%", left: positive ? "50%" : "calc(50% - " + width + "%)" }} /> : null}
+                </div>
+                <span className={"text-right text-[10px] font-bold tabular-nums " + (change == null ? "theme-muted" : positive ? "theme-success" : "theme-danger")}>{change == null ? "No quote" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</span>
+              </div>;
+            })}
+          </div>
+          <div className="mt-4 border-t theme-border pt-3 text-[10px] theme-subtle">{marketDataAge == null ? "Waiting for market overview response." : "Overview checked " + Math.round(marketDataAge) + "s ago"} • {marketSession === "CLOSED" ? "Last-close status" : "Live session quote status required"}</div>
+        </Card>
+
+        <Card className="min-w-0 rounded-2xl border theme-border theme-surface-2 p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2"><Bell size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Recent Alerts</h2></div>
+            <Link href="/errors" className="text-[11px] font-bold theme-accent">View diagnostics →</Link>
+          </div>
+          {diagnosticErrors.length === 0 ? (
+            <div className="flex min-h-28 items-center gap-3 rounded-xl border theme-border theme-surface px-3 py-4">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg theme-success-bg theme-success"><Activity size={16} /></span>
+              <div><div className="text-[11px] font-semibold">No diagnostic errors in the latest response</div><div className="mt-1 text-[10px] theme-muted">This is not a claim that scanner opportunities or all system faults are zero.</div></div>
+            </div>
+          ) : (
+            <div className="max-h-64 space-y-2 overflow-y-auto">
+              {diagnosticErrors.slice(0, 5).map((error, index) => (
+                <div key={error.id ?? error.time ?? index} className="rounded-xl border theme-border theme-surface px-3 py-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[10px] font-bold">{error.component ?? "Runtime"} • {error.severity ?? "ERROR"}</span><span className="text-[9px] theme-subtle">{error.time ? new Date(error.time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "Time unavailable"}</span></div>
+                  <div className="mt-1 break-words text-[11px] theme-muted">{error.message ?? error.error_type ?? "Diagnostic event returned without a message"}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 border-t theme-border pt-3 text-[10px] theme-subtle">Runtime diagnostics only. Scanner alert history remains in its dedicated workspace.</div>
+        </Card>
+      </section>
+
+      <section aria-label="Custom alerts and quick navigation" className="mt-4 grid gap-4 md:grid-cols-2">
+        <Card className="flex items-center justify-between gap-3 rounded-2xl border theme-border theme-surface-2 p-4">
+          <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl theme-accent-bg theme-accent"><Bell size={18} /></span><div><h2 className="text-[13px] font-semibold">Custom Alerts</h2><p className="mt-1 text-[10px] theme-muted">Manage your configured scanner alerts.</p></div></div>
+          <Link href="/custom-alert" className="shrink-0 rounded-xl border theme-border px-3 py-2 text-[10px] font-bold">Manage →</Link>
+        </Card>
+        <Card className="flex items-center justify-between gap-3 rounded-2xl border theme-border theme-surface-2 p-4">
+          <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl theme-accent-bg theme-accent"><Clock3 size={18} /></span><div><h2 className="text-[13px] font-semibold">Quick Navigation</h2><p className="mt-1 text-[10px] theme-muted">Open the most-used workspaces.</p></div></div>
+          <div className="flex flex-wrap justify-end gap-2"><Link href="/scanner" className="rounded-lg border theme-border px-2.5 py-2 text-[10px] font-semibold">Cash Future</Link><Link href="/strategies/calendar-spread" className="rounded-lg border theme-border px-2.5 py-2 text-[10px] font-semibold">Calendar</Link><Link href="/strategies/synthetic-arbitrage" className="rounded-lg border theme-border px-2.5 py-2 text-[10px] font-semibold">Synthetic</Link></div>
+        </Card>
+      </section>
 
       <Card className="mt-6 flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-start gap-3"><Database size={17} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[13px] font-semibold">Integration Boundary</div><div className="text-[11px] theme-subtle">External broker orders remain OFF. FastAPI market data runs independently of broker order routing.</div></div></div>
