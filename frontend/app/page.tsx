@@ -164,11 +164,13 @@ export default function HomePage() {
           const running = Boolean(value.running);
           const nestedFeed = value.underlying_feed ?? value.feed ?? null;
           const instruments = Number(value.registered_instruments ?? value.active_instruments ?? nestedFeed?.active_instruments ?? nestedFeed?.subscriptions ?? 0);
-          const payloads = Number(value.records_received ?? value.payload_callbacks ?? value.callbacks ?? 0);\n          const updates = Number(value.scanner_updates ?? value.scanner_results ?? value.observations ?? value.signals ?? 0);
+          const payloads = Number(value.records_received ?? value.payload_callbacks ?? value.callbacks ?? 0);
+          const updates = Number(value.scanner_updates ?? value.scanner_results ?? value.observations ?? value.signals ?? 0);
           const connected = nestedFeed?.connected_groups?.length ?? 0;
           const parts = [running ? "RUNNING" : "STOPPED"];
           if (Number.isFinite(instruments) && instruments > 0) parts.push(instruments.toLocaleString("en-IN") + " instruments");
-          if (Number.isFinite(payloads) && payloads > 0) parts.push(payloads.toLocaleString("en-IN") + " payloads");\n          if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " scanner updates");
+          if (Number.isFinite(payloads) && payloads > 0) parts.push(payloads.toLocaleString("en-IN") + " payloads");
+          if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " scanner updates");
           if (connected > 0) parts.push(connected + " feed socket" + (connected === 1 ? "" : "s"));
           return { running, detail: parts.join(" • "), updates: Number.isFinite(updates) ? updates : 0, payloads: Number.isFinite(payloads) ? payloads : 0, instruments: Number.isFinite(instruments) ? instruments : 0 };
         };
