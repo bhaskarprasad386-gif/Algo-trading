@@ -35,6 +35,29 @@ def test_runner_skips_targets_until_monthly_expiry_is_resolved():
     assert runner.build_subscriptions() == ()
 
 
+def test_contract_selection_uses_india_market_date_not_host_date(monkeypatch):
+    from datetime import datetime as RealDateTime
+    import app.market_data.synthetic_subscriptions as subscriptions_module
+
+    class SplitDateTime(RealDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            # Simulate a host still on Oct 17 while India has crossed into Oct 30.
+            if tz is None:
+                return cls(2026, 10, 17)
+            return cls(2026, 10, 30, tzinfo=tz)
+
+    monkeypatch.setattr(subscriptions_module, "datetime", SplitDateTime)
+    with __import__("pytest").raises(LookupError, match="does not match"):
+        subscriptions_module.select_synthetic_contracts(
+            _master(),
+            underlying="NIFTY",
+            instrument_class="INDEX",
+            atm_strike=100.0,
+            expiry="29OCT2026",
+        )
+
+
 def test_runner_builds_concrete_real_tokens_without_duplicates():
     master = _master()
     runner = LiveSyntheticRunner(
