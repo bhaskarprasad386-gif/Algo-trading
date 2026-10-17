@@ -538,8 +538,9 @@ class LiveSyntheticScanner:
                                 missing.append(f"INVALID_{label}_QUOTE")
                             if not positive(option.get("bid_qty")) or not positive(option.get("ask_qty")):
                                 missing.append(f"{label}_DEPTH_MISSING")
-                            if not (positive(option.get("volume")) or positive(option.get("oi"))):
-                                missing.append(f"{label}_NO_VOLUME_OR_OI")
+                            # Match scanner eligibility: executable two-sided depth is
+                            # required, but missing volume/OI metadata alone is not a
+                            # blocker. Reporting it as incomplete would contradict live results.
                         try:
                             ce_lot = int(float(ce.get("lot_size") or 0))
                             pe_lot = int(float(pe.get("lot_size") or 0))
