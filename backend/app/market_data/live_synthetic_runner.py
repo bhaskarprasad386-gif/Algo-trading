@@ -427,9 +427,11 @@ class LiveSyntheticRunner:
 
     def run_forever(self) -> None:
         # Refresh once at startup, before building the ATM strike map.
+        expiry_refresh_failed = False
         try:
             self._refresh_target_expiries()
         except Exception as exc:
+            expiry_refresh_failed = True
             app_logger.warning("Synthetic expiry refresh failed at startup: %s", exc)
         last_expiry_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         last_expiry_refresh_attempt_ns = time_ns()
@@ -488,17 +490,19 @@ class LiveSyntheticRunner:
                     and not target.expiry
                     for target in self.targets
                 )
-                retry_missing_expiry = (
-                    unresolved_expiry
+                retry_expiry_refresh = (
+                    (unresolved_expiry or expiry_refresh_failed)
                     and time_ns() - last_expiry_refresh_attempt_ns >= 60_000_000_000
                 )
-                if session_date != last_expiry_refresh_date or retry_missing_expiry:
+                if session_date != last_expiry_refresh_date or retry_expiry_refresh:
                     last_expiry_refresh_date = session_date
                     last_expiry_refresh_attempt_ns = time_ns()
                     try:
                         expiry_changed = self._refresh_target_expiries()
+                        expiry_refresh_failed = False
                     except Exception as exc:
                         expiry_changed = False
+                        expiry_refresh_failed = True
                         app_logger.warning("Synthetic expiry refresh failed; retaining last valid targets: %s", exc)
                     if expiry_changed:
                         if feed is not None:
@@ -573,17 +577,19 @@ class LiveSyntheticRunner:
                     and not target.expiry
                     for target in self.targets
                 )
-                retry_missing_expiry = (
-                    unresolved_expiry
+                retry_expiry_refresh = (
+                    (unresolved_expiry or expiry_refresh_failed)
                     and time_ns() - last_expiry_refresh_attempt_ns >= 60_000_000_000
                 )
-                if session_date != last_expiry_refresh_date or retry_missing_expiry:
+                if session_date != last_expiry_refresh_date or retry_expiry_refresh:
                     last_expiry_refresh_date = session_date
                     last_expiry_refresh_attempt_ns = time_ns()
                     try:
                         expiry_changed = self._refresh_target_expiries()
+                        expiry_refresh_failed = False
                     except Exception as exc:
                         expiry_changed = False
+                        expiry_refresh_failed = True
                         app_logger.warning("Synthetic expiry refresh failed; retaining last valid targets: %s", exc)
                     if expiry_changed:
                         if feed is not None:
