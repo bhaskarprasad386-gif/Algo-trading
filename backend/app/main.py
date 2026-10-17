@@ -916,8 +916,9 @@ def get_synthetic_universe():
         "options": ["ALL", "TOP15", *sorted(NIFTY50_INDEX_SYMBOLS)],
         "meaning": {
             "ALL": "All supported index underlyings plus the top 15 liquid F&O stocks",
-            "TOP15": "Top 15 liquid F&O stocks only",
+            "TOP15": "Top 15 liquid F&O stocks only; no index underlyings",
         },
+        "top15_stock_symbols": sorted(TOP15_LIQUID_STOCK_SYMBOLS),
     }
 
 
@@ -929,14 +930,24 @@ def set_synthetic_universe(payload: SyntheticUniverseSelection):
     if selection not in allowed:
         raise HTTPException(status_code=422, detail={"message": "Unsupported synthetic scanner universe", "allowed": sorted(allowed)})
     if selection == _live_synthetic_universe_selection:
-        return {"status": "success", "selection": selection, "restart_requested": False}
+        return {
+            "status": "success",
+            "selection": selection,
+            "restart_requested": False,
+            "top15_stock_symbols": sorted(TOP15_LIQUID_STOCK_SYMBOLS),
+        }
     _live_synthetic_universe_selection = selection
     runner = live_synthetic_runner
     restart_requested = runner is not None and not runner.stop_event.is_set()
     if restart_requested:
         _live_synthetic_universe_restart_requested.set()
         runner.stop()
-    return {"status": "success", "selection": selection, "restart_requested": restart_requested}
+    return {
+        "status": "success",
+        "selection": selection,
+        "restart_requested": restart_requested,
+        "top15_stock_symbols": sorted(TOP15_LIQUID_STOCK_SYMBOLS),
+    }
 
 
 @app.get("/api/v1/market-data/runtime/health")
