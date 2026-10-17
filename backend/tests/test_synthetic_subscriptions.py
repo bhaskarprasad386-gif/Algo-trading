@@ -54,6 +54,40 @@ def test_index_selection_subscribes_actual_chain_for_liquidity_selection():
         raise AssertionError("weekly options must not be paired with a monthly future")
 
 
+
+def test_selection_excludes_strikes_missing_either_option_leg():
+    items = [
+        {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"FUTIDX","expiry":"29OCT2026","token":"900","symbol":"NIFTY29OCT26FUT","lotsize":"65"},
+        *[
+            {
+                "exch_seg":"NFO",
+                "name":"NIFTY",
+                "instrumenttype":"OPTIDX",
+                "expiry":"29OCT2026",
+                "token":str(i * 2 + offset),
+                "symbol":f"NIFTY{24000 + i * 50}{option_type}",
+                "strike":str((24000 + i * 50) * 100),
+                "lotsize":"65",
+            }
+            for i in range(1, 62)
+            for option_type, offset in (("CE", 0), ("PE", 1))
+            if not (i == 30 and option_type == "PE")
+        ],
+    ]
+
+    selected = select_synthetic_contracts(
+        _master(items), underlying="NIFTY", instrument_class="INDEX", atm_strike=25550.0,
+        expiry="29OCT2026",
+    )
+    selected_options = [x for x in selected.subscriptions if x.contract_role == "OPTION"]
+    assert all(x.strike != 25500.0 for x in selected_options)
+    by_strike = {}
+    for item in selected_options:
+        by_strike.setdefault(item.strike, set()).add(item.option_type)
+    assert by_strike
+    assert all(legs == {"CE", "PE"} for legs in by_strike.values())
+
+
 def test_stock_selection_requires_configured_top15_liquid_universe():
     items=[{"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"30SEP2026","token":"1","symbol":"ABCFUT","lotsize":"10"}]
     try:
