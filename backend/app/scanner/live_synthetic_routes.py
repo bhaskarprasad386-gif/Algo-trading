@@ -9,11 +9,17 @@ router = APIRouter(
     tags=["Synthetic Cash-Carry"],
 )
 _latest_provider: Callable[[], tuple] | None = None
+_diagnostics_provider: Callable[[], dict | None] | None = None
 
 
 def configure(provider: Callable[[], tuple]) -> None:
     global _latest_provider
     _latest_provider = provider
+
+
+def configure_diagnostics(provider: Callable[[], dict | None]) -> None:
+    global _diagnostics_provider
+    _diagnostics_provider = provider
 
 
 def _serialize(result) -> dict:
@@ -87,3 +93,61 @@ def alerts(days: int = Query(30, ge=1, le=30), limit: int = Query(500, ge=1, le=
     finally:
         db.close()
 
+
+
+@router.get("/diagnostics")
+def diagnostics():
+    """Expose scanner health separately from common-feed ticks and opportunities."""
+    snapshot = _diagnostics_provider() if _diagnostics_provider is not None else None
+    if not isinstance(snapshot, dict):
+        return {
+            "status": "unavailable",
+            "scanner": "synthetic-cash-carry-live-1s",
+            "reason": "scanner diagnostics provider is not configured",
+            "diagnostics": None,
+        }
+    option_recorder = snapshot.get("option_recorder")
+    scanner = snapshot.get("scanner_diagnostics")
+    counters = scanner.get("counters", {}) if isinstance(scanner, dict) else {}
+    now_ns = time.time_ns()
+    last_observation_ns = counters.get("last_observation_at_ns")
+    last_scan_ns = counters.get("last_successful_calculation_at_ns")
+    def age_seconds(value):
+        try:
+            stamp = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return max(0.0, (now_ns - stamp) / 1_000_000_000) if stamp > 0 else None
+    observation_age = age_seconds(last_observation_ns)
+    scan_age = age_seconds(last_scan_ns)
+    running = bool(snapshot.get("running"))
+    if not running:
+        status = "STOPPED"
+    elif observation_age is None:
+        status = "WAITING_FOR_OBSERVATIONS"
+    elif observation_age > 5:
+        status = "STALE"
+    elif scan_age is None:
+        status = "OBSERVING_NO_COMPLETE_SCAN"
+    elif scan_age > 5:
+        status = "NO_RECENT_COMPLETE_SCAN"
+    else:
+        status = "SCANNING"
+    return {
+        "status": status,
+        "scanner": "synthetic-cash-carry-live-1s",
+        "running": running,
+        "target_count": snapshot.get("targets"),
+        "scanner_initialized": bool(snapshot.get("scanner_initialized")),
+        "observation_age_seconds": observation_age,
+        "last_scan_age_seconds": scan_age,
+        "last_observation_at_ns": last_observation_ns,
+        "last_successful_calculation_at_ns": last_scan_ns,
+        "last_result_count": counters.get("last_result_count", 0),
+        "counters": counters,
+        "option_recorder": {
+            "running": option_recorder.get("running") if isinstance(option_recorder, dict) else None,
+            "ticks_received": option_recorder.get("ticks_received") if isinstance(option_recorder, dict) else None,
+            "errors": option_recorder.get("errors") if isinstance(option_recorder, dict) else None,
+        },
+    }
