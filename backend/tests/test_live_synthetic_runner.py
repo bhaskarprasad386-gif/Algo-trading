@@ -849,3 +849,62 @@ def test_delayed_tick_is_rejected_after_its_bucket_was_flushed():
     assert recorder._latest == {}
     assert recorder._out_of_order_records == 1
     assert [row["source_timestamp_ns"] for row in emitted] == [2_000_000_100]
+
+
+
+def test_synthetic_recorder_discards_stale_completed_buffer_without_emitting():
+    from threading import Lock
+    from types import SimpleNamespace
+    from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
+
+    recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
+    recorder._lock = Lock()
+    recorder._latest = {}
+    recorder._stale_buffer_discards = 0
+    recorder._future_buffer_discards = 0
+    recorder._observations_emitted = 0
+    recorder._missing_executable_quote = 0
+    recorder._metadata = {}
+    recorder._ingestor = None
+    emitted = []
+    recorder.on_observation = emitted.append
+    stale = SimpleNamespace(
+        timestamp_ns=1_000_000_000,
+        symbol="NIFTY",
+        instrument=SimpleNamespace(exchange="NFO", token="123"),
+    )
+    recorder._latest[("NFO", "123")] = (1_000_000_000, stale)
+
+    assert recorder._flush_completed_buckets(now_ns=7_000_000_001) == 0
+    assert recorder._latest == {}
+    assert recorder._stale_buffer_discards == 1
+    assert emitted == []
+
+
+def test_synthetic_recorder_discards_far_future_buffer_but_keeps_small_clock_skew():
+    from threading import Lock
+    from types import SimpleNamespace
+    from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
+
+    recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
+    recorder._lock = Lock()
+    recorder._latest = {}
+    recorder._stale_buffer_discards = 0
+    recorder._future_buffer_discards = 0
+    recorder._observations_emitted = 0
+    recorder._missing_executable_quote = 0
+    recorder._metadata = {}
+    recorder._ingestor = None
+    emitted = []
+    recorder.on_observation = emitted.append
+    future = SimpleNamespace(
+        timestamp_ns=20_000_000_000,
+        symbol="NIFTY",
+        instrument=SimpleNamespace(exchange="NFO", token="123"),
+    )
+    recorder._latest[("NFO", "123")] = (20_000_000_000, future)
+
+    assert recorder._flush_completed_buckets(now_ns=10_000_000_000) == 0
+    assert recorder._latest == {}
+    assert recorder._future_buffer_discards == 1
+    assert emitted == []
