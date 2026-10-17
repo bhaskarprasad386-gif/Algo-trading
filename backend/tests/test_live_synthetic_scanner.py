@@ -799,3 +799,43 @@ def test_live_synthetic_scanner_does_not_overwrite_leg_with_older_tick():
     assert bucket["options"][105.0]["CE"]["bid"] == 8.0
     assert bucket["options"][105.0]["CE"]["source_timestamp_ns"] == ts + 100
     assert scanner.diagnostics_snapshot()["counters"]["out_of_order_leg_updates"] == 1
+
+
+def test_pending_quote_anchor_preserves_real_timestamp_for_out_of_order_guard():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = 30_000_000_000
+    expiry = 20261029
+    key = ("NIFTY", ts, expiry)
+    scanner._buckets[key] = {
+        "future": None,
+        "options": {105.0: {"CE": {
+            **_base(ts, 105.0, "CE", None, None),
+            "ltp": 5.0,
+            "expiry": "29OCT2026",
+        }}},
+        "first_seen_monotonic_ns": __import__("time").monotonic_ns(),
+        "quote_wait_started_ns": __import__("time").monotonic_ns(),
+    }
+
+    # An executable quote arriving later is anchored for pairing, but its real
+    # broker timestamp must remain available for ordering checks.
+    later_ce = {
+        **_base(ts + 2_000_000_000, 105.0, "CE", 8.0, 9.0),
+        "expiry": "29OCT2026",
+    }
+    updated = scanner.observe(later_ce)
+    ce = scanner._buckets[key]["options"][105.0]["CE"]
+    assert ce["source_timestamp_ns"] == ts
+    assert ce["_quote_source_timestamp_ns"] == ts + 2_000_000_000
+
+    # This intermediate timestamp is older than the real quote above, even
+    # though it is newer than the pairing anchor.
+    older_ce = {
+        **_base(ts + 1_000_000_000, 105.0, "CE", 1.0, 2.0),
+        "expiry": "29OCT2026",
+    }
+    scanner.observe(older_ce)
+    ce = scanner._buckets[key]["options"][105.0]["CE"]
+    assert ce["bid"] == 8.0
+    assert ce["_quote_source_timestamp_ns"] == ts + 2_000_000_000
+    assert scanner.diagnostics_snapshot()["counters"]["out_of_order_leg_updates"] == 1
