@@ -213,7 +213,10 @@ def test_live_synthetic_scanner_rejects_stale_epoch_timestamp_and_counts_reason(
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     payload = _base(time.time_ns() - 6_000_000_000, 100.0, "CE", 4.0, 5.0)
     assert scanner.observe(payload) == ()
-    assert scanner.diagnostics_snapshot()["counters"]["stale_timestamp"] == 1
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["stale_timestamp"] == 1
+    assert counters["source_latency_samples"] == 1
+    assert counters["source_latency_over_5s"] == 1
 
 
 def test_live_synthetic_scanner_rejects_malformed_timestamp_without_raising():
@@ -605,3 +608,16 @@ def test_pair_monitor_rejects_nonfinite_or_nonpositive_atm():
         row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
         assert row["state"] == "INCOMPLETE"
         assert "MISSING_ATM" in row["reason"]
+
+
+
+def test_live_synthetic_scanner_counts_negative_source_latency_without_retaining_payload():
+    import time
+
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(time.time_ns() + 1_000_000_000, 100.0, "CE", 4.0, 5.0)
+    assert scanner.observe(payload) == ()
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["source_latency_samples"] == 1
+    assert counters["source_latency_negative"] == 1
+    assert "payload" not in counters
