@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, ShieldCheck, TriangleAlert, TrendingDown, TrendingUp, Zap } from "lucide-react";
+import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
@@ -16,21 +16,7 @@ const strategies = [
   { name: "Strategy Scanner", detail: "Dedicated workspaces •", href: "/scanner", icon: Radio },
 ];
 
-const health = (api: string, ws: string, feed: string, ticks: number | null, runners: Record<string, { running: boolean; detail: string }>) => [
-  ["Frontend", "READY", "ok"],
-  ["FastAPI", api, api === "CONNECTED" ? "ok" : api === "ERROR" ? "error" : "warn"],
-  ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
-  ["Common Market Data Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
-  ["Ticks Received (session)", ticks == null ? "—" : ticks.toLocaleString("en-IN"), ticks && ticks > 0 ? "ok" : "warn"],
-  ["Cash Future Runner", runners.cash_future?.detail ?? "UNAVAILABLE", runners.cash_future?.running ? "ok" : "warn"],
-  ["Synthetic Future Runner", runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE", runners.synthetic_arbitrage?.running ? "ok" : "warn"],
-  ["Box Spread Runner", runners.box_spread?.detail ?? "UNAVAILABLE", runners.box_spread?.running ? "ok" : "warn"],
-  ["Calendar Spread Runner", runners.calendar_spread?.detail ?? "UNAVAILABLE", runners.calendar_spread?.running ? "ok" : "warn"],
-  ["Broker Orders", "OFF", "warn"],
-] as const;
-
 export default function HomePage() {
-  const [capital, setCapital] = useState("10000000");
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null, cashFutureObservedAt: null as string | null });
@@ -239,13 +225,6 @@ export default function HomePage() {
   const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
   const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
   const feedAgeLabel = feedAge == null ? "Not available" : feedAge >= 3600 ? `${Math.floor(feedAge / 3600)}h ${Math.floor((feedAge % 3600) / 60)}m` : feedAge >= 60 ? `${Math.floor(feedAge / 60)}m ${Math.floor(feedAge % 60)}s` : `${feedAge.toFixed(1)}s`;
-  const runnerState = (detail: string | undefined, running: boolean | undefined) => {
-    if (!detail || detail === "UNAVAILABLE") return "UNAVAILABLE";
-    const suffix = detail.replace(/^RUNNING|^STOPPED/, "").trim();
-    if (marketSession === "CLOSED") return `${running ? "RUNNING • IDLE" : "STOPPED"} • Market closed${suffix ? " • " + suffix.replace(/^•\s*/, "") : ""}`;
-    if (marketSession === "UNKNOWN") return `${running ? "RUNNING" : "STOPPED"} • Market state unknown${suffix ? " • " + suffix.replace(/^•\s*/, "") : ""}`;
-    return detail;
-  };
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
   const observationAge = snapshot.cashFutureObservedAt ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000) : null;
   const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
