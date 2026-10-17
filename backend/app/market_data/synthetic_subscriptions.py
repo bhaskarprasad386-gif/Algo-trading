@@ -93,7 +93,7 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
         token=future_token,
         symbol=future_symbol, underlying=symbol,
         instrument_class=cls, expiry=str(current.get("expiry","")).strip(),
-        lot_size=int(float(current.get("lotsize",0) or 0)) or None, contract_role="CURRENT"))]
+        lot_size=int(float(current.get("lotsize",0) or 0)) or None, contract_role="CURRENT")]
     for option_expiry, expiry_options in options_by_expiry.items():
         if not expiry_options:
             continue
