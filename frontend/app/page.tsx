@@ -425,7 +425,22 @@ export default function HomePage() {
       <div className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.8fr)]">
         <div className="min-w-0">
         <section aria-label="System health">
-          <div className="mb-2 rounded-xl border theme-border px-3 py-2 text-[10px] leading-4 theme-subtle">Interpretation: API/server health, WebSocket connection, incoming payloads and scanner observations are separate checks. A connected feed does not guarantee fresh executable bid/ask quotes, a profitable signal, or order execution.</div>
+          <div className="mb-3 rounded-2xl border theme-border theme-surface-2 p-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wide theme-subtle">Health chain • each stage is independent</div>
+            <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+              {[
+                {label:"1. API SERVER",value:apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "OFFLINE" : "CHECKING",detail:"HTTP health response",ok:apiStatus === "connected",warn:apiStatus === "degraded" || apiStatus === "unknown"},
+                {label:"2. WEBSOCKET",value:commonSocketState,detail:connectedRequiredGroupCount+"/"+(runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount)+" required groups",ok:commonSocketState === "CONNECTED",warn:commonSocketState === "DEGRADED" || commonSocketState === "UNKNOWN"},
+                {label:"3. FEED HEALTH",value:feedLabel,detail:"Sample age: "+feedAgeLabel,ok:effectiveFeedStatus === "live" && !runtimeTelemetryStale,warn:effectiveFeedStatus === "stale" || effectiveFeedStatus === "no-data" || effectiveFeedStatus === "unknown"},
+                {label:"4. SCANNER OBSERVATION",value:cashScannerAge == null ? "NO DATA" : cashScannerAge <= 5 ? "RECENT" : cashScannerAge <= 10 ? "STALE" : "STALLED",detail:cashScannerAge == null ? "No observation timestamp" : ageText(cashScannerAge)+" ago",ok:cashScannerAge != null && cashScannerAge <= 5,warn:cashScannerAge != null && cashScannerAge > 5 && cashScannerAge <= 10}
+              ].map((stage) => <div key={stage.label} className="min-w-0 rounded-xl border theme-border px-3 py-2">
+                <div className="text-[9px] font-bold tracking-wide theme-subtle">{stage.label}</div>
+                <div className={"mt-1 break-words text-[11px] font-extrabold "+(stage.ok ? "theme-success" : stage.warn ? "theme-warning" : "theme-danger")}>{stage.value}</div>
+                <div className="mt-1 break-words text-[9px] leading-4 theme-subtle">{stage.detail}</div>
+              </div>)}
+            </div>
+            <p className="mt-2 text-[10px] leading-4 theme-subtle">These stages are not interchangeable. Feed health does not prove executable bid/ask quotes; scanner activity does not prove a profitable signal or order execution.</p>
+          </div>
           <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div><div className="text-right text-[10px] theme-subtle">Auto-refreshing • Server sample: {runtimeServerTimestamp ? new Date(runtimeServerTimestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) + (runtimeServerTimestampReceivedAt == null ? "" : " • received " + Math.max(0, (Date.now() - runtimeServerTimestampReceivedAt) / 1000).toFixed(1) + "s ago") : "unavailable"}</div></div>
           <Card className="overflow-hidden rounded-2xl border theme-border theme-surface-2 p-0 shadow-sm">
             <div className="overflow-x-auto"><table className="w-full border-collapse text-left md:min-w-[1080px]">
