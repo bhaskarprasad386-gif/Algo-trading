@@ -415,6 +415,12 @@ class LiveSyntheticRunner:
             if self._stop_requested.is_set():
                 return
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
+                # The recorder returns normally when market hours end. Keep the
+                # runner alive and gate every new recording session on market
+                # hours, so the next trading day can rebuild subscriptions.
+                if not LiveSyntheticOptionFutureRecorder.market_open():
+                    self._stop_requested.wait(30.0)
+                    continue
                 self._refresh_requested.clear()
                 try:
                     subscriptions = self.build_subscriptions()
@@ -464,7 +470,15 @@ class LiveSyntheticRunner:
                     self._recorder = None
                     continue
                 self._recorder = None
-                break
+                # A normal recorder return is not a request to terminate the
+                # strategy runner. It usually means the market session ended;
+                # loop back to the market-hours gate and start a fresh scanner
+                # and recorder when the next session opens.
+                if not self._stop_requested.is_set():
+                    app_logger.info("Synthetic recorder session ended; waiting for the next session")
+                    if LiveSyntheticOptionFutureRecorder.market_open():
+                        self._stop_requested.wait(1.0)
+                    continue
         finally:
             if feed is not None:
                 feed.stop()
