@@ -260,17 +260,14 @@ class LiveSyntheticScanner:
                 updated = update_leg_without_time_regression(legs.get(option_type), payload)
                 if updated is not None:
                     legs[option_type] = updated
-            elif option_type == "":
+            else:
+                # Future instruments are accepted through one explicit path only.
+                # The upfront identity guard requires FUT in the symbol, so an
+                # empty option_type is a legacy future representation, not a
+                # blanket permission for arbitrary cash/index quotes.
                 updated = update_leg_without_time_regression(bucket.get("future"), payload)
                 if updated is not None:
                     bucket["future"] = updated
-            else:
-                # Futures may not carry option_type in older instrument masters.
-                instrument_symbol = str(payload.get("symbol") or "").upper()
-                if "FUT" in instrument_symbol:
-                    updated = update_leg_without_time_regression(bucket.get("future"), payload)
-                    if updated is not None:
-                        bucket["future"] = updated
 
             # Only accepted legs count as market observations. Valid-looking but
             # unclassifiable ticks must not keep the diagnostics freshness green.
