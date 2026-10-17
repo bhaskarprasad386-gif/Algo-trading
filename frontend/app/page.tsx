@@ -313,7 +313,7 @@ export default function HomePage() {
                   {name:"BOX SPREAD SCANNER", state:runtime.runners.box_spread?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.box_spread?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.box_spread?.updates ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:runtime.runners.box_spread?.detail ?? "UNAVAILABLE"},
                   {name:"CALENDAR SPREAD SCANNER", state:runtime.runners.calendar_spread?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.calendar_spread?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.calendar_spread?.updates ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"},
                 ].map((row) => {
-                  const healthy = ["CONNECTED","RUNNING","LIVE","RECEIVING"].includes(row.state) || row.flow === "RECEIVING";
+                  const healthy = row.state === "CONNECTED" || row.flow === "LIVE" || row.flow === "RECEIVING";
                   return <tr key={row.name} className="border-b theme-border last:border-0">
                     <td className="px-3 py-3 text-[10px] font-bold">{row.name}</td><td className="px-3 py-3"><span className={"rounded-full px-2 py-1 text-[9px] font-bold "+(healthy ? "theme-success-bg theme-success" : "theme-warning-bg theme-warning")}>{row.state}</span></td>
                     <td className="px-3 py-3 text-[11px] font-bold tabular-nums">{Number(row.updates).toLocaleString("en-IN")}</td><td className="px-3 py-3 text-[10px] font-semibold theme-muted">{row.age}</td>
