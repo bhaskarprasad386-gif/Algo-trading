@@ -513,3 +513,61 @@ def test_runner_snapshot_does_not_claim_running_before_run_forever():
     snapshot = runner.snapshot()
     assert snapshot["running"] is False
     assert snapshot["scanner_initialized"] is False
+
+
+def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
+    from threading import Event
+
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: 100.0,
+    )
+    feed_stopped = Event()
+    feed_finished = Event()
+
+    class FakeFeed:
+        def run_forever(self):
+            feed_stopped.wait(2.0)
+            feed_finished.set()
+
+        def stop(self):
+            feed_stopped.set()
+
+    runner.underlying_feed = FakeFeed()
+    monkeypatch.setattr(runner, "_refresh_target_expiries", lambda: False)
+    monkeypatch.setattr(runner, "_wait_for_live_atm", lambda _provider: None)
+    monkeypatch.setattr(runner, "build_subscriptions", lambda: [object()])
+    monkeypatch.setattr(
+        runner,
+        "_build_pipeline",
+        lambda _scanner: type("Pipeline", (), {"observe": lambda self, payload: None})(),
+    )
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
+        staticmethod(lambda now=None: True),
+    )
+
+    class FakeRecorder:
+        def __init__(self, *args, **kwargs):
+            from threading import Event
+            self.stop_event = Event()
+
+        def run_forever(self):
+            runner.stop()
+
+        def stop(self):
+            self.stop_event.set()
+
+    FakeRecorder.market_open = staticmethod(lambda now=None: True)
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder",
+        FakeRecorder,
+    )
+
+    runner.run_forever()
+
+    assert feed_finished.is_set()
+    assert runner._active_underlying_feed is None
