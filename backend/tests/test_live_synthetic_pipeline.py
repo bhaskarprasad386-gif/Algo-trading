@@ -54,7 +54,8 @@ def test_quiet_pipeline_runs_retention_cleanup_without_results():
         assert pipeline.flush(timeout=2)
         assert alerts.persist_calls == [()]
         assert alerts.notify_calls == []
-        assert sessions == ["open", "close"]
+        # Alert persistence and independent retention cleanup each use a fresh session.
+        assert sessions == ["open", "close", "open", "close"]
         assert pipeline.observe({"source_timestamp_ns": 2}) == ()
         assert pipeline.flush(timeout=0.05)
         assert alerts.persist_calls == [()]
