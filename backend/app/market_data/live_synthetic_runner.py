@@ -669,14 +669,13 @@ class LiveSyntheticRunner:
                     if target.underlying.strip().upper() in subscribed_underlyings
                 }
 
-                recorder_holder: dict[str, LiveSyntheticOptionFutureRecorder | None] = {"recorder": None}
-
                 def observe(payload):
-                    active = recorder_holder["recorder"]
-                    # Ignore callbacks from a recorder after it has been replaced;
-                    # even the old pipeline must not emit stale results or alerts.
-                    if active is None or self._recorder is not active:
+                    # Bind this callback to the recorder created for this session.
+                    # A late callback from an old feed must not affect a replacement
+                    # recorder or publish through the old pipeline.
+                    if self._recorder is not active_recorder:
                         return
+                    active = active_recorder
                     symbol = str(payload.get("underlying") or "").upper()
                     current = initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
@@ -695,7 +694,6 @@ class LiveSyntheticRunner:
                     on_observation=observe,
                     consumer="synthetic-options",
                 )
-                recorder_holder["recorder"] = active_recorder
                 self._recorder = active_recorder
 
                 def watch_atm_readiness():
