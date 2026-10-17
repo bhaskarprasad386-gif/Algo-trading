@@ -108,8 +108,17 @@ class LiveSyntheticScanner:
         symbol = str(payload.get("underlying") or "").strip().upper()
         cls = str(payload.get("instrument_class") or "").strip().upper()
         option_type = str(payload.get("option_type") or "").strip().upper()
+        raw_timestamp = payload.get("source_timestamp_ns")
+        # JSON numeric timestamps must be integral. int(1.9) silently truncates
+        # to 1 and bool is an int subclass; neither is a valid source timestamp.
+        if isinstance(raw_timestamp, bool) or (
+            isinstance(raw_timestamp, float)
+            and (not math.isfinite(raw_timestamp) or not raw_timestamp.is_integer())
+        ):
+            self._count("invalid_timestamp")
+            return ()
         try:
-            timestamp_ns = int(payload.get("source_timestamp_ns") or 0)
+            timestamp_ns = int(raw_timestamp or 0)
         except (TypeError, ValueError, OverflowError):
             self._count("invalid_timestamp")
             return ()
