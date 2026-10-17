@@ -34,6 +34,10 @@ export default function HomePage() {
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
+  const runnerCounterSampleAtRef = useRef<number | null>(null);
+  const [runnerTps, setRunnerTps] = useState<Record<string, number>>({});
+  const [runtimeServerTimestamp, setRuntimeServerTimestamp] = useState<string | null>(null);
+  const [runtimeServerTimestampReceivedAt, setRuntimeServerTimestampReceivedAt] = useState<number | null>(null);
   const [runnerLastActivity, setRunnerLastActivity] = useState<Record<string, number>>({});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
@@ -196,9 +200,15 @@ export default function HomePage() {
         if (cancelled) return;
         if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Array.isArray(body.common_feed.required_socket_groups) || !Number.isFinite(Number(body.common_feed.required_socket_group_count)) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
         const feed = body.common_feed;
-        setRuntimeLastSuccessAt(Date.now());
+        const receivedAt = Date.now();
+        setRuntimeLastSuccessAt(receivedAt);
+        if (typeof body.server_timestamp === "string" && Number.isFinite(new Date(body.server_timestamp).getTime())) {
+          setRuntimeServerTimestamp(body.server_timestamp);
+          setRuntimeServerTimestampReceivedAt(receivedAt);
+        }
         const runners = body?.runners ?? {};
         const currentCounters = {
+          commonTicks: Number(feed.ticks_received ?? 0),
           cashPayloads: Number(runners.cash_future?.records_received ?? runners.cash_future?.payload_callbacks ?? runners.cash_future?.callbacks ?? 0),
           cashUpdates: Number(runners.cash_future?.scanner_updates ?? runners.cash_future?.scanner_results ?? runners.cash_future?.observations ?? 0),
           syntheticPayloads: Number(runners.synthetic_arbitrage?.records_received ?? runners.synthetic_arbitrage?.payload_callbacks ?? runners.synthetic_arbitrage?.callbacks ?? 0),
@@ -209,6 +219,13 @@ export default function HomePage() {
           calendarUpdates: Number(runners.calendar_spread?.scanner_updates ?? runners.calendar_spread?.scanner_results ?? runners.calendar_spread?.observations ?? 0),
         };
         const previousCounters = runnerCountersRef.current;
+        const previousSampleAt = runnerCounterSampleAtRef.current;
+        if (previousCounters && previousSampleAt != null && receivedAt > previousSampleAt) {
+          const elapsedSeconds = (receivedAt - previousSampleAt) / 1000;
+          const rate = (key: string) => Math.max(0, (currentCounters[key as keyof typeof currentCounters] - (previousCounters[key] ?? 0)) / elapsedSeconds);
+          setRunnerTps({ commonTicks: rate("commonTicks"), cashPayloads: rate("cashPayloads"), syntheticPayloads: rate("syntheticPayloads"), boxPayloads: rate("boxPayloads"), calendarPayloads: rate("calendarPayloads") });
+        }
+        runnerCounterSampleAtRef.current = receivedAt;
         if (previousCounters) {
           const keys = Object.keys(currentCounters);
           const increased = keys.filter((key) => {
@@ -408,21 +425,21 @@ export default function HomePage() {
       <div className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.8fr)]">
         <div className="min-w-0">
         <section aria-label="System health">
-          <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div><div className="text-[10px] theme-subtle">Auto-refreshing live telemetry</div></div>
+          <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div><div className="text-right text-[10px] theme-subtle">Auto-refreshing • Server sample: {runtimeServerTimestamp ? new Date(runtimeServerTimestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) + (runtimeServerTimestampReceivedAt == null ? "" : " • received " + Math.max(0, (Date.now() - runtimeServerTimestampReceivedAt) / 1000).toFixed(1) + "s ago") : "unavailable"}</div></div>
           <Card className="overflow-hidden rounded-2xl border theme-border theme-surface-2 p-0 shadow-sm">
             <div className="overflow-x-auto"><table className="w-full border-collapse text-left md:min-w-[1080px]">
               <thead className="hidden theme-surface md:table-header-group"><tr className="border-b theme-border text-[9px] uppercase tracking-[0.12em] theme-subtle">
-                <th className="px-3 py-3 font-bold">Feed / Scanner</th><th className="px-3 py-3 font-bold">WebSocket / State</th><th className="px-3 py-3 font-bold">Live ticks / updates</th><th className="px-3 py-3 font-bold">Tick / update age</th><th className="px-3 py-3 font-bold">Data flow</th><th className="px-3 py-3 font-bold">Scanner position</th>
+                <th className="px-3 py-3 font-bold">Feed / Scanner</th><th className="px-3 py-3 font-bold">WebSocket / State</th><th className="px-3 py-3 font-bold">Live ticks / updates</th><th className="px-3 py-3 font-bold">TPS</th><th className="px-3 py-3 font-bold">Tick / update age</th><th className="px-3 py-3 font-bold">Data flow</th><th className="px-3 py-3 font-bold">Scanner position</th>
               </tr></thead><tbody className="block md:table-row-group">
                 {(() => {
                   const now = Date.now();
                   const activityAge = (key: string) => runnerLastActivity[key] == null ? null : Math.max(0, (now - runnerLastActivity[key]) / 1000);
                   const ageText = (age: number | null) => age == null ? "No recent sample" : age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m";
-                  const freshness = (age: number | null) => age != null && age <= 10 ? "RECEIVING" : age != null && age <= 30 ? "STALE" : "NO RECENT UPDATES";
+                  const freshness = (age: number | null) => age != null && age <= 10 ? "RECEIVING" : age != null && age <= 30 ? "STALE" : age == null ? "NO DATA" : "STALLED";
                   const serverDown = apiStatus === "error";
                   const wsState = commonSocketState;
                   const overallFlow = serverDown ? "SERVER UNREACHABLE" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : wsState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : wsState === "NO SUBSCRIPTIONS" ? "NO COMMON-FEED SUBSCRIPTIONS" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : effectiveFeedStatus === "live" ? "LIVE TICKS" : effectiveFeedStatus === "stale" ? "STALE MARKET DATA" : effectiveFeedStatus === "error" ? "FEED HEALTH ERROR" : "NO MARKET DATA";
-                  const runnerState = (running: boolean, age: number | null) => serverDown ? "SERVER OFFLINE" : runtimeTelemetryStale ? "TELEMETRY STALE" : wsState === "DISCONNECTED" ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : wsState === "NO SUBSCRIPTIONS" ? "NO FEED SUBSCRIPTIONS" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : !running ? "STOPPED" : age != null && age <= 10 ? "RECEIVING" : age != null && age <= 30 ? "STALE" : "NO DATA";
+                  const runnerState = (running: boolean, age: number | null) => serverDown ? "SERVER OFFLINE" : runtimeTelemetryStale ? "TELEMETRY STALE" : wsState === "DISCONNECTED" ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : wsState === "NO SUBSCRIPTIONS" ? "NO FEED SUBSCRIPTIONS" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : !running ? "STOPPED" : age == null ? "NO DATA" : age <= 10 ? "RECEIVING" : age <= 30 ? "STALE" : "STALLED";
                   const cashAge = activityAge("cashPayloads");
                   const syntheticAge = activityAge("syntheticPayloads");
                   const boxAge = activityAge("boxPayloads");
@@ -442,10 +459,15 @@ export default function HomePage() {
                   ];
                   return rows.map((row) => {
                     const healthy = ["ONLINE","CONNECTED","RECEIVING"].includes(row.state) && ["HTTP HEALTH OK","LIVE TICKS","LIVE OBSERVATION","RECEIVING"].includes(row.flow);
-                    const danger = ["OFFLINE","SERVER OFFLINE","WEBSOCKET DOWN","DISCONNECTED","NO DATA","NO RECENT UPDATES","NO RECENT OBSERVATION"].includes(row.state) || /UNREACHABLE|DISCONNECTED|NO DATA|NO RECENT/.test(row.flow);
+                    const danger = ["OFFLINE","SERVER OFFLINE","WEBSOCKET DOWN","DISCONNECTED","NO DATA","NO RECENT UPDATES","NO RECENT OBSERVATION","STALLED"].includes(row.state) || /UNREACHABLE|DISCONNECTED|NO DATA|NO RECENT|STALLED/.test(row.flow);
+                    const tpsKey = row.name === "OVERALL COMMON FEED" ? "commonTicks" : row.name === "CASH MARKET DATA" || row.name === "CASH-FUTURE SCANNER" ? "cashPayloads" : row.name === "OPTIONS DATA" ? "boxPayloads" : row.name === "FUTURES DATA" || row.name === "SYNTHETIC ARBITRAGE" ? "syntheticPayloads" : row.name === "CALENDAR SPREAD" ? "calendarPayloads" : null;
+                    const rowTps = tpsKey && Number.isFinite(runnerTps[tpsKey]) ? runnerTps[tpsKey] : null;
+                    const heartbeatKey = tpsKey;
+                    const heartbeatAge = heartbeatKey ? activityAge(heartbeatKey) : null;
+                    const heartbeatActive = heartbeatAge != null && heartbeatAge <= 10;
                     return <tr key={row.name} className="mb-2 block rounded-xl border theme-border p-2 last:mb-0 md:mb-0 md:table-row md:border-0 md:border-b md:p-0">
-                      <td className="block px-3 py-2 text-[10px] font-bold md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Feed / Scanner</span>{row.name}</td><td className="block px-3 py-2 md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">WebSocket / State</span><span className={"inline-block rounded-full px-2 py-1 text-[9px] font-bold "+(healthy ? "theme-success-bg theme-success" : danger ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{row.state}</span></td>
-                      <td className="block px-3 py-2 text-[11px] font-bold tabular-nums md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Live ticks / updates</span>{Number(row.updates).toLocaleString("en-IN")}</td><td className="block px-3 py-2 text-[10px] font-semibold theme-muted md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Tick / update age</span>{row.age}</td>
+                      <td className="block px-3 py-2 text-[10px] font-bold md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Feed / Scanner</span>{row.name}{heartbeatKey ? <span title={heartbeatActive ? "Recent payload progress" : "No recent payload progress"} className={"ml-2 inline-block h-2 w-2 rounded-full align-middle " + (heartbeatActive ? "theme-success-bg animate-pulse" : "theme-warning-bg")} /> : null}</td><td className="block px-3 py-2 md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">WebSocket / State</span><span className={"inline-block rounded-full px-2 py-1 text-[9px] font-bold "+(healthy ? "theme-success-bg theme-success" : danger ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{row.state}</span></td>
+                      <td className="block px-3 py-2 text-[11px] font-bold tabular-nums md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Live ticks / updates</span>{Number(row.updates).toLocaleString("en-IN")}</td><td className="block px-3 py-2 text-[10px] font-bold tabular-nums theme-accent md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Ticks per second</span>{rowTps == null ? "—" : rowTps.toFixed(1)}</td><td className="block px-3 py-2 text-[10px] font-semibold theme-muted md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Tick / update age</span>{row.age}</td>
                       <td className="block px-3 py-2 text-[9px] font-bold md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Data flow</span><span className={healthy ? "theme-success" : danger ? "theme-danger" : "theme-warning"}>{row.flow}</span></td><td className="block max-w-[360px] px-3 py-2 text-[10px] theme-muted md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Scanner position</span>{row.position}</td>
                     </tr>;
                   });
@@ -567,6 +589,14 @@ export default function HomePage() {
           </Card>
         </div>
       ) : null}
+      <section aria-label="Order pipeline" className="mt-5">
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Order Pipeline</h2></div><span className="rounded-full px-2 py-1 text-[9px] font-bold theme-warning-bg theme-warning">LIVE ORDERS OFF</span></div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wide theme-subtle">Broker connection</div><div className="mt-1 text-sm font-bold">{apiStatus === "error" ? "API UNAVAILABLE" : "NOT VERIFIED HERE"}</div></div><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wide theme-subtle">Available margin</div><div className="mt-1 text-sm font-bold">NOT EXPOSED</div><div className="mt-1 text-[10px] theme-muted">No verified dashboard margin endpoint</div></div><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wide theme-subtle">Last 3 orders</div><div className="mt-1 text-sm font-bold">UNAVAILABLE</div><div className="mt-1 text-[10px] theme-muted">No verified order-history endpoint</div></div></div>
+          <div className="mt-3 text-[10px] theme-muted">Order states and margin are intentionally not fabricated. Connect verified broker order/funds APIs before showing FILLED, REJECTED, PENDING or margin values.</div>
+        </Card>
+      </section>
+      {(() => { const alerts = diagnosticErrors.filter((e) => /bid.?ask|quote.?missing|missing.?quote|cooldown|429|connection limit/i.test(String(e.message ?? "") + " " + String(e.error_type ?? "") + " " + String(e.component ?? ""))).slice(0, 3); return alerts.length ? <div role="status" aria-live="polite" className="fixed bottom-4 right-4 z-50 w-[min(92vw,360px)] rounded-xl border theme-warning-bg p-3 shadow-xl"><div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase"><span><TriangleAlert size={13} className="mr-1 inline" />Live feed alerts</span><span>{alerts.length} recent</span></div>{alerts.map((e) => <div key={e.id} className="border-t theme-border py-2"><div className="text-[10px] font-bold">{e.component} • {e.severity}</div><div className="mt-1 text-[11px]">{e.message}</div><div className="mt-1 text-[9px] theme-subtle">{e.time ? new Date(e.time).toLocaleTimeString("en-IN") : "Time unavailable"}</div></div>)}</div> : null; })()}
     </div>
   );
 }
