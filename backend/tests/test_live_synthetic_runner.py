@@ -128,6 +128,32 @@ def test_runner_refreshes_authoritative_stock_universe_before_selection():
         instrument_master=master,
     )
     assert runner.allowed_stock_symbols == frozenset()
+
+
+def test_missing_atm_for_one_symbol_does_not_block_ready_symbol():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026"),
+         SyntheticLiveTarget("MISSING", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(), instrument_master=master,
+        atm_provider=lambda symbol, _ts: 100.0 if symbol == "NIFTY" else None,
+    )
+    runner._wait_for_live_atm(runner._ensure_atm_provider(), timeout_seconds=0.1)
+    subscriptions = runner.build_subscriptions()
+    assert subscriptions
+    assert {item.underlying for item in subscriptions} == {"NIFTY"}
+
+
+def test_expiry_refresh_replaces_expired_target_with_listed_matching_expiry():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:", [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "01OCT2026")],
+        allowed_stock_symbols=frozenset(), instrument_master=master,
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    assert runner._refresh_target_expiries() is True
+    assert runner.targets[0].expiry == "29OCT2026"
     runner._refresh_stock_universe()
     assert runner.allowed_stock_symbols == frozenset({"ABC"})
 
