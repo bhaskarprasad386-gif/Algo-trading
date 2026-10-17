@@ -85,11 +85,11 @@ export default function HomePage() {
           if (message?.type !== "dashboard_snapshot") return;
           const serverSnapshotTime = message?.timestamp == null ? NaN : new Date(message.timestamp).getTime();
           // A future-dated server snapshot must not be rendered as age-zero/live.
-          if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 60_000) return;
+          if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 5_000) return;
           setLastDashboardMessageAt(Date.now());
           const observedAt = message?.scanner?.health?.last_observation_at;
           const observedTime = observedAt == null ? NaN : new Date(observedAt).getTime();
-          const validObservedAt = Number.isFinite(observedTime) && observedTime <= Date.now() + 60_000 ? observedAt : null;
+          const validObservedAt = Number.isFinite(observedTime) && observedTime <= Date.now() + 5_000 ? observedAt : null;
           setSnapshot({
             calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
             synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
