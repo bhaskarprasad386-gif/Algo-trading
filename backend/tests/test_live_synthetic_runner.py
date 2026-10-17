@@ -596,10 +596,15 @@ def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
     monkeypatch.setattr(runner, "_refresh_target_expiries", lambda: False)
     monkeypatch.setattr(runner, "_wait_for_live_atm", lambda _provider: None)
     monkeypatch.setattr(runner, "build_subscriptions", lambda: [object()])
+    observed_payloads = []
     monkeypatch.setattr(
         runner,
         "_build_pipeline",
-        lambda _scanner: type("Pipeline", (), {"observe": lambda self, payload: None})(),
+        lambda _scanner: type(
+            "Pipeline",
+            (),
+            {"observe": lambda self, payload: observed_payloads.append(payload)},
+        )(),
     )
     monkeypatch.setattr(
         "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
