@@ -977,3 +977,20 @@ def test_pair_monitor_does_not_truncate_fractional_lot_size_to_ready():
     row = next(r for r in rows if r["strike"] == 105.0)
     assert row["state"] == "INCOMPLETE"
     assert "INVALID_LOT_SIZE" in row["reason"]
+
+def test_out_of_order_tick_does_not_refresh_observation_health():
+    import time
+
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = time.time_ns()
+    current = _base(ts, 105.0, "CE", 4.0, 5.0)
+    assert scanner.observe(current) == ()
+    before = scanner.diagnostics_snapshot()["counters"]["last_observation_at_ns"]
+
+    older = {**current, "source_timestamp_ns": ts - 100_000_000, "bid": 3.9, "ask": 5.1}
+    assert scanner.observe(older) == ()
+    counters = scanner.diagnostics_snapshot()["counters"]
+
+    assert counters["out_of_order_leg_updates"] == 1
+    assert counters["last_observation_at_ns"] == before
+    assert counters["last_payload_received_at_ns"] >= before

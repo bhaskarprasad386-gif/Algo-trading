@@ -252,7 +252,10 @@ class LiveSyntheticScanner:
                     return anchored
                 return current
 
+            accepted_observation = True
+
             def update_leg_without_time_regression(previous: dict | None, current: dict) -> dict | None:
+                nonlocal accepted_observation
                 if previous is None:
                     return preserve_pending_anchor(previous, current)
                 try:
@@ -270,6 +273,7 @@ class LiveSyntheticScanner:
                     previous_ns = current_ns = 0
                 if previous_ns > current_ns > 0:
                     self._count("out_of_order_leg_updates")
+                    accepted_observation = False
                     return previous
                 return preserve_pending_anchor(previous, current)
 
@@ -287,10 +291,11 @@ class LiveSyntheticScanner:
                 if updated is not None:
                     bucket["future"] = updated
 
-            # Only accepted legs count as market observations. Valid-looking but
-            # unclassifiable ticks must not keep the diagnostics freshness green.
-            with self._diagnostics_lock:
-                self._last_observation_at_ns = time.time_ns()
+            # Rejected out-of-order ticks must not refresh observation health:
+            # the cached quote did not advance even though transport received a payload.
+            if accepted_observation:
+                with self._diagnostics_lock:
+                    self._last_observation_at_ns = time.time_ns()
 
             if bucket["future"] is None:
                 self._count("missing_future_leg")
