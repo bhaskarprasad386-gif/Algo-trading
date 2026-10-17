@@ -41,7 +41,7 @@ const configs: Record<string, WorkspaceConfig> = {
     universe: "INDEX + NIFTY 50",
     columns: ["Underlying", "Expiry", "Strike", "Option", "Future", "Executable Edge", "Liquidity", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
-    controls: ["All Eligible", "ATM Range", "Expiry", "Edge Threshold"],
+    controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Future", "Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/alerts?days=1&limit=100",
@@ -184,6 +184,43 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [feedInstruments, setFeedInstruments] = useState<number | null>(null);
   const [runner, setRunner] = useState<{ running: boolean; detail: string } | null>(null);
   const [feedErrors, setFeedErrors] = useState<{ delivery: number; normalizer: number } | null>(null);
+
+  useEffect(() => {
+    if (slug !== "synthetic-arbitrage") return;
+    let cancelled = false;
+    const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+    void fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.detail || "Unable to load synthetic universe");
+        if (!cancelled && typeof body?.selection === "string") setControl(body.selection);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load synthetic universe");
+      });
+    return () => { cancelled = true; };
+  }, [slug]);
+
+  const changeControl = async (selection: string) => {
+    if (slug !== "synthetic-arbitrage") {
+      setControl(selection);
+      return;
+    }
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selection }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Universe update failed");
+      setControl(String(body?.selection ?? selection));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Universe update failed");
+    }
+  };
 
   const load = async (showLoading = false) => {
     if (!endpoint) {
@@ -364,7 +401,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <span className="sr-only">Search</span>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 pl-9 text-sm theme-text" />
           </label>
-          <select value={control} onChange={(e) => setControl(e.target.value)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-sm theme-text">
+          <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-sm theme-text">
             {c.controls.map((x) => <option key={x}>{x}</option>)}
           </select>
           <button type="button" onClick={refresh} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border">
