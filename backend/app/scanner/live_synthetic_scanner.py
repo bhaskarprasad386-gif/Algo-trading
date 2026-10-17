@@ -32,10 +32,14 @@ class LiveSyntheticScanner:
         atm_provider: Callable[[str, int], float | None],
         config_provider: Callable[[str], SyntheticScanConfig] | None = None,
         on_result: Callable[[tuple[SyntheticScanResult, ...]], None] | None = None,
+        allow_logical_timestamps: bool = False,
     ) -> None:
         self.atm_provider = atm_provider
         self.config_provider = config_provider or (lambda _symbol: SyntheticScanConfig())
         self.on_result = on_result
+        # Logical timestamps exist only for deterministic unit tests. Production
+        # instances reject non-epoch-nanosecond values by default.
+        self._allow_logical_timestamps = bool(allow_logical_timestamps)
         self._lock = Lock()
         self._diagnostics_lock = Lock()
         self._diagnostics: Counter[str] = Counter()
@@ -125,15 +129,15 @@ class LiveSyntheticScanner:
         if timestamp_ns <= 0:
             self._count("invalid_timestamp")
             return ()
-        # Epoch milliseconds (roughly 13 digits) are not valid nanoseconds. Treat
-        # them as malformed rather than letting them bypass the epoch-ns freshness
-        # guard as if they were deterministic test timestamps.
-        if 1_000_000_000_000 <= timestamp_ns < 1_000_000_000_000_000:
-            self._count("invalid_timestamp_unit")
-            return ()
-        # Epoch-nanosecond timestamps are checked against wall time. Small logical
-        # timestamps remain supported by deterministic unit tests only.
-        if timestamp_ns >= 1_000_000_000_000_000:
+        # Broker source_timestamp_ns is an epoch-nanosecond contract. Reject
+        # seconds, milliseconds, microseconds, and arbitrary small values in live
+        # instances; otherwise these values bypass wall-clock freshness checks.
+        # Tests may explicitly opt into deterministic logical timestamps.
+        if timestamp_ns < 1_000_000_000_000_000_000:
+            if not self._allow_logical_timestamps:
+                self._count("invalid_timestamp_unit")
+                return ()
+        else:
             # Measure latency before freshness rejection so stale samples remain
             # observable. Counters are aggregate-only; no raw payload is kept.
             now_ns = time.time_ns()
