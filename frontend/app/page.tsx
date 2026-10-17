@@ -26,7 +26,7 @@ export default function HomePage() {
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
-  const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
+  const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
   const [diagnosticCount, setDiagnosticCount] = useState(0);
@@ -160,17 +160,17 @@ export default function HomePage() {
         const feed = body?.common_feed ?? {};
         const runners = body?.runners ?? {};
         const runnerDetail = (value: any) => {
-          if (!value) return { running: false, detail: "UNAVAILABLE", updates: 0, instruments: 0 };
+          if (!value) return { running: false, detail: "UNAVAILABLE", updates: 0, payloads: 0, instruments: 0 };
           const running = Boolean(value.running);
           const nestedFeed = value.underlying_feed ?? value.feed ?? null;
           const instruments = Number(value.registered_instruments ?? value.active_instruments ?? nestedFeed?.active_instruments ?? nestedFeed?.subscriptions ?? 0);
-          const updates = Number(value.records_received ?? value.payload_callbacks ?? value.callbacks ?? value.scanner_updates ?? 0);
+          const payloads = Number(value.records_received ?? value.payload_callbacks ?? value.callbacks ?? 0);\n          const updates = Number(value.scanner_updates ?? value.scanner_results ?? value.observations ?? value.signals ?? 0);
           const connected = nestedFeed?.connected_groups?.length ?? 0;
           const parts = [running ? "RUNNING" : "STOPPED"];
           if (Number.isFinite(instruments) && instruments > 0) parts.push(instruments.toLocaleString("en-IN") + " instruments");
-          if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " updates");
+          if (Number.isFinite(payloads) && payloads > 0) parts.push(payloads.toLocaleString("en-IN") + " payloads");\n          if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " scanner updates");
           if (connected > 0) parts.push(connected + " feed socket" + (connected === 1 ? "" : "s"));
-          return { running, detail: parts.join(" • "), updates: Number.isFinite(updates) ? updates : 0, instruments: Number.isFinite(instruments) ? instruments : 0 };
+          return { running, detail: parts.join(" • "), updates: Number.isFinite(updates) ? updates : 0, payloads: Number.isFinite(payloads) ? payloads : 0, instruments: Number.isFinite(instruments) ? instruments : 0 };
         };
         setRuntime({
           ticks: Number(feed.ticks_received ?? 0),
@@ -303,9 +303,9 @@ export default function HomePage() {
               </tr></thead><tbody>
                 {[
                   {name:"OVERALL COMMON FEED", state:runtime.connectedGroups > 0 ? "CONNECTED" : "DISCONNECTED", updates:runtime.ticks, age:feedAgeLabel, flow:feedLabel, position:runtime.activeInstruments.toLocaleString("en-IN")+" active instruments"},
-                  {name:"CASH MARKET DATA", state:runtime.runners.cash_future?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.cash_future?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.cash_future?.updates ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:runtime.runners.cash_future?.instruments ? runtime.runners.cash_future.instruments.toLocaleString("en-IN")+" instruments" : "No instrument count"},
-                  {name:"OPTIONS DATA", state:(runtime.runners.box_spread?.running || runtime.runners.calendar_spread?.running) ? "RUNNING" : "STOPPED", updates:(runtime.runners.box_spread?.updates ?? 0)+(runtime.runners.calendar_spread?.updates ?? 0), age:feedAgeLabel, flow:((runtime.runners.box_spread?.updates ?? 0)+(runtime.runners.calendar_spread?.updates ?? 0))>0 ? "RECEIVING" : "NO UPDATES", position:"Box + Calendar feed"},
-                  {name:"FUTURES DATA", state:runtime.runners.synthetic_arbitrage?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.synthetic_arbitrage?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.synthetic_arbitrage?.updates ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:"Synthetic feed"},
+                  {name:"CASH MARKET DATA", state:runtime.runners.cash_future?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.cash_future?.payloads ?? 0, age:feedAgeLabel, flow:(runtime.runners.cash_future?.payloads ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:runtime.runners.cash_future?.instruments ? runtime.runners.cash_future.instruments.toLocaleString("en-IN")+" instruments" : "No instrument count"},
+                  {name:"OPTIONS DATA", state:(runtime.runners.box_spread?.running || runtime.runners.calendar_spread?.running) ? "RUNNING" : "STOPPED", updates:(runtime.runners.box_spread?.payloads ?? 0)+(runtime.runners.calendar_spread?.payloads ?? 0), age:feedAgeLabel, flow:((runtime.runners.box_spread?.payloads ?? 0)+(runtime.runners.calendar_spread?.payloads ?? 0))>0 ? "RECEIVING" : "NO UPDATES", position:"Box + Calendar feed"},
+                  {name:"FUTURES DATA", state:runtime.runners.synthetic_arbitrage?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.synthetic_arbitrage?.payloads ?? 0, age:feedAgeLabel, flow:(runtime.runners.synthetic_arbitrage?.payloads ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:"Synthetic feed"},
                   {name:"CASH-FUTURE SCANNER", state:runtime.runners.cash_future?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.cash_future?.updates ?? 0, age:observationAge == null ? "—" : observationAge < 60 ? Math.round(observationAge)+"s" : Math.round(observationAge/60)+"m", flow:(runtime.runners.cash_future?.updates ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:runtime.runners.cash_future?.detail ?? "UNAVAILABLE"},
                   {name:"SYNTHETIC ARBITRAGE", state:runtime.runners.synthetic_arbitrage?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.synthetic_arbitrage?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.synthetic_arbitrage?.updates ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"},
                   {name:"BOX SPREAD SCANNER", state:runtime.runners.box_spread?.running ? "RUNNING" : "STOPPED", updates:runtime.runners.box_spread?.updates ?? 0, age:feedAgeLabel, flow:(runtime.runners.box_spread?.updates ?? 0)>0 ? "RECEIVING" : "NO UPDATES", position:runtime.runners.box_spread?.detail ?? "UNAVAILABLE"},
