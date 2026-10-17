@@ -83,33 +83,52 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if not any(options_by_expiry.values()):
         raise LookupError(f"no options for {symbol} {target_expiry}")
 
+    future_token = str(current.get("token", "")).strip()
+    future_symbol = str(current.get("symbol", "")).strip()
+    if not future_token or not future_symbol:
+        raise LookupError(f"current future has incomplete token/symbol metadata for {symbol}")
+
     subscriptions = [SyntheticSubscription(
         exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
-        token=str(current.get("token","")).strip(),
-        symbol=str(current.get("symbol","")).strip(), underlying=symbol,
+        token=future_token,
+        symbol=future_symbol, underlying=symbol,
         instrument_class=cls, expiry=str(current.get("expiry","")).strip(),
         lot_size=int(float(current.get("lotsize",0) or 0)) or None, contract_role="CURRENT"))]
     for option_expiry, expiry_options in options_by_expiry.items():
         if not expiry_options:
             continue
-        actual_strikes = sorted({_strike(x.get("strike")) for x in expiry_options})
+        # A synthetic strike is executable only if both CE and PE contracts
+        # exist. Do not subscribe a one-sided strike that can never form a pair.
+        options_by_strike: dict[float, dict[str, dict]] = {}
+        for item in expiry_options:
+            option_symbol = str(item.get("symbol", "")).strip()
+            option_type = option_symbol[-2:].upper()
+            token = str(item.get("token", "")).strip()
+            if option_type not in {"CE", "PE"} or not token:
+                continue
+            strike = _strike(item.get("strike"))
+            options_by_strike.setdefault(strike, {})[option_type] = item
+        actual_strikes = sorted(
+            strike for strike, legs in options_by_strike.items()
+            if {"CE", "PE"}.issubset(legs)
+        )
+        if not actual_strikes:
+            continue
         selected = enumerate_synthetic_strikes(actual_strikes, atm_strike=float(atm_strike),
                                                instrument_class=cls, policy=policy or ScanPolicy())
         selected_strikes = {strike for strike, _, _ in selected}
-        for item in expiry_options:
-            if _strike(item.get("strike")) not in selected_strikes:
-                continue
-            token=str(item.get("token","")).strip()
-            if token:
+        for strike in sorted(selected_strikes):
+            for option_type in ("CE", "PE"):
+                item = options_by_strike[strike][option_type]
                 subscriptions.append(SyntheticSubscription(
                     exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
-                    token=token, symbol=str(item.get("symbol","")).strip(), underlying=symbol,
+                    token=str(item.get("token","")).strip(),
+                    symbol=str(item.get("symbol","")).strip(), underlying=symbol,
                     instrument_class=cls, expiry=str(item.get("expiry","")).strip(),
-                    option_type=str(item.get("symbol","")).strip()[-2:] or None,
-                    strike=_strike(item.get("strike")),
+                    option_type=option_type, strike=strike,
                     lot_size=int(float(item.get("lotsize",0) or 0)) or None,
                     contract_role="OPTION"))
-    if len(subscriptions) < 3: raise LookupError("selected live chain has no concrete option contracts")
+    if len(subscriptions) < 3: raise LookupError("selected live chain has no complete CE/PE strike pairs")
     return SyntheticContractSelection(tuple(subscriptions), str(current.get("expiry","")).strip(), float(atm_strike))
 
 __all__=["SyntheticContractSelection","select_synthetic_contracts"]
