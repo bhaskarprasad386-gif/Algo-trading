@@ -171,6 +171,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const [search, setSearch] = useState("");
   const [control, setControl] = useState(c.controls[0]);
+  const [top15StockSymbols, setTop15StockSymbols] = useState<string[]>([
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY",
+    "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK",
+    "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL",
+  ]);
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
@@ -194,6 +199,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.detail || "Unable to load synthetic universe");
         if (!cancelled && typeof body?.selection === "string") setControl(body.selection);
+        if (!cancelled && Array.isArray(body?.top15_stock_symbols)) {
+          setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load synthetic universe");
@@ -216,6 +224,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Universe update failed");
       setControl(String(body?.selection ?? selection));
+      if (Array.isArray(body?.top15_stock_symbols)) {
+        setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
+      }
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Universe update failed");
@@ -402,12 +413,27 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 pl-9 text-sm theme-text" />
           </label>
           <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-sm theme-text">
-            {c.controls.map((x) => <option key={x}>{x}</option>)}
+            {c.controls.map((x) => <option key={x} value={x}>{slug === "synthetic-arbitrage" && x === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS (15)" : x}</option>)}
           </select>
           <button type="button" onClick={refresh} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border">
             <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> Refresh
           </button>
         </div>
+        {slug === "synthetic-arbitrage" && (
+          <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs">
+            <p className="font-semibold theme-text">
+              {control === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS — stock-only scan" :
+               control === "ALL" ? "ALL — supported indices + these 15 liquid F&O stocks" :
+               "INDEX-ONLY SCAN — " + control}
+            </p>
+            {control === "TOP15" || control === "ALL" ? (
+              <p className="mt-2 leading-6 theme-muted">{top15StockSymbols.join(" • ")}</p>
+            ) : (
+              <p className="mt-1 theme-muted">Only the selected index is scanned. No fallback to stocks or other indices.</p>
+            )}
+            {control === "TOP15" && <p className="mt-1 theme-success">Exactly these configured stock symbols are eligible; no NIFTY index or other stocks are added.</p>}
+          </div>
+        )}
       </Card>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
