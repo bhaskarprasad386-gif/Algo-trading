@@ -929,11 +929,11 @@ def test_live_synthetic_scanner_rejects_leg_symbol_from_different_underlying():
 
 
 def test_live_scanner_rejects_malformed_future_lot_size_without_raising():
-    import math
+    import time
 
     for bad_lot_size in (float("nan"), float("inf"), "not-a-lot", 1.5):
         scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-        ts = 40_000_000_000
+        ts = time.time_ns()
         expiry = "29OCT2026"
         scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
         scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
