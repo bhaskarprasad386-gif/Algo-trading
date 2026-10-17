@@ -10,6 +10,7 @@ router = APIRouter(
 )
 _latest_provider: Callable[[], tuple] | None = None
 _diagnostics_provider: Callable[[], dict | None] | None = None
+_pairs_provider: Callable[[], dict | None] | None = None
 
 
 def configure(provider: Callable[[], tuple]) -> None:
@@ -20,6 +21,11 @@ def configure(provider: Callable[[], tuple]) -> None:
 def configure_diagnostics(provider: Callable[[], dict | None]) -> None:
     global _diagnostics_provider
     _diagnostics_provider = provider
+
+
+def configure_pairs(provider: Callable[[], dict | None]) -> None:
+    global _pairs_provider
+    _pairs_provider = provider
 
 
 def _serialize(result) -> dict:
@@ -150,4 +156,36 @@ def diagnostics():
             "ticks_received": option_recorder.get("ticks_received") if isinstance(option_recorder, dict) else None,
             "errors": option_recorder.get("errors") if isinstance(option_recorder, dict) else None,
         },
+    }
+
+
+@router.get("/pairs")
+def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
+    """Return a bounded, sanitized live combo snapshot, including incomplete legs."""
+    snapshot = _pairs_provider() if _pairs_provider is not None else None
+    if not isinstance(snapshot, dict):
+        return {
+            "status": "unavailable",
+            "scanner": "synthetic-cash-carry-live-1s",
+            "count": 0,
+            "data": [],
+        }
+    source_rows = snapshot.get("data")
+    if not isinstance(source_rows, list):
+        source_rows = []
+    allowed = (
+        "timestamp_ns", "underlying", "expiry", "strike",
+        "future_bid", "future_ask", "call_bid", "call_ask",
+        "put_bid", "put_ask", "lot_size", "state", "reason",
+    )
+    rows = [
+        {key: row.get(key) for key in allowed}
+        for row in source_rows[:limit]
+        if isinstance(row, dict)
+    ]
+    return {
+        "status": str(snapshot.get("status") or "success"),
+        "scanner": "synthetic-cash-carry-live-1s",
+        "count": len(rows),
+        "data": rows,
     }
