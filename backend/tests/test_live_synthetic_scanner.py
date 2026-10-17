@@ -416,3 +416,21 @@ def test_pair_monitor_exposes_future_expiry_mismatch_instead_of_hiding_pair():
     row = next(r for r in rows if r["strike"] == 105.0)
     assert row["state"] == "INCOMPLETE"
     assert row["reason"].count("EXPIRY_MISMATCH") == 1
+
+
+
+def test_live_scanner_rejects_mismatched_ce_pe_future_lot_sizes():
+    ts = 1_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "30SEP2026"
+    scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": expiry, "lot_size": 50})
+    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": expiry, "lot_size": 25})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 50,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["lot_size_mismatch"] == 1
+    assert counters.get("scan_evaluations", 0) == 0
