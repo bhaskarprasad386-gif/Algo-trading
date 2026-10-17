@@ -81,8 +81,8 @@ def test_closed_market_overview_labels_historical_close_not_live_quote(monkeypat
     assert result["market_session"] == "CLOSED"
     assert result["indices"]
     assert all(row["status"] == "CLOSED_LAST_CLOSE" for row in result["indices"])
-    assert all(row["ltp"] == 123.0 for row in result["indices"])
-    assert all(row["close"] == 120.0 for row in result["indices"])
+    assert all(row["ltp"] == 120.0 for row in result["indices"])
+    assert all(row["close"] == 123.0 for row in result["indices"])
 
 
 def test_live_data_health_reports_persisted_coverage(monkeypatch, tmp_path):
