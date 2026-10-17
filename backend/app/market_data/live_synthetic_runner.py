@@ -438,6 +438,18 @@ class LiveSyntheticRunner:
             on_results=self.on_results,
         )
 
+    @staticmethod
+    def _close_pipeline(pipeline, timeout: float = 2.0) -> bool:
+        """Close real pipelines while tolerating lightweight test/adapter doubles."""
+        close = getattr(pipeline, "close", None)
+        if not callable(close):
+            return True
+        try:
+            return bool(close(timeout=timeout))
+        except Exception as exc:
+            app_logger.warning("Synthetic alert pipeline shutdown failed: %s", exc)
+            return False
+
     def run_forever(self) -> None:
         active_pipeline = None
         # Refresh once at startup, before building the ATM strike map.
@@ -724,7 +736,7 @@ class LiveSyntheticRunner:
                     watcher.join(timeout=1.0)
                     # Recorder callbacks have stopped; now drain and reap this
                     # session's alert worker before replacing its pipeline.
-                    pipeline.close(timeout=2.0)
+                    self._close_pipeline(pipeline, timeout=2.0)
                     if active_pipeline is pipeline:
                         active_pipeline = None
                 refresh_requested = self._refresh_requested.is_set()
@@ -748,7 +760,7 @@ class LiveSyntheticRunner:
                 self._recorder.stop()
                 self._recorder = None
             if active_pipeline is not None:
-                active_pipeline.close(timeout=2.0)
+                self._close_pipeline(active_pipeline, timeout=2.0)
                 active_pipeline = None
             self._running = False
 
