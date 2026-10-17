@@ -9,6 +9,7 @@ ATM; stock scope remains governed by its existing synthetic strike policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Iterable
 
 from app.backtesting.arbitrage_backtester import (
@@ -27,14 +28,20 @@ from app.backtesting.arbitrage_scan_policy import (
 class SyntheticScanConfig:
     """Runtime filters; strike radii remain locked by ScanPolicy."""
 
-    rate: float = 0.0
+    rate: float = 0.055
     time_to_expiry_years: float = 0.0
-    fees_per_unit: float = 0.0
+    fees_per_unit: float = 1.0
     liquidity: LiquidityPolicy = LiquidityPolicy()
     min_executable_edge: float = 0.0
     allowed_stock_symbols: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        if isinstance(self.rate, bool) or not isinstance(self.rate, (int, float)) or not isfinite(float(self.rate)):
+            raise ValueError("rate must be finite")
+        if isinstance(self.time_to_expiry_years, bool) or not isinstance(self.time_to_expiry_years, (int, float)) or not isfinite(float(self.time_to_expiry_years)):
+            raise ValueError("time_to_expiry_years must be finite")
+        if isinstance(self.fees_per_unit, bool) or not isinstance(self.fees_per_unit, (int, float)) or not isfinite(float(self.fees_per_unit)):
+            raise ValueError("fees_per_unit must be finite")
         if self.time_to_expiry_years < 0:
             raise ValueError("time_to_expiry_years must be non-negative")
         if self.fees_per_unit < 0:
