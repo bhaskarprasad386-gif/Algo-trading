@@ -339,7 +339,7 @@ class LiveSyntheticScanner:
             # Derive carry horizon from this contract's actual expiry, not a static default.
             expiry_text = str(future.expiry or "").strip().upper()
             expiry_date = None
-            for expiry_format in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+            for expiry_format in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d"):
                 try:
                     expiry_date = datetime.strptime(expiry_text, expiry_format).date()
                     break
