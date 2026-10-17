@@ -281,6 +281,34 @@ def test_live_synthetic_scanner_skips_timestamp_mismatched_strike_without_blocki
 
 
 
+def test_live_scanner_accepts_executable_depth_when_volume_and_oi_are_missing(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+
+    monkeypatch.setattr(scanner_module, "scan_synthetic_snapshot", lambda *_a, **_k: ())
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = 10_500_000_000
+    expiry = "29OCT2026"
+    ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry}
+    pe = {**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry}
+    ce.pop("volume")
+    ce.pop("oi")
+    pe.pop("volume")
+    pe.pop("oi")
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+    }
+
+    scanner.observe(ce)
+    scanner.observe(pe)
+    scanner.observe(future)
+
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters.get("illiquid_or_incomplete_option_leg", 0) == 0
+    assert counters.get("scan_evaluations", 0) == 1
+
+
 def test_live_synthetic_scanner_waits_up_to_three_seconds_for_missing_leg_quote():
     ts = 10_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
