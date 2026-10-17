@@ -516,7 +516,7 @@ def test_runner_snapshot_does_not_claim_running_before_run_forever():
 
 
 def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
-    from threading import Event
+    from threading import Event, current_thread
 
     runner = LiveSyntheticRunner(
         ":memory:",
@@ -526,19 +526,21 @@ def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
         atm_provider=lambda _symbol, _timestamp: 100.0,
     )
     feed_stopped = Event()
-    feed_finished = Event()
+    feed_started = Event()
+    feed_thread_ref = {}
 
     class FakeFeed:
         def run_forever(self):
+            feed_thread_ref["thread"] = current_thread()
+            feed_started.set()
             feed_stopped.wait(2.0)
-            feed_finished.set()
 
         def stop(self):
             feed_stopped.set()
 
     runner.underlying_feed = FakeFeed()
     monkeypatch.setattr(runner, "_refresh_target_expiries", lambda: False)
-    monkeypatch.setattr(runner, "_wait_for_live_atm", lambda _provider: None)
+    monkeypatch.setattr(runner, "_wait_for_live_atm", lambda _provider: feed_started.wait(1.0))
     monkeypatch.setattr(runner, "build_subscriptions", lambda: [object()])
     monkeypatch.setattr(
         runner,
@@ -552,7 +554,6 @@ def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
 
     class FakeRecorder:
         def __init__(self, *args, **kwargs):
-            from threading import Event
             self.stop_event = Event()
 
         def run_forever(self):
@@ -569,5 +570,68 @@ def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
 
     runner.run_forever()
 
-    assert feed_finished.is_set()
+    assert feed_thread_ref["thread"].is_alive() is False
     assert runner._active_underlying_feed is None
+
+
+def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
+    from threading import Event
+
+    atm = {"value": 100.0}
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: atm["value"],
+    )
+    runner.underlying_feed = type(
+        "FakeFeed", (), {"run_forever": lambda self: None, "stop": lambda self: None}
+    )()
+    monkeypatch.setattr(runner, "_refresh_target_expiries", lambda: False)
+    monkeypatch.setattr(runner, "_wait_for_live_atm", lambda _provider: None)
+    monkeypatch.setattr(runner, "build_subscriptions", lambda: [object()])
+    monkeypatch.setattr(
+        runner,
+        "_build_pipeline",
+        lambda _scanner: type("Pipeline", (), {"observe": lambda self, payload: None})(),
+    )
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
+        staticmethod(lambda now=None: True),
+    )
+
+    class FakeRecorder:
+        instances = []
+
+        def __init__(self, *args, **kwargs):
+            self.stop_event = Event()
+            self.on_observation = kwargs["on_observation"]
+            self.stop_calls = 0
+            self.stop_event.set if False else None
+            type(self).instances.append(self)
+
+        def run_forever(self):
+            if len(type(self).instances) == 1:
+                atm["value"] = 105.0
+                self.on_observation({"underlying": "NIFTY"})
+                assert self.stop_event.is_set()
+            else:
+                type(self).instances[0].on_observation({"underlying": "NIFTY"})
+                self.stale_callback_left_replacement_running = not self.stop_event.is_set()
+                runner.stop()
+
+        def stop(self):
+            self.stop_calls += 1
+            self.stop_event.set()
+
+    FakeRecorder.market_open = staticmethod(lambda now=None: True)
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder",
+        FakeRecorder,
+    )
+
+    runner.run_forever()
+
+    assert len(FakeRecorder.instances) == 2
+    assert FakeRecorder.instances[1].stale_callback_left_replacement_running is True
