@@ -103,6 +103,7 @@ class LiveSyntheticOptionFutureRecorder:
         self._ingestor: BoundedMarketDataIngestor | None = None
         self._latest: dict[tuple[str, str], tuple[int, Any]] = {}
         self._lock = Lock()
+        self._accept_records = False
         self._metadata: dict[tuple[str, str], SyntheticSubscription] = {}
         self._records_received = 0
         self._observations_emitted = 0
@@ -212,11 +213,12 @@ class LiveSyntheticOptionFutureRecorder:
             )
 
     def _on_record(self, record) -> None:
-        with self._lock:
-            self._records_received += 1
         key = (record.instrument.exchange.strip().upper(), record.instrument.token.strip())
         second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
         with self._lock:
+            if not self._accept_records:
+                return
+            self._records_received += 1
             previous = self._latest.get(key)
             if previous is not None:
                 previous_timestamp_ns = int(previous[1].timestamp_ns)
@@ -255,50 +257,56 @@ class LiveSyntheticOptionFutureRecorder:
         return len(ready)
 
     def _run_session(self) -> int:
-        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
-            self._repository = DailySQLiteMarketDataRepository(self.data_db)
-            self._ingestor = BoundedMarketDataIngestor(
-                self._repository,
-                batch_size=self.batch_size,
-                record_source=self.SOURCE,
-            )
-            self._ingestor.start()
-        feed_kwargs = {"auth": self.auth}
-        if self._manager is not None:
-            feed_kwargs["manager"] = self._manager
-        else:
-            # The common manager is the sole reconnect supervisor. A private
-            # SDK reconnect loop here can race manager-driven shard recovery.
-            feed_kwargs["socket_factory"] = lambda: MarketDataWebSocket(
-                auth=self.auth,
-                auto_reconnect=False,
-            )
-        self._feed = CommonStrategyMarketFeed(self.consumer, **feed_kwargs)
-        self._feed.start(self._descriptors(), self._on_record)
+        with self._lock:
+            # A prior session must never donate buffered quotes to this one.
+            self._latest.clear()
+            self._accept_records = True
         try:
+            if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+                self._repository = DailySQLiteMarketDataRepository(self.data_db)
+                self._ingestor = BoundedMarketDataIngestor(
+                    self._repository,
+                    batch_size=self.batch_size,
+                    record_source=self.SOURCE,
+                )
+                self._ingestor.start()
+            feed_kwargs = {"auth": self.auth}
+            if self._manager is not None:
+                feed_kwargs["manager"] = self._manager
+            else:
+                # The common manager is the sole reconnect supervisor. A private
+                # SDK reconnect loop here can race manager-driven shard recovery.
+                feed_kwargs["socket_factory"] = lambda: MarketDataWebSocket(
+                    auth=self.auth,
+                    auto_reconnect=False,
+                )
+            self._feed = CommonStrategyMarketFeed(self.consumer, **feed_kwargs)
+            self._feed.start(self._descriptors(), self._on_record)
             while self.market_open() and not self.stop_event.is_set():
                 self._flush_completed_buckets()
                 sleep(self.poll_seconds)
+        finally:
+            # Stop accepting callbacks before detaching the consumer, then drain
+            # the final buffer. This prevents an in-flight old-session callback
+            # from repopulating the buffer after it has been flushed.
+            with self._lock:
+                self._accept_records = False
+            if self._feed:
+                self._feed.stop()
+                self._feed = None
             with self._lock:
                 latest = list(self._latest.values())
                 self._latest.clear()
             for _, record in latest:
                 self._emit(record, record.timestamp_ns)
-            if self._ingestor is not None:
-                self._ingestor.close()
-                snapshot = self._ingestor.snapshot()
-                return int(snapshot.get("inserted", 0))
-            return 0
-        finally:
-            if self._feed:
-                self._feed.stop()
-                self._feed = None
             if self._ingestor:
                 self._ingestor.close()
                 self._ingestor = None
             if self._repository:
                 self._repository.close()
                 self._repository = None
+
+        return 0
 
     def run_forever(self) -> None:
         while not self.stop_event.is_set():
