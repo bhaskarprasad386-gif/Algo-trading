@@ -500,6 +500,29 @@ class LiveSyntheticRunner:
                 if not LiveSyntheticOptionFutureRecorder.market_open():
                     self._stop_requested.wait(30.0)
                     continue
+                # This loop remains active across trading sessions; the earlier
+                # underlying-feed loop is not re-entered after a recorder exits.
+                # Refresh expiries here too, and rebuild the ATM strike map/feed
+                # before subscribing to the next session's contracts.
+                session_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                if session_date != last_expiry_refresh_date:
+                    last_expiry_refresh_date = session_date
+                    try:
+                        expiry_changed = self._refresh_target_expiries()
+                    except Exception as exc:
+                        expiry_changed = False
+                        app_logger.warning("Synthetic expiry refresh failed; retaining last valid targets: %s", exc)
+                    if expiry_changed:
+                        if feed is not None:
+                            feed.stop()
+                            feed = None
+                            feed_thread = None
+                            self._active_underlying_feed = None
+                        if self._atm_provider is None:
+                            self._atm_tracker = None
+                        # Re-enter the outer setup loop to start the underlying
+                        # feed with strikes for the refreshed expiry.
+                        break
                 self._refresh_requested.clear()
                 try:
                     subscriptions = self.build_subscriptions()
