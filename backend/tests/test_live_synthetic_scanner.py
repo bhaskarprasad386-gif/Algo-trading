@@ -947,3 +947,33 @@ def test_live_scanner_rejects_malformed_future_lot_size_without_raising():
         counters = scanner.diagnostics_snapshot()["counters"]
         assert counters["invalid_future_lot_size"] == 1
         assert counters.get("scan_evaluations", 0) == 0
+
+
+
+def test_live_synthetic_scanner_rejects_epoch_millisecond_timestamp_unit():
+    import time
+
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(time.time_ns() // 1_000_000, 100.0, "CE", 4.0, 5.0)
+    assert scanner.observe(payload) == ()
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["invalid_timestamp_unit"] == 1
+    assert counters.get("stale_timestamp", 0) == 0
+
+
+def test_pair_monitor_does_not_truncate_fractional_lot_size_to_ready():
+    ts = 35_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "29OCT2026"
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry, "lot_size": 1.5})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry, "lot_size": 1.5})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+
+    rows = scanner.pair_monitor_snapshot(limit=10)["data"]
+    row = next(r for r in rows if r["strike"] == 105.0)
+    assert row["state"] == "INCOMPLETE"
+    assert "INVALID_LOT_SIZE" in row["reason"]
