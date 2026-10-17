@@ -114,6 +114,47 @@ def test_empty_completed_scan_publishes_empty_results_but_incomplete_scan_does_n
     assert published == [()]
 
 
+def test_concurrent_incomplete_tick_cannot_publish_another_ticks_empty_scan():
+    from threading import Event, Thread
+
+    entered_incomplete = Event()
+    release_incomplete = Event()
+
+    class ConcurrentScanner:
+        def __init__(self):
+            self.evaluations = 0
+            self.calls = 0
+
+        def diagnostics_snapshot(self):
+            return {"counters": {"scan_evaluations": self.evaluations}}
+
+        def observe(self, payload):
+            self.calls += 1
+            if payload["kind"] == "incomplete":
+                entered_incomplete.set()
+                assert release_incomplete.wait(timeout=2)
+                return ()
+            self.evaluations += 1
+            return ()
+
+    scanner = ConcurrentScanner()
+    published = []
+    pipeline = LiveSyntheticScanPipeline(scanner=scanner, on_results=published.append)
+    first = Thread(target=lambda: pipeline.observe({"kind": "incomplete"}))
+    second = Thread(target=lambda: pipeline.observe({"kind": "complete"}))
+
+    first.start()
+    assert entered_incomplete.wait(timeout=2)
+    second.start()
+    release_incomplete.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert published == [()]
+
+
 def test_nonempty_results_are_published_and_empty_completed_results_are_not_persisted_as_alerts():
     class DiagnosticScanner:
         def __init__(self, results):
