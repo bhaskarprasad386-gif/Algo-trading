@@ -44,7 +44,9 @@ class LiveSyntheticScanPipeline:
         self._observe_lock = Lock()
         self._queue = Queue(maxsize=alert_queue_size)
         self._state_lock = Lock()
+        self._close_lock = Lock()
         self._closed = False
+        self._stop_enqueued = False
         self._counters = {
             "alert_jobs_enqueued": 0,
             "alert_jobs_completed": 0,
@@ -132,21 +134,30 @@ class LiveSyntheticScanPipeline:
         return self._queue.unfinished_tasks == 0
 
     def close(self, timeout: float = 2.0) -> bool:
-        """Stop accepting alert jobs and drain the worker within a time budget."""
+        """Stop accepting alert jobs and drain the worker within a time budget.
+
+        Never hold the counter/state lock while waiting for queue capacity:
+        the worker needs that lock to finish its current job before it can
+        dequeue the next item. Holding it here deadlocks a full queue.
+        """
         if self._worker is None:
             return True
-        with self._state_lock:
-            if not self._closed:
+        timeout = max(0.0, timeout)
+        deadline = monotonic() + timeout
+        with self._close_lock:
+            with self._state_lock:
                 self._closed = True
+                stop_enqueued = self._stop_enqueued
+            if not stop_enqueued:
                 try:
-                    self._queue.put(self._STOP, timeout=max(0.0, timeout))
+                    self._queue.put(self._STOP, timeout=max(0.0, deadline - monotonic()))
                 except Full:
-                    # Keep the pipeline open so a later close() can retry after
-                    # the worker frees queue capacity.
-                    self._closed = False
+                    # Keep rejecting new work; a later close() can retry.
                     return False
-        self._worker.join(timeout=max(0.0, timeout))
-        return not self._worker.is_alive()
+                with self._state_lock:
+                    self._stop_enqueued = True
+            self._worker.join(timeout=max(0.0, deadline - monotonic()))
+            return not self._worker.is_alive()
 
     def diagnostics_snapshot(self) -> dict:
         with self._state_lock:
