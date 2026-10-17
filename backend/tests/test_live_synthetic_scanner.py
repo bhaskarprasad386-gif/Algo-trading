@@ -19,7 +19,8 @@ def test_live_scanner_derives_time_to_expiry_and_passes_config(monkeypatch):
         atm_provider=lambda _s, _t: 100.0,
         config_provider=lambda _s: SyntheticScanConfig(rate=0.055, fees_per_unit=1.25),
     )
-    ts = 1_800_000_000_000_000_000
+    import time
+    ts = time.time_ns()
     scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
     scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"})
     scanner.observe({"underlying":"NIFTY", "instrument_class":"INDEX", "option_type":"",
