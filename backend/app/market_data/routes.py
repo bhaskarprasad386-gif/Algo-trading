@@ -33,6 +33,14 @@ def _nse_market_is_open(now: datetime) -> bool:
     return time(9, 15) <= current.time() < time(15, 30)
 
 
+
+def _mcx_market_is_open(now: datetime) -> bool:
+    """Return scheduled MCX non-agri hours in India time; quote health is separate."""
+    current = now.astimezone(ZoneInfo("Asia/Kolkata")) if now.tzinfo else now.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    if current.weekday() >= 5:
+        return False
+    return time(9, 0) <= current.time() < time(23, 30)
+
 @router.get("/ltp")
 def get_ltp(
     exchange: str = Query(...),
@@ -255,8 +263,9 @@ def get_market_overview():
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
     market_open = _nse_market_is_open(now)
+    mcx_market_open = _mcx_market_is_open(now)
     cache_key = now.date().isoformat()
-    if not market_open:
+    if not market_open and not mcx_market_open:
         with _CLOSED_OVERVIEW_CACHE_LOCK:
             cached = _CLOSED_OVERVIEW_CACHE.get(cache_key)
         if cached is not None:
@@ -311,7 +320,8 @@ def get_market_overview():
         for exchange, instruments in by_exchange.items():
             try:
                 by_token = {}
-                if market_open:
+                exchange_open = market_open if exchange in {"NSE", "BSE"} else mcx_market_open
+                if exchange_open:
                     payload = client.quote_many(exchange, instruments).get("data") or {}
                     fetched = payload.get("fetched") or payload.get("data") or []
                     if isinstance(fetched, dict):
@@ -326,7 +336,7 @@ def get_market_overview():
                     fallback_ltp = None
                     fallback_previous = None
                     status = "LIVE" if quote else "NO_QUOTE"
-                    if not market_open:
+                    if not exchange_open:
                         try:
                             fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
                             if fallback_ltp is not None:
@@ -352,10 +362,17 @@ def get_market_overview():
 
     indices, index_errors = fetch(index_specs)
     commodities, commodity_errors = fetch(commodity_specs)
-    result = {"status": "success", "mode": "live", "market_session": "OPEN" if market_open else "CLOSED",
-              "indices": indices, "commodities": commodities,
-              "errors": index_errors + commodity_errors}
-    if not market_open:
+    result = {
+        "status": "success",
+        "mode": "live",
+        "market_session": "OPEN" if market_open else "CLOSED",
+        "nse_market_session": "OPEN" if market_open else "CLOSED",
+        "mcx_market_session": "OPEN" if mcx_market_open else "CLOSED",
+        "indices": indices,
+        "commodities": commodities,
+        "errors": index_errors + commodity_errors,
+    }
+    if not market_open and not mcx_market_open:
         with _CLOSED_OVERVIEW_CACHE_LOCK:
             _CLOSED_OVERVIEW_CACHE.clear()
             _CLOSED_OVERVIEW_CACHE[cache_key] = result

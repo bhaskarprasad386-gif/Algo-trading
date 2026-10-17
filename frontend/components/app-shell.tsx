@@ -7,7 +7,7 @@ import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
 
 const nav = [
-  { href: "/", label: "Command Center", icon: Home },
+  { href: "/", label: "Dashboard", icon: Home },
   { href: "/scanner", label: "Cash Future", icon: Activity },
   { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
@@ -39,7 +39,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </span>
               <div>
                 <div className="text-sm font-semibold theme-text">ALGO TRADING</div>
-                <div className="text-[10px] uppercase tracking-[0.18em] theme-subtle">Command Terminal</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] theme-subtle">Live Market Monitor</div>
               </div>
             </Link>
           </div>
