@@ -963,6 +963,27 @@ def test_live_synthetic_scanner_rejects_leg_symbol_from_different_underlying():
     assert scanner.diagnostics_snapshot()["counters"]["underlying_symbol_mismatch"] == 1
 
 
+def test_live_synthetic_scanner_rejects_prefix_overlapping_underlying_symbols():
+    # A symbol belonging to NIFTYBANK must not enter the NIFTY bucket just
+    # because its text shares the NIFTY prefix.
+    cases = (
+        {
+            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+            "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 1,
+            "source_timestamp_ns": 35_000_000_000, "symbol": "NIFTYBANK29OCT2026FUT",
+        },
+        {
+            **_base(35_000_000_000, 105.0, "CE", 4.0, 5.0),
+            "symbol": "NIFTYBANK29OCT202610500CE",
+        },
+    )
+    for payload in cases:
+        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+        assert scanner.observe(payload) == ()
+        assert scanner._buckets == {}
+        assert scanner.diagnostics_snapshot()["counters"]["underlying_symbol_mismatch"] == 1
+
+
 def test_live_scanner_rejects_malformed_future_lot_size_without_raising():
     import time
 
