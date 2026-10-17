@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS: int = 90
     LIVE_SYNTHETIC_DATA_ENABLED: bool = True
     LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS: float = 0.0
+    # Explicit assumptions; override with broker/strategy-calibrated environment values.
+    LIVE_SYNTHETIC_CARRY_RATE: float = 0.055
+    LIVE_SYNTHETIC_FEES_PER_UNIT: float = 1.0
     LIVE_SYNTHETIC_RESULT_RETENTION_DAYS: int = 90
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = True
     LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS: float = 0.0
