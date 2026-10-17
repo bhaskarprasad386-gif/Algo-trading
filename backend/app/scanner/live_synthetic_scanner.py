@@ -69,6 +69,7 @@ class LiveSyntheticScanner:
         """Return scanner-local counters without exposing cached market payloads."""
         # Keep lock order consistent with observe(): scanner state before counters.
         with self._lock:
+            self._prune(max((key[1] for key in self._buckets), default=0))
             with self._diagnostics_lock:
                 counters = dict(self._diagnostics)
             counters["active_buckets"] = len(self._buckets)
@@ -467,6 +468,7 @@ class LiveSyntheticScanner:
         now_ns = time.time_ns()
         rows = []
         with self._lock:
+            self._prune(max((key[1] for key in self._buckets), default=0))
             for (symbol, bucket_ts, expiry), bucket in self._buckets.items():
                 if bucket_ts >= 1_000_000_000_000_000 and now_ns - bucket_ts > 5_000_000_000:
                     continue
@@ -627,14 +629,38 @@ class LiveSyntheticScanner:
         newest_bucket_ns = max((key[1] for key in self._buckets), default=timestamp_ns)
         watermark_ns = max(timestamp_ns, newest_bucket_ns)
         cutoff = watermark_ns - self.MAX_BUCKET_AGE_NS
+        now_monotonic_ns = time.monotonic_ns()
         before = len(self._buckets)
+
+        def bucket_is_fresh(bucket: dict) -> bool:
+            if not isinstance(bucket, dict) or bucket.get("first_seen_monotonic_ns") is None:
+                # Keep compatibility with manually seeded diagnostic/test buckets;
+                # production buckets always receive a monotonic creation timestamp.
+                return True
+            try:
+                first_seen_ns = int(bucket["first_seen_monotonic_ns"])
+            except (TypeError, ValueError, OverflowError):
+                return False
+            wait_started = bucket.get("quote_wait_started_ns")
+            if wait_started is not None:
+                try:
+                    wait_age_ns = now_monotonic_ns - int(wait_started)
+                except (TypeError, ValueError, OverflowError):
+                    return False
+                # A pending executable-book quote gets its own bounded three-second
+                # grace period, even if the original bucket was created earlier.
+                return 0 <= wait_age_ns < self.MAX_BUCKET_AGE_NS
+            age_ns = now_monotonic_ns - first_seen_ns
+            return 0 <= age_ns < self.MAX_BUCKET_AGE_NS
+
         self._buckets = {
             key: value for key, value in self._buckets.items()
-            if key[1] >= cutoff
+            if key[1] >= cutoff and bucket_is_fresh(value)
         }
         expired = before - len(self._buckets)
         if expired:
             self._count("pruned_buckets", expired)
+            self._count("monotonic_age_pruned_buckets", expired)
 
         # Time-based pruning is the primary bound; this hard cap protects the
         # process if a broker feed emits many distinct timestamps/symbol keys.
