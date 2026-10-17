@@ -520,6 +520,12 @@ class LiveSyntheticRunner:
                             self._active_underlying_feed = None
                         if self._atm_provider is None:
                             self._atm_tracker = None
+                            try:
+                                atm_provider = self._ensure_atm_provider()
+                            except LookupError as exc:
+                                app_logger.warning("Synthetic ATM strike map unavailable after expiry refresh: %s", exc)
+                                self._stop_requested.wait(5.0)
+                                continue
                         # Re-enter the outer setup loop to start the underlying
                         # feed with strikes for the refreshed expiry.
                         break
