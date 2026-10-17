@@ -290,7 +290,7 @@ async def dashboard_websocket(websocket: WebSocket):
             cash_count = len(snapshot)
             calendar_snapshot = live_calendar_spread_scanner.snapshot(limit=200)
             calendar_count = len(calendar_snapshot)
-            synthetic_snapshot = live_synthetic_latest_results
+            synthetic_snapshot = _fresh_live_synthetic_results(live_synthetic_latest_results)
             box_snapshot = live_box_spread_latest_results
             def _ts(items):
                 if not items:
@@ -681,6 +681,20 @@ async def _live_synthetic_loop() -> None:
                 )
             if live_synthetic_runner is runner:
                 live_synthetic_runner = None
+
+
+def _fresh_live_synthetic_results(results: tuple, max_age_seconds: float = 5.0) -> tuple:
+    """Keep dashboard integration counts aligned with the live endpoint's freshness window."""
+    cutoff_ns = time.time_ns() - int(max_age_seconds * 1_000_000_000)
+    fresh = []
+    for result in results:
+        try:
+            timestamp_ns = int(result.option.timestamp_ns)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            continue
+        if timestamp_ns >= cutoff_ns:
+            fresh.append(result)
+    return tuple(fresh)
 
 
 def _update_live_synthetic_results(results: tuple) -> None:
