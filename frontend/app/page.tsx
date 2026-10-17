@@ -314,11 +314,13 @@ export default function HomePage() {
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
   const wsLabel = wsStatus === "connected" && lastDashboardMessageAt != null && Date.now() - lastDashboardMessageAt <= 15_000 ? "CONNECTED" : wsStatus === "error" ? "ERROR" : wsStatus === "connected" ? "STALE (NO RECENT SNAPSHOT)" : "CONNECTING";
   const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
-  const effectiveFeedAge = feedAge == null || feedHealthCheckedAt == null ? null : feedAge + Math.max(0, (Date.now() - new Date(feedHealthCheckedAt).getTime()) / 1000);
-  // Age the last feed-health sample between polls so a frozen "2s" response cannot stay LIVE indefinitely.
+  const feedSampleAgeSeconds = feedHealthCheckedAt == null ? null : (Date.now() - new Date(feedHealthCheckedAt).getTime()) / 1000;
+  const calculatedFeedAge = feedAge == null || feedSampleAgeSeconds == null || !Number.isFinite(feedSampleAgeSeconds) || feedSampleAgeSeconds < 0 || !Number.isFinite(feedAge) || feedAge < 0 ? null : feedAge + feedSampleAgeSeconds;
+  const effectiveFeedAge = calculatedFeedAge != null && Number.isFinite(calculatedFeedAge) ? calculatedFeedAge : null;
+  // Age the last feed-health sample between polls; invalid/future sample times are never considered fresh.
   const effectiveFeedStatus = feedStatus === "live" && (effectiveFeedAge == null || effectiveFeedAge > 5) ? "stale" : feedStatus;
   const feedLabel = effectiveFeedStatus === "live" ? "LIVE" : effectiveFeedStatus === "stale" ? "STALE" : effectiveFeedStatus === "no-data" ? "NO DATA" : effectiveFeedStatus === "closed" ? "CLOSED" : effectiveFeedStatus === "error" ? "ERROR" : "CHECKING";
-  const feedAgeLabel = feedAge == null ? "Not available" : feedAge >= 3600 ? `${Math.floor(feedAge / 3600)}h ${Math.floor((feedAge % 3600) / 60)}m` : feedAge >= 60 ? `${Math.floor(feedAge / 60)}m ${Math.floor(feedAge % 60)}s` : `${feedAge.toFixed(1)}s`;
+  const feedAgeLabel = effectiveFeedAge == null ? "Not available" : effectiveFeedAge >= 3600 ? `${Math.floor(effectiveFeedAge / 3600)}h ${Math.floor((effectiveFeedAge % 3600) / 60)}m` : effectiveFeedAge >= 60 ? `${Math.floor(effectiveFeedAge / 60)}m ${Math.floor(effectiveFeedAge % 60)}s` : `${effectiveFeedAge.toFixed(1)}s`;
   const snapshotTime = snapshot.timestamp == null ? NaN : new Date(snapshot.timestamp).getTime();
   // Do not clamp a future timestamp to age zero; that would falsely look like a fresh heartbeat.
   const snapshotAge = Number.isFinite(snapshotTime) && snapshotTime <= Date.now() ? (Date.now() - snapshotTime) / 1000 : null;
