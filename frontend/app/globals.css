@@ -99,3 +99,74 @@ input::placeholder, textarea::placeholder { color: var(--app-subtle); }
 }
 
 .theme-overlay { background: color-mix(in srgb, var(--app-bg) 78%, transparent) !important; }
+
+/* Dashboard visual system */
+.dashboard-page {
+  --dash-line: color-mix(in srgb, var(--app-border) 88%, transparent);
+  gap: 1.25rem;
+}
+.dashboard-page > div:first-child {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--dash-line);
+  background:
+    radial-gradient(ellipse at 92% 0%, color-mix(in srgb, var(--app-accent) 13%, transparent), transparent 38%),
+    linear-gradient(135deg, var(--app-surface-2), var(--app-surface));
+  box-shadow: var(--app-shadow);
+  padding: clamp(1rem, 2.2vw, 1.6rem);
+}
+.dashboard-page > div:first-child::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, var(--app-accent), var(--app-success));
+  opacity: .9;
+}
+.dashboard-page h2 {
+  letter-spacing: -.025em;
+}
+.dashboard-page section > .rounded-2xl,
+.dashboard-page section > section,
+.dashboard-page section [class*="rounded-2xl"] {
+  border-color: var(--dash-line);
+}
+.dashboard-page section[aria-label="Market overview"] > div:last-child > section {
+  min-height: 188px;
+  background: linear-gradient(155deg, var(--app-surface), color-mix(in srgb, var(--app-surface-2) 58%, var(--app-surface)));
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .07);
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.dashboard-page section[aria-label="Market overview"] > div:last-child > section:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--app-accent) 42%, var(--app-border));
+  box-shadow: var(--app-shadow);
+}
+.dashboard-page section[aria-label="Market and connection status"] > div:first-child > section {
+  border-radius: 1rem;
+  background: linear-gradient(135deg, var(--app-surface-2), var(--app-surface));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .05);
+}
+.dashboard-page section[aria-label="System health"] table thead {
+  background: color-mix(in srgb, var(--app-surface-2) 86%, var(--app-accent-soft));
+}
+.dashboard-page section[aria-label="System health"] tbody tr {
+  transition: background-color .15s ease;
+}
+.dashboard-page section[aria-label="System health"] tbody tr:hover {
+  background: color-mix(in srgb, var(--app-accent-soft) 38%, transparent);
+}
+.dashboard-page a[class*="theme-accent-bg"] {
+  transition: transform .16s ease, filter .16s ease;
+}
+.dashboard-page a[class*="theme-accent-bg"]:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+@media (max-width: 640px) {
+  .dashboard-page { gap: 1rem; }
+  .dashboard-page > div:first-child { border-radius: 1rem; }
+  .dashboard-page section[aria-label="Market overview"] > div:last-child > section { min-height: 172px; padding: .8rem; }
+}
