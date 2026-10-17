@@ -495,7 +495,7 @@ export default function HomePage() {
                 ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
                 ["Broker Orders", "OFF"],
                 ["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
-                ["Socket Groups", runtime.connectedGroups + "/" + (runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount) + " required • " + runtime.socketGroups + " active • cap " + runtime.maxSocketSessions],
+                ["Socket Groups", connectedRequiredGroupCount + "/" + (runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount) + " required • " + runtime.socketGroups + " active • cap " + runtime.maxSocketSessions],
                 ["Runtime Telemetry", runtimeTelemetryStale ? "STALE / UNAVAILABLE" : "FRESH"],
                 ["Diagnostics Endpoint", diagnosticsFetchFailed ? "REQUEST FAILED" : diagnosticsLastSuccessAt == null ? "NOT CHECKED" : Date.now() - diagnosticsLastSuccessAt > 8000 ? "STALE" : "RESPONDING"],
                 ["Disconnected Groups", [...runtime.disconnectedGroups, ...runtime.missingSocketGroups].filter((value, index, values) => values.indexOf(value) === index).join(", ") || "None reported"],
