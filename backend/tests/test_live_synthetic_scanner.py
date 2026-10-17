@@ -426,6 +426,26 @@ def test_pair_monitor_survives_malformed_cached_leg_timestamp():
 
 
 
+def test_pair_monitor_rejects_nonfinite_depth_instead_of_ready():
+    for invalid_depth in (float("inf"), float("nan")):
+        ts = 14_000_000_000
+        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+        expiry = "29OCT2026"
+        scanner.observe({
+            **_base(ts, 105.0, "CE", 4.0, 5.0),
+            "expiry": expiry, "bid_qty": invalid_depth,
+        })
+        scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+        scanner.observe({
+            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+            "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+            "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+        })
+        row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+        assert row["state"] == "INCOMPLETE"
+        assert "CALL_DEPTH_MISSING" in row["reason"]
+
+
 def test_pair_monitor_reports_missing_executable_depth_instead_of_ready():
     ts = 14_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
