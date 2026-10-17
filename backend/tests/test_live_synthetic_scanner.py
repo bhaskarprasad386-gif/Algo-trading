@@ -33,6 +33,41 @@ def test_live_scanner_derives_time_to_expiry_and_passes_config(monkeypatch):
     assert captured["config"].time_to_expiry_years > 0
 
 
+def test_live_scanner_expiry_horizon_uses_future_quote_source_timestamp(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+    from datetime import date, datetime, time as datetime_time, timedelta
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Kolkata")
+    source_at = datetime(2026, 10, 17, 10, 0, tzinfo=tz)
+    ts = int(source_at.timestamp()) * 1_000_000_000
+    monkeypatch.setattr(scanner_module.time, "time_ns", lambda: ts)
+    captured = {}
+
+    def fake_scan(options, future, *, atm_strike, config, policy=None):
+        captured["config"] = config
+        return ()
+
+    monkeypatch.setattr(scanner_module, "scan_synthetic_snapshot", fake_scan)
+    expiry_date = date(2026, 11, 17)
+    expiry = expiry_date.strftime("%d%b%Y").upper()
+    scanner = LiveSyntheticScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        config_provider=lambda _s: SyntheticScanConfig(rate=0.055),
+    )
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+    })
+
+    expiry_at = datetime.combine(expiry_date, datetime_time(15, 30), tzinfo=tz)
+    expected = (expiry_at - source_at).total_seconds() / (365.25 * 24 * 60 * 60)
+    assert captured["config"].time_to_expiry_years == expected
+
+
 def _base(ts, strike, typ, bid, ask):
     return {
         "underlying": "NIFTY",
