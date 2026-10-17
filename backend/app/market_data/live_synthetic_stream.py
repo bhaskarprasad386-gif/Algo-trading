@@ -179,6 +179,10 @@ class LiveSyntheticOptionFutureRecorder:
 
     def _emit(self, record, timestamp_ns: int) -> None:
         payload = record.as_dict()
+        # MarketDataRecord.as_dict() includes the original broker payload for
+        # generic diagnostics. Synthetic strategy callbacks and historical
+        # storage need only canonical fields; never forward/retain raw ticks here.
+        payload.pop("payload", None)
         with self._lock:
             self._observations_emitted += 1
             bid, ask = payload.get("bid"), payload.get("ask")
