@@ -301,3 +301,16 @@ def test_pair_monitor_marks_complete_synchronized_triplet_ready():
     assert row["future_bid"] == 117.0
     assert row["call_bid"] == 4.0
     assert row["put_bid"] == 4.0
+
+
+def test_pair_monitor_survives_malformed_cached_leg_timestamp():
+    ts = 13_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
+    bucket = scanner._buckets[("NIFTY", ts, 20261029)]
+    bucket["options"][105.0]["CE"]["source_timestamp_ns"] = "not-a-timestamp"
+
+    snapshot = scanner.pair_monitor_snapshot(limit=10)
+    assert snapshot["status"] == "success"
+    assert len(snapshot["data"]) == 1
+    assert "INVALID_TIMESTAMP" in snapshot["data"][0]["reason"]
