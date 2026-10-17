@@ -257,6 +257,7 @@ class LiveSyntheticOptionFutureRecorder:
         return len(ready)
 
     def _run_session(self) -> int:
+        inserted = 0
         with self._lock:
             # A prior session must never donate buffered quotes to this one.
             self._latest.clear()
@@ -300,13 +301,16 @@ class LiveSyntheticOptionFutureRecorder:
             for _, record in latest:
                 self._emit(record, record.timestamp_ns)
             if self._ingestor:
-                self._ingestor.close()
+                ingestor = self._ingestor
+                ingestor.close()
+                snapshot = ingestor.snapshot()
+                inserted = int(snapshot.get("inserted", 0))
                 self._ingestor = None
             if self._repository:
                 self._repository.close()
                 self._repository = None
 
-        return 0
+        return inserted
 
     def run_forever(self) -> None:
         while not self.stop_event.is_set():
