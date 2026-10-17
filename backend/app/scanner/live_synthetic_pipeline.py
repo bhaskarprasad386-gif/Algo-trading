@@ -41,6 +41,7 @@ class LiveSyntheticScanPipeline:
         self.on_results = on_results
         self.retention_interval_seconds = retention_interval_seconds
         self._last_retention_cleanup = 0.0
+        self._retention_cleanup_pending = False
         self._observe_lock = Lock()
         self._queue = Queue(maxsize=alert_queue_size)
         # A second bounded queue absorbs short bursts without blocking feed callbacks.
@@ -83,8 +84,9 @@ class LiveSyntheticScanPipeline:
 
         if results:
             self._enqueue(tuple(results))
-        else:
-            self._maybe_cleanup_retention()
+        # Retention is time-based, not dependent on whether the market currently
+        # has opportunities. Enqueue cleanup after the result job to preserve order.
+        self._maybe_cleanup_retention()
         return tuple(results)
 
     def _enqueue(self, results: tuple) -> None:
@@ -118,11 +120,12 @@ class LiveSyntheticScanPipeline:
                     else:
                         self.alerts.persist(db, job)
                         self.alerts.notify_users(db, job)
-                if job is None:
-                    self._last_retention_cleanup = monotonic()
                 succeeded = True
-                with self._state_lock:
-                    self._counters["alert_jobs_completed"] += 1
+                # Retention cleanup is maintenance work, not an alert job:
+                # it must not distort alert counters.
+                if job is not None:
+                    with self._state_lock:
+                        self._counters["alert_jobs_completed"] += 1
                 break
             except Exception:
                 with self._state_lock:
@@ -145,6 +148,12 @@ class LiveSyntheticScanPipeline:
                     job = self._overflow_queue.get_nowait()
                     source_queue = self._overflow_queue
                 except Empty:
+                    with self._state_lock:
+                        cleanup_pending = self._retention_cleanup_pending
+                        if cleanup_pending:
+                            self._retention_cleanup_pending = False
+                    if cleanup_pending:
+                        self._process_alert_job(None)
                     continue
             if job is self._STOP:
                 # Drain spillover before stopping. Since close() has already
@@ -175,11 +184,25 @@ class LiveSyntheticScanPipeline:
             self._overflow_queue.join()
             return True
         deadline = monotonic() + max(0.0, timeout)
-        while (self._queue.unfinished_tasks or self._overflow_queue.unfinished_tasks) and monotonic() < deadline:
+        while monotonic() < deadline:
+            with self._state_lock:
+                cleanup_pending = self._retention_cleanup_pending
+            if (
+                self._queue.unfinished_tasks == 0
+                and self._overflow_queue.unfinished_tasks == 0
+                and not cleanup_pending
+            ):
+                return True
             # Event-based waiting without holding up the market-data callback.
             from threading import Event
             Event().wait(min(0.01, max(0.0, deadline - monotonic())))
-        return self._queue.unfinished_tasks == 0 and self._overflow_queue.unfinished_tasks == 0
+        with self._state_lock:
+            cleanup_pending = self._retention_cleanup_pending
+        return (
+            self._queue.unfinished_tasks == 0
+            and self._overflow_queue.unfinished_tasks == 0
+            and not cleanup_pending
+        )
 
     def close(self, timeout: float = 2.0) -> bool:
         """Stop accepting alert jobs and drain the worker within a time budget.
@@ -238,16 +261,13 @@ class LiveSyntheticScanPipeline:
         with self._state_lock:
             if self._closed:
                 return
-            try:
-                self._queue.put_nowait(None)
-            except Full:
-                try:
-                    self._overflow_queue.put_nowait(None)
-                except Full:
-                    # Retention cleanup is best-effort; never count it as a lost alert.
-                    return
+            # Keep maintenance work outside the bounded alert queues. Otherwise
+            # a cleanup job can consume alert capacity and cause valid alerts to
+            # overflow or be dropped while notification I/O is slow.
+            self._retention_cleanup_pending = True
+            # Throttle from request time, not worker completion: while the
+            # worker is busy, repeated ticks must not schedule duplicate cleanup.
             self._last_retention_cleanup = now
-            self._counters["alert_jobs_enqueued"] += 1
 
 
 __all__ = ["LiveSyntheticScanPipeline"]
