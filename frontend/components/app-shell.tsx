@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { theme, setTheme } = useTheme();
 
   return (
-    <div className="min-h-screen theme-bg theme-text">
+    <div className="min-h-screen min-h-[100dvh] theme-bg theme-text">
       <header className="app-topbar sticky top-0 z-40 border-b theme-border theme-surface backdrop-blur">
         <div className="flex h-[64px] items-center justify-between px-3 sm:px-6">
           <div className="flex items-center gap-3">
@@ -60,8 +60,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </aside>
         </div>
 
-        <main className="min-h-[calc(100vh-4rem)] w-full min-w-0 lg:ml-[236px]">
-          <div className="mx-auto w-full max-w-[1880px] p-3 pb-24 sm:p-5 lg:p-6">{children}</div>
+        <main className="min-h-[calc(100vh-4rem)] min-h-[calc(100dvh-4rem)] w-full min-w-0 lg:ml-[236px]">
+          <div className="mx-auto w-full max-w-[1880px] p-3 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:p-5 sm:pb-5 lg:p-6">{children}</div>
         </main>
       </div>
 
