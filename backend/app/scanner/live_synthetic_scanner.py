@@ -400,7 +400,9 @@ class LiveSyntheticScanner:
                     if future and ce and pe:
                         try:
                             stamps = [int(x.get("source_timestamp_ns") or 0) for x in (future, ce, pe)]
-                            if min(stamps) <= 0 or max(stamps) - min(stamps) > self.TIMESTAMP_TOLERANCE_NS:
+                            if min(stamps) <= 0:
+                                missing.append("INVALID_TIMESTAMP")
+                            elif max(stamps) - min(stamps) > self.TIMESTAMP_TOLERANCE_NS:
                                 missing.append("TIMESTAMP_MISMATCH")
                         except (TypeError, ValueError, OverflowError):
                             missing.append("INVALID_TIMESTAMP")
@@ -418,6 +420,49 @@ class LiveSyntheticScanner:
                         if leg_timestamps and max(leg_timestamps) > 0
                         else bucket_ts
                     )
+
+                    def positive(value):
+                        try:
+                            number = float(value)
+                            return number > 0
+                        except (TypeError, ValueError, OverflowError):
+                            return False
+
+                    def executable(leg):
+                        bid, ask = self._price(leg.get("bid")), self._price(leg.get("ask"))
+                        return bid is not None and ask is not None and ask >= bid
+
+                    if future and ce and pe:
+                        try:
+                            ce_expiry = self._expiry(ce.get("expiry"))
+                            pe_expiry = self._expiry(pe.get("expiry"))
+                            if ce_expiry != expiry or pe_expiry != expiry or future_expiry != expiry:
+                                missing.append("EXPIRY_MISMATCH")
+                        except ValueError:
+                            missing.append("INVALID_EXPIRY")
+                        if not executable(future):
+                            missing.append("INVALID_FUTURE_QUOTE")
+                        for label, option in (("CALL", ce), ("PUT", pe)):
+                            if not executable(option):
+                                missing.append(f"INVALID_{label}_QUOTE")
+                            if not positive(option.get("bid_qty")) or not positive(option.get("ask_qty")):
+                                missing.append(f"{label}_DEPTH_MISSING")
+                            if not (positive(option.get("volume")) or positive(option.get("oi"))):
+                                missing.append(f"{label}_NO_VOLUME_OR_OI")
+                        try:
+                            ce_lot = int(float(ce.get("lot_size") or 0))
+                            pe_lot = int(float(pe.get("lot_size") or 0))
+                            future_lot = int(float(future.get("lot_size") or 0))
+                        except (TypeError, ValueError, OverflowError):
+                            ce_lot = pe_lot = future_lot = 0
+                        if min(ce_lot, pe_lot, future_lot) <= 0:
+                            missing.append("INVALID_LOT_SIZE")
+                        elif ce_lot != pe_lot or ce_lot != future_lot:
+                            missing.append("LOT_SIZE_MISMATCH")
+                        if self.atm_provider(symbol, latest_timestamp) is None:
+                            missing.append("MISSING_ATM")
+                        if not missing:
+                            missing.append("AWAITING_SCANNER_QUALIFICATION")
                     rows.append({
                         "timestamp_ns": latest_timestamp,
                         "underlying": symbol,
@@ -430,8 +475,8 @@ class LiveSyntheticScanner:
                         "put_bid": self._price(pe.get("bid")),
                         "put_ask": self._price(pe.get("ask")),
                         "lot_size": ce.get("lot_size") or future.get("lot_size"),
-                        "state": "READY_TO_EVALUATE" if not missing else "INCOMPLETE",
-                        "reason": ",".join(missing) if missing else "AWAITING_SCANNER_QUALIFICATION",
+                        "state": "READY_TO_EVALUATE" if missing == ["AWAITING_SCANNER_QUALIFICATION"] else "INCOMPLETE",
+                        "reason": ",".join(missing) if missing else "INCOMPLETE",
                     })
         rows.sort(key=lambda row: int(row.get("timestamp_ns") or 0), reverse=True)
         return {"status": "success", "data": rows[:max(1, min(int(limit), 500))]}
