@@ -81,6 +81,14 @@ live_synthetic_latest_results: tuple = ()
 live_synthetic_runner: LiveSyntheticRunner | None = None
 _live_synthetic_universe_selection = "ALL"
 _live_synthetic_universe_restart_requested = threading.Event()
+_live_synthetic_universe_status = {
+    "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+    "eligible_future_symbols": [],
+    "missing_future_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+    "eligible_target_symbols": [],
+    "missing_option_expiry_symbols": [],
+    "checked_at": None,
+}
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 configure_live_synthetic(lambda: live_synthetic_latest_results)
@@ -563,7 +571,8 @@ async def _live_synthetic_loop() -> None:
                 elif typ == "FUTCOM" and segment == "MCX":
                     commodity_symbols.add(name)
 
-            stock_symbols = sorted(top15_liquid_stocks)
+            stock_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol in top15_liquid_stocks]
+            missing_future_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol not in top15_liquid_stocks]
             raw_index_symbols = sorted(index_symbols)
             index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
             missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
@@ -606,6 +615,14 @@ async def _live_synthetic_loop() -> None:
                     continue
                 targets.append(SyntheticLiveTarget(symbol, instrument_class, expiry=expiry))
             targets = tuple(targets)
+            _live_synthetic_universe_status.update({
+                "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+                "eligible_future_symbols": list(stock_symbols),
+                "missing_future_symbols": list(missing_future_symbols),
+                "eligible_target_symbols": [target.underlying for target in targets],
+                "missing_option_expiry_symbols": sorted(set(missing_expiry)),
+                "checked_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
+            })
             if missing_expiry:
                 app_logger.warning(
                     "Synthetic live targets skipped because no current option expiry exists: {}",
@@ -919,6 +936,7 @@ def get_synthetic_universe():
             "TOP15": "Top 15 liquid F&O stocks only; no index underlyings",
         },
         "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+        "availability": dict(_live_synthetic_universe_status),
     }
 
 
@@ -935,6 +953,7 @@ def set_synthetic_universe(payload: SyntheticUniverseSelection):
             "selection": selection,
             "restart_requested": False,
             "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+            "availability": dict(_live_synthetic_universe_status),
         }
     _live_synthetic_universe_selection = selection
     runner = live_synthetic_runner
@@ -947,6 +966,7 @@ def set_synthetic_universe(payload: SyntheticUniverseSelection):
         "selection": selection,
         "restart_requested": restart_requested,
         "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+        "availability": dict(_live_synthetic_universe_status),
     }
 
 
