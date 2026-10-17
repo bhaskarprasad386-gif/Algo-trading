@@ -118,6 +118,65 @@ def test_live_synthetic_scanner_assembles_real_ce_pe_and_future():
     assert result[0].future.bid == 117.0
 
 
+def test_live_synthetic_scanner_rejects_cross_class_option_future_triplet(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+
+    scan_calls = []
+    monkeypatch.setattr(
+        scanner_module,
+        "scan_synthetic_snapshot",
+        lambda *args, **kwargs: scan_calls.append((args, kwargs)) or (),
+    )
+    ts = 1_500_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "30SEP2026"
+    ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry, "instrument_class": "STOCK"}
+    pe = {**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry, "instrument_class": "STOCK"}
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+    }
+
+    scanner.observe(ce)
+    scanner.observe(pe)
+    assert scanner.observe(future) == ()
+
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["instrument_class_mismatch"] == 1
+    assert counters.get("scan_evaluations", 0) == 0
+    assert scan_calls == []
+    row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+    assert row["state"] == "INCOMPLETE"
+    assert "INSTRUMENT_CLASS_MISMATCH" in row["reason"]
+
+
+def test_live_synthetic_scanner_rejects_fractional_executable_depth():
+    for field, value in (("bid_qty", 0.5), ("ask_qty", 1.5)):
+        ts = 1_600_000_000
+        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+        expiry = "30SEP2026"
+        ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry}
+        pe = {**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry}
+        ce[field] = value
+        future = {
+            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+            "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+            "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+        }
+
+        scanner.observe(ce)
+        scanner.observe(pe)
+        assert scanner.observe(future) == ()
+        counters = scanner.diagnostics_snapshot()["counters"]
+        assert counters["illiquid_or_incomplete_option_leg"] >= 1
+        assert counters.get("scan_evaluations", 0) == 0
+
+        row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+        assert row["state"] == "INCOMPLETE"
+        assert ("CALL_DEPTH_MISSING" if field == "bid_qty" else "CALL_DEPTH_MISSING") in row["reason"]
+
+
 def test_live_synthetic_scanner_rejects_missing_timestamp():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     assert scanner.observe({"underlying": "NIFTY", "instrument_class": "INDEX", "bid": 1, "ask": 2}) == ()
