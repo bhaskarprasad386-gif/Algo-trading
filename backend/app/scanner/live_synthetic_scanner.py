@@ -436,7 +436,7 @@ class LiveSyntheticScanner:
                         try:
                             ce_expiry = self._expiry(ce.get("expiry"))
                             pe_expiry = self._expiry(pe.get("expiry"))
-                            if ce_expiry != expiry or pe_expiry != expiry or future_expiry != expiry:
+                            if (ce_expiry != expiry or pe_expiry != expiry or future_expiry != expiry) and "EXPIRY_MISMATCH" not in missing:
                                 missing.append("EXPIRY_MISMATCH")
                         except ValueError:
                             missing.append("INVALID_EXPIRY")
