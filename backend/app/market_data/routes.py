@@ -143,7 +143,7 @@ def get_historical(
 @router.get("/live-health")
 def get_live_data_health():
     """Return bounded live-data persistence and freshness health for the control center."""
-    from datetime import datetime, time
+    from datetime import datetime
     from zoneinfo import ZoneInfo
     from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
     from app.core.config import settings
@@ -151,7 +151,8 @@ def get_live_data_health():
 
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
-    market_open = now.weekday() < 5 and time(9, 15) <= now.time() <= time(15, 30)
+    # Use the same holiday-aware NSE session calculation as the market overview.
+    market_open = _nse_market_is_open(now)
     catalog = DailyMarketDataShardCatalog(settings.BACKTEST_DATA_DB)
     try:
         sources = []
@@ -160,7 +161,9 @@ def get_live_data_health():
             instruments = catalog.instruments(source=source, timeframe=timeframe)
             watermarks = [catalog.watermark(source=source, instrument=i, timeframe=timeframe) for i in instruments]
             latest_ns = max((v for v in watermarks if v is not None), default=None)
-            age_seconds = None if latest_ns is None else max(0.0, (now.timestamp() * 1_000_000_000 - latest_ns) / 1_000_000_000)
+            raw_age_seconds = None if latest_ns is None else (now.timestamp() * 1_000_000_000 - latest_ns) / 1_000_000_000
+            # A timestamp materially in the future is invalid, not a zero-age live quote.
+            age_seconds = None if raw_age_seconds is None or raw_age_seconds < -5.0 else max(0.0, raw_age_seconds)
             status = "LIVE" if market_open and age_seconds is not None and age_seconds <= 5 else (
                 "STALE" if market_open and age_seconds is not None else "NO_DATA"
             )
@@ -176,8 +179,10 @@ def get_live_data_health():
         if common and common.get("last_tick") and common.get("ticks_received", 0) > 0:
             timestamp_ns = common["last_tick"].get("timestamp_ns")
             if timestamp_ns is not None:
-                runtime_age = max(0.0, (now.timestamp() * 1_000_000_000 - timestamp_ns) / 1_000_000_000)
-                runtime_live = market_open and runtime_age <= 5.0
+                raw_runtime_age = (now.timestamp() * 1_000_000_000 - timestamp_ns) / 1_000_000_000
+                # Do not turn future-dated source timestamps into fresh market data.
+                runtime_age = None if raw_runtime_age < -5.0 else max(0.0, raw_runtime_age)
+                runtime_live = market_open and runtime_age is not None and runtime_age <= 5.0
         feed_status = "LIVE" if runtime_live else one_second["status"]
         return {
             "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
