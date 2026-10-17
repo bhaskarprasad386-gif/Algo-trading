@@ -130,3 +130,19 @@ def test_any_configured_top15_stock_can_qualify_above_five_points():
     )
     assert results
     assert all(result.executable_edge > 5 for result in results)
+
+
+
+def test_min_executable_edge_rejects_non_finite_and_non_numeric_values():
+    import pytest
+
+    for value in (float("nan"), float("inf"), float("-inf"), True, "10"):
+        with pytest.raises(ValueError, match="min_executable_edge must be finite"):
+            SyntheticScanConfig(min_executable_edge=value)
+
+
+def test_min_executable_edge_rejects_negative_values():
+    import pytest
+
+    with pytest.raises(ValueError, match="min_executable_edge must be non-negative"):
+        SyntheticScanConfig(min_executable_edge=-0.01)
