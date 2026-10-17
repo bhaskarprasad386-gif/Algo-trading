@@ -172,6 +172,7 @@ class LiveSyntheticScanPipeline:
             return True
         if timeout is None:
             self._queue.join()
+            self._overflow_queue.join()
             return True
         deadline = monotonic() + max(0.0, timeout)
         while (self._queue.unfinished_tasks or self._overflow_queue.unfinished_tasks) and monotonic() < deadline:
