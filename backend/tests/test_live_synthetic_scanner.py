@@ -1,5 +1,11 @@
-from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
+from app.scanner.live_synthetic_scanner import LiveSyntheticScanner as _LiveSyntheticScanner
 from app.scanner.synthetic_cash_carry import SyntheticScanConfig
+
+
+def LiveSyntheticScanner(*args, **kwargs):
+    """Use logical timestamps only in this deterministic unit-test module."""
+    kwargs.setdefault("allow_logical_timestamps", True)
+    return _LiveSyntheticScanner(*args, **kwargs)
 
 
 def test_synthetic_pricing_config_accepts_explicit_carry_and_cost_estimate():
@@ -1059,3 +1065,28 @@ def test_live_synthetic_scanner_rejects_fractional_and_boolean_timestamps():
         payload["source_timestamp_ns"] = timestamp
         assert scanner.observe(payload) == ()
     assert scanner.diagnostics_snapshot()["counters"]["invalid_timestamp"] == 4
+
+
+
+def test_live_scanner_rejects_non_epoch_timestamp_units_by_default():
+    scanner = _LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    for timestamp in (1_700_000_000, 1_700_000_000_000, 1_700_000_000_000_000, 1_000_000_000):
+        payload = _base(timestamp, 100.0, "CE", 4.0, 5.0)
+        assert scanner.observe(payload) == ()
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["invalid_timestamp_unit"] == 4
+    assert counters.get("scan_evaluations", 0) == 0
+
+
+def test_live_scanner_logical_timestamps_require_explicit_opt_in():
+    scanner = _LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(1_000_000_000, 100.0, "CE", 4.0, 5.0)
+    assert scanner.observe(payload) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["invalid_timestamp_unit"] == 1
+
+    test_scanner = _LiveSyntheticScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        allow_logical_timestamps=True,
+    )
+    assert test_scanner.observe(payload) == ()
+    assert test_scanner.diagnostics_snapshot()["counters"].get("invalid_timestamp_unit", 0) == 0
