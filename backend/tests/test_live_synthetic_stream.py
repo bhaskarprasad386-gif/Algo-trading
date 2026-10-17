@@ -106,7 +106,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     from app.market_data import live_synthetic_stream as stream
     from time import time_ns
 
-    base_timestamp = time_ns() - 2_500_000_000
+    base_timestamp = (time_ns() // 1_000_000_000 - 3) * 1_000_000_000 + 50_000_000
 
     collector = LiveSyntheticOptionFutureRecorder(
         str(tmp_path / "synthetic.db"),
@@ -190,7 +190,7 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
     from app.market_data import live_synthetic_stream as stream
     from time import time_ns
 
-    base_timestamp = time_ns() - 2_500_000_000
+    base_timestamp = (time_ns() // 1_000_000_000 - 3) * 1_000_000_000 + 50_000_000
 
     collector = LiveSyntheticOptionFutureRecorder(
         str(tmp_path / "synthetic.db"),
@@ -297,7 +297,7 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
     from app.market_data import live_synthetic_stream as stream
     from time import time_ns
 
-    base_timestamp = time_ns() - 2_500_000_000
+    base_timestamp = (time_ns() // 1_000_000_000 - 3) * 1_000_000_000 + 50_000_000
 
     collector = LiveSyntheticOptionFutureRecorder(
         str(tmp_path / "synthetic.db"),
