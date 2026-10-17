@@ -354,6 +354,54 @@ class LiveSyntheticScanner:
             self.on_result(results)
         return results
 
+    def pair_monitor_snapshot(self, limit: int = 200) -> dict:
+        """Expose recent sanitized option/future combinations, including incomplete legs."""
+        now_ns = time.time_ns()
+        rows = []
+        with self._lock:
+            for (symbol, bucket_ts, expiry), bucket in self._buckets.items():
+                if bucket_ts >= 1_000_000_000_000_000 and now_ns - bucket_ts > 5_000_000_000:
+                    continue
+                future = bucket.get("future") or {}
+                future_expiry = self._expiry(future.get("expiry")) if future.get("expiry") else expiry
+                for strike, legs in bucket.get("options", {}).items():
+                    ce, pe = legs.get("CE") or {}, legs.get("PE") or {}
+                    if future and future_expiry != expiry:
+                        continue
+                    missing = []
+                    if not future:
+                        missing.append("MISSING_FUTURE")
+                    if not ce:
+                        missing.append("MISSING_CALL")
+                    if not pe:
+                        missing.append("MISSING_PUT")
+                    if future and ce and pe:
+                        try:
+                            stamps = [int(x.get("source_timestamp_ns") or 0) for x in (future, ce, pe)]
+                            if min(stamps) <= 0 or max(stamps) - min(stamps) > self.TIMESTAMP_TOLERANCE_NS:
+                                missing.append("TIMESTAMP_MISMATCH")
+                        except (TypeError, ValueError, OverflowError):
+                            missing.append("INVALID_TIMESTAMP")
+                    rows.append({
+                        "timestamp_ns": max(
+                            [int(x.get("source_timestamp_ns") or 0) for x in (future, ce, pe)] or [bucket_ts]
+                        ),
+                        "underlying": symbol,
+                        "expiry": expiry,
+                        "strike": strike,
+                        "future_bid": self._price(future.get("bid")),
+                        "future_ask": self._price(future.get("ask")),
+                        "call_bid": self._price(ce.get("bid")),
+                        "call_ask": self._price(ce.get("ask")),
+                        "put_bid": self._price(pe.get("bid")),
+                        "put_ask": self._price(pe.get("ask")),
+                        "lot_size": ce.get("lot_size") or future.get("lot_size"),
+                        "state": "READY_TO_EVALUATE" if not missing else "INCOMPLETE",
+                        "reason": ",".join(missing) if missing else "AWAITING_SCANNER_QUALIFICATION",
+                    })
+        rows.sort(key=lambda row: int(row.get("timestamp_ns") or 0), reverse=True)
+        return {"status": "success", "data": rows[:max(1, min(int(limit), 500))]}
+
     TIMESTAMP_TOLERANCE_NS = 1_000_000_000
 
     def _matching_bucket_key(self, symbol: str, timestamp_ns: int, expiry: int) -> tuple[str, int, int]:
