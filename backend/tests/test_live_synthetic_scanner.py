@@ -994,3 +994,12 @@ def test_out_of_order_tick_does_not_refresh_observation_health():
     assert counters["out_of_order_leg_updates"] == 1
     assert counters["last_observation_at_ns"] == before
     assert counters["last_payload_received_at_ns"] >= before
+
+
+def test_live_synthetic_scanner_rejects_fractional_and_boolean_timestamps():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    for timestamp in (1.5, True, float("nan"), float("inf")):
+        payload = _base(1_000_000_000, 100.0, "CE", 4.0, 5.0)
+        payload["source_timestamp_ns"] = timestamp
+        assert scanner.observe(payload) == ()
+    assert scanner.diagnostics_snapshot()["counters"]["invalid_timestamp"] == 4
