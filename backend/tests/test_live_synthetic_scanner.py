@@ -1015,7 +1015,8 @@ def test_live_scanner_rejects_malformed_future_lot_size_without_raising():
 def test_live_synthetic_scanner_rejects_epoch_millisecond_timestamp_unit():
     import time
 
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    # This case must exercise production defaults, not the module's logical-time test wrapper.
+    scanner = _LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     payload = _base(time.time_ns() // 1_000_000, 100.0, "CE", 4.0, 5.0)
     assert scanner.observe(payload) == ()
     counters = scanner.diagnostics_snapshot()["counters"]
