@@ -420,6 +420,7 @@ class LiveSyntheticRunner:
         except Exception as exc:
             app_logger.warning("Synthetic expiry refresh failed at startup: %s", exc)
         last_expiry_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        last_expiry_refresh_attempt_ns = time_ns()
         while not self._stop_requested.is_set():
             try:
                 atm_provider = self._ensure_atm_provider()
@@ -447,8 +448,18 @@ class LiveSyntheticRunner:
                     self._stop_requested.wait(30.0)
                     continue
                 session_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-                if session_date != last_expiry_refresh_date:
+                unresolved_expiry = any(
+                    target.instrument_class.strip().upper() in {"STOCK", "INDEX"}
+                    and not target.expiry
+                    for target in self.targets
+                )
+                retry_missing_expiry = (
+                    unresolved_expiry
+                    and time_ns() - last_expiry_refresh_attempt_ns >= 60_000_000_000
+                )
+                if session_date != last_expiry_refresh_date or retry_missing_expiry:
                     last_expiry_refresh_date = session_date
+                    last_expiry_refresh_attempt_ns = time_ns()
                     try:
                         expiry_changed = self._refresh_target_expiries()
                     except Exception as exc:
