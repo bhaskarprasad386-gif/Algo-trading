@@ -518,7 +518,16 @@ class LiveSyntheticScanner:
                             missing.append("INVALID_LOT_SIZE")
                         elif ce_lot != pe_lot or ce_lot != future_lot:
                             missing.append("LOT_SIZE_MISMATCH")
-                        if self.atm_provider(symbol, latest_timestamp) is None:
+                        try:
+                            monitor_atm = self.atm_provider(symbol, latest_timestamp)
+                        except Exception:
+                            self._count("monitor_atm_provider_errors")
+                            monitor_atm = None
+                        try:
+                            monitor_atm_number = float(monitor_atm)
+                        except (TypeError, ValueError, OverflowError):
+                            monitor_atm_number = 0.0
+                        if not math.isfinite(monitor_atm_number) or monitor_atm_number <= 0:
                             missing.append("MISSING_ATM")
                         if not missing:
                             missing.append("AWAITING_SCANNER_QUALIFICATION")
