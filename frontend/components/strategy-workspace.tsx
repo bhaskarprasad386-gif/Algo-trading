@@ -323,7 +323,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     let cancelled = false;
     const loadScannerDiagnostics = async () => {
       try {
-        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/diagnostics", { cache: "no-store" });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error("scanner diagnostics HTTP " + response.status);
