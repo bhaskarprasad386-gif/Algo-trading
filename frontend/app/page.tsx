@@ -84,15 +84,19 @@ export default function HomePage() {
           const message = JSON.parse(event.data);
           if (message?.type !== "dashboard_snapshot") return;
           const serverSnapshotTime = message?.timestamp == null ? NaN : new Date(message.timestamp).getTime();
-          if (!Number.isFinite(serverSnapshotTime)) return;
+          // A future-dated server snapshot must not be rendered as age-zero/live.
+          if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 60_000) return;
           setLastDashboardMessageAt(Date.now());
+          const observedAt = message?.scanner?.health?.last_observation_at;
+          const observedTime = observedAt == null ? NaN : new Date(observedAt).getTime();
+          const validObservedAt = Number.isFinite(observedTime) && observedTime <= Date.now() + 60_000 ? observedAt : null;
           setSnapshot({
             calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
             synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
             box: Number(message?.integration?.box_spread?.count ?? 0),
             opportunities: Number(message?.scanner?.opportunity_count ?? 0),
             timestamp: message?.timestamp ?? null,
-            cashFutureObservedAt: message?.scanner?.health?.last_observation_at ?? null,
+            cashFutureObservedAt: validObservedAt,
           });
         } catch {
           // Ignore malformed dashboard messages without losing the last valid snapshot.
