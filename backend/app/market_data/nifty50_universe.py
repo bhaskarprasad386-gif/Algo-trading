@@ -14,16 +14,18 @@ NIFTY50_STOCK_SYMBOLS = frozenset({
 })
 
 # Explicit top-15 liquid F&O stock universe used by option strategies.
-# Keep this separate from the full NIFTY 50 membership list.
-TOP15_LIQUID_STOCK_SYMBOLS = frozenset({
+# Preserve this configured ranking/order for clear UI display. This is not a
+# dynamically recalculated daily liquidity ranking.
+TOP15_LIQUID_STOCK_SYMBOLS_ORDERED = (
     "RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY",
     "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK",
     "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL",
-})
+)
+TOP15_LIQUID_STOCK_SYMBOLS = frozenset(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED)
 
 # Live option strategies share this narrow index universe.
 OPTION_STRATEGY_INDEX_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
 
 NIFTY50_INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"})
 
-__all__ = ["NIFTY50_STOCK_SYMBOLS", "TOP15_LIQUID_STOCK_SYMBOLS", "OPTION_STRATEGY_INDEX_SYMBOLS", "NIFTY50_INDEX_SYMBOLS"]
+__all__ = ["NIFTY50_STOCK_SYMBOLS", "TOP15_LIQUID_STOCK_SYMBOLS", "TOP15_LIQUID_STOCK_SYMBOLS_ORDERED", "OPTION_STRATEGY_INDEX_SYMBOLS", "NIFTY50_INDEX_SYMBOLS"]
