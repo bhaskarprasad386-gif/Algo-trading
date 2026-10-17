@@ -35,6 +35,7 @@ def test_underlying_feed_accepts_authoritative_index_token_without_cash_lookup()
     )
     assert feed._tokens() == {"NIFTY": "26000"}
 
+
 def test_index_token_resolution_uses_exact_master_entry():
     master = InstrumentMaster()
     master.instruments = [
@@ -97,6 +98,7 @@ def test_index_token_resolution_still_rejects_multiple_migrated_entries():
     else:
         raise AssertionError("expected LookupError")
 
+
 def test_underlying_feed_resolves_index_from_master_when_declared():
     master = InstrumentMaster()
     master.instruments = [
@@ -144,12 +146,24 @@ def test_filter_resolvable_index_symbols_skips_unresolvable_index():
     assert filter_resolvable_index_symbols(master, ("NIFTY", "NIFTYFPI")) == ("NIFTY",)
 
 
-def test_underlying_feed_skips_unresolvable_symbols_without_killing_feed():
+def test_underlying_feed_retains_unresolved_target_and_recovers_token():
     master = InstrumentMaster()
-    master.instruments = [{"exch_seg":"NSE","symbol":"NIFTY","token":"99926000"}]
+    master.instruments = []
     master._loaded = True
     master.download = lambda force=False: master.instruments
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
-    feed = LiveSyntheticUnderlyingFeed(("NIFTY","COPPER"), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"}), commodity_symbols=frozenset({"COPPER"}))
-    assert feed._tokens() == {"NIFTY":"99926000"}
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY",),
+        tracker=tracker,
+        instrument_master=master,
+        index_symbols=frozenset({"NIFTY"}),
+    )
+
+    assert feed._tokens() == {"NIFTY": ""}
+    assert feed.symbols == ("NIFTY",)
+
+    master.instruments = [
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
+    ]
+    assert feed._tokens() == {"NIFTY": "99926000"}
     assert [d.symbol for d in feed._descriptors()] == ["NIFTY"]
