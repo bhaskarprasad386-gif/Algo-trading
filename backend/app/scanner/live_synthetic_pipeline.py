@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from threading import Lock
 from time import monotonic
 from typing import Callable
 
@@ -34,22 +35,26 @@ class LiveSyntheticScanPipeline:
         self.on_results = on_results
         self.retention_interval_seconds = retention_interval_seconds
         self._last_retention_cleanup = 0.0
+        # scan_evaluations is a shared cumulative counter. Serialize the
+        # before/observe/after window so another websocket callback cannot make
+        # an incomplete tick look like a completed empty calculation.
+        self._observe_lock = Lock()
 
     def observe(self, payload: dict) -> tuple:
-        # Publish empty results only when a complete calculation ran. Missing
-        # legs/invalid ticks are not a completed empty scan and must not flicker
-        # valid opportunities off the dashboard.
-        before = self._scan_evaluations()
-        results = self.scanner.observe(payload)
-        after = self._scan_evaluations()
-        calculation_completed = after > before or (
-            before == 0 and after == 0 and bool(results)
-        )
-        if calculation_completed and self.on_results is not None:
-            try:
-                self.on_results(tuple(results))
-            except Exception:
-                pass
+        # Publish empty results only when this observation completed a calculation.
+        # Missing legs/invalid ticks must not flicker valid opportunities off.
+        with self._observe_lock:
+            before = self._scan_evaluations()
+            results = self.scanner.observe(payload)
+            after = self._scan_evaluations()
+            calculation_completed = after > before or (
+                before == 0 and after == 0 and bool(results)
+            )
+            if calculation_completed and self.on_results is not None:
+                try:
+                    self.on_results(tuple(results))
+                except Exception:
+                    pass
         if not results:
             self._maybe_cleanup_retention()
             return ()
