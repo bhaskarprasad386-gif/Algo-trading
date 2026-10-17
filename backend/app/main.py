@@ -685,7 +685,7 @@ async def _live_synthetic_loop() -> None:
 
 def _fresh_live_synthetic_results(results: tuple, max_age_seconds: float = 5.0) -> tuple:
     """Keep dashboard integration counts aligned with the live endpoint's freshness window."""
-    cutoff_ns = time.time_ns() - int(max_age_seconds * 1_000_000_000)
+    cutoff_ns = time_module.time_ns() - int(max_age_seconds * 1_000_000_000)
     fresh = []
     for result in results:
         try:
