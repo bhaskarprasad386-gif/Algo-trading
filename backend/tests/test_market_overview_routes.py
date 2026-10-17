@@ -47,6 +47,44 @@ def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
     assert result["errors"] == []
 
 
+def test_closed_market_overview_labels_historical_close_not_live_quote(monkeypatch):
+    class FakeMaster:
+        def get_instrument(self, symbol, exchange):
+            return {"token": f"{exchange}-{symbol}"}
+
+        def resolve_index_instrument(self, symbol, exchange):
+            return {"token": f"{exchange}-{symbol}"}
+
+    class FakeClient:
+        def quote_many(self, exchange, instruments):
+            raise AssertionError("closed market must not request a live quote")
+
+    class FakeHistoricalDataClient:
+        def __init__(self, client):
+            pass
+
+        def get_candles(self, **kwargs):
+            return {"data": [
+                ["2026-10-15", 118, 124, 117, 123, 1000],
+                ["2026-10-16", 123, 125, 119, 120, 900],
+            ]}
+
+    routes._CLOSED_OVERVIEW_CACHE.clear()
+    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
+    monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
+    monkeypatch.setattr("app.market_data.historical.HistoricalDataClient", FakeHistoricalDataClient)
+    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: False)
+    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: False)
+
+    result = routes.get_market_overview()
+
+    assert result["market_session"] == "CLOSED"
+    assert result["indices"]
+    assert all(row["status"] == "CLOSED_LAST_CLOSE" for row in result["indices"])
+    assert all(row["ltp"] == 123.0 for row in result["indices"])
+    assert all(row["close"] == 120.0 for row in result["indices"])
+
+
 def test_live_data_health_reports_persisted_coverage(monkeypatch, tmp_path):
     from app.core.config import settings
     from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
