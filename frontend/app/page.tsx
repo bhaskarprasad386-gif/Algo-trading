@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
@@ -27,16 +27,26 @@ export default function HomePage() {
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
+  const runnerCountersRef = useRef<Record<string, number> | null>(null);
+  const [runnerLastActivity, setRunnerLastActivity] = useState<Record<string, number>>({});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
   const [diagnosticCount, setDiagnosticCount] = useState(0);
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", { cache: "no-store", signal: controller.signal })
-      .then((response) => { if (!response.ok) throw new Error("health"); setApiStatus("connected"); })
-      .catch(() => setApiStatus("error"));
-    return () => controller.abort();
+    let cancelled = false;
+    const checkServer = async () => {
+      try {
+        const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", { cache: "no-store" });
+        if (!response.ok) throw new Error("health");
+        if (!cancelled) setApiStatus("connected");
+      } catch {
+        if (!cancelled) setApiStatus("error");
+      }
+    };
+    void checkServer();
+    const timer = window.setInterval(checkServer, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
   useEffect(() => {
@@ -159,6 +169,27 @@ export default function HomePage() {
         if (cancelled) return;
         const feed = body?.common_feed ?? {};
         const runners = body?.runners ?? {};
+        const currentCounters = {
+          cashPayloads: Number(runners.cash_future?.records_received ?? runners.cash_future?.payload_callbacks ?? runners.cash_future?.callbacks ?? 0),
+          cashUpdates: Number(runners.cash_future?.scanner_updates ?? runners.cash_future?.scanner_results ?? runners.cash_future?.observations ?? 0),
+          syntheticPayloads: Number(runners.synthetic_arbitrage?.records_received ?? runners.synthetic_arbitrage?.payload_callbacks ?? runners.synthetic_arbitrage?.callbacks ?? 0),
+          syntheticUpdates: Number(runners.synthetic_arbitrage?.scanner_updates ?? runners.synthetic_arbitrage?.scanner_results ?? runners.synthetic_arbitrage?.observations ?? 0),
+          boxPayloads: Number(runners.box_spread?.records_received ?? runners.box_spread?.payload_callbacks ?? runners.box_spread?.callbacks ?? 0),
+          boxUpdates: Number(runners.box_spread?.scanner_updates ?? runners.box_spread?.scanner_results ?? runners.box_spread?.observations ?? 0),
+          calendarPayloads: Number(runners.calendar_spread?.records_received ?? runners.calendar_spread?.payload_callbacks ?? runners.calendar_spread?.callbacks ?? 0),
+          calendarUpdates: Number(runners.calendar_spread?.scanner_updates ?? runners.calendar_spread?.scanner_results ?? runners.calendar_spread?.observations ?? 0),
+        };
+        const previousCounters = runnerCountersRef.current;
+        if (previousCounters) {
+          const increased = Object.keys(currentCounters).filter((key) => currentCounters[key as keyof typeof currentCounters] > (previousCounters[key] ?? 0));
+          if (increased.length) setRunnerLastActivity((previous) => {
+            const next = { ...previous };
+            const now = Date.now();
+            increased.forEach((key) => { next[key] = now; });
+            return next;
+          });
+        }
+        runnerCountersRef.current = currentCounters;
         const runnerDetail = (value: any) => {
           if (!value) return { running: false, detail: "UNAVAILABLE", updates: 0, payloads: 0, instruments: 0 };
           const running = Boolean(value.running);
@@ -246,11 +277,12 @@ export default function HomePage() {
           {[
             { label: "NSE EQUITY", value: marketSession, detail: "09:15–15:30 IST", Icon: Activity },
             { label: "MCX COMMODITIES", value: mcxSession, detail: "Session from market API", Icon: Activity },
-            { label: "COMMON WEBSOCKET", value: runtime.connectedGroups > 0 ? "CONNECTED" : "DISCONNECTED", detail: `${runtime.connectedGroups}/${runtime.maxSocketSessions} socket groups`, Icon: Radio },
+            { label: "API SERVER", value: apiStatus === "connected" ? "ONLINE" : apiStatus === "error" ? "OFFLINE" : "CHECKING", detail: "FastAPI /health endpoint", Icon: Database },
+            { label: "COMMON WEBSOCKET", value: runtime.connectedGroups >= runtime.maxSocketSessions && runtime.maxSocketSessions > 0 ? "CONNECTED" : runtime.connectedGroups > 0 ? "DEGRADED" : "DISCONNECTED", detail: `${runtime.connectedGroups}/${runtime.maxSocketSessions} socket groups`, Icon: Radio },
           ].map((item) => {
             const Icon = item.Icon;
-            const positive = item.label === "COMMON WEBSOCKET" ? runtime.connectedGroups > 0 : item.label === "NSE EQUITY" || item.label === "MCX COMMODITIES" ? item.value === "OPEN" : false;
-            const warning = item.label === "LIVE BROKER ORDERS" || item.value === "CLOSED" || item.value === "UNKNOWN";
+            const positive = item.label === "API SERVER" ? apiStatus === "connected" : item.label === "COMMON WEBSOCKET" ? runtime.connectedGroups >= runtime.maxSocketSessions && runtime.maxSocketSessions > 0 : item.label === "NSE EQUITY" || item.label === "MCX COMMODITIES" ? item.value === "OPEN" : false;
+            const warning = item.value === "CLOSED" || item.value === "UNKNOWN" || item.value === "DEGRADED" || item.value === "CHECKING";
             return <Card key={item.label} className="flex min-h-[74px] items-center gap-3 rounded-xl border theme-border theme-surface-2 p-3">
               <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${positive ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Icon size={18} /></span>
               <div className="min-w-0">
