@@ -815,6 +815,43 @@ def test_same_second_out_of_order_tick_does_not_replace_newer_quote():
 
 
 
+def test_synthetic_observation_does_not_forward_raw_broker_payload():
+    from threading import Lock
+    from types import SimpleNamespace
+    from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
+
+    record = SimpleNamespace(
+        timestamp_ns=1_000_000_100,
+        symbol="NIFTY",
+        instrument=SimpleNamespace(exchange="NFO", token="123"),
+        as_dict=lambda: {
+            "bid": 100.0,
+            "ask": 101.0,
+            "underlying": "NIFTY",
+            "payload": {
+                "best_5_buy_data": [{"price": 10000, "quantity": 25}],
+                "private_broker_field": "must-not-leak",
+            },
+        },
+    )
+    recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
+    recorder._lock = Lock()
+    recorder._metadata = {}
+    recorder._observations_emitted = 0
+    recorder._missing_executable_quote = 0
+    recorder._ingestor = None
+    emitted = []
+    recorder.on_observation = emitted.append
+
+    recorder._emit(record, record.timestamp_ns)
+
+    assert len(emitted) == 1
+    assert "payload" not in emitted[0]
+    assert "private_broker_field" not in str(emitted[0])
+    assert emitted[0]["bid"] == 100.0
+    assert emitted[0]["ask"] == 101.0
+
+
 def test_synthetic_recorder_rejects_callback_after_session_closes():
     from threading import Lock
     from types import SimpleNamespace
