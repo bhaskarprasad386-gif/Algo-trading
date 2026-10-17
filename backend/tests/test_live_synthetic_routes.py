@@ -89,3 +89,13 @@ def test_pairs_endpoint_sanitizes_snapshot_rows():
     assert response["data"][0]["opportunity_confirmed"] is False
     assert response["data"][0]["qualification_status"] == "NOT_CONFIRMED"
     assert "raw_broker_payload" not in response["data"][0]
+
+def test_dashboard_synthetic_results_exclude_stale_entries():
+    from app.main import _fresh_live_synthetic_results
+
+    fresh = _result()
+    stale = _result()
+    stale.option.timestamp_ns = time.time_ns() - 10_000_000_000
+
+    assert _fresh_live_synthetic_results((fresh, stale)) == (fresh,)
+    assert _fresh_live_synthetic_results((stale,)) == ()
