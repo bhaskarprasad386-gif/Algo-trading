@@ -217,17 +217,35 @@ class LiveSyntheticScanner:
                     return anchored
                 return current
 
+            def update_leg_without_time_regression(previous: dict | None, current: dict) -> dict | None:
+                if previous is None:
+                    return preserve_pending_anchor(previous, current)
+                try:
+                    previous_ns = int(previous.get("source_timestamp_ns") or 0)
+                    current_ns = int(current.get("source_timestamp_ns") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    previous_ns = current_ns = 0
+                if previous_ns > current_ns > 0:
+                    self._count("out_of_order_leg_updates")
+                    return previous
+                return preserve_pending_anchor(previous, current)
+
             if option_type in {"CE", "PE"} and strike is not None:
                 legs = bucket["options"].setdefault(strike, {})
-                payload = preserve_pending_anchor(legs.get(option_type), payload)
-                legs[option_type] = payload
+                updated = update_leg_without_time_regression(legs.get(option_type), payload)
+                if updated is not None:
+                    legs[option_type] = updated
             elif option_type == "":
-                bucket["future"] = preserve_pending_anchor(bucket.get("future"), payload)
+                updated = update_leg_without_time_regression(bucket.get("future"), payload)
+                if updated is not None:
+                    bucket["future"] = updated
             else:
                 # Futures may not carry option_type in older instrument masters.
                 instrument_symbol = str(payload.get("symbol") or "").upper()
                 if "FUT" in instrument_symbol:
-                    bucket["future"] = preserve_pending_anchor(bucket.get("future"), payload)
+                    updated = update_leg_without_time_regression(bucket.get("future"), payload)
+                    if updated is not None:
+                        bucket["future"] = updated
 
             # Only accepted legs count as market observations. Valid-looking but
             # unclassifiable ticks must not keep the diagnostics freshness green.
