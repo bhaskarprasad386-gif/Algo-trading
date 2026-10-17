@@ -220,7 +220,7 @@ class LiveSyntheticScanner:
                 if option_type in {"CE", "PE"}
                 else symbol_suffix.startswith("FUT") or symbol_suffix[0].isdigit()
             )
-        )
+        ) or (option_type == "" and not symbol_suffix)
         if not valid_symbol_boundary:
             self._count("underlying_symbol_mismatch")
             return ()
