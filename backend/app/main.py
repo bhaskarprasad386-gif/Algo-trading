@@ -41,7 +41,7 @@ from app.scanner.auto_routes import router as auto_scanner_router, discover_cash
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner
-from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic
+from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
@@ -92,6 +92,7 @@ _live_synthetic_universe_status = {
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 configure_live_synthetic(lambda: live_synthetic_latest_results)
+configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
 configure_live_box_spread(lambda: live_box_spread_latest_results)
 
 @asynccontextmanager
