@@ -510,7 +510,23 @@ class LiveSyntheticScanner:
                 return ()
             tz = ZoneInfo("Asia/Kolkata")
             expiry_at = datetime.combine(expiry_date, datetime_time(15, 30), tzinfo=tz)
-            time_to_expiry_years = max(0.0, (expiry_at - datetime.now(tz)).total_seconds() / (365.25 * 24 * 60 * 60))
+            # Price carry from the market snapshot's source time, not wall-clock
+            # execution time. This keeps a quote's pricing horizon deterministic
+            # when processing is delayed. Tiny logical timestamps are used by
+            # deterministic unit tests; live epoch-ns timestamps use integer
+            # seconds plus microseconds to avoid float timestamp precision loss.
+            reference_timestamp_ns = future_payload.get("_quote_source_timestamp_ns") or future_timestamp_ns
+            if reference_timestamp_ns >= 1_000_000_000_000_000:
+                source_seconds, source_nanoseconds = divmod(reference_timestamp_ns, 1_000_000_000)
+                reference_at = datetime.fromtimestamp(source_seconds, tz=tz).replace(
+                    microsecond=source_nanoseconds // 1_000
+                )
+            else:
+                reference_at = datetime.now(tz)
+            time_to_expiry_years = max(
+                0.0,
+                (expiry_at - reference_at).total_seconds() / (365.25 * 24 * 60 * 60),
+            )
             config = replace(config, time_to_expiry_years=time_to_expiry_years)
             try:
                 atm_strike = float(atm)
