@@ -562,7 +562,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Signals / edges</p><p className="mt-1 text-lg font-semibold theme-text">{signals.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed status</p><p className="mt-1 text-lg font-semibold theme-text">{feedStatus}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed age</p><p className="mt-1 text-lg font-semibold theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p></div>
-          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Last scan</p><p className="mt-1 text-lg font-semibold theme-text">{lastScan ? "LIVE" : "—"}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Last completed scan</p><p className="mt-1 text-lg font-semibold theme-text">{slug === "synthetic-arbitrage" ? (typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s ago" : "Not yet") : (lastScan ? "LIVE" : "—")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Broker execution</p><p className="mt-1 text-lg font-semibold theme-warning">OFF</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
