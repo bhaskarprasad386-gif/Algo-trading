@@ -412,6 +412,7 @@ export default function HomePage() {
           {markets.map((symbol) => {
             const quote = indexLtps[symbol];
             const quoteAvailable = !marketOverviewError && marketDataAge != null && marketDataAge <= 15 && (effectiveMarketSession === "OPEN" ? quote?.status === "LIVE" : effectiveMarketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
+            const quoteUnavailableReason = marketOverviewError ? "Market API unavailable" : marketDataAge == null || marketDataAge > 15 ? "Market data stale" : effectiveMarketSession === "UNKNOWN" ? "Market session unknown" : effectiveMarketSession === "CLOSED" ? "Last close unavailable" : "No broker quote";
             const change = quoteAvailable ? quote?.changePercent : null;
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
@@ -421,13 +422,13 @@ export default function HomePage() {
                   <div className="pl-1">
                     <div className="flex items-center justify-between"><span className="text-[11px] font-bold tracking-wide">{symbol}</span>{effectiveMarketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
                     <div className="mt-1 flex items-center justify-between gap-1">
-                      <div className={"break-words text-xs font-bold sm:text-sm " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? (effectiveMarketSession === "CLOSED" ? "Last close unavailable" : "No broker quote") : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      <div className={"break-words text-xs font-bold sm:text-sm " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? quoteUnavailableReason : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       {(!quoteAvailable || quote?.ltp == null) && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
                     </div>
                     <div className={"mt-1 text-[11px] font-bold sm:text-[12px] " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
-                    <div className="mt-1 break-words text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? "Previous close unavailable" : effectiveMarketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-1 break-words text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? (quoteAvailable ? "Previous close unavailable" : quoteUnavailableReason) : effectiveMarketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-1 flex items-center justify-between gap-1 border-t theme-border pt-1 text-[8px] font-semibold theme-muted">
-                      <span>{effectiveMarketSession === "CLOSED" ? "Last trading close" : quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{effectiveMarketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
+                      <span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "Last trading close" : "Broker quote returned") : quoteUnavailableReason}</span><span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "LAST CLOSE" : "QUOTE RESPONSE") : marketOverviewError ? "API ERROR" : marketDataAge == null || marketDataAge > 15 ? "STALE" : "NO DATA"}</span>
                     </div>
                   </div>
                 </Card>
