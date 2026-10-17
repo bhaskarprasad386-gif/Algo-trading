@@ -767,6 +767,8 @@ def test_same_second_out_of_order_tick_does_not_replace_newer_quote():
     recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
     recorder._lock = Lock()
     recorder._latest = {}
+    recorder._last_timestamp_ns_by_key = {}
+    recorder._out_of_order_records = 0
     recorder._accept_records = True
     recorder._metadata = {}
     recorder._records_received = 0
@@ -805,3 +807,43 @@ def test_synthetic_recorder_rejects_callback_after_session_closes():
 
     assert recorder._latest == {}
     assert recorder._records_received == 0
+
+
+
+def test_delayed_tick_is_rejected_after_its_bucket_was_flushed():
+    from threading import Lock
+    from types import SimpleNamespace
+    from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
+
+    def record(timestamp_ns):
+        return SimpleNamespace(
+            timestamp_ns=timestamp_ns,
+            symbol="NIFTY",
+            instrument=SimpleNamespace(exchange="NFO", token="123"),
+            as_dict=lambda: {"bid": 100.0, "ask": 101.0, "underlying": "NIFTY"},
+        )
+
+    recorder = LiveSyntheticOptionFutureRecorder.__new__(LiveSyntheticOptionFutureRecorder)
+    recorder._lock = Lock()
+    recorder._latest = {}
+    recorder._last_timestamp_ns_by_key = {}
+    recorder._out_of_order_records = 0
+    recorder._accept_records = True
+    recorder._metadata = {}
+    recorder._records_received = 0
+    recorder._observations_emitted = 0
+    recorder._missing_executable_quote = 0
+    recorder._ingestor = None
+    emitted = []
+    recorder.on_observation = emitted.append
+
+    recorder._on_record(record(2_000_000_100))
+    # Simulate the normal completed-bucket flush: buffered quote is emitted
+    # and removed, while the per-token timestamp watermark must remain.
+    recorder._latest.clear()
+    recorder._emit(record(2_000_000_100), 2_000_000_100)
+    recorder._on_record(record(1_500_000_100))
+
+    assert recorder._latest == {}
+    assert recorder._out_of_order_records == 1
+    assert [row["source_timestamp_ns"] for row in emitted] == [2_000_000_100]
