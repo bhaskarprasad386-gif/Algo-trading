@@ -907,3 +907,22 @@ def test_live_synthetic_scanner_rejects_unknown_option_type_even_for_future_symb
     assert scanner.observe(payload) == ()
     assert scanner._buckets == {}
     assert scanner.diagnostics_snapshot()["counters"]["invalid_option_type"] == 1
+
+
+def test_live_synthetic_scanner_rejects_leg_symbol_from_different_underlying():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = {
+        "underlying": "NIFTY",
+        "instrument_class": "INDEX",
+        "option_type": "",
+        "expiry": "29OCT2026",
+        "bid": 117.0,
+        "ask": 118.0,
+        "lot_size": 1,
+        "source_timestamp_ns": 35_000_000_000,
+        "symbol": "BANKNIFTY29OCT2026FUT",
+    }
+
+    assert scanner.observe(payload) == ()
+    assert scanner._buckets == {}
+    assert scanner.diagnostics_snapshot()["counters"]["underlying_symbol_mismatch"] == 1
