@@ -645,3 +645,68 @@ def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
     assert len(FakeRecorder.instances) == 2
     assert FakeRecorder.instances[1].stale_callback_left_replacement_running is True
     assert observed_payloads == [{"underlying": "NIFTY"}]
+
+def test_runner_waits_for_slow_underlying_feed_exit_before_clearing_reference(monkeypatch):
+    from threading import Event, Thread, current_thread
+    from time import monotonic
+
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: 100.0,
+    )
+    release_feed = Event()
+    feed_started = Event()
+    feed_thread_ref = {}
+    release_started = {"value": False}
+
+    class SlowFeed:
+        def run_forever(self):
+            feed_thread_ref["thread"] = current_thread()
+            feed_started.set()
+            release_feed.wait(5.0)
+
+        def stop(self):
+            if not release_started["value"]:
+                release_started["value"] = True
+                def delayed_release():
+                    import time
+                    time.sleep(2.2)
+                    release_feed.set()
+                Thread(target=delayed_release, daemon=True).start()
+
+    runner.underlying_feed = SlowFeed()
+    monkeypatch.setattr(runner, "_refresh_target_expiries", lambda: False)
+    monkeypatch.setattr(runner, "_wait_for_live_atm", lambda _provider: feed_started.wait(1.0))
+    monkeypatch.setattr(runner, "build_subscriptions", lambda: [object()])
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
+        staticmethod(lambda now=None: True),
+    )
+
+    class FakeRecorder:
+        def __init__(self, *args, **kwargs):
+            self.stop_event = Event()
+
+        def run_forever(self):
+            runner.stop()
+
+        def stop(self):
+            self.stop_event.set()
+
+    FakeRecorder.market_open = staticmethod(lambda now=None: True)
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder",
+        FakeRecorder,
+    )
+
+    started_at = monotonic()
+    runner.run_forever()
+    elapsed = monotonic() - started_at
+
+    assert elapsed >= 2.0
+    assert feed_thread_ref["thread"].is_alive() is False
+    assert runner._active_underlying_feed is None
+
