@@ -388,9 +388,9 @@ class LiveSyntheticScanner:
                     future_expiry = None
                 for strike, legs in bucket.get("options", {}).items():
                     ce, pe = legs.get("CE") or {}, legs.get("PE") or {}
-                    if future and future_expiry != expiry:
-                        continue
                     missing = []
+                    if future and future_expiry != expiry:
+                        missing.append("EXPIRY_MISMATCH")
                     if not future:
                         missing.append("MISSING_FUTURE")
                     if not ce:
