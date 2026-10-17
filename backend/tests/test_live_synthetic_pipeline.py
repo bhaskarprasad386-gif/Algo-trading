@@ -100,7 +100,9 @@ def test_result_pipeline_persists_and_notifies_off_callback_thread():
         assert pipeline.observe({"source_timestamp_ns": 1}) == (result,)
         assert alerts.persist_calls == []
         assert pipeline.flush(timeout=2)
-        assert alerts.persist_calls == [(result,)]
+        # The first observation can schedule time-based retention cleanup
+        # independently of the alert result job.
+        assert alerts.persist_calls == [(result,), ()]
         assert alerts.notify_calls == [(result,)]
         assert sessions == ["open", "close"]
     finally:
