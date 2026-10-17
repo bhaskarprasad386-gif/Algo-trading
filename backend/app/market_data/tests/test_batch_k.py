@@ -283,3 +283,28 @@ def test_cash_future_source_timestamp_requires_original_provider_timestamp():
     )
     present = runner._record_payload(record_with_timestamp, meta)
     assert present["source_timestamp_ns"] == raw_timestamp * 1_000_000
+
+
+
+def test_normalizer_converts_epoch_seconds_without_marking_them_stale():
+    seconds = 1_780_000_000
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {"token": "101", "timestamp": seconds, "last_traded_price": 12345},
+    )
+    assert record.timestamp_ns == seconds * 1_000_000_000
+
+
+def test_normalizer_converts_epoch_microseconds_and_preserves_explicit_nanoseconds():
+    micros = 1_780_000_000_123_456
+    micro_record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {"token": "101", "feed_time": micros, "last_traded_price": 12345},
+    )
+    explicit_ns = 1_780_000_000_123_456_789
+    ns_record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {"token": "101", "timestamp_ns": explicit_ns, "last_traded_price": 12345},
+    )
+    assert micro_record.timestamp_ns == micros * 1_000
+    assert ns_record.timestamp_ns == explicit_ns
