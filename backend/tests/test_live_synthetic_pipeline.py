@@ -221,3 +221,35 @@ def test_nonempty_results_are_published_without_database_configuration():
     )
     assert pipeline.observe({"leg": "complete"}) == (result,)
     assert published == [(result,)]
+
+
+def test_transient_alert_failure_is_retried_with_fresh_session():
+    class FlakyAlerts(_Alerts):
+        def __init__(self):
+            super().__init__()
+            self.failures_left = 1
+
+        def notify_users(self, db, results):
+            if self.failures_left:
+                self.failures_left -= 1
+                raise RuntimeError("temporary notification failure")
+            self.notify_calls.append(tuple(results))
+
+    result = SimpleNamespace()
+    alerts = FlakyAlerts()
+    pipeline = LiveSyntheticScanPipeline(
+        scanner=_Scanner((result,)),
+        session_factory=_session_factory([]),
+        alerts=alerts,
+    )
+    try:
+        assert pipeline.observe({"tick": 1}) == (result,)
+        assert pipeline.flush(timeout=2)
+        snapshot = pipeline.diagnostics_snapshot()
+        assert len(alerts.notify_calls) == 1
+        assert snapshot["counters"]["alert_job_retries"] == 1
+        assert snapshot["counters"]["alert_jobs_failed"] == 0
+        assert snapshot["counters"]["alert_jobs_completed"] == 1
+    finally:
+        assert pipeline.close(timeout=2)
+
