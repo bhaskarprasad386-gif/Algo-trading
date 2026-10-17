@@ -141,6 +141,9 @@ class LiveSyntheticScanPipeline:
                 try:
                     self._queue.put(self._STOP, timeout=max(0.0, timeout))
                 except Full:
+                    # Keep the pipeline open so a later close() can retry after
+                    # the worker frees queue capacity.
+                    self._closed = False
                     return False
         self._worker.join(timeout=max(0.0, timeout))
         return not self._worker.is_alive()
