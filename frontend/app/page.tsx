@@ -24,9 +24,13 @@ export default function HomePage() {
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [mcxSession, setMcxSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
+  const [marketOverviewError, setMarketOverviewError] = useState(false);
+  const [runtimeLastSuccessAt, setRuntimeLastSuccessAt] = useState<number | null>(null);
+  const [runtimeFetchFailed, setRuntimeFetchFailed] = useState(false);
+  const [lastDashboardMessageAt, setLastDashboardMessageAt] = useState<number | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
-  const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
+  const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
   const [runnerLastActivity, setRunnerLastActivity] = useState<Record<string, number>>({});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
@@ -67,6 +71,7 @@ export default function HomePage() {
         try {
           const message = JSON.parse(event.data);
           if (message?.type !== "dashboard_snapshot") return;
+          setLastDashboardMessageAt(Date.now());
           setSnapshot({
             calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
             synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
@@ -120,10 +125,12 @@ export default function HomePage() {
           setMarketSession(session);
           setMcxSession(mcx);
           setMarketCheckedAt(new Date().toISOString());
+          setMarketOverviewError(false);
           setIndexLtps(next);
         }
       } catch {
-        // Keep the last successful overview snapshot during transient API/quote failures.
+        if (!cancelled) setMarketOverviewError(true);
+        // Keep last values visible, but mark the source unavailable/stale.
       }
     };
     loadMarketOverview();
@@ -168,6 +175,8 @@ export default function HomePage() {
         const body = await response.json();
         if (cancelled) return;
         const feed = body?.common_feed ?? {};
+        setRuntimeLastSuccessAt(Date.now());
+        setRuntimeFetchFailed(false);
         const runners = body?.runners ?? {};
         const currentCounters = {
           cashPayloads: Number(runners.cash_future?.records_received ?? runners.cash_future?.payload_callbacks ?? runners.cash_future?.callbacks ?? 0),
@@ -211,6 +220,9 @@ export default function HomePage() {
           activeInstruments: Number(feed.active_instruments ?? 0),
           socketGroups: Number(feed.socket_groups ?? 0),
           connectedGroups: Array.isArray(feed.connected_groups) ? feed.connected_groups.length : 0,
+          disconnectedGroups: Array.isArray(feed.disconnected_groups) ? feed.disconnected_groups : [],
+          lastConnectFailure: feed.last_connect_failure ?? null,
+          lastSocketFailure: feed.last_socket_failure ?? null,
           maxSocketSessions: Number(feed.max_socket_sessions ?? 3),
           consumers: Array.isArray(feed.consumers) ? feed.consumers : [],
           deliveryErrors: Number(feed.delivery_errors ?? 0),
@@ -223,7 +235,8 @@ export default function HomePage() {
           },
         });
       } catch {
-        // Keep the last successful runtime snapshot during transient API failures.
+        if (!cancelled) setRuntimeFetchFailed(true);
+        // Keep last values for context; UI separately marks telemetry stale/unavailable.
       }
     };
     void loadRuntimeHealth();
@@ -259,6 +272,11 @@ export default function HomePage() {
   const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
   const feedAgeLabel = feedAge == null ? "Not available" : feedAge >= 3600 ? `${Math.floor(feedAge / 3600)}h ${Math.floor((feedAge % 3600) / 60)}m` : feedAge >= 60 ? `${Math.floor(feedAge / 60)}m ${Math.floor(feedAge % 60)}s` : `${feedAge.toFixed(1)}s`;
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
+  const dashboardMessageAge = lastDashboardMessageAt == null ? null : Math.max(0, (Date.now() - lastDashboardMessageAt) / 1000);
+  const runtimeTelemetryAge = runtimeLastSuccessAt == null ? null : Math.max(0, (Date.now() - runtimeLastSuccessAt) / 1000);
+  const runtimeTelemetryStale = runtimeFetchFailed || runtimeTelemetryAge == null || runtimeTelemetryAge > 8;
+  const dashboardStreamStale = wsStatus !== "connected" || dashboardMessageAge == null || dashboardMessageAge > 15;
+  const commonSocketState = runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.socketGroups === 0 || runtime.connectedGroups === 0 ? "DISCONNECTED" : runtime.connectedGroups < runtime.socketGroups ? "DEGRADED" : "CONNECTED";
   const observationAge = snapshot.cashFutureObservedAt ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000) : null;
   const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
@@ -271,17 +289,17 @@ export default function HomePage() {
 
   return (
     <div className="dashboard-page space-y-5">
-      <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && runtime.connectedGroups >= runtime.maxSocketSessions && runtime.maxSocketSessions > 0 && feedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" ? "SERVER OFFLINE" : apiStatus !== "connected" ? "CHECKING SERVER" : runtime.connectedGroups === 0 ? "WEBSOCKET DISCONNECTED" : feedStatus === "stale" ? "MARKET DATA STALE" : feedStatus === "closed" ? "MARKET CLOSED" : feedStatus === "live" && runtime.connectedGroups >= runtime.maxSocketSessions ? "SYSTEM LIVE" : "NO LIVE MARKET DATA"}</div></div>
+      <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && runtime.socketGroups > 0 && runtime.connectedGroups >= runtime.socketGroups && feedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" ? "SERVER OFFLINE" : apiStatus !== "connected" ? "CHECKING SERVER" : runtimeTelemetryStale ? "RUNTIME TELEMETRY STALE" : dashboardStreamStale ? "DASHBOARD STREAM STALE" : commonSocketState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : commonSocketState === "DEGRADED" ? "WEBSOCKET DEGRADED" : marketSession === "CLOSED" ? "MARKET CLOSED" : feedStatus === "stale" ? "MARKET DATA STALE" : feedStatus === "live" && commonSocketState === "CONNECTED" ? "SYSTEM LIVE" : "NO LIVE MARKET DATA"}</div></div>
       <section aria-label="Market and connection status">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: "NSE EQUITY", value: marketSession, detail: "09:15–15:30 IST", Icon: Activity },
             { label: "MCX COMMODITIES", value: mcxSession, detail: "Session from market API", Icon: Activity },
             { label: "API SERVER", value: apiStatus === "connected" ? "ONLINE" : apiStatus === "error" ? "OFFLINE" : "CHECKING", detail: "FastAPI /health endpoint", Icon: Database },
-            { label: "COMMON WEBSOCKET", value: runtime.connectedGroups >= runtime.maxSocketSessions && runtime.maxSocketSessions > 0 ? "CONNECTED" : runtime.connectedGroups > 0 ? "DEGRADED" : "DISCONNECTED", detail: `${runtime.connectedGroups}/${runtime.maxSocketSessions} socket groups`, Icon: Radio },
+            { label: "COMMON WEBSOCKET", value: commonSocketState, detail: `${runtime.connectedGroups}/${runtime.socketGroups} required groups connected • cap ${runtime.maxSocketSessions}`, Icon: Radio },
           ].map((item) => {
             const Icon = item.Icon;
-            const positive = item.label === "API SERVER" ? apiStatus === "connected" : item.label === "COMMON WEBSOCKET" ? runtime.connectedGroups >= runtime.maxSocketSessions && runtime.maxSocketSessions > 0 : item.label === "NSE EQUITY" || item.label === "MCX COMMODITIES" ? item.value === "OPEN" : false;
+            const positive = item.label === "API SERVER" ? apiStatus === "connected" : item.label === "COMMON WEBSOCKET" ? runtime.socketGroups > 0 && runtime.connectedGroups >= runtime.socketGroups : item.label === "NSE EQUITY" || item.label === "MCX COMMODITIES" ? item.value === "OPEN" : false;
             const warning = item.value === "CLOSED" || item.value === "UNKNOWN" || item.value === "DEGRADED" || item.value === "CHECKING";
             return <Card key={item.label} className="flex min-h-[74px] items-center gap-3 rounded-xl border theme-border theme-surface-2 p-3">
               <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${positive ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Icon size={18} /></span>
@@ -344,9 +362,9 @@ export default function HomePage() {
                   const ageText = (age: number | null) => age == null ? "No recent sample" : age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m";
                   const freshness = (age: number | null) => age != null && age <= 10 ? "RECEIVING" : age != null && age <= 30 ? "STALE" : "NO RECENT UPDATES";
                   const serverDown = apiStatus === "error";
-                  const wsState = runtime.connectedGroups >= runtime.maxSocketSessions && runtime.maxSocketSessions > 0 ? "CONNECTED" : runtime.connectedGroups > 0 ? "DEGRADED" : "DISCONNECTED";
-                  const overallFlow = serverDown ? "SERVER UNREACHABLE" : wsState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : feedStatus === "live" ? "LIVE TICKS" : feedStatus === "stale" ? "STALE MARKET DATA" : feedStatus === "closed" ? "MARKET CLOSED" : feedStatus === "error" ? "FEED HEALTH ERROR" : "NO MARKET DATA";
-                  const runnerState = (running: boolean, age: number | null) => serverDown ? "SERVER OFFLINE" : !running ? "STOPPED" : age != null && age <= 10 ? "RECEIVING" : age != null && age <= 30 ? "STALE" : "NO DATA";
+                  const wsState = commonSocketState;
+                  const overallFlow = serverDown ? "SERVER UNREACHABLE" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : wsState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : marketSession === "CLOSED" ? "MARKET CLOSED • TICKS NOT EXPECTED" : feedStatus === "live" ? "LIVE TICKS" : feedStatus === "stale" ? "STALE MARKET DATA" : feedStatus === "error" ? "FEED HEALTH ERROR" : "NO MARKET DATA";
+                  const runnerState = (running: boolean, age: number | null) => serverDown ? "SERVER OFFLINE" : runtimeTelemetryStale ? "TELEMETRY STALE" : wsState === "DISCONNECTED" ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : marketSession === "CLOSED" ? "MARKET CLOSED" : !running ? "STOPPED" : age != null && age <= 10 ? "RECEIVING" : age != null && age <= 30 ? "STALE" : "NO DATA";
                   const cashAge = activityAge("cashPayloads");
                   const syntheticAge = activityAge("syntheticPayloads");
                   const boxAge = activityAge("boxPayloads");
@@ -355,7 +373,7 @@ export default function HomePage() {
                   const cashScannerAge = observationAge;
                   const rows = [
                     {name:"API SERVER", state:serverDown ? "OFFLINE" : apiStatus === "connected" ? "ONLINE" : "CHECKING", updates:0, age:apiStatus === "connected" ? "Health endpoint responding" : "No response", flow:serverDown ? "SERVER UNREACHABLE" : apiStatus === "connected" ? "HTTP HEALTH OK" : "CHECKING", position:"FastAPI /health"},
-                    {name:"OVERALL COMMON FEED", state:serverDown ? "SERVER OFFLINE" : wsState, updates:runtime.ticks, age:feedAgeLabel, flow:overallFlow, position:runtime.activeInstruments.toLocaleString("en-IN")+" active instruments • "+runtime.connectedGroups+"/"+runtime.maxSocketSessions+" socket groups"},
+                    {name:"OVERALL COMMON FEED", state:serverDown ? "SERVER OFFLINE" : wsState, updates:runtime.ticks, age:feedAgeLabel, flow:overallFlow, position:runtime.activeInstruments.toLocaleString("en-IN")+" active instruments • "+runtime.connectedGroups+"/"+runtime.socketGroups+" required groups • cap "+runtime.maxSocketSessions},
                     {name:"CASH MARKET DATA", state:serverDown ? "SERVER OFFLINE" : runtime.connectedGroups === 0 ? "WEBSOCKET DOWN" : marketSession === "CLOSED" ? "MARKET CLOSED" : freshness(cashAge), updates:runtime.runners.cash_future?.payloads ?? 0, age:ageText(cashAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.connectedGroups === 0 ? "WEBSOCKET DISCONNECTED" : marketSession === "CLOSED" ? "MARKET CLOSED" : freshness(cashAge), position:runtime.runners.cash_future?.instruments ? runtime.runners.cash_future.instruments.toLocaleString("en-IN")+" instruments • "+(runtime.runners.cash_future?.payloads ?? 0).toLocaleString("en-IN")+" cumulative payloads" : "No instrument count"},
                     {name:"OPTIONS DATA", state:serverDown ? "SERVER OFFLINE" : runtime.connectedGroups === 0 ? "WEBSOCKET DOWN" : marketSession === "CLOSED" ? "MARKET CLOSED" : runnerState(Boolean(runtime.runners.box_spread?.running || runtime.runners.calendar_spread?.running), optionsAge), updates:(runtime.runners.box_spread?.payloads ?? 0)+(runtime.runners.calendar_spread?.payloads ?? 0), age:ageText(optionsAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.connectedGroups === 0 ? "WEBSOCKET DISCONNECTED" : marketSession === "CLOSED" ? "MARKET CLOSED" : freshness(optionsAge), position:"Box + Calendar • cumulative counters alone do not prove fresh data"},
                     {name:"FUTURES DATA", state:serverDown ? "SERVER OFFLINE" : runtime.connectedGroups === 0 ? "WEBSOCKET DOWN" : marketSession === "CLOSED" ? "MARKET CLOSED" : runnerState(Boolean(runtime.runners.synthetic_arbitrage?.running), syntheticAge), updates:runtime.runners.synthetic_arbitrage?.payloads ?? 0, age:ageText(syntheticAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.connectedGroups === 0 ? "WEBSOCKET DISCONNECTED" : marketSession === "CLOSED" ? "MARKET CLOSED" : freshness(syntheticAge), position:"Synthetic feed • cumulative counter "+(runtime.runners.synthetic_arbitrage?.payloads ?? 0).toLocaleString("en-IN")},
@@ -445,7 +463,12 @@ export default function HomePage() {
                 ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
                 ["Broker Orders", "OFF"],
                 ["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
-                ["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],
+                ["Socket Groups", runtime.connectedGroups + "/" + runtime.socketGroups + " required • cap " + runtime.maxSocketSessions],
+                ["Runtime Telemetry", runtimeTelemetryStale ? "STALE / UNAVAILABLE" : "FRESH"],
+                ["Disconnected Groups", runtime.disconnectedGroups.join(", ") || "None reported"],
+                ["Last Connect Failure", runtime.lastConnectFailure ? String(runtime.lastConnectFailure.error ?? runtime.lastConnectFailure.error_type ?? JSON.stringify(runtime.lastConnectFailure)) : "None reported"],
+                ["Last Socket Failure", runtime.lastSocketFailure ? String(runtime.lastSocketFailure.reason ?? JSON.stringify(runtime.lastSocketFailure)) : "None reported"],
+                ["Dashboard Snapshot Age", dashboardMessageAge == null ? "No snapshot received" : Math.round(dashboardMessageAge) + "s"],
                 ["Last Feed Tick Age", feedAgeLabel],
                 ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors],
                 ["NSE Session", marketSession],
