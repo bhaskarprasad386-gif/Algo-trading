@@ -177,6 +177,7 @@ class LiveSyntheticRunner:
         self._scanner: LiveSyntheticScanner | None = None
         self._refresh_requested = Event()
         self._stop_requested = Event()
+        self._running = False
         self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
 
     @property
@@ -380,6 +381,7 @@ class LiveSyntheticRunner:
         feed = None
         feed_thread = None
         self._active_underlying_feed = None
+        self._running = True
         try:
             while not self._stop_requested.is_set():
                 # Keep this market-hours gate local to Synthetic; the shared feed
@@ -486,6 +488,7 @@ class LiveSyntheticRunner:
             if self._recorder is not None:
                 self._recorder.stop()
                 self._recorder = None
+            self._running = False
 
     def snapshot(self) -> dict:
         """Return lightweight runtime state for shared-feed diagnostics."""
@@ -495,7 +498,7 @@ class LiveSyntheticRunner:
             None if self._scanner is None else self._scanner.diagnostics_snapshot()
         )
         return {
-            "running": not self._stop_requested.is_set(),
+            "running": self._running and not self._stop_requested.is_set(),
             "targets": len(self.targets),
             "scanner_initialized": self._scanner is not None,
             "scanner_diagnostics": scanner_diagnostics,
