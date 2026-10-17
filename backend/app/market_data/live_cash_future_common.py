@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from app.core.config import settings
 from app.core.logger import app_logger
+from app.core.diagnostics import runtime_diagnostics
 from app.market_data.cash_future_opportunity import CashFutureOpportunityScanner, CashFutureScanResult
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.common_strategy_feed import shared_common_manager
@@ -78,6 +79,7 @@ class LiveCashFutureCommonRunner:
         self._records_missing_executable_quote = 0
         # Aggregate quote-side counters only; never retain raw broker frames.
         self._quote_side_lock = threading.Lock()
+        self._quote_alert_last_at: dict[str, float] = {}
         self._quote_side_counts = {
             f"{leg}_{side}_missing": 0
             for leg in ("cash", "future")
@@ -286,11 +288,26 @@ class LiveCashFutureCommonRunner:
             ) is not None
             for side in missing_sides
         }
+        alerts: list[tuple[str, str]] = []
+        now = time.monotonic()
         with self._quote_side_lock:
             for side in missing_sides:
                 self._quote_side_counts[f"{leg}_{side}_missing"] += 1
                 kind = "normalization_missing" if source_has[side] else "source_missing"
                 self._quote_side_source_counts[f"{leg}_{side}_{kind}"] += 1
+                alert_key = f"{leg}_{side}_{kind}"
+                if now - self._quote_alert_last_at.get(alert_key, 0.0) >= 30.0:
+                    self._quote_alert_last_at[alert_key] = now
+                    alerts.append((side, kind))
+        for side, kind in alerts:
+            runtime_diagnostics.record(
+                component="Cash-Future Scanner",
+                severity="WARNING",
+                message=f"Bid-Ask quote missing: {leg.upper()} {side.upper()} ({kind.replace(chr(95), chr(32))})",
+                error_type="MissingExecutableQuote",
+                endpoint="/api/v1/market-data/runtime/health",
+                context={"leg": leg.upper(), "side": side.upper(), "source_quote_present": source_has[side]},
+            )
 
     def _quote_side_snapshot(self) -> dict[str, int]:
         with self._quote_side_lock:
