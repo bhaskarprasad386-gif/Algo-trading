@@ -235,9 +235,6 @@ export default function HomePage() {
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
     { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
-    { label: "Orders", value: "Not reported" },
-    { label: "Fills", value: "Not reported" },
-    { label: "Backend Errors", value: "Not reported" },
     { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
   ];
 
@@ -370,7 +367,7 @@ export default function HomePage() {
           </div>
         </section>
         <Card className="flex flex-col justify-between gap-3 rounded-xl border theme-border theme-surface-2 p-3 sm:flex-row sm:items-center xl:flex-col xl:items-start">
-          <div className="flex min-w-0 items-start gap-3"><Database size={16} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[12px] font-semibold">Integration Boundary</div><div className="mt-1 text-[10px] leading-4 theme-subtle">External broker orders remain OFF. FastAPI market data runs independently of broker order routing.</div></div></div>
+          <div className="flex min-w-0 items-start gap-3"><Database size={16} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[12px] font-semibold">Market Data Architecture</div><div className="mt-1 text-[10px] leading-4 theme-subtle">Shared live market data feeds the independent scanners. This dashboard displays API-reported feed and scanner health.</div></div></div>
           <button type="button" onClick={() => setConnectionsOpen(true)} className="shrink-0 rounded-lg theme-accent-bg px-3 py-2 text-[10px] font-bold theme-accent">View Connections →</button>
         </Card>
       </div>
