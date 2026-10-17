@@ -23,6 +23,9 @@ from app.scanner.synthetic_cash_carry import SyntheticScanConfig, SyntheticScanR
 class LiveSyntheticScanner:
     """Bounded in-memory assembler for one-second synthetic opportunities."""
 
+    MAX_ACTIVE_BUCKETS = 4096
+    MAX_BUCKET_AGE_NS = 3_000_000_000
+
     def __init__(
         self,
         *,
@@ -555,8 +558,28 @@ class LiveSyntheticScanner:
         return (symbol, timestamp_ns, expiry)
 
     def _prune(self, timestamp_ns: int) -> None:
-        cutoff = timestamp_ns - 3_000_000_000
-        self._buckets = {key: value for key, value in self._buckets.items() if key[1] >= cutoff}
+        # A delayed/out-of-order tick must not move the cleanup watermark
+        # backwards and keep older buckets alive indefinitely.
+        newest_bucket_ns = max((key[1] for key in self._buckets), default=timestamp_ns)
+        watermark_ns = max(timestamp_ns, newest_bucket_ns)
+        cutoff = watermark_ns - self.MAX_BUCKET_AGE_NS
+        before = len(self._buckets)
+        self._buckets = {
+            key: value for key, value in self._buckets.items()
+            if key[1] >= cutoff
+        }
+        expired = before - len(self._buckets)
+        if expired:
+            self._count("pruned_buckets", expired)
+
+        # Time-based pruning is the primary bound; this hard cap protects the
+        # process if a broker feed emits many distinct timestamps/symbol keys.
+        if len(self._buckets) > self.MAX_ACTIVE_BUCKETS:
+            excess = len(self._buckets) - self.MAX_ACTIVE_BUCKETS
+            oldest = sorted(self._buckets, key=lambda key: key[1])[:excess]
+            for key in oldest:
+                self._buckets.pop(key, None)
+            self._count("bucket_capacity_evictions", excess)
 
 
 __all__ = ["LiveSyntheticScanner"]
