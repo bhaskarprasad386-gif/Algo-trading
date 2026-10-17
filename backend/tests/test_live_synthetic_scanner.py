@@ -746,3 +746,32 @@ def test_pending_quote_wait_bucket_expires_after_its_own_three_second_window(mon
 
     assert snapshot["counters"]["active_buckets"] == 0
     assert scanner.diagnostics_snapshot()["counters"]["monotonic_age_pruned_buckets"] == 1
+
+
+def test_pair_monitor_does_not_reject_executable_quotes_when_volume_and_oi_are_missing(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+
+    monkeypatch.setattr(scanner_module, "scan_synthetic_snapshot", lambda *_a, **_k: ())
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = 18_000_000_000
+    expiry = "29OCT2026"
+    ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry}
+    pe = {**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry}
+    ce.pop("volume")
+    ce.pop("oi")
+    pe.pop("volume")
+    pe.pop("oi")
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+    }
+
+    scanner.observe(ce)
+    scanner.observe(pe)
+    scanner.observe(future)
+
+    row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+    assert row["state"] == "READY_TO_EVALUATE"
+    assert row["reason"] == "AWAITING_SCANNER_QUALIFICATION"
+    assert "NO_VOLUME_OR_OI" not in row["reason"]
