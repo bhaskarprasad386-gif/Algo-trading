@@ -452,6 +452,7 @@ class LiveSyntheticRunner:
 
     def run_forever(self) -> None:
         active_pipeline = None
+        pending_pipelines = []
         # Refresh once at startup, before building the ATM strike map.
         expiry_refresh_failed = False
         try:
@@ -462,6 +463,12 @@ class LiveSyntheticRunner:
         last_expiry_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         last_expiry_refresh_attempt_ns = time_ns()
         while not self._stop_requested.is_set():
+            # A timed-out close may not have queued its stop sentinel (for
+            # example, when a slow DB call leaves the bounded queue full).
+            # Keep those pipelines reachable and retry cleanup between sessions.
+            for pending in tuple(pending_pipelines):
+                if self._close_pipeline(pending, timeout=0.05):
+                    pending_pipelines.remove(pending)
             try:
                 atm_provider = self._ensure_atm_provider()
                 break
@@ -736,7 +743,9 @@ class LiveSyntheticRunner:
                     watcher.join(timeout=1.0)
                     # Recorder callbacks have stopped; now drain and reap this
                     # session's alert worker before replacing its pipeline.
-                    self._close_pipeline(pipeline, timeout=2.0)
+                    closed = self._close_pipeline(pipeline, timeout=2.0)
+                    if not closed and pipeline not in pending_pipelines:
+                        pending_pipelines.append(pipeline)
                     if active_pipeline is pipeline:
                         active_pipeline = None
                 refresh_requested = self._refresh_requested.is_set()
@@ -762,6 +771,9 @@ class LiveSyntheticRunner:
             if active_pipeline is not None:
                 self._close_pipeline(active_pipeline, timeout=2.0)
                 active_pipeline = None
+            for pending in tuple(pending_pipelines):
+                self._close_pipeline(pending, timeout=2.0)
+            pending_pipelines.clear()
             self._running = False
 
     def snapshot(self) -> dict:
