@@ -31,7 +31,7 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -41,7 +41,7 @@ from app.scanner.auto_routes import router as auto_scanner_router, discover_cash
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner
-from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic
+from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
@@ -79,9 +79,21 @@ live_calendar_spread_scanner = LiveCalendarSpreadScanner(
 configure_calendar_spread_scanner(live_calendar_spread_scanner)
 live_synthetic_latest_results: tuple = ()
 live_synthetic_runner: LiveSyntheticRunner | None = None
+_live_synthetic_universe_selection = "ALL"
+_live_synthetic_universe_restart_requested = threading.Event()
+_live_synthetic_universe_status = {
+    "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+    "eligible_future_symbols": [],
+    "missing_future_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+    "eligible_target_symbols": [],
+    "missing_option_expiry_symbols": [],
+    "checked_at": None,
+}
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 configure_live_synthetic(lambda: live_synthetic_latest_results)
+configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
+configure_live_synthetic_pairs(lambda: None if live_synthetic_runner is None else live_synthetic_runner.pair_monitor_snapshot())
 configure_live_box_spread(lambda: live_box_spread_latest_results)
 
 @asynccontextmanager
@@ -561,7 +573,8 @@ async def _live_synthetic_loop() -> None:
                 elif typ == "FUTCOM" and segment == "MCX":
                     commodity_symbols.add(name)
 
-            stock_symbols = sorted(top15_liquid_stocks)
+            stock_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol in top15_liquid_stocks]
+            missing_future_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol not in top15_liquid_stocks]
             raw_index_symbols = sorted(index_symbols)
             index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
             missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
@@ -572,13 +585,20 @@ async def _live_synthetic_loop() -> None:
                     ", ".join(missing_index_underlyings),
                 )
 
-            # Synthetic Arbitrage is intentionally limited to STOCK + INDEX.
-            # MCX/commodity contracts remain available to the common feed and
-            # Calendar Spread, but are not valid synthetic cash-carry targets.
-            target_specs = (
-                [(symbol, "STOCK") for symbol in stock_symbols]
-                + [(symbol, "INDEX") for symbol in index_symbols]
-            )
+            # The selected universe is authoritative: ALL = supported indices + top 15 liquid stocks.
+            # An index-only selection must never silently fall back to stocks or other indices.
+            selection = _live_synthetic_universe_selection
+            if selection == "ALL":
+                target_specs = (
+                    [(symbol, "STOCK") for symbol in stock_symbols]
+                    + [(symbol, "INDEX") for symbol in index_symbols]
+                )
+            elif selection == "TOP15":
+                target_specs = [(symbol, "STOCK") for symbol in stock_symbols]
+            elif selection in NIFTY50_INDEX_SYMBOLS:
+                target_specs = [(selection, "INDEX")] if selection in index_symbols else []
+            else:
+                target_specs = []
             targets = []
             missing_expiry = []
             for symbol, instrument_class in target_specs:
@@ -597,6 +617,14 @@ async def _live_synthetic_loop() -> None:
                     continue
                 targets.append(SyntheticLiveTarget(symbol, instrument_class, expiry=expiry))
             targets = tuple(targets)
+            _live_synthetic_universe_status.update({
+                "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+                "eligible_future_symbols": list(stock_symbols),
+                "missing_future_symbols": list(missing_future_symbols),
+                "eligible_target_symbols": [target.underlying for target in targets],
+                "missing_option_expiry_symbols": sorted(set(missing_expiry)),
+                "checked_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
+            })
             if missing_expiry:
                 app_logger.warning(
                     "Synthetic live targets skipped because no current option expiry exists: {}",
@@ -631,6 +659,10 @@ async def _live_synthetic_loop() -> None:
                 )
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(max_retry_delay, retry_delay * 2.0)
+            elif _live_synthetic_universe_restart_requested.is_set():
+                _live_synthetic_universe_restart_requested.clear()
+                retry_delay = 5.0
+                continue
             else:
                 return
         except asyncio.CancelledError:
@@ -889,6 +921,55 @@ def app_strategy_workspace(strategy_id: str):
 @app.get("/")
 def root():
     return {"message": "Algo Trading Platform is running", "environment": settings.environment, "version": "0.1.0"}
+
+
+class SyntheticUniverseSelection(BaseModel):
+    selection: str
+
+
+@app.get("/api/v1/scanner/synthetic-cash-carry/universe")
+def get_synthetic_universe():
+    return {
+        "status": "success",
+        "selection": _live_synthetic_universe_selection,
+        "options": ["ALL", "TOP15", *sorted(NIFTY50_INDEX_SYMBOLS)],
+        "meaning": {
+            "ALL": "All supported index underlyings plus the top 15 liquid F&O stocks",
+            "TOP15": "Top 15 liquid F&O stocks only; no index underlyings",
+        },
+        "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+        "availability": dict(_live_synthetic_universe_status),
+    }
+
+
+@app.post("/api/v1/scanner/synthetic-cash-carry/universe")
+def set_synthetic_universe(payload: SyntheticUniverseSelection):
+    global _live_synthetic_universe_selection
+    selection = str(payload.selection or "").strip().upper()
+    allowed = {"ALL", "TOP15", *NIFTY50_INDEX_SYMBOLS}
+    if selection not in allowed:
+        raise HTTPException(status_code=422, detail={"message": "Unsupported synthetic scanner universe", "allowed": sorted(allowed)})
+    if selection == _live_synthetic_universe_selection:
+        return {
+            "status": "success",
+            "selection": selection,
+            "restart_requested": False,
+            "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+            "availability": dict(_live_synthetic_universe_status),
+        }
+    _live_synthetic_universe_selection = selection
+    runner = live_synthetic_runner
+    restart_requested = runner is not None and not runner.stop_event.is_set()
+    if restart_requested:
+        _live_synthetic_universe_restart_requested.set()
+        runner.stop()
+    return {
+        "status": "success",
+        "selection": selection,
+        "restart_requested": restart_requested,
+        "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
+        "availability": dict(_live_synthetic_universe_status),
+    }
 
 
 @app.get("/api/v1/market-data/runtime/health")

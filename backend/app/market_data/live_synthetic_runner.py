@@ -177,6 +177,7 @@ class LiveSyntheticRunner:
         self._scanner: LiveSyntheticScanner | None = None
         self._refresh_requested = Event()
         self._stop_requested = Event()
+        self._running = False
         self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
 
     @property
@@ -380,6 +381,7 @@ class LiveSyntheticRunner:
         feed = None
         feed_thread = None
         self._active_underlying_feed = None
+        self._running = True
         try:
             while not self._stop_requested.is_set():
                 # Keep this market-hours gate local to Synthetic; the shared feed
@@ -415,6 +417,12 @@ class LiveSyntheticRunner:
             if self._stop_requested.is_set():
                 return
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
+                # The recorder returns normally when market hours end. Keep the
+                # runner alive and gate every new recording session on market
+                # hours, so the next trading day can rebuild subscriptions.
+                if not LiveSyntheticOptionFutureRecorder.market_open():
+                    self._stop_requested.wait(30.0)
+                    continue
                 self._refresh_requested.clear()
                 try:
                     subscriptions = self.build_subscriptions()
@@ -464,7 +472,15 @@ class LiveSyntheticRunner:
                     self._recorder = None
                     continue
                 self._recorder = None
-                break
+                # A normal recorder return is not a request to terminate the
+                # strategy runner. It usually means the market session ended;
+                # loop back to the market-hours gate and start a fresh scanner
+                # and recorder when the next session opens.
+                if not self._stop_requested.is_set():
+                    app_logger.info("Synthetic recorder session ended; waiting for the next session")
+                    if LiveSyntheticOptionFutureRecorder.market_open():
+                        self._stop_requested.wait(1.0)
+                    continue
         finally:
             if feed is not None:
                 feed.stop()
@@ -472,6 +488,7 @@ class LiveSyntheticRunner:
             if self._recorder is not None:
                 self._recorder.stop()
                 self._recorder = None
+            self._running = False
 
     def snapshot(self) -> dict:
         """Return lightweight runtime state for shared-feed diagnostics."""
@@ -481,13 +498,19 @@ class LiveSyntheticRunner:
             None if self._scanner is None else self._scanner.diagnostics_snapshot()
         )
         return {
-            "running": not self._stop_requested.is_set(),
+            "running": self._running and not self._stop_requested.is_set(),
             "targets": len(self.targets),
             "scanner_initialized": self._scanner is not None,
             "scanner_diagnostics": scanner_diagnostics,
             "underlying_feed": None if feed is None else feed.snapshot(),
             "option_recorder": None if recorder is None else recorder.snapshot(),
         }
+
+    def pair_monitor_snapshot(self, limit: int = 200) -> dict:
+        scanner = self._scanner
+        if scanner is None:
+            return {"status": "waiting", "data": []}
+        return scanner.pair_monitor_snapshot(limit=limit)
 
     def stop(self) -> None:
         self._stop_requested.set()

@@ -48,3 +48,38 @@ def test_live_route_limits_results():
     live_synthetic_routes.configure(lambda: (result, result))
     response = live_synthetic_routes.live(limit=1)
     assert response["opportunity_count"] == 1
+
+
+def test_diagnostics_endpoint_is_available():
+    response = live_synthetic_routes.diagnostics()
+    assert response["scanner"] == "synthetic-cash-carry-live-1s"
+
+
+def test_pairs_endpoint_returns_empty_snapshot():
+    live_synthetic_routes.configure_pairs(lambda: {"status": "success", "data": []})
+    response = live_synthetic_routes.pairs(limit=10)
+    assert response["count"] == 0
+    assert response["data"] == []
+
+
+
+def test_pairs_endpoint_sanitizes_snapshot_rows():
+    live_synthetic_routes.configure_pairs(
+        lambda: {
+            "status": "success",
+            "data": [{
+                "timestamp_ns": 123,
+                "underlying": "NIFTY",
+                "expiry": 20261029,
+                "strike": 25000,
+                "state": "INCOMPLETE",
+                "reason": "MISSING_CALL",
+                "raw_broker_payload": {"secret": "must not escape"},
+            }],
+        }
+    )
+    response = live_synthetic_routes.pairs(limit=10)
+    assert response["count"] == 1
+    assert response["data"][0]["underlying"] == "NIFTY"
+    assert response["data"][0]["reason"] == "MISSING_CALL"
+    assert "raw_broker_payload" not in response["data"][0]
