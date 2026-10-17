@@ -119,8 +119,6 @@ class LiveSyntheticScanPipeline:
                     else:
                         self.alerts.persist(db, job)
                         self.alerts.notify_users(db, job)
-                if job is None:
-                    self._last_retention_cleanup = monotonic()
                 succeeded = True
                 with self._state_lock:
                     self._counters["alert_jobs_completed"] += 1
@@ -247,6 +245,9 @@ class LiveSyntheticScanPipeline:
                 except Full:
                     # Retention cleanup is best-effort; never count it as a lost alert.
                     return
+            # Throttle from enqueue time, not worker completion: while the
+            # worker is busy, repeated ticks must not flood either bounded queue
+            # with duplicate cleanup jobs.
             self._last_retention_cleanup = now
             self._counters["alert_jobs_enqueued"] += 1
 
