@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from threading import Event, Thread
 from time import sleep, time_ns
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Callable, Iterable
 
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
@@ -163,6 +164,8 @@ class LiveSyntheticRunner:
         self.scan_config_provider = scan_config_provider or (
             lambda _symbol: SyntheticScanConfig(
                 allowed_stock_symbols=self.allowed_stock_symbols,
+                rate=float(settings.LIVE_SYNTHETIC_CARRY_RATE),
+                fees_per_unit=float(settings.LIVE_SYNTHETIC_FEES_PER_UNIT),
                 min_executable_edge=float(settings.LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS),
             )
         )
@@ -298,6 +301,45 @@ class LiveSyntheticRunner:
             return None
         return feed
 
+    def _refresh_target_expiries(self) -> bool:
+        """Refresh listed monthly future/option expiries from the current instrument master."""
+        try:
+            self.instrument_master.download(force=True)
+        except TypeError:
+            # Compatibility with simple test doubles and older master adapters.
+            self.instrument_master.download()
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        refreshed = []
+        changed = False
+        for target in self.targets:
+            cls = target.instrument_class.strip().upper()
+            if cls not in {"STOCK", "INDEX"}:
+                refreshed.append(target)
+                continue
+            expiry = select_monthly_option_expiry(
+                self.instrument_master.instruments,
+                underlying=target.underlying,
+                instrument_class=cls,
+                today=today,
+            )
+            if expiry is None:
+                app_logger.warning("Synthetic target has no matching live future/option expiry: %s", target.underlying)
+                changed = True
+                continue
+            if expiry != target.expiry:
+                changed = True
+                target = SyntheticLiveTarget(
+                    underlying=target.underlying,
+                    instrument_class=target.instrument_class,
+                    atm_strike=target.atm_strike,
+                    expiry=expiry,
+                )
+            refreshed.append(target)
+        if tuple(refreshed) != self.targets:
+            changed = True
+        self.targets = tuple(refreshed)
+        return changed
+
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
         self._refresh_stock_universe()
@@ -313,9 +355,8 @@ class LiveSyntheticRunner:
                 else (live_atm or target.atm_strike)
             )
             if atm_strike is None:
-                raise LookupError(
-                    f"live ATM price is not available for {target.underlying}"
-                )
+                # A missing underlying must not block ready symbols in the universe.
+                continue
             selection = select_synthetic_contracts(
                 self.instrument_master,
                 underlying=target.underlying,
@@ -344,19 +385,17 @@ class LiveSyntheticRunner:
         deadline = time_ns() + int(timeout_seconds * 1_000_000_000)
         symbols = tuple(target.underlying.strip().upper() for target in self.targets)
         while time_ns() < deadline and not self._stop_requested.is_set():
-            if all(atm_provider(symbol, time_ns()) is not None for symbol in symbols):
+            ready = [symbol for symbol in symbols if atm_provider(symbol, time_ns()) is not None]
+            if ready:
+                missing = sorted(set(symbols) - set(ready))
+                if missing:
+                    app_logger.warning("Synthetic scanning will start for ready symbols; waiting for ATM on: %s", ", ".join(missing))
                 return
             sleep(0.25)
         if self._stop_requested.is_set():
             return
-        missing = [
-            symbol for symbol in symbols
-            if atm_provider(symbol, time_ns()) is None
-        ]
-        raise TimeoutError(
-            "timed out waiting for live underlying prices: "
-            + ", ".join(sorted(set(missing)))
-        )
+        missing = [symbol for symbol in symbols if atm_provider(symbol, time_ns()) is None]
+        raise TimeoutError("timed out waiting for any live underlying price; missing: " + ", ".join(sorted(set(missing))))
 
     def _build_pipeline(self, scanner: LiveSyntheticScanner) -> LiveSyntheticScanPipeline:
         """Build a scanner pipeline while retaining alert cooldown across refreshes."""
@@ -368,6 +407,12 @@ class LiveSyntheticRunner:
         )
 
     def run_forever(self) -> None:
+        # Refresh once at startup, before building the ATM strike map.
+        try:
+            self._refresh_target_expiries()
+        except Exception as exc:
+            app_logger.warning("Synthetic expiry refresh failed at startup: %s", exc)
+        last_expiry_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         while not self._stop_requested.is_set():
             try:
                 atm_provider = self._ensure_atm_provider()
@@ -387,6 +432,26 @@ class LiveSyntheticRunner:
                 # Keep this market-hours gate local to Synthetic; the shared feed
                 # manager and other scanner consumers are not modified.
                 if not LiveSyntheticOptionFutureRecorder.market_open():
+                    self._stop_requested.wait(30.0)
+                    continue
+                session_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                if session_date != last_expiry_refresh_date:
+                    last_expiry_refresh_date = session_date
+                    try:
+                        expiry_changed = self._refresh_target_expiries()
+                    except Exception as exc:
+                        expiry_changed = False
+                        app_logger.warning("Synthetic expiry refresh failed; retaining last valid targets: %s", exc)
+                    if expiry_changed:
+                        if feed is not None:
+                            feed.stop()
+                            feed = None
+                            feed_thread = None
+                            self._active_underlying_feed = None
+                        if self._atm_provider is None:
+                            self._atm_tracker = None
+                            atm_provider = self._ensure_atm_provider()
+                if not self.targets:
                     self._stop_requested.wait(30.0)
                     continue
                 if feed is None:
@@ -451,10 +516,8 @@ class LiveSyntheticRunner:
                     pipeline.observe(payload)
                     symbol = str(payload.get("underlying") or "").upper()
                     current = initial_atm.get(symbol)
-                    if current is None:
-                        return
                     latest = atm_provider(symbol, time_ns())
-                    if latest is not None and latest != current and self._recorder is not None:
+                    if latest is not None and (current is None or latest != current) and self._recorder is not None:
                         self._refresh_requested.set()
                         self._recorder.stop()
 
@@ -465,6 +528,18 @@ class LiveSyntheticRunner:
                     on_observation=observe,
                     consumer="synthetic-options",
                 )
+                active_recorder = self._recorder
+                def watch_atm_readiness():
+                    while not self._stop_requested.is_set() and not active_recorder.stop_event.is_set():
+                        for symbol, initial in initial_atm.items():
+                            latest = atm_provider(symbol, time_ns())
+                            if latest is not None and (initial is None or latest != initial):
+                                self._refresh_requested.set()
+                                active_recorder.stop()
+                                return
+                        sleep(0.25)
+                watcher = Thread(target=watch_atm_readiness, daemon=True, name="synthetic-atm-readiness")
+                watcher.start()
                 self._recorder.run_forever()
                 refresh_requested = self._refresh_requested.is_set()
                 if refresh_requested:
