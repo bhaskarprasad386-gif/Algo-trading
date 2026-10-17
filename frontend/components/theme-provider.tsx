@@ -2,13 +2,11 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-export type ThemeName = "white" | "black" | "blue" | "dark";
+export type ThemeName = "white" | "dark";
 
 export const themeOptions: Array<{ id: ThemeName; label: string; symbol: string }> = [
+  { id: "dark", label: "Current Dark", symbol: "🌑" },
   { id: "white", label: "White", symbol: "⚪" },
-  { id: "black", label: "Black", symbol: "⚫" },
-  { id: "blue", label: "Blue", symbol: "🔵" },
-  { id: "dark", label: "Premium Dark", symbol: "🌑" },
 ];
 
 const STORAGE_KEY = "algo-trading-theme";
@@ -26,10 +24,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY) as ThemeName | null;
-    // The former default was white; use the reference dashboard's dark navy
-    // theme for first visits and migrate that old default without overriding
-    // an explicitly selected blue/black/dark theme.
-    const next = themeOptions.some((item) => item.id === saved) && saved !== "white" ? saved! : "dark";
+    // Keep the current dark theme as the first-visit default, but respect either explicit choice.
+    const next: ThemeName = themeOptions.some((item) => item.id === saved) ? saved! : "dark";
     setThemeState(next);
     document.documentElement.dataset.theme = next;
   }, []);
