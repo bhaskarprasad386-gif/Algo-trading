@@ -545,6 +545,11 @@ class LiveSyntheticScanner:
                         "lot_size": ce.get("lot_size") or future.get("lot_size"),
                         "state": "READY_TO_EVALUATE" if missing == ["AWAITING_SCANNER_QUALIFICATION"] else "INCOMPLETE",
                         "reason": ",".join(missing) if missing else "INCOMPLETE",
+                        # Pair monitor reports structural readiness only. It is not
+                        # the scanner's emitted opportunity/result stream.
+                        "readiness_scope": "STRUCTURAL_ONLY",
+                        "opportunity_confirmed": False,
+                        "qualification_status": "NOT_CONFIRMED",
                     })
         rows.sort(key=lambda row: int(row.get("timestamp_ns") or 0), reverse=True)
         return {"status": "success", "data": rows[:max(1, min(int(limit), 500))]}
