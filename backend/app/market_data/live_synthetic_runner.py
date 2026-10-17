@@ -510,7 +510,7 @@ class LiveSyntheticRunner:
                         stop_underlying_feed()
             if self._stop_requested.is_set():
                 return
-            while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
+            while not self._stop_requested.is_set():
                 # The recorder returns normally when market hours end. Keep the
                 # runner alive and gate every new recording session on market
                 # hours, so the next trading day can rebuild subscriptions.
