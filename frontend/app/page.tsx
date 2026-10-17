@@ -44,6 +44,7 @@ export default function HomePage() {
   const [diagnosticCount, setDiagnosticCount] = useState(0);
   const [diagnosticsLastSuccessAt, setDiagnosticsLastSuccessAt] = useState<number | null>(null);
   const [diagnosticsFetchFailed, setDiagnosticsFetchFailed] = useState(false);
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -355,6 +356,19 @@ export default function HomePage() {
   const feedHealthAge = feedHealthCheckedAt ? Math.max(0, (Date.now() - new Date(feedHealthCheckedAt).getTime()) / 1000) : null;
   const effectiveMarketSession = marketDataAge != null && marketDataAge <= 15 && marketSession !== "UNKNOWN" ? marketSession : feedHealthAge != null && feedHealthAge <= 10 ? feedMarketSession : "UNKNOWN";
   const effectiveMcxSession = marketDataAge != null && marketDataAge <= 15 ? mcxSession : "UNKNOWN";
+  const liveFeedAlerts = diagnosticErrors.filter((e) => {
+    const eventTime = new Date(e.time).getTime();
+    const id = String(e.id ?? "");
+    return id && !dismissedAlertIds.includes(id) && Number.isFinite(eventTime) && Date.now() - eventTime >= 0 && Date.now() - eventTime <= 120000 && /bid.?ask|quote.?missing|missing.?quote|cooldown|429|connection limit/i.test(String(e.message ?? "") + " " + String(e.error_type ?? "") + " " + String(e.component ?? ""));
+  }).slice(0, 3);
+  const liveFeedAlertKey = liveFeedAlerts.map((e) => String(e.id)).join("|");
+  useEffect(() => {
+    if (!liveFeedAlertKey) return;
+    const ids = liveFeedAlertKey.split("|");
+    const timer = window.setTimeout(() => setDismissedAlertIds((current) => Array.from(new Set([...current, ...ids])).slice(-100), 8000);
+    return () => window.clearTimeout(timer);
+  }, [liveFeedAlertKey]);
+
   const scannerStatus = [
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
@@ -402,17 +416,17 @@ export default function HomePage() {
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
             return (
-                <Card key={symbol} className="relative min-w-0 overflow-hidden rounded-2xl p-3 sm:p-4">
+                <Card key={symbol} className="relative min-w-0 overflow-hidden rounded-xl p-2 sm:p-2.5">
                   <span className="absolute inset-y-0 left-0 w-1 theme-accent-bg" />
                   <div className="pl-1">
                     <div className="flex items-center justify-between"><span className="text-[12px] font-bold tracking-wide">{symbol}</span>{effectiveMarketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
-                    <div className="mt-3 flex items-center justify-between gap-2">
-                      <div className={"break-words text-base font-bold sm:text-lg " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? (effectiveMarketSession === "CLOSED" ? "Last close unavailable" : "No broker quote") : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-1.5 flex items-center justify-between gap-1.5">
+                      <div className={"break-words text-sm font-bold sm:text-base " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? (effectiveMarketSession === "CLOSED" ? "Last close unavailable" : "No broker quote") : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       {(!quoteAvailable || quote?.ltp == null) && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
                     </div>
                     <div className={"mt-1 text-[11px] font-bold sm:text-[12px] " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
                     <div className="mt-1 break-words text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? "Previous close unavailable" : effectiveMarketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                    <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-muted">
+                    <div className="mt-1.5 flex items-center justify-between border-t theme-border pt-1.5 text-[9px] font-semibold theme-muted">
                       <span>{effectiveMarketSession === "CLOSED" ? "Last trading close" : quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{effectiveMarketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
                     </div>
                   </div>
@@ -612,7 +626,7 @@ export default function HomePage() {
           <div className="mt-3 text-[10px] theme-muted">Order states and margin are intentionally not fabricated. Connect verified broker order/funds APIs before showing FILLED, REJECTED, PENDING or margin values.</div>
         </Card>
       </section>
-      {(() => { const alerts = diagnosticErrors.filter((e) => { const eventTime = new Date(e.time).getTime(); return Number.isFinite(eventTime) && Date.now() - eventTime >= 0 && Date.now() - eventTime <= 120000 && /bid.?ask|quote.?missing|missing.?quote|cooldown|429|connection limit/i.test(String(e.message ?? "") + " " + String(e.error_type ?? "") + " " + String(e.component ?? "")); }).slice(0, 3); return alerts.length ? <div role="status" aria-live="polite" className="fixed bottom-4 right-4 z-50 w-[min(92vw,360px)] rounded-xl border theme-warning-bg p-3 shadow-xl"><div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase"><span><TriangleAlert size={13} className="mr-1 inline" />Live feed alerts</span><span>{alerts.length} recent</span></div>{alerts.map((e) => <div key={e.id} className="border-t theme-border py-2"><div className="text-[10px] font-bold">{e.component} • {e.severity}</div><div className="mt-1 text-[11px]">{e.message}</div><div className="mt-1 text-[9px] theme-subtle">{e.time ? new Date(e.time).toLocaleTimeString("en-IN") : "Time unavailable"}</div></div>)}</div> : null; })()}
+      {liveFeedAlerts.length ? <div role="status" aria-live="polite" className="fixed bottom-4 right-4 z-50 w-[min(92vw,360px)] rounded-xl border theme-warning-bg p-3 shadow-xl"><div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-bold uppercase"><span><TriangleAlert size={13} className="mr-1 inline" />Live feed alerts</span><div className="flex items-center gap-2"><span>{liveFeedAlerts.length} recent • auto-hide 8s</span><button type="button" aria-label="Dismiss live feed alerts" title="Dismiss alerts" onClick={() => setDismissedAlertIds((current) => Array.from(new Set([...current, ...liveFeedAlerts.map((e) => String(e.id))])).slice(-100)} className="rounded-md px-2 py-1 text-sm theme-text hover:theme-surface">×</button></div></div>{liveFeedAlerts.map((e) => <div key={e.id} className="border-t theme-border py-2"><div className="text-[10px] font-bold">{e.component} • {e.severity}</div><div className="mt-1 text-[11px]">{e.message}</div><div className="mt-1 text-[9px] theme-subtle">{e.time ? new Date(e.time).toLocaleTimeString("en-IN") : "Time unavailable"}</div></div>)}</div> : null}
     </div>
   );
 }
