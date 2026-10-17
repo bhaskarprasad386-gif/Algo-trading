@@ -527,3 +527,32 @@ def test_live_scanner_contains_result_callback_failure(monkeypatch):
     })
     assert result == ("safe-result",)
     assert scanner.diagnostics_snapshot()["counters"]["result_callback_errors"] == 1
+
+
+
+def test_synthetic_bucket_pruning_does_not_move_backwards_on_delayed_tick():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner._buckets = {
+        ("NIFTY", 10_000_000_000, 20260930): {},
+        ("NIFTY", 11_000_000_000, 20260930): {},
+        ("NIFTY", 15_000_000_000, 20260930): {},
+    }
+
+    scanner._prune(10_000_000_000)
+
+    assert ("NIFTY", 10_000_000_000, 20260930) not in scanner._buckets
+    assert ("NIFTY", 11_000_000_000, 20260930) not in scanner._buckets
+    assert ("NIFTY", 15_000_000_000, 20260930) in scanner._buckets
+    assert scanner.diagnostics_snapshot()["counters"]["pruned_buckets"] == 2
+
+
+def test_synthetic_bucket_cache_has_hard_capacity_limit():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner._buckets = {
+        (f"SYM{i}", i, 20260930): {} for i in range(scanner.MAX_ACTIVE_BUCKETS + 25)
+    }
+
+    scanner._prune(scanner.MAX_ACTIVE_BUCKETS + 24)
+
+    assert len(scanner._buckets) <= scanner.MAX_ACTIVE_BUCKETS
+    assert scanner.diagnostics_snapshot()["counters"]["bucket_capacity_evictions"] == 25
