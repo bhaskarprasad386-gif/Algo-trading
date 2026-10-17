@@ -302,6 +302,19 @@ class LiveSyntheticScanner:
                 self._count("invalid_future_timestamp")
                 self._prune(timestamp_ns)
                 return ()
+            try:
+                raw_future_lot_size = float(future_payload.get("lot_size") or 0)
+                if (
+                    not math.isfinite(raw_future_lot_size)
+                    or raw_future_lot_size <= 0
+                    or not raw_future_lot_size.is_integer()
+                ):
+                    raise ValueError("future lot size must be a positive integer")
+                future_lot_size = int(raw_future_lot_size)
+            except (TypeError, ValueError, OverflowError):
+                self._count("invalid_future_lot_size")
+                self._prune(timestamp_ns)
+                return ()
             # Validate each strike independently. An incomplete or delayed option
             # at another strike must not block an otherwise synchronized CE+PE+FUT
             # triplet. The pure scanner requires one snapshot timestamp, so accepted
@@ -429,19 +442,6 @@ class LiveSyntheticScanner:
                         self._count("waiting_for_executable_quote")
                         return ()
                 self._count("invalid_future_quote")
-                self._prune(timestamp_ns)
-                return ()
-            try:
-                raw_future_lot_size = float(future_payload.get("lot_size") or 0)
-                if (
-                    not math.isfinite(raw_future_lot_size)
-                    or raw_future_lot_size <= 0
-                    or not raw_future_lot_size.is_integer()
-                ):
-                    raise ValueError("future lot size must be a positive integer")
-                future_lot_size = int(raw_future_lot_size)
-            except (TypeError, ValueError, OverflowError):
-                self._count("invalid_future_lot_size")
                 self._prune(timestamp_ns)
                 return ()
             future = FutureQuote(
