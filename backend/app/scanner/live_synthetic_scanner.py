@@ -632,25 +632,24 @@ class LiveSyntheticScanner:
                     actual_timestamps = [
                         self._quote_timestamp_ns(leg) for leg in available_legs
                     ]
+                    anchor_timestamps = [
+                        self._timestamp_ns(leg.get("source_timestamp_ns"))
+                        for leg in available_legs
+                    ]
                     latest_timestamp = (
                         max(value for value in actual_timestamps if value is not None)
                         if actual_timestamps and any(value is not None for value in actual_timestamps)
                         else bucket_ts
                     )
-                    if future and ce and pe:
-                        anchor_timestamps = [
-                            self._timestamp_ns(leg.get("source_timestamp_ns"))
-                            for leg in (future, ce, pe)
-                        ]
-                        if (
-                            any(value is None for value in anchor_timestamps)
-                            or any(value is None for value in actual_timestamps)
-                        ):
-                            missing.append("INVALID_TIMESTAMP")
-                        elif max(actual_timestamps) - min(actual_timestamps) > self.TIMESTAMP_TOLERANCE_NS:
-                            # Pending bucket anchors are for association only; actual
-                            # broker times determine whether a triplet is synchronized.
-                            missing.append("TIMESTAMP_MISMATCH")
+                    if (
+                        any(value is None for value in anchor_timestamps)
+                        or any(value is None for value in actual_timestamps)
+                    ):
+                        missing.append("INVALID_TIMESTAMP")
+                    elif future and ce and pe and max(actual_timestamps) - min(actual_timestamps) > self.TIMESTAMP_TOLERANCE_NS:
+                        # Pending bucket anchors are for association only; actual
+                        # broker times determine whether a triplet is synchronized.
+                        missing.append("TIMESTAMP_MISMATCH")
 
                     def positive(value):
                         if isinstance(value, bool):
