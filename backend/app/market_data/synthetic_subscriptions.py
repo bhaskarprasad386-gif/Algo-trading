@@ -63,12 +63,12 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     )
     if not future_rows: raise LookupError(f"no current/near {future_type} contracts for {symbol}")
     current = future_rows[0]
-    selected_futures = future_rows[:2]
     current_future_expiry = _expiry_key(current.get("expiry"))
     target_expiry = _expiry_key(expiry) if expiry else current_future_expiry
-    # Synthetic options must expire with the current future. In particular,
-    # never pair weekly NIFTY/SENSEX options with a monthly index future.
-    # Box Spread has its own selector and may independently use weekly chains.
+    # Synthetic Future uses one coherent contract month: current future plus
+    # CE/PE legs from the exact same expiry. Never subscribe to the near future
+    # here because there is no matching near-expiry option chain in this
+    # selection and the scanner cannot form a complete synthetic pair from it.
     if target_expiry != current_future_expiry:
         raise LookupError(
             f"synthetic option expiry {target_expiry} does not match "
@@ -82,21 +82,16 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if not any(options_by_expiry.values()):
         raise LookupError(f"no options for {symbol} {target_expiry}")
 
-    subscriptions = []
-    for role, future in zip(("CURRENT","NEAR"), selected_futures):
-        subscriptions.append(SyntheticSubscription(
-            exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
-            token=str(future.get("token","")).strip(),
-            symbol=str(future.get("symbol","")).strip(), underlying=symbol,
-            instrument_class=cls, expiry=str(future.get("expiry","")).strip(),
-            lot_size=int(float(future.get("lotsize",0) or 0)) or None, contract_role=role))
+    subscriptions = [SyntheticSubscription(
+        exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
+        token=str(current.get("token","")).strip(),
+        symbol=str(current.get("symbol","")).strip(), underlying=symbol,
+        instrument_class=cls, expiry=str(current.get("expiry","")).strip(),
+        lot_size=int(float(current.get("lotsize",0) or 0)) or None, contract_role="CURRENT"))]
     for option_expiry, expiry_options in options_by_expiry.items():
         if not expiry_options:
             continue
         actual_strikes = sorted({_strike(x.get("strike")) for x in expiry_options})
-        # Bound subscriptions to the configured actual-strike window. Index:
-        # up to 15 listed strikes on each side of ATM; stock: existing +/-7.
-        # Liquidity/opportunity filtering happens on live CE+PE quotes downstream.
         selected = enumerate_synthetic_strikes(actual_strikes, atm_strike=float(atm_strike),
                                                instrument_class=cls, policy=policy or ScanPolicy())
         selected_strikes = {strike for strike, _, _ in selected}
