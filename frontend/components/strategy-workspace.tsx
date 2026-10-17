@@ -427,11 +427,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                "INDEX-ONLY SCAN — " + control}
             </p>
             {control === "TOP15" || control === "ALL" ? (
-              <p className="mt-2 leading-6 theme-muted">{top15StockSymbols.join(" • ")}</p>
+              <>
+                <p className="mt-2 leading-6 theme-muted">{top15StockSymbols.join(" • ")}</p>
+                <p className="mt-1 theme-muted">These names define the basket only; stocks are not separate dropdown choices.</p>
+              </>
             ) : (
               <p className="mt-1 theme-muted">Only the selected index is scanned. No fallback to stocks or other indices.</p>
             )}
-            {control === "TOP15" && <p className="mt-1 theme-success">Exactly these configured stock symbols are eligible; no NIFTY index or other stocks are added.</p>}
+            {control === "TOP15" && <p className="mt-1 theme-success">TOP15 scans the configured stock basket automatically. No individual stock selection is required; only stocks with eligible current futures and matching option expiry can be scanned.</p>}
           </div>
         )}
       </Card>
