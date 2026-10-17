@@ -8,6 +8,7 @@ delegates pricing/ranking to the existing pure synthetic scanner.
 from __future__ import annotations
 
 from collections import Counter
+import math
 from datetime import datetime, time as datetime_time
 from dataclasses import replace
 from zoneinfo import ZoneInfo
@@ -70,9 +71,9 @@ class LiveSyntheticScanner:
     def _price(value: object) -> float | None:
         try:
             number = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
-        return number if number > 0 else None
+        return number if math.isfinite(number) and number > 0 else None
 
     def observe(self, payload: dict) -> tuple[SyntheticScanResult, ...]:
         self._count("observations_received")
@@ -119,8 +120,18 @@ class LiveSyntheticScanner:
         def positive_number(value: object) -> float:
             try:
                 return max(float(value), 0.0)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return 0.0
+            return max(number, 0.0) if math.isfinite(number) else 0.0
+
+        def nonnegative_int(value: object) -> int:
+            try:
+                number = float(value or 0)
+            except (TypeError, ValueError, OverflowError):
+                return 0
+            if not math.isfinite(number) or number <= 0:
+                return 0
+            return int(number)
 
         def liquid_leg(option: dict) -> bool:
             # Liquidity is evaluated from live ticks, not the static instrument master.
@@ -285,8 +296,8 @@ class LiveSyntheticScanner:
                         put_ask=pe_ask,
                         lot_size=lot,
                         instrument_class=cls,
-                        volume=int(float(ce.get("volume") or 0)),
-                        oi=int(float(ce.get("oi") or 0)),
+                        volume=nonnegative_int(ce.get("volume")),
+                        oi=nonnegative_int(ce.get("oi")),
                     )
                 )
 
@@ -342,8 +353,8 @@ class LiveSyntheticScanner:
                 ask=future_ask,
                 lot_size=int(float(future_payload.get("lot_size") or 0)),
                 instrument_class=cls,
-                volume=int(float(future_payload.get("volume") or 0)),
-                oi=int(float(future_payload.get("oi") or 0)),
+                volume=nonnegative_int(future_payload.get("volume")),
+                oi=nonnegative_int(future_payload.get("oi")),
             )
             if future.lot_size <= 0:
                 self._count("invalid_future_lot_size")
