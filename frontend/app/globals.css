@@ -147,9 +147,10 @@ input::placeholder, textarea::placeholder { color: var(--app-subtle); }
   border-color: var(--dash-line);
 }
 .dashboard-page section[aria-label="Market overview"] > div:last-child > section {
-  min-height: 188px;
+  min-height: 0;
+  padding: .6rem !important;
   background: linear-gradient(155deg, var(--app-surface), color-mix(in srgb, var(--app-surface-2) 58%, var(--app-surface)));
-  box-shadow: 0 6px 22px rgba(0, 0, 0, .07);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .06);
   transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 .dashboard-page section[aria-label="Market overview"] > div:last-child > section:hover {
@@ -181,7 +182,7 @@ input::placeholder, textarea::placeholder { color: var(--app-subtle); }
 @media (max-width: 640px) {
   .dashboard-page { gap: 1rem; }
   .dashboard-page > div:first-child { border-radius: 1rem; }
-  .dashboard-page section[aria-label="Market overview"] > div:last-child > section { min-height: 172px; padding: .8rem; }
+  .dashboard-page section[aria-label="Market overview"] > div:last-child > section { min-height: 0; padding: .5rem !important; }
 }
 
 /* App shell polish */
