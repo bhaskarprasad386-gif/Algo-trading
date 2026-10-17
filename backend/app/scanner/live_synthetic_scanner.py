@@ -192,6 +192,18 @@ class LiveSyntheticScanner:
             # its original pairing timestamp only when it is the same instrument
             # and arrives inside the explicit three-second quote-wait window.
             def preserve_pending_anchor(previous: dict | None, current: dict) -> dict:
+                # Keep the broker's real source time separately: source_timestamp_ns
+                # may be normalized to the pending bucket anchor for pairing, and
+                # must not erase ordering information for subsequent ticks.
+                current = dict(current)
+                try:
+                    current["_quote_source_timestamp_ns"] = int(
+                        current.get("_quote_source_timestamp_ns")
+                        or current.get("source_timestamp_ns")
+                        or 0
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    current["_quote_source_timestamp_ns"] = 0
                 if previous is None:
                     return current
                 previous_bid = self._price(previous.get("bid"))
@@ -221,8 +233,16 @@ class LiveSyntheticScanner:
                 if previous is None:
                     return preserve_pending_anchor(previous, current)
                 try:
-                    previous_ns = int(previous.get("source_timestamp_ns") or 0)
-                    current_ns = int(current.get("source_timestamp_ns") or 0)
+                    previous_ns = int(
+                        previous.get("_quote_source_timestamp_ns")
+                        or previous.get("source_timestamp_ns")
+                        or 0
+                    )
+                    current_ns = int(
+                        current.get("_quote_source_timestamp_ns")
+                        or current.get("source_timestamp_ns")
+                        or 0
+                    )
                 except (TypeError, ValueError, OverflowError):
                     previous_ns = current_ns = 0
                 if previous_ns > current_ns > 0:
