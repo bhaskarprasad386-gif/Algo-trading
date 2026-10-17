@@ -394,6 +394,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const signals = rows.filter((row) => isSignal(slug, row)).length;
   const monitorRows = c.pairEndpoint ? pairRows : rows;
+  const filteredPairRows = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    if (!q) return monitorRows;
+    return monitorRows.filter((row) => Object.values(row).some((v) => String(v ?? "").toUpperCase().includes(q)));
+  }, [monitorRows, search]);
   const lastScan = rows.reduce<string | null>((latest, row) => {
     const raw = value(row, "timestamp_ns", "timestamp");
     if (raw == null) return latest;
@@ -503,6 +508,26 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </div>
       </Card>
 
+      {slug === "synthetic-arbitrage" && (
+        <Card className="theme-border theme-surface p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold theme-text">Synthetic Scanner Health</h2>
+              <p className="mt-1 text-xs theme-muted">Scanner observations and completed calculations are separate from common-feed tick totals.</p>
+            </div>
+            <span className={"rounded-lg border px-3 py-1.5 text-xs font-semibold " + (String(scannerDiagnostics?.status ?? "UNKNOWN") === "SCANNING" ? "theme-success" : "theme-warning")}>{String(scannerDiagnostics?.status ?? "UNKNOWN")}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div><p className="text-xs theme-muted">Observations</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.observations_received) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Completed scans</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.scan_evaluations) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Empty scans</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.empty_calculations) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Missing option legs</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_ce_or_pe_leg) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Last scan age</p><p className="mt-1 text-base font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s" : "—"}</p></div>
+          </div>
+          <p className="mt-3 text-xs theme-muted">Zero signals can be a valid market result. A stale or incomplete scanner is shown as a health problem, not as a successful empty scan. Broker orders remain OFF.</p>
+        </Card>
+      )}
+
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
       <Card className="overflow-hidden theme-border theme-surface">
@@ -541,15 +566,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Broker execution</p><p className="mt-1 text-lg font-semibold theme-warning">OFF</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
-          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live pair monitor…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live pair/combo observations</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-pair-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{pairCell(slug, c.pairColumns[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.pairColumns.filter((column) => column !== c.pairColumns[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{pairCell(slug, column, row)}</div></div>)}</div></div>)}
+          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live pair monitor…</div> : filteredPairRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live pair/combo observations</div> : filteredPairRows.map((row, index) => <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-pair-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{pairCell(slug, c.pairColumns[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.pairColumns.filter((column) => column !== c.pairColumns[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{pairCell(slug, column, row)}</div></div>)}</div></div>)}
         </div>
         <div className="mt-4 hidden overflow-x-auto md:block">
           <table className="min-w-[1100px] w-full text-left text-sm">
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
               {loading ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">Loading live pair monitor…</td></tr> :
-              filteredRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No live pair/combo observations</td></tr> :
-              filteredRows.map((row, index) => <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-pair-" + index)} className="border-b theme-border last:border-0">
+              filteredPairRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No live pair/combo observations</td></tr> :
+              filteredPairRows.map((row, index) => <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-pair-" + index)} className="border-b theme-border last:border-0">
                 {c.pairColumns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{pairCell(slug, column, row)}</td>)}
               </tr>)}
             </tbody>
