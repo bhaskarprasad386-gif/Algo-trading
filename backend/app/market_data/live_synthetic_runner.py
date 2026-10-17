@@ -254,12 +254,8 @@ class LiveSyntheticRunner:
                 target for target in self.targets
                 if target.underlying.strip().upper() in strikes
             )
-            self.targets = supported
-            if not supported:
-                raise LookupError(
-                    "no concrete option strikes found for live expiry: "
-                    + ", ".join(sorted(set(missing)))
-                )
+            # Keep unsupported targets in the universe. They may become
+            # resolvable after the next instrument-master/expiry refresh.
         if not strikes:
             raise LookupError(
                 "no concrete option strikes found for live expiry: "
@@ -324,7 +320,14 @@ class LiveSyntheticRunner:
             )
             if expiry is None:
                 app_logger.warning("Synthetic target has no matching live future/option expiry: %s", target.underlying)
-                changed = True
+                if target.expiry is not None:
+                    changed = True
+                refreshed.append(SyntheticLiveTarget(
+                    underlying=target.underlying,
+                    instrument_class=target.instrument_class,
+                    atm_strike=target.atm_strike,
+                    expiry=None,
+                ))
                 continue
             if expiry != target.expiry:
                 changed = True
@@ -357,15 +360,19 @@ class LiveSyntheticRunner:
             if atm_strike is None:
                 # A missing underlying must not block ready symbols in the universe.
                 continue
-            selection = select_synthetic_contracts(
-                self.instrument_master,
-                underlying=target.underlying,
-                instrument_class=target.instrument_class,
-                atm_strike=atm_strike,
-                expiry=target.expiry,
-                allowed_stock_symbols=self.allowed_stock_symbols,
-                policy=self.policy,
-            )
+            try:
+                selection = select_synthetic_contracts(
+                    self.instrument_master,
+                    underlying=target.underlying,
+                    instrument_class=target.instrument_class,
+                    atm_strike=atm_strike,
+                    expiry=target.expiry,
+                    allowed_stock_symbols=self.allowed_stock_symbols,
+                    policy=self.policy,
+                )
+            except LookupError as exc:
+                app_logger.warning("Skipping unavailable synthetic target %s: %s", target.underlying, exc)
+                continue
             for item in selection.subscriptions:
                 key = (item.exchange_type, item.token)
                 if key not in seen:
