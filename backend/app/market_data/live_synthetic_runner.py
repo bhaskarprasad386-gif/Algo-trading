@@ -503,6 +503,12 @@ class LiveSyntheticRunner:
             "option_recorder": None if recorder is None else recorder.snapshot(),
         }
 
+    def pair_monitor_snapshot(self, limit: int = 200) -> dict:
+        scanner = self._scanner
+        if scanner is None:
+            return {"status": "waiting", "data": []}
+        return scanner.pair_monitor_snapshot(limit=limit)
+
     def stop(self) -> None:
         self._stop_requested.set()
         feed = self._active_underlying_feed or self.underlying_feed
