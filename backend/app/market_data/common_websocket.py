@@ -445,6 +445,7 @@ class CommonWebSocketManager:
                     reason="obsolete_group", on_finished=_reconcile_after_obsolete_close,
                 )
 
+            connect_errors: list[Exception] = []
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
                 if socket is None:
@@ -541,13 +542,24 @@ class CommonWebSocketManager:
                         self._last_successful_route_at.pop(group, None)
                         self._last_data_at[group] = now
                         self._last_successful_delivery_at[group] = None
-                    self._start_socket_connect(
-                        socket=socket,
-                        group=group,
-                        pairs=pairs,
-                        subscriptions=subscriptions,
-                        generation=generation,
-                    )
+                    try:
+                        self._start_socket_connect(
+                            socket=socket,
+                            group=group,
+                            pairs=pairs,
+                            subscriptions=subscriptions,
+                            generation=generation,
+                        )
+                    except Exception as exc:
+                        # One shard's immediate handshake failure must not prevent
+                        # later required shards from getting their first connect attempt.
+                        # Keep the subscription intent; the recovery supervisor retries
+                        # the failed shard once its old transport has closed.
+                        connect_errors.append(exc)
+                        app_logger.warning(
+                            "Common feed shard connect failed; continuing other required shards group=%s error=%s: %s",
+                            f"{group.mode}:{group.shard}", type(exc).__name__, exc,
+                        )
                 else:
                     # Keep the old acknowledged token set while the broker is
                     # cooling down. Updating it here would lose the pending
@@ -572,6 +584,11 @@ class CommonWebSocketManager:
                         )
                     with self._lock:
                         self._socket_tokens[group] = set(pairs)
+
+            if connect_errors:
+                # Preserve existing error visibility to the caller, but only after
+                # every required shard has been attempted.
+                raise connect_errors[0]
 
     @staticmethod
     def _is_broker_connection_limit_error(reason: Any) -> bool:

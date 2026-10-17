@@ -136,7 +136,14 @@ def test_authoritative_payload_mode_skips_legacy_scanner_update():
     assert len(payloads) == 1
     assert payloads[0]["underlying"] == "ABC"
     assert scanner.updates == 0
-    assert runner._scanner_updates == 0
+    # Authoritative callback mode counts successful handoff as a scanner update.
+    assert runner._scanner_updates == 1
+    snapshot = runner.snapshot()
+    assert snapshot["payload_callbacks"] == 1
+    assert snapshot["payload_callback_errors"] == 0
+    assert snapshot["last_record_at_ns"] is not None
+    assert snapshot["last_payload_at_ns"] is not None
+    assert snapshot["last_scanner_update_at_ns"] is not None
 
 
 def test_runner_persistence_coalesces_multiple_ticks_within_one_second(monkeypatch):

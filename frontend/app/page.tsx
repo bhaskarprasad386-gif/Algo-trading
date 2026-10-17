@@ -249,6 +249,25 @@ export default function HomePage() {
             return next;
           });
         }
+        // Prefer server-observed timestamps over when this browser first noticed
+        // a cumulative counter. This preserves the true stale age across page reloads.
+        const serverActivitySamples: Array<[string, unknown]> = [
+          ["cashPayloads", runners.cash_future?.last_payload_at_ns],
+          ["cashUpdates", runners.cash_future?.last_scanner_update_at_ns],
+        ];
+        const nowMs = Date.now();
+        const validServerActivity = serverActivitySamples.flatMap(([key, raw]) => {
+          const ns = Number(raw);
+          const ms = ns / 1_000_000;
+          return Number.isFinite(ns) && ns > 0 && Number.isFinite(ms) && ms <= nowMs + 5000
+            ? [[key, ms] as [string, number]]
+            : [];
+        });
+        if (validServerActivity.length) setRunnerLastActivity((previous) => {
+          const next = { ...previous };
+          validServerActivity.forEach(([key, ms]) => { next[key] = ms; });
+          return next;
+        });
         runnerCountersRef.current = currentCounters;
         const runnerDetail = (value: any) => {
           if (!value) return { running: false, detail: "UNAVAILABLE", updates: 0, payloads: 0, instruments: 0 };
@@ -426,9 +445,9 @@ export default function HomePage() {
                       {(!quoteAvailable || quote?.ltp == null) && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
                     </div>
                     <div className={"mt-0.5 text-[10px] font-bold sm:text-[11px] " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
-                    <div className="mt-0.5 break-words text-[9px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? (quoteAvailable ? "Previous close unavailable" : quoteUnavailableReason) : effectiveMarketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-0.5 break-words text-[9px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? (quoteAvailable ? "Previous close unavailable" : quoteUnavailableReason) : effectiveMarketSession === "CLOSED" ? "Previous session close (not live): " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-0.5 flex items-center justify-between gap-1 border-t theme-border pt-0.5 text-[8px] font-semibold theme-muted">
-                      <span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "Last trading close" : "Broker quote returned") : quoteUnavailableReason}</span><span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "LAST CLOSE" : "QUOTE RESPONSE") : marketOverviewError ? "API ERROR" : marketDataAge == null || marketDataAge > 15 ? "STALE" : "NO DATA"}</span>
+                      <span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "LAST SESSION CLOSE • NOT LIVE" : "Broker quote returned") : quoteUnavailableReason}</span><span>{quoteAvailable ? (effectiveMarketSession === "CLOSED" ? "NOT LIVE • LAST CLOSE" : "QUOTE RESPONSE") : marketOverviewError ? "API ERROR" : marketDataAge == null || marketDataAge > 15 ? "STALE" : "NO DATA"}</span>
                     </div>
                   </div>
                 </Card>

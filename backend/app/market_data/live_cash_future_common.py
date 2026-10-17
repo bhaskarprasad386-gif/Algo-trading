@@ -74,8 +74,13 @@ class LiveCashFutureCommonRunner:
         self._records_received = 0
         self._records_missing_metadata = 0
         self._payload_callbacks = 0
+        self._payload_callback_errors = 0
         self._scanner_updates = 0
         self._scanner_results = 0
+        self._last_record_at_ns: int | None = None
+        self._last_payload_at_ns: int | None = None
+        self._last_scanner_update_at_ns: int | None = None
+        self._last_result_at_ns: int | None = None
         self._records_missing_executable_quote = 0
         # Aggregate quote-side counters only; never retain raw broker frames.
         self._quote_side_lock = threading.Lock()
@@ -109,8 +114,13 @@ class LiveCashFutureCommonRunner:
             "records_received": self._records_received,
             "records_missing_metadata": self._records_missing_metadata,
             "payload_callbacks": self._payload_callbacks,
+            "payload_callback_errors": self._payload_callback_errors,
             "scanner_updates": self._scanner_updates,
             "scanner_results": self._scanner_results,
+            "last_record_at_ns": self._last_record_at_ns,
+            "last_payload_at_ns": self._last_payload_at_ns,
+            "last_scanner_update_at_ns": self._last_scanner_update_at_ns,
+            "last_result_at_ns": self._last_result_at_ns,
             "records_missing_executable_quote": self._records_missing_executable_quote,
             "quote_side_counts": self._quote_side_snapshot(),
             "quote_side_source_counts": self._quote_side_source_snapshot(),
@@ -337,6 +347,7 @@ class LiveCashFutureCommonRunner:
 
     def _on_record(self, record: MarketDataRecord) -> None:
         self._records_received += 1
+        self._last_record_at_ns = time.time_ns()
         meta = self._metadata.get(record.instrument)
         if meta is None:
             self._records_missing_metadata += 1
@@ -367,12 +378,21 @@ class LiveCashFutureCommonRunner:
             # on the WebSocket transport callback and can delay frame handling.
             try:
                 self.on_payload(self._record_payload(record, meta))
+                now_ns = time.time_ns()
                 self._payload_callbacks += 1
+                # In authoritative callback mode this runner's callback is the
+                # scanner's accepted observation boundary; count it as an update
+                # rather than reporting a misleading permanent zero.
+                self._scanner_updates += 1
+                self._last_payload_at_ns = now_ns
+                self._last_scanner_update_at_ns = now_ns
             except Exception as exc:
+                self._payload_callback_errors += 1
                 app_logger.error("Cash-Future payload callback failed: %s", exc)
             return
         try:
             self._scanner_updates += 1
+            self._last_scanner_update_at_ns = time.time_ns()
             result = self.scanner.update(
                 record,
                 contract_month=meta["contract_month"],
@@ -385,6 +405,7 @@ class LiveCashFutureCommonRunner:
             return
         if result is not None and result.signal.qualifies:
             self._scanner_results += 1
+            self._last_result_at_ns = time.time_ns()
             self._last_result = result
             if self.on_result is not None:
                 try:
