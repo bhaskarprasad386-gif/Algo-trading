@@ -64,24 +64,39 @@ class AngelOneTickNormalizer:
 
     @staticmethod
     def _timestamp_ns(payload: Mapping[str, Any]) -> int:
-        value = AngelOneTickNormalizer._number(
-            payload, "exchange_timestamp_ns", "timestamp_ns"
-        )
-        if value is not None:
-            return max(0, int(value))
-        value = AngelOneTickNormalizer._number(
-            payload, "exchange_timestamp", "exchange_timestamp_ms",
-            "timestamp", "feed_time"
-        )
-        if value is None:
+        # Parse integer-like timestamps without routing epoch nanoseconds through
+        # float: binary64 cannot represent individual nanoseconds at this scale.
+        # Converting a 19-digit ns string to float silently shifts its value.
+        for name in ("exchange_timestamp_ns", "timestamp_ns"):
+            raw = payload.get(name)
+            if raw is None:
+                continue
+            try:
+                return max(0, int(str(raw).strip()))
+            except (TypeError, ValueError, OverflowError):
+                continue
+
+        raw = None
+        for name in ("exchange_timestamp", "exchange_timestamp_ms", "timestamp", "feed_time"):
+            if payload.get(name) is not None:
+                raw = payload.get(name)
+                break
+        if raw is None:
             return time_ns()
+        try:
+            # Preserve exact integral strings and ints; accept numeric floats
+            # only as a fallback for providers that actually send fractional data.
+            text = str(raw).strip()
+            integer = int(text)
+        except (TypeError, ValueError, OverflowError):
+            number = AngelOneTickNormalizer._finite_float(raw)
+            if number is None:
+                return time_ns()
+            integer = int(number)
 
         # Provider aliases are not consistent about units: SmartAPI's exchange
         # timestamp is milliseconds, while generic timestamp/feed_time fields
-        # can be epoch seconds. Infer the epoch unit by magnitude so seconds do
-        # not become a 1970-era pseudo-nanosecond timestamp and get rejected as
-        # stale by downstream scanners. Explicit *_ns fields above stay exact.
-        integer = int(value)
+        # can be epoch seconds. Infer the epoch unit by magnitude.
         magnitude = abs(integer)
         if magnitude >= 10**16:       # nanoseconds
             return integer
