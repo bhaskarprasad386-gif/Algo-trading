@@ -119,7 +119,7 @@ class LiveSyntheticScanner:
 
         def positive_number(value: object) -> float:
             try:
-                return max(float(value), 0.0)
+                number = float(value)
             except (TypeError, ValueError, OverflowError):
                 return 0.0
             return max(number, 0.0) if math.isfinite(number) else 0.0
