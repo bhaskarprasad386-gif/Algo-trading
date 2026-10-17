@@ -392,10 +392,11 @@ class LiveSyntheticScanner:
                     continue
                 ce_timestamp_ns = self._quote_timestamp_ns(ce) or 0
                 pe_timestamp_ns = self._quote_timestamp_ns(pe) or 0
+                if ce_timestamp_ns <= 0 or pe_timestamp_ns <= 0:
+                    self._count("invalid_option_timestamp")
+                    continue
                 if (
-                    ce_timestamp_ns <= 0
-                    or pe_timestamp_ns <= 0
-                    or abs(ce_timestamp_ns - pe_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                    abs(ce_timestamp_ns - pe_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
                     or abs(ce_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
                     or abs(pe_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
                 ):
