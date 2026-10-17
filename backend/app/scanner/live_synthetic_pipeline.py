@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from queue import Full, Queue
+from queue import Empty, Full, Queue
 from threading import Lock, Thread
 from time import monotonic, sleep
 from typing import Callable
@@ -43,6 +43,8 @@ class LiveSyntheticScanPipeline:
         self._last_retention_cleanup = 0.0
         self._observe_lock = Lock()
         self._queue = Queue(maxsize=alert_queue_size)
+        # A second bounded queue absorbs short bursts without blocking feed callbacks.
+        self._overflow_queue = Queue(maxsize=alert_queue_size)
         self._state_lock = Lock()
         self._close_lock = Lock()
         self._closed = False
@@ -95,45 +97,74 @@ class LiveSyntheticScanPipeline:
             try:
                 self._queue.put_nowait(results)
             except Full:
-                self._counters["alert_jobs_dropped"] += 1
+                try:
+                    self._overflow_queue.put_nowait(results)
+                except Full:
+                    self._counters["alert_jobs_dropped"] += 1
+                else:
+                    self._counters["alert_jobs_enqueued"] += 1
             else:
                 self._counters["alert_jobs_enqueued"] += 1
 
+    def _process_alert_job(self, job) -> None:
+        succeeded = False
+        for attempt in range(self._max_job_attempts):
+            try:
+                # Use a fresh DB session on each attempt; a failed SQL
+                # transaction may have left the previous session unusable.
+                with self.session_factory() as db:
+                    if job is None:
+                        self.alerts.persist(db, ())
+                    else:
+                        self.alerts.persist(db, job)
+                        self.alerts.notify_users(db, job)
+                if job is None:
+                    self._last_retention_cleanup = monotonic()
+                succeeded = True
+                with self._state_lock:
+                    self._counters["alert_jobs_completed"] += 1
+                break
+            except Exception:
+                with self._state_lock:
+                    self._counters["alert_job_errors"] += 1
+                    if attempt + 1 < self._max_job_attempts:
+                        self._counters["alert_job_retries"] += 1
+                if attempt + 1 < self._max_job_attempts:
+                    sleep(0.05 * (2 ** attempt))
+        if not succeeded:
+            with self._state_lock:
+                self._counters["alert_jobs_failed"] += 1
+
     def _run_alert_worker(self) -> None:
         while True:
-            job = self._queue.get()
             try:
-                if job is self._STOP:
+                job = self._queue.get(timeout=0.05)
+                source_queue = self._queue
+            except Empty:
+                try:
+                    job = self._overflow_queue.get_nowait()
+                    source_queue = self._overflow_queue
+                except Empty:
+                    continue
+            if job is self._STOP:
+                # Drain spillover before stopping. Since close() has already
+                # marked the pipeline closed, no producer can add new work.
+                try:
+                    overflow_job = self._overflow_queue.get_nowait()
+                except Empty:
+                    source_queue.task_done()
                     return
-                succeeded = False
-                for attempt in range(self._max_job_attempts):
-                    try:
-                        # Use a fresh DB session on each attempt; a failed SQL
-                        # transaction may have left the previous session unusable.
-                        with self.session_factory() as db:
-                            if job is None:
-                                self.alerts.persist(db, ())
-                            else:
-                                self.alerts.persist(db, job)
-                                self.alerts.notify_users(db, job)
-                        if job is None:
-                            self._last_retention_cleanup = monotonic()
-                        succeeded = True
-                        with self._state_lock:
-                            self._counters["alert_jobs_completed"] += 1
-                        break
-                    except Exception:
-                        with self._state_lock:
-                            self._counters["alert_job_errors"] += 1
-                            if attempt + 1 < self._max_job_attempts:
-                                self._counters["alert_job_retries"] += 1
-                        if attempt + 1 < self._max_job_attempts:
-                            sleep(0.05 * (2 ** attempt))
-                if not succeeded:
-                    with self._state_lock:
-                        self._counters["alert_jobs_failed"] += 1
+                self._queue.put_nowait(self._STOP)
+                source_queue.task_done()
+                try:
+                    self._process_alert_job(overflow_job)
+                finally:
+                    self._overflow_queue.task_done()
+                continue
+            try:
+                self._process_alert_job(job)
             finally:
-                self._queue.task_done()
+                source_queue.task_done()
 
     def flush(self, timeout: float | None = None) -> bool:
         """Wait for queued work to finish; timeout is best-effort."""
@@ -143,11 +174,11 @@ class LiveSyntheticScanPipeline:
             self._queue.join()
             return True
         deadline = monotonic() + max(0.0, timeout)
-        while self._queue.unfinished_tasks and monotonic() < deadline:
+        while (self._queue.unfinished_tasks or self._overflow_queue.unfinished_tasks) and monotonic() < deadline:
             # Event-based waiting without holding up the market-data callback.
             from threading import Event
             Event().wait(min(0.01, max(0.0, deadline - monotonic())))
-        return self._queue.unfinished_tasks == 0
+        return self._queue.unfinished_tasks == 0 and self._overflow_queue.unfinished_tasks == 0
 
     def close(self, timeout: float = 2.0) -> bool:
         """Stop accepting alert jobs and drain the worker within a time budget.
@@ -182,8 +213,10 @@ class LiveSyntheticScanPipeline:
         return {
             "alert_worker_enabled": self._worker is not None,
             "alert_worker_alive": bool(self._worker and self._worker.is_alive()),
-            "alert_queue_depth": self._queue.qsize(),
-            "alert_queue_capacity": self._queue.maxsize,
+            "alert_queue_depth": self._queue.qsize() + self._overflow_queue.qsize(),
+            "alert_queue_capacity": self._queue.maxsize + self._overflow_queue.maxsize,
+            "alert_queue_primary_depth": self._queue.qsize(),
+            "alert_queue_overflow_depth": self._overflow_queue.qsize(),
             "alert_worker_closed": closed,
             "counters": counters,
         }
@@ -207,10 +240,13 @@ class LiveSyntheticScanPipeline:
             try:
                 self._queue.put_nowait(None)
             except Full:
-                self._counters["alert_jobs_dropped"] += 1
-            else:
-                self._last_retention_cleanup = now
-                self._counters["alert_jobs_enqueued"] += 1
+                try:
+                    self._overflow_queue.put_nowait(None)
+                except Full:
+                    # Retention cleanup is best-effort; never count it as a lost alert.
+                    return
+            self._last_retention_cleanup = now
+            self._counters["alert_jobs_enqueued"] += 1
 
 
 __all__ = ["LiveSyntheticScanPipeline"]
