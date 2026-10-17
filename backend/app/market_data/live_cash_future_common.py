@@ -94,16 +94,37 @@ class LiveCashFutureCommonRunner:
             for kind in ("source_missing", "normalization_missing")
         }
         self._scanner_rejections = 0
+        self._run_phase = "CREATED"
+        self._last_runner_error: str | None = None
+        self._subscription_active = False
+        self._run_started_at_ns: int | None = None
+        self._last_payload_at_ns: int | None = None
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
         return self._last_result
 
     def snapshot(self) -> dict[str, Any]:
-        """Return live runner state without exposing broker/socket internals."""
+        """Expose worker, registration and subscription state separately."""
         ingestor = self._ingestor
+        worker = getattr(self, "_runner_worker", None)
+        worker_alive = bool(worker is not None and worker.is_alive())
+        try:
+            common_feed = self.manager.snapshot()
+        except Exception:
+            common_feed = None
         return {
-            "running": not self.stop_event.is_set() and not self._stopped,
+            # A clear stop event only means stop was not requested; it does not
+            # prove that the worker survived descriptor loading or is subscribed.
+            "running": worker_alive,
+            "worker_alive": worker_alive,
+            "stop_requested": self.stop_event.is_set(),
+            "phase": self._run_phase,
+            "last_runner_error": self._last_runner_error,
+            "subscription_active": self._subscription_active,
+            "run_started_at_ns": self._run_started_at_ns,
+            "last_payload_at_ns": self._last_payload_at_ns,
+            "common_feed": common_feed,
             "registered_instruments": len(self._metadata),
             "ingestor": None if ingestor is None else ingestor.snapshot(),
             "records_received": self._records_received,
@@ -337,6 +358,9 @@ class LiveCashFutureCommonRunner:
 
     def _on_record(self, record: MarketDataRecord) -> None:
         self._records_received += 1
+        self._last_payload_at_ns = time.time_ns()
+        self._run_phase = "RECEIVING_TICKS"
+        self._last_runner_error = None
         meta = self._metadata.get(record.instrument)
         if meta is None:
             self._records_missing_metadata += 1
@@ -429,18 +453,33 @@ class LiveCashFutureCommonRunner:
 
     def run_forever(self) -> None:
         if self.stop_event.is_set():
+            self._run_phase = "STOPPED"
             return
-        descriptors = self._build_descriptors()
+        self._run_started_at_ns = time.time_ns()
+        self._run_phase = "LOADING_INSTRUMENTS"
+        try:
+            descriptors = self._build_descriptors()
+        except Exception as exc:
+            self._run_phase = "INSTRUMENT_MASTER_ERROR"
+            self._last_runner_error = f"{type(exc).__name__}: {exc}"
+            raise
         if self.stop_event.is_set():
+            self._run_phase = "STOPPED"
             return
         if not descriptors:
+            self._run_phase = "NO_ELIGIBLE_INSTRUMENTS"
+            self._last_runner_error = "Instrument master produced no eligible NSE cash/NFO FUTSTK descriptors"
             app_logger.warning("Common Cash-Future runner found no eligible F&O stock contracts")
             return
         accepted = self._register_descriptors(descriptors)
         if not accepted:
+            self._run_phase = "NO_USABLE_DESCRIPTORS"
+            self._last_runner_error = "All descriptors conflicted with the shared instrument registry"
             app_logger.warning("Common Cash-Future runner found no usable shared instrument descriptors")
             return
         self._metadata = {key: meta for key, meta in self._metadata.items() if key in accepted}
+        self._run_phase = "REGISTERED"
+        self._last_runner_error = None
         self.manager.register_normalized_callback(self.CONSUMER, self._on_record)
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
             self._repository = DailySQLiteMarketDataRepository(self.data_db)
@@ -462,14 +501,21 @@ class LiveCashFutureCommonRunner:
             while not self.stop_event.wait(1.0):
                 try:
                     if not subscribed:
+                        self._run_phase = "SUBSCRIBING"
                         self.manager.subscribe(self.CONSUMER, keys, mode=3)
                         subscribed = True
+                        self._subscription_active = True
+                        self._run_phase = "SUBSCRIBED"
+                        self._last_runner_error = None
                         self._last_contract_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
                 except Exception as exc:
                     # A transient broker/auth/socket failure must not terminate
                     # the shared live runner. Keep the consumer registered and
                     # retry on the next supervision cycle.
                     subscribed = False
+                    self._subscription_active = False
+                    self._run_phase = "SUBSCRIPTION_ERROR"
+                    self._last_runner_error = f"{type(exc).__name__}: {exc}"
                     app_logger.warning("Cash-Future common feed subscribe/retry failed: %s", exc)
                     continue
                 try:
@@ -485,6 +531,9 @@ class LiveCashFutureCommonRunner:
                 if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
                     self._prune_old_live_shards()
         finally:
+            self._subscription_active = False
+            if self.stop_event.is_set():
+                self._run_phase = "STOPPED"
             self.stop()
 
     def _prune_old_live_shards(self) -> None:
