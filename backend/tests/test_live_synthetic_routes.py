@@ -53,3 +53,10 @@ def test_live_route_limits_results():
 def test_diagnostics_endpoint_is_available():
     response = live_synthetic_routes.diagnostics()
     assert response["scanner"] == "synthetic-cash-carry-live-1s"
+
+
+def test_pairs_endpoint_returns_empty_when_provider_missing():
+    live_synthetic_routes.configure_pairs(lambda: {"status": "success", "data": []})
+    response = live_synthetic_routes.pairs(limit=10)
+    assert response["count"] == 0
+    assert response["data"] == []
