@@ -148,6 +148,31 @@ def test_runner_refresh_snapshot_uses_automatic_atm_provider(monkeypatch):
     assert not hasattr(runner, "atm_provider")
 
 
+def test_atm_readiness_watch_scope_matches_actual_subscriptions():
+    from types import SimpleNamespace
+
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [
+            SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026"),
+            SyntheticLiveTarget("BANKNIFTY", "INDEX", 500.0, "29OCT2026"),
+        ],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: 100.0,
+    )
+
+    active = runner._subscribed_underlyings([
+        SimpleNamespace(underlying="NIFTY"),
+        SimpleNamespace(underlying="NIFTY"),
+    ])
+
+    assert active == {"NIFTY"}
+    # A target omitted by subscription selection must not trigger an ATM-driven
+    # recorder restart merely because its underlying price later becomes available.
+    assert "BANKNIFTY" not in active
+
+
 def test_runner_refreshes_authoritative_stock_universe_before_selection():
     master = _master()
     runner = LiveSyntheticRunner(
