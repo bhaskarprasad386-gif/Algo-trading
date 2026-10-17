@@ -208,6 +208,22 @@ class LiveSyntheticScanner:
         if option_type not in {"", "CE", "PE"}:
             self._count("invalid_option_type")
             return ()
+        # Prefix matching alone is unsafe: NIFTYBANK... also starts with
+        # NIFTY. After the declared underlying, a valid option/future symbol
+        # must continue with its expiry/strike digits (or the legacy FUT suffix).
+        # This is a boundary check, not a full broker-symbol parser.
+        symbol_suffix = instrument_symbol[len(symbol):]
+        valid_symbol_boundary = (
+            bool(symbol_suffix)
+            and (
+                symbol_suffix[0].isdigit()
+                if option_type in {"CE", "PE"}
+                else symbol_suffix == "FUT" or symbol_suffix[0].isdigit()
+            )
+        )
+        if not valid_symbol_boundary:
+            self._count("underlying_symbol_mismatch")
+            return ()
         if option_type in {"CE", "PE"} and not instrument_symbol.endswith(option_type):
             self._count("invalid_option_instrument")
             return ()
