@@ -330,6 +330,9 @@ def test_pair_monitor_marks_complete_synchronized_triplet_ready():
     row = next(row for row in rows if row["strike"] == 105.0)
     assert row["state"] == "READY_TO_EVALUATE"
     assert row["reason"] == "AWAITING_SCANNER_QUALIFICATION"
+    assert row["readiness_scope"] == "STRUCTURAL_ONLY"
+    assert row["opportunity_confirmed"] is False
+    assert row["qualification_status"] == "NOT_CONFIRMED"
     assert row["future_bid"] == 117.0
     assert row["call_bid"] == 4.0
     assert row["put_bid"] == 4.0
