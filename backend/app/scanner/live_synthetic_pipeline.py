@@ -83,8 +83,9 @@ class LiveSyntheticScanPipeline:
 
         if results:
             self._enqueue(tuple(results))
-        else:
-            self._maybe_cleanup_retention()
+        # Retention is time-based, not dependent on whether the market currently
+        # has opportunities. Enqueue cleanup after the result job to preserve order.
+        self._maybe_cleanup_retention()
         return tuple(results)
 
     def _enqueue(self, results: tuple) -> None:
