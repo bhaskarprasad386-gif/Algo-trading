@@ -75,12 +75,21 @@ class AngelOneTickNormalizer:
         )
         if value is None:
             return time_ns()
-        # SmartAPI exchange timestamps are epoch milliseconds. Values already
-        # in ns are retained to make the boundary tolerant of normalized feeds.
+
+        # Provider aliases are not consistent about units: SmartAPI's exchange
+        # timestamp is milliseconds, while generic timestamp/feed_time fields
+        # can be epoch seconds. Infer the epoch unit by magnitude so seconds do
+        # not become a 1970-era pseudo-nanosecond timestamp and get rejected as
+        # stale by downstream scanners. Explicit *_ns fields above stay exact.
         integer = int(value)
-        if integer >= 10**16:
+        magnitude = abs(integer)
+        if magnitude >= 10**16:       # nanoseconds
             return integer
-        return integer * 1_000_000
+        if magnitude >= 10**14:       # microseconds
+            return integer * 1_000
+        if magnitude >= 10**11:       # milliseconds
+            return integer * 1_000_000
+        return integer * 1_000_000_000
 
     @staticmethod
     def _depth_value(payload: Mapping[str, Any], side: str, field: str) -> Any:
