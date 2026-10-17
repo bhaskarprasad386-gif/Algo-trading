@@ -28,9 +28,10 @@ from app.backtesting.arbitrage_scan_policy import (
 class SyntheticScanConfig:
     """Runtime filters; strike radii remain locked by ScanPolicy."""
 
-    rate: float = 0.055
+    # Pure scanner defaults preserve legacy/backtest semantics; live runner injects explicit settings.
+    rate: float = 0.0
     time_to_expiry_years: float = 0.0
-    fees_per_unit: float = 1.0
+    fees_per_unit: float = 0.0
     liquidity: LiquidityPolicy = LiquidityPolicy()
     min_executable_edge: float = 0.0
     allowed_stock_symbols: frozenset[str] = frozenset()
