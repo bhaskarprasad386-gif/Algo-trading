@@ -395,3 +395,24 @@ def test_pair_monitor_reports_missing_atm_instead_of_ready():
     row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
     assert row["state"] == "INCOMPLETE"
     assert "MISSING_ATM" in row["reason"]
+
+
+
+def test_pair_monitor_exposes_future_expiry_mismatch_instead_of_hiding_pair():
+    ts = 17_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "29OCT2026"
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    bucket = scanner._buckets[("NIFTY", ts, 20261029)]
+    bucket["future"]["expiry"] = "26NOV2026"
+
+    rows = scanner.pair_monitor_snapshot(limit=10)["data"]
+    row = next(r for r in rows if r["strike"] == 105.0)
+    assert row["state"] == "INCOMPLETE"
+    assert row["reason"].count("EXPIRY_MISMATCH") == 1
