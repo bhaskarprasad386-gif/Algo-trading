@@ -662,13 +662,16 @@ class LiveSyntheticRunner:
                     # even the old pipeline must not emit stale results or alerts.
                     if active is None or self._recorder is not active:
                         return
-                    pipeline.observe(payload)
                     symbol = str(payload.get("underlying") or "").upper()
                     current = initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
+                    # Do not evaluate a tick from the old subscription universe
+                    # against a newly moved ATM; discard it and refresh first.
                     if latest is not None and (current is None or latest != current):
                         self._refresh_requested.set()
                         active.stop()
+                        return
+                    pipeline.observe(payload)
 
                 active_recorder = LiveSyntheticOptionFutureRecorder(
                     self.data_db,
