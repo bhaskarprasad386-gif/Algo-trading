@@ -464,6 +464,7 @@ def test_runner_restarts_recorder_after_market_session_ends(monkeypatch):
         def stop(self):
             self.stop_event.set()
 
+    FakeRecorder.market_open = staticmethod(lambda now=None: market["open"])
     monkeypatch.setattr(
         "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder",
         FakeRecorder,
