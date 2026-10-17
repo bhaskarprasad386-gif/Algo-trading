@@ -158,17 +158,15 @@ class LiveSyntheticScanner:
             return int(number)
 
         def liquid_leg(option: dict) -> bool:
-            # Liquidity is evaluated from live ticks, not the static instrument master.
+            # Executability requires a valid two-sided quote with positive depth.
+            # Volume/OI may be absent on individual WebSocket ticks and are metadata,
+            # not a reason to discard an otherwise executable opportunity.
             return (
                 self._price(option.get("bid")) is not None
                 and self._price(option.get("ask")) is not None
                 and self._price(option.get("ask")) >= self._price(option.get("bid"))
                 and positive_number(option.get("bid_qty")) > 0
                 and positive_number(option.get("ask_qty")) > 0
-                and (
-                    positive_number(option.get("volume")) > 0
-                    or positive_number(option.get("oi")) > 0
-                )
             )
 
         try:
