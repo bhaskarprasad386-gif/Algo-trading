@@ -295,7 +295,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      <div className="mt-6">
+      <div className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.8fr)]">
+        <div className="min-w-0">
         <section aria-label="System health">
           <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div><div className="text-[10px] theme-subtle">Auto-refreshing live telemetry</div></div>
           <Card className="overflow-hidden rounded-2xl border theme-border theme-surface-2 p-0 shadow-sm">
@@ -327,6 +328,11 @@ export default function HomePage() {
             ["Connected sockets", runtime.connectedGroups+"/"+runtime.maxSocketSessions],["Delivery / normalizer errors", runtime.deliveryErrors+" / "+runtime.normalizerErrors],
           ].map(([label,value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-3 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div>
         </section>
+        </div>
+        <aside className="min-w-0 space-y-4" aria-label="Live scanner panel">
+          <section aria-label="Scanner status" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Database size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Feed Snapshot</h2></div><div className="grid grid-cols-2 gap-2">{[["Live ticks",runtime.ticks.toLocaleString("en-IN")],["Active instruments",runtime.activeInstruments.toLocaleString("en-IN")],["Socket groups",runtime.connectedGroups+"/"+runtime.maxSocketSessions],["Feed age",feedAgeLabel]].map(([label,value])=><div key={label} className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div></Card>
+        </aside>
       </div>
 
       <section aria-label="Error Diagnostics" className="mt-4">
@@ -357,7 +363,7 @@ export default function HomePage() {
           </div>
         </section>
         <div className="space-y-4">
-          <section aria-label="Scanner status" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
+
           <section aria-label="Operations" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Cash Future</div><div className="text-[10px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
             <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
