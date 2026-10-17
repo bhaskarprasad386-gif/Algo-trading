@@ -427,6 +427,11 @@ class LiveSyntheticRunner:
             except LookupError as exc:
                 app_logger.warning("Synthetic live target unavailable; retrying: %s", exc)
                 sleep(30.0)
+                try:
+                    if self._refresh_target_expiries() and self._atm_provider is None:
+                        self._atm_tracker = None
+                except Exception as refresh_exc:
+                    app_logger.warning("Synthetic expiry refresh retry failed: %s", refresh_exc)
         else:
             return
 
