@@ -268,3 +268,36 @@ def test_live_synthetic_scanner_waits_up_to_three_seconds_for_missing_leg_quote(
     result = scanner.observe(pe_quote)
     assert result
     assert result[0].option.strike == 105.0
+
+
+def test_pair_monitor_exposes_incomplete_combo_without_raw_payload():
+    ts = 11_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
+    rows = scanner.pair_monitor_snapshot(limit=10)["data"]
+    assert len(rows) == 1
+    assert rows[0]["underlying"] == "NIFTY"
+    assert rows[0]["strike"] == 105.0
+    assert rows[0]["state"] == "INCOMPLETE"
+    assert rows[0]["reason"] == "MISSING_FUTURE,MISSING_PUT"
+    assert "raw_broker_payload" not in rows[0]
+
+
+def test_pair_monitor_marks_complete_synchronized_triplet_ready():
+    ts = 12_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "29OCT2026"
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts + 100, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts + 200, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    rows = scanner.pair_monitor_snapshot(limit=10)["data"]
+    row = next(row for row in rows if row["strike"] == 105.0)
+    assert row["state"] == "READY_TO_EVALUATE"
+    assert row["reason"] == "AWAITING_SCANNER_QUALIFICATION"
+    assert row["future_bid"] == 117.0
+    assert row["call_bid"] == 4.0
+    assert row["put_bid"] == 4.0
