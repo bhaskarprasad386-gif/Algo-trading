@@ -459,7 +459,7 @@ export default function HomePage() {
                   ];
                   return rows.map((row) => {
                     const healthy = ["ONLINE","CONNECTED","RECEIVING"].includes(row.state) && ["HTTP HEALTH OK","LIVE TICKS","LIVE OBSERVATION","RECEIVING"].includes(row.flow);
-                    const danger = ["OFFLINE","SERVER OFFLINE","WEBSOCKET DOWN","DISCONNECTED","NO DATA","NO RECENT UPDATES","NO RECENT OBSERVATION","STALLED"].includes(row.state) || /UNREACHABLE|DISCONNECTED|NO DATA|NO RECENT|STALLED/.test(row.flow);
+                    const danger = ["OFFLINE","SERVER OFFLINE","WEBSOCKET DOWN","DISCONNECTED","NO DATA","NO RECENT UPDATES","NO RECENT OBSERVATION"].includes(row.state) || /UNREACHABLE|DISCONNECTED|NO DATA|NO RECENT/.test(row.flow);
                     const tpsKey = row.name === "OVERALL COMMON FEED" ? "commonTicks" : row.name === "CASH MARKET DATA" || row.name === "CASH-FUTURE SCANNER" ? "cashPayloads" : row.name === "OPTIONS DATA" ? "boxPayloads" : row.name === "FUTURES DATA" || row.name === "SYNTHETIC ARBITRAGE" ? "syntheticPayloads" : row.name === "CALENDAR SPREAD" ? "calendarPayloads" : null;
                     const rowTps = tpsKey && Number.isFinite(runnerTps[tpsKey]) ? runnerTps[tpsKey] : null;
                     const heartbeatKey = tpsKey;
