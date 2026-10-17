@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
-import { Card, PageTitle } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
 const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
@@ -243,7 +243,17 @@ export default function HomePage() {
 
   return (
     <div className="space-y-5">
-      <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "connected" && wsStatus === "connected" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "connected" && wsStatus === "connected" ? "SYSTEM CONNECTED" : "CHECKING CONNECTIONS"}</div></div>
+      <div className="mb-5 flex flex-col gap-3 border-b theme-border pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">LIVE MARKET OPERATIONS</div>
+          <h1 className="text-2xl font-semibold tracking-tight theme-text sm:text-3xl">Trading Dashboard</h1>
+          <p className="mt-1 text-sm theme-muted">Live market status, feed health and scanner activity at a glance.</p>
+        </div>
+        <div className="inline-flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto">
+          <span className={"h-2 w-2 rounded-full " + (apiStatus === "connected" && wsStatus === "connected" ? "theme-success-bg" : "theme-warning-bg")}></span>
+          {apiStatus === "connected" && wsStatus === "connected" ? "SYSTEM CONNECTED" : "CHECKING CONNECTIONS"}
+        </div>
+      </div>
       <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]">
         <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
