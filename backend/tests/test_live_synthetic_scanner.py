@@ -346,3 +346,52 @@ def test_pair_monitor_survives_malformed_cached_leg_timestamp():
     assert snapshot["status"] == "success"
     assert len(snapshot["data"]) == 1
     assert "INVALID_TIMESTAMP" in snapshot["data"][0]["reason"]
+
+
+
+def test_pair_monitor_reports_missing_executable_depth_instead_of_ready():
+    ts = 14_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "29OCT2026"
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry, "bid_qty": 0})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+    assert row["state"] == "INCOMPLETE"
+    assert "CALL_DEPTH_MISSING" in row["reason"]
+
+
+def test_pair_monitor_reports_lot_size_mismatch_instead_of_ready():
+    ts = 15_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    expiry = "29OCT2026"
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry, "lot_size": 50})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry, "lot_size": 25})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 50,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+    assert row["state"] == "INCOMPLETE"
+    assert "LOT_SIZE_MISMATCH" in row["reason"]
+
+
+def test_pair_monitor_reports_missing_atm_instead_of_ready():
+    ts = 16_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: None)
+    expiry = "29OCT2026"
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+    })
+    row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+    assert row["state"] == "INCOMPLETE"
+    assert "MISSING_ATM" in row["reason"]
