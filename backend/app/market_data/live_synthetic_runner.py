@@ -351,6 +351,18 @@ class LiveSyntheticRunner:
         subscriptions = []
         seen: set[tuple[int, str]] = set()
         for target in self.targets:
+            if (
+                target.instrument_class.strip().upper() in {"STOCK", "INDEX"}
+                and not target.expiry
+            ):
+                # Never let a transient expiry-resolution gap fall through to
+                # select_synthetic_contracts(expiry=None), which defaults to the
+                # current future expiry and can bypass the monthly-expiry policy.
+                app_logger.warning(
+                    "Skipping synthetic target until its monthly expiry is resolved: %s",
+                    target.underlying,
+                )
+                continue
             live_atm = atm_provider(target.underlying, time_ns())
             atm_strike = (
                 live_atm
