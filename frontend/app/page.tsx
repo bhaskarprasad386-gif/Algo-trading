@@ -210,11 +210,24 @@ export default function HomePage() {
         };
         const previousCounters = runnerCountersRef.current;
         if (previousCounters) {
-          const increased = Object.keys(currentCounters).filter((key) => currentCounters[key as keyof typeof currentCounters] > (previousCounters[key] ?? 0));
-          if (increased.length) setRunnerLastActivity((previous) => {
+          const keys = Object.keys(currentCounters);
+          const increased = keys.filter((key) => {
+            const current = currentCounters[key as keyof typeof currentCounters];
+            const previous = previousCounters[key] ?? 0;
+            return Number.isFinite(current) && current > previous;
+          });
+          // Process restarts reset cumulative counters. Clear old activity timestamps
+          // for those counters so a restarted runner cannot inherit a false "recent" age.
+          const reset = keys.filter((key) => {
+            const current = currentCounters[key as keyof typeof currentCounters];
+            const previous = previousCounters[key] ?? 0;
+            return Number.isFinite(current) && Number.isFinite(previous) && current < previous;
+          });
+          if (increased.length || reset.length) setRunnerLastActivity((previous) => {
             const next = { ...previous };
             const now = Date.now();
             increased.forEach((key) => { next[key] = now; });
+            reset.forEach((key) => { delete next[key]; });
             return next;
           });
         }
