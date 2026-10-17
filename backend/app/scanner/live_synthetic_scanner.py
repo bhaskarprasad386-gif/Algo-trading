@@ -176,11 +176,13 @@ class LiveSyntheticScanner:
         except ValueError:
             self._count("invalid_expiry")
             return ()
-        # This timestamp means a payload passed freshness, scope, quote and
-        # contract validation—not merely that a callback arrived.
-        with self._lock:
-            self._last_observation_at_ns = time.time_ns()
         strike = self._price(payload.get("strike"))
+        if option_type in {"CE", "PE"} and strike is None:
+            self._count("invalid_strike")
+            return ()
+        if option_type not in {"CE", "PE", ""} and "FUT" not in str(payload.get("symbol") or "").upper():
+            self._count("invalid_payload_or_scope")
+            return ()
         with self._lock:
             key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
             bucket = self._buckets.setdefault(
@@ -227,6 +229,11 @@ class LiveSyntheticScanner:
                 instrument_symbol = str(payload.get("symbol") or "").upper()
                 if "FUT" in instrument_symbol:
                     bucket["future"] = preserve_pending_anchor(bucket.get("future"), payload)
+
+            # Only accepted legs count as market observations. Valid-looking but
+            # unclassifiable ticks must not keep the diagnostics freshness green.
+            with self._diagnostics_lock:
+                self._last_observation_at_ns = time.time_ns()
 
             if bucket["future"] is None:
                 self._count("missing_future_leg")
