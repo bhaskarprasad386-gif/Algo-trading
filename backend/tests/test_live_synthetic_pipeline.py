@@ -62,6 +62,31 @@ def test_quiet_pipeline_runs_retention_cleanup_without_results():
         assert pipeline.close(timeout=2)
 
 
+def test_retention_cleanup_continues_during_continuous_nonempty_results():
+    result = SimpleNamespace()
+    alerts = _Alerts()
+    pipeline = LiveSyntheticScanPipeline(
+        scanner=_Scanner((result,)),
+        session_factory=_session_factory([]),
+        alerts=alerts,
+        retention_interval_seconds=0.001,
+    )
+    try:
+        assert pipeline.observe({"tick": 1}) == (result,)
+        assert pipeline.flush(timeout=2)
+        assert alerts.persist_calls == [(result,), ()]
+
+        # Simulate sustained opportunity flow after the cleanup interval. The
+        # result must still be queued, and retention cleanup must not starve.
+        from time import sleep
+        sleep(0.01)
+        assert pipeline.observe({"tick": 2}) == (result,)
+        assert pipeline.flush(timeout=2)
+        assert alerts.persist_calls == [(result,), (), (result,), ()]
+    finally:
+        assert pipeline.close(timeout=2)
+
+
 def test_result_pipeline_persists_and_notifies_off_callback_thread():
     result = SimpleNamespace()
     sessions = []
