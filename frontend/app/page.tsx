@@ -35,6 +35,8 @@ export default function HomePage() {
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
   const [diagnosticCount, setDiagnosticCount] = useState(0);
+  const [diagnosticsLastSuccessAt, setDiagnosticsLastSuccessAt] = useState<number | null>(null);
+  const [diagnosticsFetchFailed, setDiagnosticsFetchFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,10 +252,13 @@ export default function HomePage() {
         if (!response.ok) throw new Error("diagnostics");
         const body = await response.json();
         if (!cancelled) {
+          setDiagnosticsLastSuccessAt(Date.now());
+          setDiagnosticsFetchFailed(false);
           setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);
           setDiagnosticCount(Number.isFinite(Number(body?.count)) ? Number(body.count) : (Array.isArray(body?.errors) ? body.errors.length : 0));
         }
       } catch {
+        if (!cancelled) setDiagnosticsFetchFailed(true);
         // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
       }
     };
@@ -462,6 +467,7 @@ export default function HomePage() {
                 ["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
                 ["Socket Groups", runtime.connectedGroups + "/" + runtime.socketGroups + " required • cap " + runtime.maxSocketSessions],
                 ["Runtime Telemetry", runtimeTelemetryStale ? "STALE / UNAVAILABLE" : "FRESH"],
+                ["Diagnostics Endpoint", diagnosticsFetchFailed ? "REQUEST FAILED" : diagnosticsLastSuccessAt == null ? "NOT CHECKED" : Date.now() - diagnosticsLastSuccessAt > 8000 ? "STALE" : "RESPONDING"],
                 ["Disconnected Groups", runtime.disconnectedGroups.join(", ") || "None reported"],
                 ["Last Connect Failure", runtime.lastConnectFailure ? String(runtime.lastConnectFailure.error ?? runtime.lastConnectFailure.error_type ?? JSON.stringify(runtime.lastConnectFailure)) : "None reported"],
                 ["Last Socket Failure", runtime.lastSocketFailure ? String(runtime.lastSocketFailure.reason ?? JSON.stringify(runtime.lastSocketFailure)) : "None reported"],
@@ -479,7 +485,7 @@ export default function HomePage() {
             </div>
             <div className="mt-4 rounded-xl border theme-border theme-surface-2 p-3">
               <div className="text-[10px] font-bold uppercase tracking-wide">Runtime Errors Recorded Since API Process Start</div>
-              {diagnosticErrors.length === 0 ? <div className="mt-2 text-[10px] theme-muted">No error records returned in the latest sample. This does not independently prove zero active faults.</div> : (
+              {diagnosticsLastSuccessAt == null ? <div className="mt-2 text-[10px] theme-warning">Diagnostics have not returned a successful sample yet.</div> : diagnosticsFetchFailed && Date.now() - diagnosticsLastSuccessAt > 8000 ? <div className="mt-2 text-[10px] theme-danger">Diagnostics endpoint unavailable. Previous error records are retained and may be stale.</div> : diagnosticErrors.length === 0 ? <div className="mt-2 text-[10px] theme-muted">No error records in the latest successful sample. This does not prove zero active faults.</div> : (
                 <div className="mt-2 max-h-48 space-y-2 overflow-auto">
                   {diagnosticErrors.map((error) => (
                     <div key={error.id} className="rounded-lg border theme-border px-2.5 py-2">
