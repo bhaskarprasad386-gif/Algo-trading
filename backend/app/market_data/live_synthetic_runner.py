@@ -506,6 +506,17 @@ class LiveSyntheticRunner:
                                 )
                                 self._stop_requested.wait(5.0)
                                 continue
+                # A previous rollover may have left the internally managed ATM
+                # provider unavailable. Retry rebuilding it even when expiry values
+                # did not change on this refresh; otherwise the fallback provider
+                # can remain active forever after a transient instrument-master gap.
+                if self._atm_provider is None and self._atm_tracker is None:
+                    try:
+                        atm_provider = self._ensure_atm_provider()
+                    except LookupError as exc:
+                        app_logger.warning("Synthetic ATM strike map still unavailable; retrying: %s", exc)
+                        self._stop_requested.wait(5.0)
+                        continue
                 if not self.targets:
                     self._stop_requested.wait(30.0)
                     continue
@@ -591,6 +602,16 @@ class LiveSyntheticRunner:
                             app_logger.warning("Synthetic ATM not ready after expiry refresh: %s", exc)
                             self._stop_requested.wait(5.0)
                             continue
+                # The ATM tracker can be cleared when a rollover temporarily
+                # removes all concrete strikes. Rebuild it as soon as the master
+                # becomes usable, even if the expiry string itself is unchanged.
+                if self._atm_provider is None and self._atm_tracker is None:
+                    try:
+                        atm_provider = self._ensure_atm_provider()
+                    except LookupError as exc:
+                        app_logger.warning("Synthetic ATM strike map still unavailable; retrying: %s", exc)
+                        self._stop_requested.wait(5.0)
+                        continue
                 self._refresh_requested.clear()
                 try:
                     subscriptions = self.build_subscriptions()
