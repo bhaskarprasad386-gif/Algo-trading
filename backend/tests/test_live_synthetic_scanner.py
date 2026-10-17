@@ -556,3 +556,49 @@ def test_synthetic_bucket_cache_has_hard_capacity_limit():
 
     assert len(scanner._buckets) <= scanner.MAX_ACTIVE_BUCKETS
     assert scanner.diagnostics_snapshot()["counters"]["bucket_capacity_evictions"] == 25
+
+
+
+def test_pair_monitor_survives_atm_provider_exception_and_marks_missing_atm():
+    def broken_atm(_symbol, _timestamp):
+        raise RuntimeError("provider unavailable")
+
+    scanner = LiveSyntheticScanner(atm_provider=broken_atm)
+    ts = 1_000_000_000
+    expiry = "30SEP2026"
+    scanner._buckets[("NIFTY", ts, 20260930)] = {
+        "future": {
+            "expiry": expiry, "source_timestamp_ns": ts, "bid": 117, "ask": 118,
+            "lot_size": 1, "volume": 100, "oi": 1000,
+        },
+        "options": {
+            105.0: {
+                "CE": {**_base(ts, 105.0, "CE", 4.0, 5.0), "bid_qty": 10, "ask_qty": 10, "volume": 100, "lot_size": 1},
+                "PE": {**_base(ts, 105.0, "PE", 4.0, 5.0), "bid_qty": 10, "ask_qty": 10, "volume": 100, "lot_size": 1},
+            }
+        },
+    }
+
+    snapshot = scanner.pair_monitor_snapshot(limit=10)
+    row = next(r for r in snapshot["data"] if r["strike"] == 105.0)
+
+    assert row["state"] == "INCOMPLETE"
+    assert "MISSING_ATM" in row["reason"]
+    assert scanner.diagnostics_snapshot()["counters"]["monitor_atm_provider_errors"] == 1
+
+
+def test_pair_monitor_rejects_nonfinite_or_nonpositive_atm():
+    for value in (float("nan"), float("inf"), 0, -1):
+        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t, value=value: value)
+        ts = 1_000_000_000
+        scanner._buckets[("NIFTY", ts, 20260930)] = {
+            "future": {"expiry": "30SEP2026", "source_timestamp_ns": ts, "bid": 117, "ask": 118,
+                       "lot_size": 1, "volume": 100, "oi": 1000},
+            "options": {105.0: {
+                "CE": {**_base(ts, 105.0, "CE", 4.0, 5.0), "bid_qty": 10, "ask_qty": 10, "volume": 100, "lot_size": 1},
+                "PE": {**_base(ts, 105.0, "PE", 4.0, 5.0), "bid_qty": 10, "ask_qty": 10, "volume": 100, "lot_size": 1},
+            }},
+        }
+        row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+        assert row["state"] == "INCOMPLETE"
+        assert "MISSING_ATM" in row["reason"]
