@@ -371,7 +371,16 @@ def test_live_synthetic_scanner_waits_up_to_three_seconds_for_missing_leg_quote(
     ce_quote = {**ce_ltp, "bid": 1.0, "ask": 2.0, "source_timestamp_ns": ts + 2_500_000_000}
     pe_quote = {**pe_ltp, "bid": 1.0, "ask": 2.0, "source_timestamp_ns": ts + 2_500_000_000}
     assert scanner.observe(ce_quote) == ()
-    result = scanner.observe(pe_quote)
+    assert scanner.observe(pe_quote) == ()
+
+    # The pairing anchor must not disguise the old future timestamp. The monitor
+    # reports the actual quote-time mismatch until a synchronized future tick arrives.
+    row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
+    assert row["state"] == "INCOMPLETE"
+    assert "TIMESTAMP_MISMATCH" in row["reason"]
+    assert row["timestamp_ns"] == ts + 2_500_000_000
+
+    result = scanner.observe({**future, "source_timestamp_ns": ts + 2_500_000_000})
     assert result
     assert result[0].option.strike == 105.0
 
@@ -427,7 +436,7 @@ def test_pair_monitor_survives_malformed_cached_leg_timestamp():
 
 
 def test_pair_monitor_rejects_nonfinite_depth_instead_of_ready():
-    for invalid_depth in (float("inf"), float("nan")):
+    for invalid_depth in (float("inf"), float("nan"), True):
         ts = 14_000_000_000
         scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
         expiry = "29OCT2026"
@@ -514,6 +523,59 @@ def test_pair_monitor_exposes_future_expiry_mismatch_instead_of_hiding_pair():
     assert row["state"] == "INCOMPLETE"
     assert row["reason"].count("EXPIRY_MISMATCH") == 1
 
+
+
+def test_live_scanner_rejects_boolean_contract_lot_sizes():
+    for bad_leg in ("call", "put", "future"):
+        ts = 1_100_000_000
+        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+        expiry = "30SEP2026"
+        ce = {**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": expiry}
+        pe = {**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": expiry}
+        future = {
+            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+            "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+            "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+        }
+        if bad_leg == "call":
+            ce["lot_size"] = True
+        elif bad_leg == "put":
+            pe["lot_size"] = True
+        else:
+            future["lot_size"] = True
+
+        scanner.observe(ce)
+        scanner.observe(pe)
+        scanner.observe(future)
+        counters = scanner.diagnostics_snapshot()["counters"]
+        assert counters.get("scan_evaluations", 0) == 0
+        assert counters.get("invalid_option_lot_size", 0) + counters.get("invalid_future_lot_size", 0) >= 1
+        row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 100.0)
+        assert row["state"] == "INCOMPLETE"
+        assert "INVALID_LOT_SIZE" in row["reason"]
+
+
+def test_live_scanner_uses_future_timestamp_for_atm_lookup(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+
+    monkeypatch.setattr(scanner_module, "scan_synthetic_snapshot", lambda *_a, **_k: ())
+    ts = 1_200_000_000
+    atm_timestamps = []
+    scanner = LiveSyntheticScanner(
+        atm_provider=lambda _s, timestamp: atm_timestamps.append(timestamp) or 100.0
+    )
+    expiry = "29OCT2026"
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
+    }
+    scanner.observe(future)
+    scanner.observe({**_base(ts + 500_000_000, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts + 500_000_000, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+
+    assert atm_timestamps
+    assert set(atm_timestamps) == {ts}
 
 
 def test_live_scanner_rejects_mismatched_ce_pe_future_lot_sizes():
