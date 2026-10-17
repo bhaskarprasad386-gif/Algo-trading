@@ -1,7 +1,8 @@
 name: Backend Tests
 on: [push, pull_request, workflow_dispatch]
 concurrency:
-  group: backend-tests
+  # Isolate runs per ref so unrelated PRs cannot cancel each other's backend gate.
+  group: backend-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
