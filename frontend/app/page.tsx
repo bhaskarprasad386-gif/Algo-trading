@@ -231,6 +231,9 @@ export default function HomePage() {
   const observationAge = snapshot.cashFutureObservedAt ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000) : null;
   const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
+  const marketOverviewFresh = marketDataAge != null && Number.isFinite(marketDataAge) && marketDataAge <= 15;
+  const displayedMarketSession = marketOverviewFresh ? marketSession : "UNKNOWN";
+  const displayedMcxSession = marketOverviewFresh ? mcxSession : "UNKNOWN";
   const scannerStatus = [
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
@@ -248,8 +251,8 @@ export default function HomePage() {
         <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
-              {label:"NSE EQUITY", value:marketSession, detail:"09:15–15:30 IST"},
-              {label:"MCX COMMODITIES", value:mcxSession, detail:"Scheduled window 09:00–23:30 IST"},
+              {label:"NSE EQUITY", value:displayedMarketSession, detail:"09:15–15:30 IST"},
+              {label:"MCX COMMODITIES", value:displayedMcxSession, detail:"Session from market API"},
             ].map((item) => <div key={item.label} className="rounded-xl border theme-border px-3 py-2">
               <div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">{item.label}</div>
               <div className={"mt-1 text-[13px] font-extrabold " + (item.value === "OPEN" ? "theme-success" : item.value === "CLOSED" ? "theme-warning" : "theme-muted")}>{item.value}</div>
@@ -270,7 +273,7 @@ export default function HomePage() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {markets.map((symbol) => {
             const quote = indexLtps[symbol];
-            const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
+            const quoteAvailable = marketOverviewFresh && (displayedMarketSession === "OPEN" ? quote?.status === "LIVE" : displayedMarketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
             const change = quoteAvailable ? quote?.changePercent : null;
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
@@ -286,7 +289,7 @@ export default function HomePage() {
                     <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
                     <div className="mt-1 text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-muted">
-                      <span>{quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{marketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
+                      <span>{quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{!marketOverviewFresh ? "SESSION STATUS STALE" : displayedMarketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
                     </div>
                   </div>
                 </Card>
