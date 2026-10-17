@@ -589,35 +589,55 @@ class LiveSyntheticRunner:
                     for target in self.targets
                 }
 
+                recorder_holder: dict[str, LiveSyntheticOptionFutureRecorder | None] = {"recorder": None}
+
                 def observe(payload):
                     pipeline.observe(payload)
                     symbol = str(payload.get("underlying") or "").upper()
                     current = initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
-                    if latest is not None and (current is None or latest != current) and self._recorder is not None:
+                    active = recorder_holder["recorder"]
+                    # A late callback from a stopped recorder must not stop a
+                    # replacement recorder or request another refresh.
+                    if (
+                        active is not None
+                        and self._recorder is active
+                        and latest is not None
+                        and (current is None or latest != current)
+                    ):
                         self._refresh_requested.set()
-                        self._recorder.stop()
+                        active.stop()
 
-                self._recorder = LiveSyntheticOptionFutureRecorder(
+                active_recorder = LiveSyntheticOptionFutureRecorder(
                     self.data_db,
                     list(subscriptions),
                     auth=self.auth,
                     on_observation=observe,
                     consumer="synthetic-options",
                 )
-                active_recorder = self._recorder
+                recorder_holder["recorder"] = active_recorder
+                self._recorder = active_recorder
+
                 def watch_atm_readiness():
                     while not self._stop_requested.is_set() and not active_recorder.stop_event.is_set():
                         for symbol, initial in initial_atm.items():
                             latest = atm_provider(symbol, time_ns())
                             if latest is not None and (initial is None or latest != initial):
-                                self._refresh_requested.set()
-                                active_recorder.stop()
+                                if self._recorder is active_recorder:
+                                    self._refresh_requested.set()
+                                    active_recorder.stop()
                                 return
                         sleep(0.25)
+
                 watcher = Thread(target=watch_atm_readiness, daemon=True, name="synthetic-atm-readiness")
                 watcher.start()
-                self._recorder.run_forever()
+                try:
+                    active_recorder.run_forever()
+                finally:
+                    # Stop and reap this recorder's watcher before the runner
+                    # can publish/start another recorder instance.
+                    active_recorder.stop()
+                    watcher.join(timeout=1.0)
                 refresh_requested = self._refresh_requested.is_set()
                 if refresh_requested:
                     self._refresh_requested.clear()
