@@ -47,6 +47,12 @@ class SyntheticScanConfig:
             raise ValueError("time_to_expiry_years must be non-negative")
         if self.fees_per_unit < 0:
             raise ValueError("fees_per_unit must be non-negative")
+        if (
+            isinstance(self.min_executable_edge, bool)
+            or not isinstance(self.min_executable_edge, (int, float))
+            or not isfinite(float(self.min_executable_edge))
+        ):
+            raise ValueError("min_executable_edge must be finite")
         if self.min_executable_edge < 0:
             raise ValueError("min_executable_edge must be non-negative")
         if any(not isinstance(s, str) or not s.strip() for s in self.allowed_stock_symbols):
