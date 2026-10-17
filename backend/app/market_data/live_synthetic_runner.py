@@ -439,6 +439,18 @@ class LiveSyntheticRunner:
         feed = None
         feed_thread = None
         self._active_underlying_feed = None
+
+        def stop_underlying_feed() -> None:
+            nonlocal feed, feed_thread
+            active_feed, active_thread = feed, feed_thread
+            if active_feed is not None:
+                active_feed.stop()
+            if active_thread is not None and active_thread.is_alive():
+                active_thread.join(timeout=2.0)
+            feed = None
+            feed_thread = None
+            self._active_underlying_feed = None
+
         self._running = True
         try:
             while not self._stop_requested.is_set():
@@ -467,10 +479,7 @@ class LiveSyntheticRunner:
                         app_logger.warning("Synthetic expiry refresh failed; retaining last valid targets: %s", exc)
                     if expiry_changed:
                         if feed is not None:
-                            feed.stop()
-                            feed = None
-                            feed_thread = None
-                            self._active_underlying_feed = None
+                            stop_underlying_feed()
                         if self._atm_provider is None:
                             self._atm_tracker = None
                             atm_provider = self._ensure_atm_provider()
@@ -498,10 +507,7 @@ class LiveSyntheticRunner:
                         self._stop_requested.wait(5.0)
                     else:
                         app_logger.info("Synthetic underlying price wait paused outside market hours")
-                        feed.stop()
-                        feed = None
-                        feed_thread = None
-                        self._active_underlying_feed = None
+                        stop_underlying_feed()
             if self._stop_requested.is_set():
                 return
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
@@ -654,9 +660,7 @@ class LiveSyntheticRunner:
                         self._stop_requested.wait(1.0)
                     continue
         finally:
-            if feed is not None:
-                feed.stop()
-            self._active_underlying_feed = None
+            stop_underlying_feed()
             if self._recorder is not None:
                 self._recorder.stop()
                 self._recorder = None
