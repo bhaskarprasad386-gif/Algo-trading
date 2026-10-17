@@ -669,15 +669,18 @@ class LiveSyntheticRunner:
                     if target.underlying.strip().upper() in subscribed_underlyings
                 }
 
-                def observe(payload):
-                    # Bind this callback to the recorder created for this session.
-                    # A late callback from an old feed must not affect a replacement
-                    # recorder or publish through the old pipeline.
-                    if self._recorder is not active_recorder:
+                # A fresh state object per loop iteration prevents a late callback
+                # from closing over the next iteration's recorder/pipeline variables.
+                callback_state = {"recorder": None}
+
+                def observe(payload, _state=callback_state, _initial_atm=initial_atm, _pipeline=pipeline):
+                    # Check the recorder bound to this callback's own session, not
+                    # the loop's mutable active_recorder cell.
+                    active = _state["recorder"]
+                    if active is None or self._recorder is not active:
                         return
-                    active = active_recorder
                     symbol = str(payload.get("underlying") or "").upper()
-                    current = initial_atm.get(symbol)
+                    current = _initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
                     # Do not evaluate a tick from the old subscription universe
                     # against a newly moved ATM; discard it and refresh first.
@@ -685,7 +688,7 @@ class LiveSyntheticRunner:
                         self._refresh_requested.set()
                         active.stop()
                         return
-                    pipeline.observe(payload)
+                    _pipeline.observe(payload)
 
                 active_recorder = LiveSyntheticOptionFutureRecorder(
                     self.data_db,
@@ -694,6 +697,7 @@ class LiveSyntheticRunner:
                     on_observation=observe,
                     consumer="synthetic-options",
                 )
+                callback_state["recorder"] = active_recorder
                 self._recorder = active_recorder
 
                 def watch_atm_readiness():
