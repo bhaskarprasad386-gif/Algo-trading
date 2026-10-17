@@ -190,13 +190,15 @@ class LiveSyntheticScanner:
             return ()
 
         def positive_number(value: object) -> float:
+            # Exchange depth is a count of contracts/shares, never a fractional
+            # quantity. A positive decimal must not qualify as executable depth.
             if isinstance(value, bool):
                 return 0.0
             try:
                 number = float(value)
             except (TypeError, ValueError, OverflowError):
                 return 0.0
-            return max(number, 0.0) if math.isfinite(number) else 0.0
+            return number if math.isfinite(number) and number > 0 and number.is_integer() else 0.0
 
         def nonnegative_int(value: object) -> int:
             if isinstance(value, bool):
@@ -352,6 +354,11 @@ class LiveSyntheticScanner:
                 self._prune(timestamp_ns)
                 return ()
             future_payload = bucket["future"]
+            future_class = str(future_payload.get("instrument_class") or "").strip().upper()
+            if future_class not in {"STOCK", "INDEX"}:
+                self._count("invalid_future_instrument_class")
+                self._prune(timestamp_ns)
+                return ()
             try:
                 future_expiry = self._expiry(future_payload.get("expiry"))
             except ValueError:
@@ -389,6 +396,13 @@ class LiveSyntheticScanner:
                 ce, pe = legs.get("CE"), legs.get("PE")
                 if ce is None or pe is None:
                     self._count("missing_ce_or_pe_leg")
+                    continue
+                leg_classes = {
+                    str(ce.get("instrument_class") or "").strip().upper(),
+                    str(pe.get("instrument_class") or "").strip().upper(),
+                }
+                if leg_classes != {future_class}:
+                    self._count("instrument_class_mismatch")
                     continue
                 ce_timestamp_ns = self._quote_timestamp_ns(ce) or 0
                 pe_timestamp_ns = self._quote_timestamp_ns(pe) or 0
@@ -456,7 +470,7 @@ class LiveSyntheticScanner:
                         put_bid=pe_bid,
                         put_ask=pe_ask,
                         lot_size=lot,
-                        instrument_class=cls,
+                        instrument_class=future_class,
                         volume=nonnegative_int(ce.get("volume")),
                         oi=nonnegative_int(ce.get("oi")),
                     )
@@ -513,7 +527,7 @@ class LiveSyntheticScanner:
                 bid=future_bid,
                 ask=future_ask,
                 lot_size=future_lot_size,
-                instrument_class=cls,
+                instrument_class=future_class,
                 volume=nonnegative_int(future_payload.get("volume")),
                 oi=nonnegative_int(future_payload.get("oi")),
             )
@@ -657,7 +671,7 @@ class LiveSyntheticScanner:
                             return False
                         try:
                             number = float(value)
-                            return math.isfinite(number) and number > 0
+                            return math.isfinite(number) and number > 0 and number.is_integer()
                         except (TypeError, ValueError, OverflowError):
                             return False
 
@@ -666,6 +680,13 @@ class LiveSyntheticScanner:
                         return bid is not None and ask is not None and ask >= bid
 
                     if future and ce and pe:
+                        future_class = str(future.get("instrument_class") or "").strip().upper()
+                        leg_classes = {
+                            str(ce.get("instrument_class") or "").strip().upper(),
+                            str(pe.get("instrument_class") or "").strip().upper(),
+                        }
+                        if future_class not in {"STOCK", "INDEX"} or leg_classes != {future_class}:
+                            missing.append("INSTRUMENT_CLASS_MISMATCH")
                         try:
                             ce_expiry = self._expiry(ce.get("expiry"))
                             pe_expiry = self._expiry(pe.get("expiry"))
