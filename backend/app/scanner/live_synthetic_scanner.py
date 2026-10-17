@@ -184,6 +184,12 @@ class LiveSyntheticScanner:
         # it shares the same underlying/expiry bucket and could create a false
         # synthetic triplet. Every non-option leg must identify itself as a future.
         instrument_symbol = str(payload.get("symbol") or "").strip().upper()
+        # Subscription metadata is keyed by instrument token, but validate the
+        # normalized symbol against the declared underlying too: a valid FUT/CE/PE
+        # suffix alone must not let another underlying enter this bucket.
+        if not instrument_symbol.startswith(symbol):
+            self._count("underlying_symbol_mismatch")
+            return ()
         if option_type not in {"", "CE", "PE"}:
             self._count("invalid_option_type")
             return ()
