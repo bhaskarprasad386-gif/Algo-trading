@@ -595,19 +595,16 @@ class LiveSyntheticRunner:
                 recorder_holder: dict[str, LiveSyntheticOptionFutureRecorder | None] = {"recorder": None}
 
                 def observe(payload):
+                    active = recorder_holder["recorder"]
+                    # Ignore callbacks from a recorder after it has been replaced;
+                    # even the old pipeline must not emit stale results or alerts.
+                    if active is None or self._recorder is not active:
+                        return
                     pipeline.observe(payload)
                     symbol = str(payload.get("underlying") or "").upper()
                     current = initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
-                    active = recorder_holder["recorder"]
-                    # A late callback from a stopped recorder must not stop a
-                    # replacement recorder or request another refresh.
-                    if (
-                        active is not None
-                        and self._recorder is active
-                        and latest is not None
-                        and (current is None or latest != current)
-                    ):
+                    if latest is not None and (current is None or latest != current):
                         self._refresh_requested.set()
                         active.stop()
 
