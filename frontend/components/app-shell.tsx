@@ -65,12 +65,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
 
-      <nav className="app-mobile-nav fixed inset-x-0 bottom-0 z-40 border-t theme-border theme-surface px-2 py-2 backdrop-blur lg:hidden">
-        <div className="mx-auto flex max-w-lg items-center justify-around">
-          {nav.slice(0, 5).map((item) => {
+      <nav className="app-mobile-nav fixed inset-x-0 bottom-0 z-40 border-t theme-border theme-surface px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur lg:hidden" aria-label="Primary navigation">
+        <div className="mx-auto flex max-w-lg items-center gap-1 overflow-x-auto">
+          {nav.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
-            return <Link key={item.href} href={item.href} className={`flex min-h-11 min-w-14 flex-col items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] ${active ? "theme-accent" : "theme-muted"}`}><Icon size={18} /><span>{item.label.split(" ")[0]}</span></Link>;
+            return <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={`flex min-h-11 min-w-[4.25rem] shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[10px] ${active ? "theme-accent" : "theme-muted"}`}><Icon size={18} /><span className="whitespace-nowrap">{item.label.split(" ")[0]}</span></Link>;
           })}
         </div>
       </nav>
