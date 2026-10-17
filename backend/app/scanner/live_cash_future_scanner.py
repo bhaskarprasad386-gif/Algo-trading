@@ -87,7 +87,9 @@ class LiveCashFutureScanner:
             "dropped": 0, "persisted": 0, "pair_events": 0,
             "pair_events_persisted": 0, "invalid_payloads": 0,
             "invalid_legs": 0, "invalid_timestamps": 0, "invalid_prices": 0,
-            "stale_quotes": 0, "crossed_cash_quotes": 0,
+            "stale_quotes": 0, "crossed_cash_quotes": 0, "crossed_future_quotes": 0,
+            "missing_cash_bid": 0, "missing_cash_ask": 0,
+            "missing_future_bid": 0, "missing_future_ask": 0,
             "out_of_order_updates": 0, "cache_evictions": 0,
         }
         self._last_observation_ns: int | None = None
@@ -626,16 +628,28 @@ class LiveCashFutureScanner:
             self._increment_stat("pairs")
 
         cash_ask, future_bid = cash["ask"], future["bid"]
+        # Keep aggregate pair quote counts, but also expose the exact missing
+        # side. This is diagnostic only: incomplete depth must not suppress an
+        # otherwise synchronized LTP pair.
+        quote_values = {
+            "missing_cash_bid": cash["bid"],
+            "missing_cash_ask": cash_ask,
+            "missing_future_bid": future_bid,
+            "missing_future_ask": future["ask"],
+        }
+        with self._lock:
+            for stat_name, quote_value in quote_values.items():
+                if quote_value is None or quote_value <= 0:
+                    self._increment_stat(stat_name)
+            if future_bid is not None and future["ask"] is not None and future_bid > future["ask"]:
+                self._increment_stat("crossed_future_quotes")
+
         quote_complete = all(
             value is not None and value > 0
             for value in (cash["bid"], cash_ask, future_bid, future["ask"])
         ) and cash["bid"] <= cash_ask and future_bid <= future["ask"]
-        if quote_complete:
-            with self._lock:
-                self._increment_stat("pairs_with_quotes")
-        else:
-            with self._lock:
-                self._increment_stat("pairs_missing_quotes")
+        with self._lock:
+            self._increment_stat("pairs_with_quotes" if quote_complete else "pairs_missing_quotes")
 
         liquidity_values = [
             cash["bid_qty"], cash["ask_qty"],
