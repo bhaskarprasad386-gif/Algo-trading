@@ -187,7 +187,7 @@ class LiveSyntheticScanner:
         if option_type in {"CE", "PE"} and not instrument_symbol.endswith(option_type):
             self._count("invalid_option_instrument")
             return ()
-        if option_type not in {"CE", "PE"} and "FUT" not in instrument_symbol:
+        if option_type not in {"CE", "PE"} and not instrument_symbol.endswith("FUT"):
             self._count("invalid_future_instrument")
             return ()
         with self._lock:
