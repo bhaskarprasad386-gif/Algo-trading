@@ -102,6 +102,10 @@ class LiveSyntheticOptionFutureRecorder:
         self._repository: DailySQLiteMarketDataRepository | None = None
         self._ingestor: BoundedMarketDataIngestor | None = None
         self._latest: dict[tuple[str, str], tuple[int, Any]] = {}
+        # Keep a per-instrument timestamp watermark even after a bucket flushes;
+        # otherwise a delayed callback can reinsert an already-emitted old quote.
+        self._last_timestamp_ns_by_key: dict[tuple[str, str], int] = {}
+        self._out_of_order_records = 0
         self._lock = Lock()
         self._accept_records = False
         self._metadata: dict[tuple[str, str], SyntheticSubscription] = {}
@@ -219,11 +223,17 @@ class LiveSyntheticOptionFutureRecorder:
             if not self._accept_records:
                 return
             self._records_received += 1
+            current_timestamp_ns = int(record.timestamp_ns)
+            last_timestamp_ns = self._last_timestamp_ns_by_key.get(key)
+            if last_timestamp_ns is not None and current_timestamp_ns < last_timestamp_ns:
+                self._out_of_order_records += 1
+                return
+            self._last_timestamp_ns_by_key[key] = current_timestamp_ns
             previous = self._latest.get(key)
             if previous is not None:
                 previous_timestamp_ns = int(previous[1].timestamp_ns)
-                current_timestamp_ns = int(record.timestamp_ns)
                 if current_timestamp_ns < previous_timestamp_ns:
+                    self._out_of_order_records += 1
                     return
                 if second == previous[0]:
                     self._latest[key] = (second, record)
@@ -261,6 +271,7 @@ class LiveSyntheticOptionFutureRecorder:
         with self._lock:
             # A prior session must never donate buffered quotes to this one.
             self._latest.clear()
+            self._last_timestamp_ns_by_key.clear()
             self._accept_records = True
         try:
             if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
@@ -329,12 +340,14 @@ class LiveSyntheticOptionFutureRecorder:
         """Return lightweight recorder state for runtime diagnostics."""
         with self._lock:
             latest = len(self._latest)
+            out_of_order_records = self._out_of_order_records
         feed = self._feed
         return {
             "running": not self.stop_event.is_set(),
             "subscriptions": len(self.subscriptions),
             "latest_instruments": latest,
             "records_received": self._records_received,
+            "out_of_order_records": out_of_order_records,
             "observations_emitted": self._observations_emitted,
             "missing_executable_quote": self._missing_executable_quote,
             "feed": None if feed is None else feed.snapshot(),
