@@ -73,7 +73,10 @@ def test_pairs_endpoint_sanitizes_snapshot_rows():
                 "expiry": 20261029,
                 "strike": 25000,
                 "state": "INCOMPLETE",
-                "reason": "MISSING_CALL",
+                "reason": "AWAITING_SCANNER_QUALIFICATION",
+                "readiness_scope": "STRUCTURAL_ONLY",
+                "opportunity_confirmed": False,
+                "qualification_status": "NOT_CONFIRMED",
                 "raw_broker_payload": {"secret": "must not escape"},
             }],
         }
@@ -81,5 +84,8 @@ def test_pairs_endpoint_sanitizes_snapshot_rows():
     response = live_synthetic_routes.pairs(limit=10)
     assert response["count"] == 1
     assert response["data"][0]["underlying"] == "NIFTY"
-    assert response["data"][0]["reason"] == "MISSING_CALL"
+    assert response["data"][0]["reason"] == "AWAITING_SCANNER_QUALIFICATION"
+    assert response["data"][0]["readiness_scope"] == "STRUCTURAL_ONLY"
+    assert response["data"][0]["opportunity_confirmed"] is False
+    assert response["data"][0]["qualification_status"] == "NOT_CONFIRMED"
     assert "raw_broker_payload" not in response["data"][0]
