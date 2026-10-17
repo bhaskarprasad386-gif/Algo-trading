@@ -106,6 +106,8 @@ class LiveSyntheticOptionFutureRecorder:
         # otherwise a delayed callback can reinsert an already-emitted old quote.
         self._last_timestamp_ns_by_key: dict[tuple[str, str], int] = {}
         self._out_of_order_records = 0
+        self._stale_buffer_discards = 0
+        self._future_buffer_discards = 0
         self._lock = Lock()
         self._accept_records = False
         self._metadata: dict[tuple[str, str], SyntheticSubscription] = {}
@@ -248,8 +250,8 @@ class LiveSyntheticOptionFutureRecorder:
     def _flush_completed_buckets(self, now_ns: int | None = None) -> int:
         """Emit completed one-second buckets without waiting for the same token's next tick.
 
-        Only flush recent buckets; stale broker quotes must not be made fresh by
-        the recorder. Old buffered records remain available for final shutdown flush.
+        Only flush recent buckets; stale or implausibly future-dated broker quotes
+        are discarded rather than retained for a later shutdown flush.
         """
         from time import time_ns as _time_ns
 
@@ -259,7 +261,13 @@ class LiveSyntheticOptionFutureRecorder:
         with self._lock:
             for key, (second, record) in tuple(self._latest.items()):
                 age = now - int(record.timestamp_ns)
-                if second < current_second and 0 <= age <= 5_000_000_000:
+                if age > 5_000_000_000:
+                    self._latest.pop(key, None)
+                    self._stale_buffer_discards += 1
+                elif age < -5_000_000_000:
+                    self._latest.pop(key, None)
+                    self._future_buffer_discards += 1
+                elif second < current_second and age >= 0:
                     ready.append(record)
                     self._latest.pop(key, None)
         for record in ready:
@@ -306,10 +314,20 @@ class LiveSyntheticOptionFutureRecorder:
             if self._feed:
                 self._feed.stop()
                 self._feed = None
+            now_ns = __import__("time").time_ns()
             with self._lock:
                 latest = list(self._latest.values())
                 self._latest.clear()
-            for _, record in latest:
+                eligible = []
+                for second, record in latest:
+                    age = now_ns - int(record.timestamp_ns)
+                    if age > 5_000_000_000:
+                        self._stale_buffer_discards += 1
+                    elif age < -5_000_000_000:
+                        self._future_buffer_discards += 1
+                    else:
+                        eligible.append((second, record))
+            for _, record in eligible:
                 self._emit(record, record.timestamp_ns)
             if self._ingestor:
                 ingestor = self._ingestor
@@ -341,6 +359,8 @@ class LiveSyntheticOptionFutureRecorder:
         with self._lock:
             latest = len(self._latest)
             out_of_order_records = self._out_of_order_records
+            stale_buffer_discards = self._stale_buffer_discards
+            future_buffer_discards = self._future_buffer_discards
         feed = self._feed
         return {
             "running": not self.stop_event.is_set(),
@@ -348,6 +368,8 @@ class LiveSyntheticOptionFutureRecorder:
             "latest_instruments": latest,
             "records_received": self._records_received,
             "out_of_order_records": out_of_order_records,
+            "stale_buffer_discards": stale_buffer_discards,
+            "future_buffer_discards": future_buffer_discards,
             "observations_emitted": self._observations_emitted,
             "missing_executable_quote": self._missing_executable_quote,
             "feed": None if feed is None else feed.snapshot(),
