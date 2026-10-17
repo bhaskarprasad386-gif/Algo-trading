@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from app.backtesting.arbitrage_scan_policy import ScanPolicy, enumerate_synthetic_strikes
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import SyntheticSubscription
@@ -58,7 +59,7 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if not options: raise LookupError(f"no option contracts found for {expected_exchange}:{symbol}")
 
     future_rows = sorted(
-        [x for x in futures if _expiry_key(x.get("expiry")) >= datetime.now().date()],
+        [x for x in futures if _expiry_key(x.get("expiry")) >= datetime.now(ZoneInfo("Asia/Kolkata")).date()],
         key=lambda x: (_expiry_key(x.get("expiry")), str(x.get("token","")))
     )
     if not future_rows: raise LookupError(f"no current/near {future_type} contracts for {symbol}")
