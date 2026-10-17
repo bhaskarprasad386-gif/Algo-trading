@@ -775,3 +775,27 @@ def test_pair_monitor_does_not_reject_executable_quotes_when_volume_and_oi_are_m
     assert row["state"] == "READY_TO_EVALUATE"
     assert row["reason"] == "AWAITING_SCANNER_QUALIFICATION"
     assert "NO_VOLUME_OR_OI" not in row["reason"]
+
+
+def test_live_synthetic_scanner_does_not_overwrite_leg_with_older_tick():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = 25_000_000_000
+    expiry = "29OCT2026"
+    newer_ce = {**_base(ts + 100, 105.0, "CE", 8.0, 9.0), "expiry": expiry}
+    pe = {**_base(ts + 100, 105.0, "PE", 4.0, 5.0), "expiry": expiry}
+    future = {
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+        "source_timestamp_ns": ts + 100, "symbol": "NIFTYFUT",
+    }
+
+    scanner.observe(newer_ce)
+    scanner.observe(pe)
+    scanner.observe(future)
+    older_ce = {**_base(ts, 105.0, "CE", 1.0, 2.0), "expiry": expiry}
+    scanner.observe(older_ce)
+
+    bucket = scanner._buckets[("NIFTY", ts + 100, 20261029)]
+    assert bucket["options"][105.0]["CE"]["bid"] == 8.0
+    assert bucket["options"][105.0]["CE"]["source_timestamp_ns"] == ts + 100
+    assert scanner.diagnostics_snapshot()["counters"]["out_of_order_leg_updates"] == 1
