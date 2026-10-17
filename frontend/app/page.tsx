@@ -334,10 +334,10 @@ export default function HomePage() {
         <section aria-label="System health">
           <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div><div className="text-[10px] theme-subtle">Auto-refreshing live telemetry</div></div>
           <Card className="overflow-hidden rounded-2xl border theme-border theme-surface-2 p-0 shadow-sm">
-            <div className="overflow-x-auto"><table className="w-full min-w-[1080px] border-collapse text-left">
-              <thead className="theme-surface"><tr className="border-b theme-border text-[9px] uppercase tracking-[0.12em] theme-subtle">
+            <div className="overflow-x-auto"><table className="w-full border-collapse text-left md:min-w-[1080px]">
+              <thead className="hidden theme-surface md:table-header-group"><tr className="border-b theme-border text-[9px] uppercase tracking-[0.12em] theme-subtle">
                 <th className="px-3 py-3 font-bold">Feed / Scanner</th><th className="px-3 py-3 font-bold">WebSocket / State</th><th className="px-3 py-3 font-bold">Live ticks / updates</th><th className="px-3 py-3 font-bold">Tick age</th><th className="px-3 py-3 font-bold">Data flow</th><th className="px-3 py-3 font-bold">Scanner position</th>
-              </tr></thead><tbody>
+              </tr></thead><tbody className="block md:table-row-group">
                 {(() => {
                   const now = Date.now();
                   const activityAge = (key: string) => runnerLastActivity[key] == null ? null : Math.max(0, (now - runnerLastActivity[key]) / 1000);
@@ -367,10 +367,10 @@ export default function HomePage() {
                   return rows.map((row) => {
                     const healthy = ["ONLINE","CONNECTED","RECEIVING"].includes(row.state) && ["HTTP HEALTH OK","LIVE TICKS","LIVE OBSERVATION","RECEIVING"].includes(row.flow);
                     const danger = ["OFFLINE","SERVER OFFLINE","WEBSOCKET DOWN","DISCONNECTED","NO DATA","NO RECENT UPDATES","NO RECENT OBSERVATION"].includes(row.state) || /UNREACHABLE|DISCONNECTED|NO DATA|NO RECENT/.test(row.flow);
-                    return <tr key={row.name} className="border-b theme-border last:border-0">
-                      <td className="px-3 py-3 text-[10px] font-bold">{row.name}</td><td className="px-3 py-3"><span className={"rounded-full px-2 py-1 text-[9px] font-bold "+(healthy ? "theme-success-bg theme-success" : danger ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{row.state}</span></td>
-                      <td className="px-3 py-3 text-[11px] font-bold tabular-nums">{Number(row.updates).toLocaleString("en-IN")}</td><td className="px-3 py-3 text-[10px] font-semibold theme-muted">{row.age}</td>
-                      <td className="px-3 py-3 text-[9px] font-bold"><span className={healthy ? "theme-success" : danger ? "theme-danger" : "theme-warning"}>{row.flow}</span></td><td className="max-w-[360px] px-3 py-3 text-[10px] theme-muted">{row.position}</td>
+                    return <tr key={row.name} className="mb-2 block rounded-xl border theme-border p-2 last:mb-0 md:mb-0 md:table-row md:border-0 md:border-b md:p-0">
+                      <td className="block px-3 py-2 text-[10px] font-bold md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Feed / Scanner</span>{row.name}</td><td className="block px-3 py-2 md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">WebSocket / State</span><span className={"inline-block rounded-full px-2 py-1 text-[9px] font-bold "+(healthy ? "theme-success-bg theme-success" : danger ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{row.state}</span></td>
+                      <td className="block px-3 py-2 text-[11px] font-bold tabular-nums md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Live ticks / updates</span>{Number(row.updates).toLocaleString("en-IN")}</td><td className="block px-3 py-2 text-[10px] font-semibold theme-muted md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Tick age</span>{row.age}</td>
+                      <td className="block px-3 py-2 text-[9px] font-bold md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Data flow</span><span className={healthy ? "theme-success" : danger ? "theme-danger" : "theme-warning"}>{row.flow}</span></td><td className="block max-w-[360px] px-3 py-2 text-[10px] theme-muted md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Scanner position</span>{row.position}</td>
                     </tr>;
                   });
                 })()}
