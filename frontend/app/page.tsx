@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap } from "lucide-react";
+import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
@@ -242,14 +242,14 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="min-h-screen theme-bg theme-text p-1">
-      <PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Broker quote responses, feed freshness and scanner activity at a glance." />
+    <div className="min-h-screen theme-bg theme-text p-1 sm:p-3 lg:p-5">
+      <div className="mb-4 flex flex-col gap-3 rounded-2xl border theme-border theme-surface-2 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl theme-accent-bg theme-accent"><LayoutDashboard size={22} /></span><div><div className="text-[10px] font-bold uppercase tracking-[0.2em] theme-accent">ALGO TRADING</div><PageTitle eyebrow="LIVE MARKET OPERATIONS" title="Trading Dashboard" description="Live market status, feed health and scanner activity at a glance." /></div></div><div className="flex items-center gap-2 self-start rounded-full border theme-border px-3 py-2 text-[10px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "connected" && wsStatus === "connected" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "connected" && wsStatus === "connected" ? "SYSTEM CONNECTED" : "CHECKING CONNECTIONS"}</div></div>
       <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]">
         <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               {label:"NSE EQUITY", value:marketSession, detail:"09:15–15:30 IST"},
-              {label:"MCX COMMODITIES", value:mcxSession, detail:"Scheduled window 09:00–23:30 IST"},
+              {label:"MCX COMMODITIES", value:mcxSession, detail:"Session from market API"},
             ].map((item) => <div key={item.label} className="rounded-xl border theme-border px-3 py-2">
               <div className="text-[9px] font-bold uppercase tracking-[0.14em] theme-subtle">{item.label}</div>
               <div className={"mt-1 text-[13px] font-extrabold " + (item.value === "OPEN" ? "theme-success" : item.value === "CLOSED" ? "theme-warning" : "theme-muted")}>{item.value}</div>
@@ -286,7 +286,7 @@ export default function HomePage() {
                     <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
                     <div className="mt-1 text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-muted">
-                      <span>{quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{marketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
+                      <span>{marketSession === "CLOSED" ? "Last trading close" : quoteAvailable ? "Broker quote returned" : "Awaiting broker quote"}</span><span>{marketSession === "CLOSED" ? "LAST CLOSE" : quoteAvailable ? "QUOTE RESPONSE" : "NO DATA"}</span>
                     </div>
                   </div>
                 </Card>
@@ -349,16 +349,16 @@ export default function HomePage() {
           </div>
         </Card>
       </section>
-      <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-        <section aria-label="Strategy workspaces">
+      <div className="mt-5 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
+        <section aria-label="Strategy workspaces" className="rounded-2xl border theme-border theme-surface-2 p-4">
           <div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Strategy Workspaces</h2></div>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {strategies.map((strategy) => { const Icon = strategy.icon; return <Link key={strategy.name} href={strategy.href} className="block"><Card className="min-h-[95px] rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg theme-accent-bg theme-accent"><Icon size={15} /></span><div className="text-[12px] font-semibold">{strategy.name}</div></div><div className="mt-2 text-[10px] theme-subtle">{strategy.detail} —</div></Card></Link>; })}
           </div>
         </section>
         <div className="space-y-4">
-          <section aria-label="Scanner status"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
-          <section aria-label="Operations"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <section aria-label="Scanner status" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
+          <section aria-label="Operations" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Cash Future</div><div className="text-[10px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
             <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
             <Link href="/history"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Clock3 size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">History</div><div className="text-[10px] theme-subtle">Trade history & logs</div></div></div></Card></Link>
