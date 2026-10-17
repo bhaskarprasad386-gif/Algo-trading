@@ -1603,3 +1603,26 @@ def test_stale_connect_exception_cannot_trigger_broker_cooldown():
     finally:
         release.set()
         manager.close()
+
+
+
+def test_consumer_refresh_removes_old_token_and_activates_new_token():
+    registry = InstrumentRegistry()
+    old = descriptor("101", "NFO", "DERIVATIVES")
+    new = descriptor("202", "NFO", "DERIVATIVES")
+    registry.register_many([old, new])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+
+    manager.subscribe("synthetic-options", [old.key], mode=3)
+    old_socket = FakeSocket.instances[0]
+    assert old_socket.connect_calls[0]["subscriptions"] == {2: ["101"]}
+
+    manager.clear_consumer("synthetic-options")
+    assert manager.snapshot()["active_instruments"] == 0
+    assert old_socket.closed is True
+
+    manager.subscribe("synthetic-options", [new.key], mode=3)
+    new_socket = FakeSocket.instances[-1]
+    assert new_socket is not old_socket
+    assert new_socket.connect_calls[0]["subscriptions"] == {2: ["202"]}
+    assert [sub.key.token for sub in registry.subscriptions()] == ["202"]
