@@ -516,8 +516,18 @@ class LiveSyntheticRunner:
                 # Refresh expiries here too, and rebuild the ATM strike map/feed
                 # before subscribing to the next session's contracts.
                 session_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-                if session_date != last_expiry_refresh_date:
+                unresolved_expiry = any(
+                    target.instrument_class.strip().upper() in {"STOCK", "INDEX"}
+                    and not target.expiry
+                    for target in self.targets
+                )
+                retry_missing_expiry = (
+                    unresolved_expiry
+                    and time_ns() - last_expiry_refresh_attempt_ns >= 60_000_000_000
+                )
+                if session_date != last_expiry_refresh_date or retry_missing_expiry:
                     last_expiry_refresh_date = session_date
+                    last_expiry_refresh_attempt_ns = time_ns()
                     try:
                         expiry_changed = self._refresh_target_expiries()
                     except Exception as exc:
@@ -537,9 +547,24 @@ class LiveSyntheticRunner:
                                 app_logger.warning("Synthetic ATM strike map unavailable after expiry refresh: %s", exc)
                                 self._stop_requested.wait(5.0)
                                 continue
-                        # Re-enter the outer setup loop to start the underlying
-                        # feed with strikes for the refreshed expiry.
-                        break
+                        if feed is None:
+                            feed = self._ensure_underlying_feed()
+                            if feed is None:
+                                self._stop_requested.wait(5.0)
+                                continue
+                            self._active_underlying_feed = feed
+                            feed_thread = Thread(
+                                target=feed.run_forever,
+                                daemon=True,
+                                name="synthetic-underlying-feed",
+                            )
+                            feed_thread.start()
+                        try:
+                            self._wait_for_live_atm(atm_provider)
+                        except TimeoutError as exc:
+                            app_logger.warning("Synthetic ATM not ready after expiry refresh: %s", exc)
+                            self._stop_requested.wait(5.0)
+                            continue
                 self._refresh_requested.clear()
                 try:
                     subscriptions = self.build_subscriptions()
