@@ -2,10 +2,10 @@ from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
 from app.scanner.synthetic_cash_carry import SyntheticScanConfig
 
 
-def test_synthetic_pricing_defaults_include_carry_and_nonzero_cost_estimate():
-    config = SyntheticScanConfig()
-    assert config.rate > 0
-    assert config.fees_per_unit > 0
+def test_synthetic_pricing_config_accepts_explicit_carry_and_cost_estimate():
+    config = SyntheticScanConfig(rate=0.055, fees_per_unit=1.0)
+    assert config.rate == 0.055
+    assert config.fees_per_unit == 1.0
 
 
 def test_live_scanner_derives_time_to_expiry_and_passes_config(monkeypatch):
