@@ -82,12 +82,9 @@ def test_runner_requires_live_atm_when_automatic_tracker_has_no_price():
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
     )
-    try:
-        runner.build_subscriptions()
-    except LookupError as exc:
-        assert "live ATM price" in str(exc)
-    else:
-        raise AssertionError("expected LookupError")
+    # A valid listed strike chain can initialize before the first underlying tick.
+    # The runner must stay alive and simply wait for ATM readiness.
+    assert runner.build_subscriptions() == ()
 
 
 def test_runner_exposes_concrete_atm_strikes_from_master():
@@ -130,6 +127,39 @@ def test_runner_refreshes_authoritative_stock_universe_before_selection():
     assert runner.allowed_stock_symbols == frozenset()
     runner._refresh_stock_universe()
     assert runner.allowed_stock_symbols == frozenset({"ABC"})
+
+
+def test_missing_atm_for_one_symbol_does_not_block_ready_symbol():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026"),
+         SyntheticLiveTarget("MISSING", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(), instrument_master=master,
+        atm_provider=lambda symbol, _ts: 100.0 if symbol == "NIFTY" else None,
+    )
+    runner._wait_for_live_atm(runner._ensure_atm_provider(), timeout_seconds=0.1)
+    subscriptions = runner.build_subscriptions()
+    assert subscriptions
+    assert {item.underlying for item in subscriptions} == {"NIFTY"}
+
+
+def test_expiry_refresh_replaces_expired_target_with_listed_matching_expiry():
+    from datetime import date, timedelta
+
+    master = _master()
+    expected_expiry = (date.today() + timedelta(days=30)).strftime("%d%b%Y").upper()
+    expired_expiry = (date.today() - timedelta(days=1)).strftime("%d%b%Y").upper()
+    for item in master.instruments:
+        if item.get("instrumenttype") in {"FUTIDX", "OPTIDX"}:
+            item["expiry"] = expected_expiry
+    runner = LiveSyntheticRunner(
+        ":memory:", [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, expired_expiry)],
+        allowed_stock_symbols=frozenset(), instrument_master=master,
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    assert runner._refresh_target_expiries() is True
+    assert runner.targets[0].expiry == expected_expiry
 
 
 def test_runner_stock_path_uses_provider_and_only_real_plus_minus_7_positions():

@@ -8,7 +8,9 @@ delegates pricing/ranking to the existing pure synthetic scanner.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, time as datetime_time
+from dataclasses import replace
+from zoneinfo import ZoneInfo
 from threading import Lock
 import time
 from typing import Callable
@@ -334,6 +336,23 @@ class LiveSyntheticScanner:
                 self._prune(timestamp_ns)
                 return ()
             config = self.config_provider(symbol)
+            # Derive carry horizon from this contract's actual expiry, not a static default.
+            expiry_text = str(future.expiry or "").strip().upper()
+            expiry_date = None
+            for expiry_format in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+                try:
+                    expiry_date = datetime.strptime(expiry_text, expiry_format).date()
+                    break
+                except ValueError:
+                    continue
+            if expiry_date is None:
+                self._count("invalid_expiry_for_pricing")
+                self._prune(timestamp_ns)
+                return ()
+            tz = ZoneInfo("Asia/Kolkata")
+            expiry_at = datetime.combine(expiry_date, datetime_time(15, 30), tzinfo=tz)
+            time_to_expiry_years = max(0.0, (expiry_at - datetime.now(tz)).total_seconds() / (365.25 * 24 * 60 * 60))
+            config = replace(config, time_to_expiry_years=time_to_expiry_years)
             results = scan_synthetic_snapshot(
                 option_quotes,
                 future,

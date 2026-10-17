@@ -1,4 +1,36 @@
 from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
+from app.scanner.synthetic_cash_carry import SyntheticScanConfig
+
+
+def test_synthetic_pricing_config_accepts_explicit_carry_and_cost_estimate():
+    config = SyntheticScanConfig(rate=0.055, fees_per_unit=1.0)
+    assert config.rate == 0.055
+    assert config.fees_per_unit == 1.0
+
+
+def test_live_scanner_derives_time_to_expiry_and_passes_config(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+    captured = {}
+    def fake_scan(options, future, *, atm_strike, config, policy=None):
+        captured["config"] = config
+        return ()
+    monkeypatch.setattr(scanner_module, "scan_synthetic_snapshot", fake_scan)
+    scanner = LiveSyntheticScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        config_provider=lambda _s: SyntheticScanConfig(rate=0.055, fees_per_unit=1.25),
+    )
+    import time
+    from datetime import date, timedelta
+    ts = time.time_ns()
+    expiry = (date.today() + timedelta(days=30)).strftime("%d%b%Y").upper()
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+    scanner.observe({"underlying":"NIFTY", "instrument_class":"INDEX", "option_type":"",
+        "expiry":expiry, "bid":117.0, "ask":118.0, "lot_size":1,
+        "source_timestamp_ns":ts, "symbol":"NIFTYFUT", "volume":100, "oi":1000})
+    assert captured["config"].rate == 0.055
+    assert captured["config"].fees_per_unit == 1.25
+    assert captured["config"].time_to_expiry_years > 0
 
 
 def _base(ts, strike, typ, bid, ask):
