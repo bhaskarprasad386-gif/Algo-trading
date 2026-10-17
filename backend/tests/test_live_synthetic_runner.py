@@ -418,3 +418,63 @@ def test_monthly_stock_expiry_returns_none_when_only_weekly_options_exist():
     assert select_monthly_option_expiry(
         items, underlying="RELIANCE", instrument_class="STOCK", today=date(2026, 10, 15)
     ) is None
+
+
+
+def test_runner_restarts_recorder_after_market_session_ends(monkeypatch):
+    from threading import Event
+
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+        atm_provider=lambda _symbol, _timestamp: 100.0,
+    )
+    market = {"open": True}
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
+        staticmethod(lambda now=None: market["open"]),
+    )
+
+    class FakeFeed:
+        def run_forever(self):
+            return
+
+        def stop(self):
+            return
+
+    runner.underlying_feed = FakeFeed()
+    recorder_calls = []
+
+    class FakeRecorder:
+        def __init__(self, *args, **kwargs):
+            self.stop_event = Event()
+            self.calls = len(recorder_calls) + 1
+            recorder_calls.append(self)
+
+        def run_forever(self):
+            if len(recorder_calls) == 1:
+                # Model the normal return at market close.
+                market["open"] = False
+            else:
+                runner.stop()
+
+        def stop(self):
+            self.stop_event.set()
+
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder",
+        FakeRecorder,
+    )
+
+    def wait_for_next_session(_seconds):
+        market["open"] = True
+
+    monkeypatch.setattr(runner._stop_requested, "wait", wait_for_next_session)
+
+    runner.run_forever()
+
+    assert len(recorder_calls) == 2
+    assert runner.stop_event.is_set()
