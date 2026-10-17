@@ -140,13 +140,13 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "base_timestamp",
+                "exchange_timestamp": str(base_timestamp),
                 "last_traded_price": "12345",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "base_timestamp + 1_000_000_000",
+                "exchange_timestamp": str(base_timestamp + 1_000_000_000),
                 "last_traded_price": "12355",
             })
 
@@ -164,7 +164,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     )
 
     assert collector._run_session() == 2
-    assert observed == [1_750_000_000_000_000_000, 1_750_000_001_000_000_000]
+    assert observed == [base_timestamp, base_timestamp + 1_000_000_000]
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
@@ -178,11 +178,11 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     finally:
         catalog.close()
 
-    assert [record.timestamp_ns for record in records] == [1_750_000_000_000_000_000, 1_750_000_001_000_000_000]
+    assert [record.timestamp_ns for record in records] == [base_timestamp, base_timestamp + 1_000_000_000]
     assert [record.payload["ltp"] for record in records] == [123.45, 123.55]
     assert [record.payload["source_timestamp_ns"] for record in records] == [
-        1_750_000_000_000_000_000,
-        1_750_000_001_000_000_000,
+        base_timestamp,
+        base_timestamp + 1_000_000_000,
     ]
 
 
@@ -229,7 +229,7 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
                 on_data({
                     "token": token,
                     "symbol": symbol,
-                    "exchange_timestamp": "base_timestamp",
+                    "exchange_timestamp": str(base_timestamp),
                     "last_traded_price": price,
                 })
             for token, symbol, price in (
@@ -239,7 +239,7 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
                 on_data({
                     "token": token,
                     "symbol": symbol,
-                    "exchange_timestamp": "base_timestamp + 1_000_000_000",
+                    "exchange_timestamp": str(base_timestamp + 1_000_000_000),
                     "last_traded_price": price,
                 })
 
@@ -258,10 +258,10 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
 
     assert collector._run_session() == 4
     assert observed == [
-        ("101", 1_750_000_000_000_000_000),
-        ("102", 1_750_000_000_000_000_000),
-        ("101", 1_750_000_001_000_000_000),
-        ("102", 1_750_000_001_000_000_000),
+        ("101", base_timestamp),
+        ("102", base_timestamp),
+        ("101", base_timestamp + 1_000_000_000),
+        ("102", base_timestamp + 1_000_000_000),
     ]
 
     from app.backtesting.historical_catalog import HistoricalCatalog
@@ -282,12 +282,12 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
         catalog.close()
 
     assert [record.timestamp_ns for record in ce] == [
-        1_750_000_000_000_000_000,
-        1_750_000_001_000_000_000,
+        base_timestamp,
+        base_timestamp + 1_000_000_000,
     ]
     assert [record.timestamp_ns for record in pe] == [
-        1_750_000_000_000_000_000,
-        1_750_000_001_000_000_000,
+        base_timestamp,
+        base_timestamp + 1_000_000_000,
     ]
     assert [record.payload["ltp"] for record in ce] == [123.45, 123.55]
     assert [record.payload["ltp"] for record in pe] == [223.45, 223.55]
@@ -332,25 +332,25 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "base_timestamp",
+                "exchange_timestamp": str(base_timestamp),
                 "last_traded_price": "12345",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "base_timestamp + 900_000_000",
+                "exchange_timestamp": str(base_timestamp + 900_000_000),
                 "last_traded_price": "12456",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "base_timestamp + 1_000_000_000",
+                "exchange_timestamp": str(base_timestamp + 1_000_000_000),
                 "last_traded_price": "12567",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "base_timestamp + 2_000_000_000",
+                "exchange_timestamp": str(base_timestamp + 2_000_000_000),
                 "last_traded_price": "12678",
             })
             collector.stop_event.set()
@@ -384,9 +384,9 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
         catalog.close()
 
     assert [record.timestamp_ns for record in records] == [
-        1_750_000_000_900_000_000,
-        1_750_000_001_000_000_000,
-        1_750_000_002_000_000_000,
+        base_timestamp + 900_000_000,
+        base_timestamp + 1_000_000_000,
+        base_timestamp + 2_000_000_000,
     ]
     assert [record.payload["ltp"] for record in records] == [124.56, 125.67, 126.78]
 
