@@ -48,3 +48,8 @@ def test_live_route_limits_results():
     live_synthetic_routes.configure(lambda: (result, result))
     response = live_synthetic_routes.live(limit=1)
     assert response["opportunity_count"] == 1
+
+
+def test_diagnostics_endpoint_is_available():
+    response = live_synthetic_routes.diagnostics()
+    assert response["scanner"] == "synthetic-cash-carry-live-1s"
