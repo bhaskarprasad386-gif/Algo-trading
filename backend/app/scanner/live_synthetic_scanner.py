@@ -587,18 +587,38 @@ class LiveSyntheticScanner:
     TIMESTAMP_TOLERANCE_NS = 1_000_000_000
 
     def _matching_bucket_key(self, symbol: str, timestamp_ns: int, expiry: int) -> tuple[str, int, int]:
-        # Keep expiry isolated and allow a delayed executable-book tick to rejoin
-        # its LTP candidate for up to three seconds. The per-leg timestamp guard
-        # still rejects unrelated or genuinely mismatched legs.
-        candidates = [
+        # Normal ticks may join only a timestamp-compatible snapshot. Extending
+        # matching to three seconds is reserved for a bucket explicitly waiting
+        # for executable quotes; otherwise unrelated one-second snapshots can be
+        # collapsed into one bucket and valid newer legs can be blocked by stale legs.
+        compatible = [
             key
             for key in self._buckets
             if key[0] == symbol
             and key[2] == expiry
-            and abs(key[1] - timestamp_ns) <= 3_000_000_000
+            and abs(key[1] - timestamp_ns) <= self.TIMESTAMP_TOLERANCE_NS
         ]
-        if candidates:
-            return min(candidates, key=lambda key: abs(key[1] - timestamp_ns))
+        if compatible:
+            return min(compatible, key=lambda key: abs(key[1] - timestamp_ns))
+
+        now_monotonic_ns = time.monotonic_ns()
+        pending = []
+        for key, bucket in self._buckets.items():
+            if key[0] != symbol or key[2] != expiry:
+                continue
+            if abs(key[1] - timestamp_ns) > 3_000_000_000:
+                continue
+            started_ns = bucket.get("quote_wait_started_ns")
+            if started_ns is None:
+                continue
+            try:
+                wait_age_ns = now_monotonic_ns - int(started_ns)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if 0 <= wait_age_ns < 3_000_000_000:
+                pending.append(key)
+        if pending:
+            return min(pending, key=lambda key: abs(key[1] - timestamp_ns))
         return (symbol, timestamp_ns, expiry)
 
     def _prune(self, timestamp_ns: int) -> None:
