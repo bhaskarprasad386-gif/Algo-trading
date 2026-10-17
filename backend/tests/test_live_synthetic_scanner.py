@@ -409,6 +409,28 @@ def test_live_scanner_accepts_executable_depth_when_volume_and_oi_are_missing(mo
     assert counters.get("scan_evaluations", 0) == 1
 
 
+def test_ltp_only_update_does_not_erase_executable_book_or_refresh_its_timestamp():
+    ts = 10_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"}
+    newer_ltp_only = {
+        **ce, "source_timestamp_ns": ts + 500_000_000,
+        "bid": None, "ask": None, "bid_qty": None, "ask_qty": None, "ltp": 4.5,
+    }
+
+    scanner.observe(ce)
+    scanner.observe(newer_ltp_only)
+
+    bucket = next(iter(scanner._buckets.values()))
+    cached = bucket["options"][105.0]["CE"]
+    assert cached["bid"] == 4.0
+    assert cached["ask"] == 5.0
+    assert cached["bid_qty"] == ce["bid_qty"]
+    assert cached["ask_qty"] == ce["ask_qty"]
+    assert cached["_quote_source_timestamp_ns"] == ts
+    assert cached["source_timestamp_ns"] == ts + 500_000_000
+
+
 def test_live_synthetic_scanner_waits_up_to_three_seconds_for_missing_leg_quote():
     ts = 10_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)

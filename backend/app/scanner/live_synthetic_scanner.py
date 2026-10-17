@@ -310,6 +310,27 @@ class LiveSyntheticScanner:
                     anchored = dict(current)
                     anchored["source_timestamp_ns"] = previous.get("source_timestamp_ns")
                     return anchored
+
+                # A newer LTP-only update must not erase a previously executable
+                # book. Keep the book's real source timestamp so synchronization
+                # still measures its age; only the pairing/order timestamp advances.
+                # This avoids turning a valid leg into a missing-quote leg on every
+                # trade-only tick, without pretending that the book itself refreshed.
+                if (
+                    previous_bid is not None
+                    and previous_ask is not None
+                    and current_bid is None
+                    and current_ask is None
+                    and (self._price(current.get("ltp") or current.get("last_traded_price")) is not None)
+                    and self._price(previous.get("ask")) >= self._price(previous.get("bid"))
+                ):
+                    retained = dict(current)
+                    retained["bid"] = previous.get("bid")
+                    retained["ask"] = previous.get("ask")
+                    retained["bid_qty"] = previous.get("bid_qty")
+                    retained["ask_qty"] = previous.get("ask_qty")
+                    retained["_quote_source_timestamp_ns"] = self._quote_timestamp_ns(previous) or 0
+                    return retained
                 return current
 
             accepted_observation = True
