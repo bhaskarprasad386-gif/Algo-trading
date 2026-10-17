@@ -439,6 +439,7 @@ class LiveSyntheticRunner:
         )
 
     def run_forever(self) -> None:
+        active_pipeline = None
         # Refresh once at startup, before building the ATM strike map.
         expiry_refresh_failed = False
         try:
@@ -660,6 +661,7 @@ class LiveSyntheticRunner:
                 )
                 self._scanner = scanner
                 pipeline = self._build_pipeline(scanner)
+                active_pipeline = pipeline
                 subscribed_underlyings = self._subscribed_underlyings(subscriptions)
                 initial_atm = {
                     target.underlying: atm_provider(
@@ -720,6 +722,11 @@ class LiveSyntheticRunner:
                     # can publish/start another recorder instance.
                     active_recorder.stop()
                     watcher.join(timeout=1.0)
+                    # Recorder callbacks have stopped; now drain and reap this
+                    # session's alert worker before replacing its pipeline.
+                    pipeline.close(timeout=2.0)
+                    if active_pipeline is pipeline:
+                        active_pipeline = None
                 refresh_requested = self._refresh_requested.is_set()
                 if refresh_requested:
                     self._refresh_requested.clear()
@@ -740,6 +747,9 @@ class LiveSyntheticRunner:
             if self._recorder is not None:
                 self._recorder.stop()
                 self._recorder = None
+            if active_pipeline is not None:
+                active_pipeline.close(timeout=2.0)
+                active_pipeline = None
             self._running = False
 
     def snapshot(self) -> dict:
