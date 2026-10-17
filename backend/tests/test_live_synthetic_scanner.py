@@ -635,3 +635,15 @@ def test_live_synthetic_scanner_does_not_mark_invalid_tick_as_accepted_observati
     counters = scanner.diagnostics_snapshot()["counters"]
     assert counters["last_payload_received_at_ns"] > 0
     assert counters["last_observation_at_ns"] is None
+
+
+def test_live_synthetic_scanner_does_not_accept_option_without_valid_strike():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(8_000_000_000, 100.0, "CE", 4.0, 5.0)
+    payload["strike"] = "not-a-strike"
+
+    assert scanner.observe(payload) == ()
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["invalid_strike"] == 1
+    assert counters["last_payload_received_at_ns"] > 0
+    assert counters["last_observation_at_ns"] is None
