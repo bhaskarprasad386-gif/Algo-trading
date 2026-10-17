@@ -79,6 +79,8 @@ live_calendar_spread_scanner = LiveCalendarSpreadScanner(
 configure_calendar_spread_scanner(live_calendar_spread_scanner)
 live_synthetic_latest_results: tuple = ()
 live_synthetic_runner: LiveSyntheticRunner | None = None
+_live_synthetic_universe_selection = "ALL"
+_live_synthetic_universe_restart_requested = threading.Event()
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 configure_live_synthetic(lambda: live_synthetic_latest_results)
@@ -572,13 +574,20 @@ async def _live_synthetic_loop() -> None:
                     ", ".join(missing_index_underlyings),
                 )
 
-            # Synthetic Arbitrage is intentionally limited to STOCK + INDEX.
-            # MCX/commodity contracts remain available to the common feed and
-            # Calendar Spread, but are not valid synthetic cash-carry targets.
-            target_specs = (
-                [(symbol, "STOCK") for symbol in stock_symbols]
-                + [(symbol, "INDEX") for symbol in index_symbols]
-            )
+            # The selected universe is authoritative: ALL = supported indices + top 15 liquid stocks.
+            # An index-only selection must never silently fall back to stocks or other indices.
+            selection = _live_synthetic_universe_selection
+            if selection == "ALL":
+                target_specs = (
+                    [(symbol, "STOCK") for symbol in stock_symbols]
+                    + [(symbol, "INDEX") for symbol in index_symbols]
+                )
+            elif selection == "TOP15":
+                target_specs = [(symbol, "STOCK") for symbol in stock_symbols]
+            elif selection in NIFTY50_INDEX_SYMBOLS:
+                target_specs = [(selection, "INDEX")] if selection in index_symbols else []
+            else:
+                target_specs = []
             targets = []
             missing_expiry = []
             for symbol, instrument_class in target_specs:
@@ -631,6 +640,10 @@ async def _live_synthetic_loop() -> None:
                 )
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(max_retry_delay, retry_delay * 2.0)
+            elif _live_synthetic_universe_restart_requested.is_set():
+                _live_synthetic_universe_restart_requested.clear()
+                retry_delay = 5.0
+                continue
             else:
                 return
         except asyncio.CancelledError:
@@ -889,6 +902,41 @@ def app_strategy_workspace(strategy_id: str):
 @app.get("/")
 def root():
     return {"message": "Algo Trading Platform is running", "environment": settings.environment, "version": "0.1.0"}
+
+
+class SyntheticUniverseSelection(BaseModel):
+    selection: str
+
+
+@app.get("/api/v1/scanner/synthetic-cash-carry/universe")
+def get_synthetic_universe():
+    return {
+        "status": "success",
+        "selection": _live_synthetic_universe_selection,
+        "options": ["ALL", "TOP15", *sorted(NIFTY50_INDEX_SYMBOLS)],
+        "meaning": {
+            "ALL": "All supported index underlyings plus the top 15 liquid F&O stocks",
+            "TOP15": "Top 15 liquid F&O stocks only",
+        },
+    }
+
+
+@app.post("/api/v1/scanner/synthetic-cash-carry/universe")
+def set_synthetic_universe(payload: SyntheticUniverseSelection):
+    global _live_synthetic_universe_selection
+    selection = str(payload.selection or "").strip().upper()
+    allowed = {"ALL", "TOP15", *NIFTY50_INDEX_SYMBOLS}
+    if selection not in allowed:
+        raise HTTPException(status_code=422, detail={"message": "Unsupported synthetic scanner universe", "allowed": sorted(allowed)})
+    if selection == _live_synthetic_universe_selection:
+        return {"status": "success", "selection": selection, "restart_requested": False}
+    _live_synthetic_universe_selection = selection
+    runner = live_synthetic_runner
+    restart_requested = runner is not None and not runner.stop_event.is_set()
+    if restart_requested:
+        _live_synthetic_universe_restart_requested.set()
+        runner.stop()
+    return {"status": "success", "selection": selection, "restart_requested": restart_requested}
 
 
 @app.get("/api/v1/market-data/runtime/health")
