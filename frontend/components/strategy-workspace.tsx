@@ -193,6 +193,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [feedInstruments, setFeedInstruments] = useState<number | null>(null);
   const [runner, setRunner] = useState<{ running: boolean; detail: string } | null>(null);
   const [feedErrors, setFeedErrors] = useState<{ delivery: number; normalizer: number } | null>(null);
+  const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") return;
@@ -313,6 +314,28 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     const timer = window.setInterval(() => void loadPairs(), 1500);
     return () => window.clearInterval(timer);
   }, [isCustom, c.pairEndpoint, rows]);
+
+  useEffect(() => {
+    if (slug !== "synthetic-arbitrage") {
+      setScannerDiagnostics(null);
+      return;
+    }
+    let cancelled = false;
+    const loadScannerDiagnostics = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/diagnostics", { cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error("scanner diagnostics HTTP " + response.status);
+        if (!cancelled) setScannerDiagnostics(body && typeof body === "object" ? body as Record<string, unknown> : null);
+      } catch {
+        if (!cancelled) setScannerDiagnostics({ status: "DIAGNOSTICS_UNAVAILABLE" });
+      }
+    };
+    void loadScannerDiagnostics();
+    const timer = window.setInterval(loadScannerDiagnostics, 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [slug]);
 
   useEffect(() => {
     if (isCustom) return;
