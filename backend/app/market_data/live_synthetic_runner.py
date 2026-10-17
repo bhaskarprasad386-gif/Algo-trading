@@ -482,7 +482,19 @@ class LiveSyntheticRunner:
                             stop_underlying_feed()
                         if self._atm_provider is None:
                             self._atm_tracker = None
-                            atm_provider = self._ensure_atm_provider()
+                            try:
+                                atm_provider = self._ensure_atm_provider()
+                            except LookupError as exc:
+                                # A rollover can briefly precede publication of the
+                                # new option chain. Do not terminate the runner or
+                                # keep querying the expired tracker's bound method.
+                                atm_provider = lambda _symbol, _timestamp: None
+                                app_logger.warning(
+                                    "Synthetic ATM strike map unavailable after expiry refresh; retrying: %s",
+                                    exc,
+                                )
+                                self._stop_requested.wait(5.0)
+                                continue
                 if not self.targets:
                     self._stop_requested.wait(30.0)
                     continue
