@@ -218,11 +218,14 @@ class LiveSyntheticOptionFutureRecorder:
         second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
         with self._lock:
             previous = self._latest.get(key)
-            if previous is not None and second < previous[0]:
-                return
-            if previous is not None and second == previous[0]:
-                self._latest[key] = (second, record)
-                return
+            if previous is not None:
+                previous_timestamp_ns = int(previous[1].timestamp_ns)
+                current_timestamp_ns = int(record.timestamp_ns)
+                if current_timestamp_ns < previous_timestamp_ns:
+                    return
+                if second == previous[0]:
+                    self._latest[key] = (second, record)
+                    return
             self._latest[key] = (second, record)
         if previous is not None:
             # Persist the latest tick's real exchange timestamp, not the
