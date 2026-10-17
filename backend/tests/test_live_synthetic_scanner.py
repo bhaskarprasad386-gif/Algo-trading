@@ -840,6 +840,16 @@ def test_pending_quote_anchor_preserves_real_timestamp_for_out_of_order_guard():
     assert ce["_quote_source_timestamp_ns"] == ts + 2_000_000_000
     assert scanner.diagnostics_snapshot()["counters"]["out_of_order_leg_updates"] == 1
 
+def test_live_synthetic_scanner_rejects_option_type_symbol_mismatch():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(35_000_000_000, 100, "CE", 10.0, 11.0)
+    payload["symbol"] = "NIFTY100PE"
+
+    assert scanner.observe(payload) == ()
+    assert scanner._buckets == {}
+    assert scanner.diagnostics_snapshot()["counters"]["invalid_option_instrument"] == 1
+
+
 def test_live_synthetic_scanner_rejects_cash_quote_as_future_leg():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     ts = 35_000_000_000
