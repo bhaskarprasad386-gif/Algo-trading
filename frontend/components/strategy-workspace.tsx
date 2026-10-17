@@ -45,6 +45,7 @@ const configs: Record<string, WorkspaceConfig> = {
     pairTitle: "Option / Future Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Future", "Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/alerts?days=1&limit=100",
+    pairEndpoint: "/api/v1/scanner/synthetic-cash-carry/pairs?limit=200",
   },
   "box-spread": {
     slug: "box-spread",
