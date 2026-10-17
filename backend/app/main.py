@@ -31,7 +31,7 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -918,7 +918,7 @@ def get_synthetic_universe():
             "ALL": "All supported index underlyings plus the top 15 liquid F&O stocks",
             "TOP15": "Top 15 liquid F&O stocks only; no index underlyings",
         },
-        "top15_stock_symbols": sorted(TOP15_LIQUID_STOCK_SYMBOLS),
+        "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
     }
 
 
@@ -934,7 +934,7 @@ def set_synthetic_universe(payload: SyntheticUniverseSelection):
             "status": "success",
             "selection": selection,
             "restart_requested": False,
-            "top15_stock_symbols": sorted(TOP15_LIQUID_STOCK_SYMBOLS),
+            "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
         }
     _live_synthetic_universe_selection = selection
     runner = live_synthetic_runner
@@ -946,7 +946,7 @@ def set_synthetic_universe(payload: SyntheticUniverseSelection):
         "status": "success",
         "selection": selection,
         "restart_requested": restart_requested,
-        "top15_stock_symbols": sorted(TOP15_LIQUID_STOCK_SYMBOLS),
+        "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
     }
 
 
