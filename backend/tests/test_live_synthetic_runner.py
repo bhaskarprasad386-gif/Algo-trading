@@ -542,10 +542,15 @@ def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
     monkeypatch.setattr(runner, "_refresh_target_expiries", lambda: False)
     monkeypatch.setattr(runner, "_wait_for_live_atm", lambda _provider: feed_started.wait(1.0))
     monkeypatch.setattr(runner, "build_subscriptions", lambda: [object()])
+    observed_payloads = []
     monkeypatch.setattr(
         runner,
         "_build_pipeline",
-        lambda _scanner: type("Pipeline", (), {"observe": lambda self, payload: None})(),
+        lambda _scanner: type(
+            "Pipeline",
+            (),
+            {"observe": lambda self, payload: observed_payloads.append(payload)},
+        )(),
     )
     monkeypatch.setattr(
         "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
@@ -634,3 +639,4 @@ def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
 
     assert len(FakeRecorder.instances) == 2
     assert FakeRecorder.instances[1].stale_callback_left_replacement_running is True
+    assert observed_payloads == [{"underlying": "NIFTY"}]
