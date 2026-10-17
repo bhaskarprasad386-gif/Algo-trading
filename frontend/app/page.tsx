@@ -435,12 +435,12 @@ export default function HomePage() {
               const quote = indexLtps[symbol];
               const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
               const change = quoteAvailable ? quote?.changePercent : null;
-              const width = change == null ? 0 : Math.min(100, Math.abs(change) * 12);
+              const width = change == null ? 0 : Math.min(48, Math.abs(change) * 12);
               const positive = change != null && change >= 0;
               return <div key={symbol} className="grid grid-cols-[76px_minmax(0,1fr)_72px] items-center gap-3">
                 <span className="text-[10px] font-bold">{symbol}</span>
                 <div className="relative h-2 overflow-hidden rounded-full theme-surface">
-                  <span className={"absolute inset-y-0 left-1/2 w-px " + "theme-border"} />
+                  <span className="absolute inset-y-0 left-1/2 w-px" style={{ backgroundColor: "var(--app-border)" }} />
                   {change != null ? <span className={"absolute top-0 h-full rounded-full " + (positive ? "theme-success-bg" : "theme-danger-bg")} style={{ width: width + "%", left: positive ? "50%" : "calc(50% - " + width + "%)" }} /> : null}
                 </div>
                 <span className={"text-right text-[10px] font-bold tabular-nums " + (change == null ? "theme-muted" : positive ? "theme-success" : "theme-danger")}>{change == null ? "No quote" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</span>
