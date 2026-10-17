@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-import time
+import time as _time
 from typing import Annotated, Callable
 
 from fastapi import APIRouter, Query
@@ -58,7 +58,7 @@ def live(
     max_age_seconds: Annotated[float, Query(gt=0, le=60)] = 5.0,
 ):
     results = _latest_provider() if _latest_provider is not None else ()
-    cutoff = time.time_ns() - int(max_age_seconds * 1_000_000_000)
+    cutoff = _time.time_ns() - int(max_age_seconds * 1_000_000_000)
     results = tuple(r for r in results if int(getattr(r.option, "timestamp_ns", 0)) >= cutoff)
     rows = [_serialize(result) for result in results[:limit]]
     return {
@@ -115,7 +115,7 @@ def diagnostics():
     option_recorder = snapshot.get("option_recorder")
     scanner = snapshot.get("scanner_diagnostics")
     counters = scanner.get("counters", {}) if isinstance(scanner, dict) else {}
-    now_ns = time.time_ns()
+    now_ns = _time.time_ns()
     last_observation_ns = counters.get("last_observation_at_ns")
     last_scan_ns = counters.get("last_successful_calculation_at_ns")
     def age_seconds(value):
