@@ -40,15 +40,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           </div>
 
-          <div className="hidden items-center gap-3 sm:flex">
-            <span className="inline-flex items-center gap-2 rounded-full border theme-border theme-surface-2 px-3 py-2 text-[10px] font-semibold theme-muted">
-              <span className="h-1.5 w-1.5 rounded-full theme-success-bg" /> Live Market Operations
+          <div className="flex items-center gap-2 sm:gap-3">
+            <span className="hidden items-center gap-2 rounded-full border theme-border theme-surface-2 px-3 py-2 text-[10px] font-semibold theme-muted md:inline-flex">
+              <Settings2 size={12} /> Dashboard Controls
             </span>
             <ThemePicker theme={theme} setTheme={setTheme} />
           </div>
-          <button className="min-h-9 min-w-9 rounded-lg p-2 theme-muted" aria-label="Settings">
-            <Settings2 size={17} />
-          </button>
         </div>
       </header>
 
