@@ -679,7 +679,9 @@ def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
 
     assert len(FakeRecorder.instances) == 2
     assert FakeRecorder.instances[1].stale_callback_left_replacement_running is True
-    assert observed_payloads == [{"underlying": "NIFTY"}]
+    # The ATM-changing tick from the old subscription is discarded, and the
+    # late callback from the replaced recorder is ignored as well.
+    assert observed_payloads == []
 
 def test_runner_waits_for_slow_underlying_feed_exit_before_clearing_reference(monkeypatch):
     from threading import Event, Thread, current_thread
