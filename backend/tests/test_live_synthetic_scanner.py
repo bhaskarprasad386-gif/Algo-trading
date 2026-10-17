@@ -698,3 +698,51 @@ def test_live_synthetic_scanner_does_not_accept_option_without_valid_strike():
     assert counters["invalid_strike"] == 1
     assert counters["last_payload_received_at_ns"] > 0
     assert counters["last_observation_at_ns"] is None
+
+
+def test_synthetic_bucket_pruning_uses_monotonic_age_when_market_timestamps_stop(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    now = 50_000_000_000
+    monkeypatch.setattr(scanner_module.time, "monotonic_ns", lambda: now)
+    scanner._buckets = {
+        ("NIFTY", 20_000_000_000, 20260930): {
+            "future": None,
+            "options": {},
+            "first_seen_monotonic_ns": now - scanner.MAX_BUCKET_AGE_NS - 1,
+        },
+        ("BANKNIFTY", 20_000_000_000, 20260930): {
+            "future": None,
+            "options": {},
+            "first_seen_monotonic_ns": now - 100,
+        },
+    }
+
+    snapshot = scanner.diagnostics_snapshot()
+
+    assert snapshot["counters"]["active_buckets"] == 1
+    assert ("NIFTY", 20_000_000_000, 20260930) not in scanner._buckets
+    assert ("BANKNIFTY", 20_000_000_000, 20260930) in scanner._buckets
+    assert snapshot["counters"]["monotonic_age_pruned_buckets"] == 1
+
+
+def test_pending_quote_wait_bucket_expires_after_its_own_three_second_window(monkeypatch):
+    import app.scanner.live_synthetic_scanner as scanner_module
+
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    now = 70_000_000_000
+    monkeypatch.setattr(scanner_module.time, "monotonic_ns", lambda: now)
+    scanner._buckets = {
+        ("NIFTY", 20_000_000_000, 20260930): {
+            "future": None,
+            "options": {},
+            "first_seen_monotonic_ns": now - 5_000_000_000,
+            "quote_wait_started_ns": now - scanner.MAX_BUCKET_AGE_NS,
+        },
+    }
+
+    snapshot = scanner.diagnostics_snapshot()
+
+    assert snapshot["counters"]["active_buckets"] == 0
+    assert scanner.diagnostics_snapshot()["counters"]["monotonic_age_pruned_buckets"] == 1
