@@ -850,6 +850,25 @@ def test_live_synthetic_scanner_rejects_option_type_symbol_mismatch():
     assert scanner.diagnostics_snapshot()["counters"]["invalid_option_instrument"] == 1
 
 
+def test_live_synthetic_scanner_rejects_non_future_symbol_containing_fut():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = {
+        "underlying": "NIFTY",
+        "instrument_class": "INDEX",
+        "option_type": "",
+        "expiry": "29OCT2026",
+        "bid": 117.0,
+        "ask": 118.0,
+        "lot_size": 1,
+        "source_timestamp_ns": 35_000_000_000,
+        "symbol": "FUTNIFTY",
+    }
+
+    assert scanner.observe(payload) == ()
+    assert scanner._buckets == {}
+    assert scanner.diagnostics_snapshot()["counters"]["invalid_future_instrument"] == 1
+
+
 def test_live_synthetic_scanner_rejects_cash_quote_as_future_leg():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     ts = 35_000_000_000
