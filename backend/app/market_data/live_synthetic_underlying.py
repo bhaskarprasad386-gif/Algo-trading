@@ -178,10 +178,6 @@ class LiveSyntheticUnderlyingFeed:
         try:
             while not self.stop_event.is_set():
                 descriptors = self._descriptors()
-                resolved_tokens = {
-                    descriptor.token: descriptor.symbol
-                    for descriptor in descriptors
-                }
                 current_token_set = {
                     symbol: token for symbol, token in self._tokens().items() if token
                 }
