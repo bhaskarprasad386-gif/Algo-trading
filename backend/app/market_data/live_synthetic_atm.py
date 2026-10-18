@@ -79,9 +79,10 @@ class LiveSyntheticAtmTracker:
             raise ValueError("underlying timestamp must be positive")
         with self._lock:
             previous = self._prices.get(key)
-            if previous is not None and source_ns < previous[1]:
-                return self.atm(key)
-            self._prices[key] = (value, source_ns)
+            older_tick = previous is not None and source_ns < previous[1]
+            if not older_tick:
+                self._prices[key] = (value, source_ns)
+        # Do not call atm() while holding the non-reentrant tracker lock.
         return self.atm(key)
 
     def atm(
