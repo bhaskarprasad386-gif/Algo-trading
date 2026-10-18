@@ -77,6 +77,9 @@ class LiveSyntheticAtmTracker:
         source_ns = int(timestamp_ns) if timestamp_ns is not None else time_ns()
         if source_ns <= 0:
             raise ValueError("underlying timestamp must be positive")
+        # Reject future-skewed ticks before they poison the ordering watermark.
+        if source_ns > time_ns() + 1_000_000_000:
+            return self.atm(key)
         with self._lock:
             previous = self._prices.get(key)
             older_tick = previous is not None and source_ns < previous[1]
