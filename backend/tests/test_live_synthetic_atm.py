@@ -54,3 +54,16 @@ def test_atm_tracker_ignores_out_of_order_underlying_tick():
     # An older tick must not overwrite the latest underlying price.
     assert tracker.update("NIFTY", 109.0, latest - 1_000_000_000) == 105.0
     assert tracker.atm("NIFTY") == 105.0
+
+
+def test_atm_tracker_does_not_let_future_tick_poison_timestamp_ordering():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)}
+    )
+    future = time_ns() + 5_000_000_000
+    assert tracker.update("NIFTY", 109.0, future) is None
+    # A valid tick arriving after the rejected future-skewed tick is accepted.
+    assert tracker.update("NIFTY", 102.0, time_ns()) == 100.0
+    assert tracker.atm("NIFTY") == 100.0
