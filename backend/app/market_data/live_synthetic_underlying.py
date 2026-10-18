@@ -164,7 +164,7 @@ class LiveSyntheticUnderlyingFeed:
         if price is None or price <= 0:
             return
         timestamp_ns = record.timestamp_ns
-        self.tracker.update(symbol, price)
+        self.tracker.update(symbol, price, timestamp_ns)
         if self.on_price is not None:
             self.on_price(symbol, price, timestamp_ns)
 
