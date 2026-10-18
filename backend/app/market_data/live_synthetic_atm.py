@@ -103,7 +103,10 @@ class LiveSyntheticAtmTracker:
         price, source_ns = quote
         if max_age_seconds < 0:
             raise ValueError("max_age_seconds must be non-negative")
-        now_ns = int(_timestamp_ns) if _timestamp_ns is not None else time_ns()
+        timestamp_ns = int(_timestamp_ns) if _timestamp_ns is not None else 0
+        # Legacy runner callbacks use 0 to mean "no evaluation timestamp".
+        # Treat that sentinel as wall-clock now, not as an epoch timestamp.
+        now_ns = timestamp_ns if timestamp_ns > 0 else time_ns()
         age_ns = now_ns - source_ns
         # Permit at most 1s of clock skew into the future; reject old source
         # prices rather than deriving ATM from a stale underlying observation.
