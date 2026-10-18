@@ -30,3 +30,27 @@ def test_concrete_strikes_from_master_uses_real_chain_and_expiry():
         {"name": "NIFTY", "exch_seg": "NSE", "instrumenttype": "OPTIDX", "expiry": "30SEP2026", "strike": "11000"},
     ]
     assert concrete_strikes_from_master(instruments, symbols=("NIFTY",), expiry="30SEP2026") == {"NIFTY": (95.0, 100.0)}
+
+
+def test_atm_tracker_rejects_stale_underlying_price():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)}
+    )
+    old_timestamp = time_ns() - 6_000_000_000
+    assert tracker.update("NIFTY", 107.0, old_timestamp) is None
+    assert tracker.atm("NIFTY") is None
+
+
+def test_atm_tracker_ignores_out_of_order_underlying_tick():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)}
+    )
+    latest = time_ns()
+    assert tracker.update("NIFTY", 107.0, latest) == 105.0
+    # An older tick must not overwrite the latest underlying price.
+    assert tracker.update("NIFTY", 109.0, latest - 1_000_000_000) == 105.0
+    assert tracker.atm("NIFTY") == 105.0
