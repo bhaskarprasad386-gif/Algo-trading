@@ -167,3 +167,41 @@ def test_underlying_feed_retains_unresolved_target_and_recovers_token():
     ]
     assert feed._tokens() == {"NIFTY": "99926000"}
     assert [d.symbol for d in feed._descriptors()] == ["NIFTY"]
+
+
+def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monkeypatch):
+    from app.market_data import live_synthetic_underlying as module
+
+    holder = {}
+    original_descriptor = module.CommonStrategyMarketFeed.descriptor
+
+    class FakeFeed:
+        descriptor = staticmethod(original_descriptor)
+
+        def __init__(self, consumer, *, auth):
+            self.started = []
+
+        def start(self, descriptors, callback):
+            self.started.append((tuple(descriptors), callback))
+            holder["feed"].stop_event.set()
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(module, "CommonStrategyMarketFeed", FakeFeed)
+    monkeypatch.setattr(module, "TOKEN_REFRESH_SECONDS", 0.0)
+
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "instrumenttype": "EQ", "symbol": "ABC", "token": "123"}
+    ]
+    master._loaded = True
+    master.download = lambda force=False: master.instruments
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"ABC": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(("ABC",), tracker=tracker, instrument_master=master)
+    holder["feed"] = feed
+
+    feed.run_forever()
+
+    # A descriptor exposes its broker token through key, not descriptor.token.
+    assert feed._feed is None
