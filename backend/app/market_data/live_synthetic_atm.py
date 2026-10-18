@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from threading import Lock
+from time import time_ns
 
 
 def concrete_strikes_from_master(
@@ -59,28 +60,53 @@ class LiveSyntheticAtmTracker:
         if not normalized:
             raise ValueError("at least one ATM symbol is required")
         self._strikes = normalized
-        self._prices: dict[str, float] = {}
+        # Keep source time with the price so a dead underlying feed cannot
+        # leave an apparently valid ATM strike indefinitely.
+        self._prices: dict[str, tuple[float, int]] = {}
         self._lock = Lock()
 
-    def update(self, symbol: str, price: float) -> float | None:
+    def update(
+        self, symbol: str, price: float, timestamp_ns: int | None = None
+    ) -> float | None:
         key = str(symbol).strip().upper()
         if key not in self._strikes:
             return None
         value = float(price)
         if value <= 0:
             raise ValueError("underlying price must be positive")
+        source_ns = int(timestamp_ns) if timestamp_ns is not None else time_ns()
+        if source_ns <= 0:
+            raise ValueError("underlying timestamp must be positive")
         with self._lock:
-            self._prices[key] = value
+            previous = self._prices.get(key)
+            if previous is not None and source_ns < previous[1]:
+                return self.atm(key)
+            self._prices[key] = (value, source_ns)
         return self.atm(key)
 
-    def atm(self, symbol: str, _timestamp_ns: int | None = None) -> float | None:
+    def atm(
+        self,
+        symbol: str,
+        _timestamp_ns: int | None = None,
+        *,
+        max_age_seconds: float = 5.0,
+    ) -> float | None:
         key = str(symbol).strip().upper()
         strikes = self._strikes.get(key)
         if strikes is None:
             return None
         with self._lock:
-            price = self._prices.get(key)
-        if price is None:
+            quote = self._prices.get(key)
+        if quote is None:
+            return None
+        price, source_ns = quote
+        if max_age_seconds < 0:
+            raise ValueError("max_age_seconds must be non-negative")
+        now_ns = int(_timestamp_ns) if _timestamp_ns is not None else time_ns()
+        age_ns = now_ns - source_ns
+        # Permit at most 1s of clock skew into the future; reject old source
+        # prices rather than deriving ATM from a stale underlying observation.
+        if age_ns < -1_000_000_000 or age_ns > int(max_age_seconds * 1_000_000_000):
             return None
         index = bisect_left(strikes, price)
         if index == 0:
