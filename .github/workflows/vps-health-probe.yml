@@ -64,6 +64,13 @@ jobs:
             echo
           fi
 
+          live_health_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/live_health_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/market-data/live-health 2>/dev/null || true)
+          echo "LIVE_HEALTH_HTTP=$live_health_code"
+          if [ "$live_health_code" != "000" ]; then
+            cat /tmp/live_health_body || true
+            echo
+          fi
+
           echo "=== LIVE SCANNER SNAPSHOTS ==="
           for endpoint in \
             "/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=5" \
@@ -78,6 +85,69 @@ jobs:
               echo
             fi
           done
+
+          echo "=== SYNTHETIC FEED ACCEPTANCE ==="
+          synthetic_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/synthetic_diag_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/scanner/synthetic-cash-carry/diagnostics 2>/dev/null || true)
+          echo "SYNTHETIC_DIAGNOSTICS_HTTP=$synthetic_code"
+          if [ "$synthetic_code" != "000" ]; then
+            cat /tmp/synthetic_diag_body || true
+            echo
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          def load(path):
+              try:
+                  return json.loads(Path(path).read_text())
+              except Exception:
+                  return {}
+
+          def walk(value):
+              if isinstance(value, dict):
+                  yield value
+                  for child in value.values():
+                      yield from walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from walk(child)
+
+          diag = load("/tmp/synthetic_diag_body")
+          runtime = load("/tmp/runtime_body")
+          live_health = load("/tmp/live_health_body")
+          nodes = list(walk(runtime)) + list(walk(live_health))
+          session = next((str(x.get("market_session", "")).upper() for x in nodes if x.get("market_session")), "")
+          feed = diag.get("underlying_feed") if isinstance(diag.get("underlying_feed"), dict) else {}
+          symbols = feed.get("symbols") if isinstance(feed.get("symbols"), dict) else {}
+          resolved = [name for name, item in symbols.items() if isinstance(item, dict) and item.get("token_resolved")]
+          fresh = [name for name, item in symbols.items() if isinstance(item, dict) and isinstance(item.get("last_tick_age_seconds"), (int, float)) and item["last_tick_age_seconds"] <= 10]
+          readiness = next((x for x in nodes if isinstance(x.get("ready_symbols"), list) and isinstance(x.get("waiting_symbols"), list)), {})
+          ready_symbols = readiness.get("ready_symbols", [])
+          initialized = bool(diag.get("scanner_initialized"))
+          state = str(feed.get("state") or "NO_FEED_SNAPSHOT")
+          reason = str(feed.get("state_reason") or "no_underlying_feed_snapshot")
+          print(f"MARKET_SESSION={session or 'UNKNOWN'}")
+          print(f"UNDERLYING_FEED_STATE={state}")
+          print(f"UNDERLYING_FEED_REASON={reason}")
+          print(f"TOKENS_RESOLVED={len(resolved)}/{len(symbols)}")
+          print(f"FRESH_TICKS_LE_10S={len(fresh)}/{len(symbols)}")
+          print(f"ATM_READY_SYMBOLS={len(ready_symbols)}")
+          print(f"SCANNER_INITIALIZED={initialized}")
+          if session != "OPEN":
+              print("ACCEPTANCE_RESULT=DEFERRED_MARKET_NOT_OPEN")
+          else:
+              checks = {
+                  "token_resolution": bool(resolved),
+                  "fresh_ticks": bool(fresh),
+                  "atm_readiness": bool(ready_symbols),
+                  "scanner_initialization": initialized,
+              }
+              for name, passed in checks.items():
+                  print(f"GATE_{name.upper()}={'PASS' if passed else 'FAIL'}")
+              print("ACCEPTANCE_RESULT=" + ("PASS" if all(checks.values()) else "FAIL"))
+              if not all(checks.values()):
+                  raise SystemExit(1)
+          PY
 
           echo "=== SERVICE MEMORY / PROCESS ==="
           systemctl show algo-trading.service --no-pager \
