@@ -214,21 +214,32 @@ class LiveSyntheticUnderlyingFeed:
         active_tokens: dict[str, str] = {}
         try:
             while not self.stop_event.is_set():
-                descriptors = self._descriptors()
-                current_token_set = {
-                    symbol: token for symbol, token in self._tokens().items() if token
-                }
-                if not descriptors:
-                    app_logger.warning("Synthetic underlying feed found no resolvable live symbols; retrying")
-                    self.stop_event.wait(TOKEN_REFRESH_SECONDS)
-                    continue
-                if current_token_set != active_tokens:
-                    if active_tokens:
-                        self._feed.stop()
-                    self._feed.start(descriptors, self._on_record)
-                    active_tokens = current_token_set
-                if self.stop_event.wait(TOKEN_REFRESH_SECONDS):
-                    break
+                try:
+                    descriptors = self._descriptors()
+                    current_token_set = {
+                        symbol: token for symbol, token in self._tokens().items() if token
+                    }
+                    if not descriptors:
+                        app_logger.warning("Synthetic underlying feed found no resolvable live symbols; retrying")
+                        self.stop_event.wait(TOKEN_REFRESH_SECONDS)
+                        continue
+                    if current_token_set != active_tokens:
+                        if active_tokens:
+                            self._feed.stop()
+                        self._feed.start(descriptors, self._on_record)
+                        active_tokens = current_token_set
+                    if self.stop_event.wait(TOKEN_REFRESH_SECONDS):
+                        break
+                except Exception:
+                    # Instrument-master/network and broker-subscription failures are
+                    # transient in production. Do not let one exception silently kill
+                    # the only worker that can deliver ATM prices to the scanner.
+                    app_logger.exception(
+                        "Synthetic underlying feed cycle failed; retrying in %.1fs",
+                        TOKEN_REFRESH_SECONDS,
+                    )
+                    if self.stop_event.wait(TOKEN_REFRESH_SECONDS):
+                        break
         finally:
             if self._feed:
                 self._feed.stop()

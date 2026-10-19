@@ -151,6 +151,10 @@ def diagnostics():
         "last_successful_calculation_at_ns": last_scan_ns,
         "last_result_count": counters.get("last_result_count", 0),
         "counters": counters,
+        # Surface the actual underlying transport/consumer state. Without this,
+        # WAITING_FOR_OBSERVATIONS cannot distinguish missing ATM ticks from a
+        # dead worker, unresolved tokens, or a disconnected shared socket.
+        "underlying_feed": snapshot.get("underlying_feed"),
         "option_recorder": {
             "running": option_recorder.get("running") if isinstance(option_recorder, dict) else None,
             "ticks_received": option_recorder.get("ticks_received") if isinstance(option_recorder, dict) else None,
