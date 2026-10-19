@@ -183,6 +183,14 @@ def get_live_data_health():
                 # Do not turn future-dated source timestamps into fresh market data.
                 runtime_age = None if raw_runtime_age < -5.0 else max(0.0, raw_runtime_age)
                 runtime_live = market_open and runtime_age is not None and runtime_age <= 5.0
+        # Runtime tick freshness and persisted-source freshness are different signals.
+        # Never report persisted rows as evidence that the in-memory live feed is receiving ticks.
+        runtime_status = (
+            "CLOSED" if not market_open else
+            "LIVE" if runtime_live else
+            "STALE" if runtime_age is not None else
+            "NO_DATA"
+        )
         feed_status = "LIVE" if runtime_live else one_second["status"]
         return {
             "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
@@ -204,6 +212,7 @@ def get_live_data_health():
                 "recovery_attempts": common.get("recovery_attempts", 0) if common else 0,
                 "last_recovery_at": common.get("last_recovery_at") if common else None,
                 "delivery_errors": common.get("delivery_errors", 0) if common else 0,
+                "status": runtime_status,
                 "age_seconds": runtime_age,
             },
             "sources": sources, "live_orders": "OFF",
