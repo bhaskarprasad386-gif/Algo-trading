@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime, time as datetime_time
 from math import isfinite
 from threading import Event, Lock, RLock, Thread, current_thread
+import sys
 import time
+import traceback
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -1402,18 +1404,38 @@ class CommonWebSocketManager:
             }
 
         def _watch() -> None:
+            next_stack_dump_at = time.monotonic() + 30.0
             while close_worker.is_alive():
                 close_worker.join(timeout=10.0)
+                alive = close_worker.is_alive()
                 with self._lock:
                     record = self._retired_transports.get(key)
                     if record is not None:
-                        record["close_worker_alive"] = bool(close_worker.is_alive())
+                        record["close_worker_alive"] = alive
                         record["last_observed_at"] = time.time()
-                if close_worker.is_alive():
+                if alive:
                     app_logger.error(
-                        "Common feed retired transport still alive group=%s generation=%s reason=%s; replacement remains blocked",
+                        "Common feed retired transport still alive group={} generation={} reason={} "
+                        "close_worker={} ident={}; replacement remains blocked",
                         f"{group.mode}:{group.shard}", generation, reason,
+                        close_worker.name, close_worker.ident,
                     )
+                    # A close() worker that never exits is the actual gate
+                    # preventing a replacement session. Capture its Python stack
+                    # so production logs identify the blocking call, without
+                    # dumping thread locals (which could contain credentials).
+                    now = time.monotonic()
+                    if now >= next_stack_dump_at:
+                        frame = sys._current_frames().get(close_worker.ident)
+                        if frame is not None:
+                            stack = "".join(traceback.format_stack(frame, limit=32))
+                            app_logger.error(
+                                "Common feed retired close-worker stack group={} generation={} "
+                                "reason={} worker={}\\n{}",
+                                f"{group.mode}:{group.shard}", generation, reason,
+                                close_worker.name, stack,
+                            )
+                        next_stack_dump_at = now + 60.0
             with self._lock:
                 self._retired_transports.pop(key, None)
             if on_finished is not None:
