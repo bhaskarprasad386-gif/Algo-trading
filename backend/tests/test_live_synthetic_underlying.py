@@ -213,8 +213,6 @@ def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monke
 def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underlying():
     from time import time_ns
 
-    from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
-
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"RELIANCE": (100.0, 105.0)})
     observed = []
     feed = LiveSyntheticUnderlyingFeed(
@@ -256,8 +254,6 @@ def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underly
 
 def test_underlying_feed_reports_connected_but_silent(monkeypatch):
     from time import time_ns
-    from app.market_data import live_synthetic_underlying as module
-
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",), tracker=tracker, concrete_tokens={"NIFTY": "99926000"}
@@ -300,3 +296,54 @@ def test_underlying_feed_reports_stale_after_last_tick_expires(monkeypatch):
     feed._feed = DisconnectedFeed()
     assert feed.snapshot()["state"] == "STALE"
     assert feed.snapshot()["symbols"]["NIFTY"]["last_tick_age_seconds"] >= 20.0
+
+
+
+def test_underlying_feed_reports_reconnecting_when_transport_is_down_without_ticks():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY",), tracker=tracker, concrete_tokens={"NIFTY": "99926000"}
+    )
+
+    class DisconnectedFeed:
+        def snapshot(self):
+            return {
+                "connected": False,
+                "disconnected_groups": ["3:0"],
+                "transport_close_timed_out_groups": [],
+            }
+
+    feed._feed = DisconnectedFeed()
+    feed._last_resolved_tokens = {"NIFTY": "99926000"}
+    feed._last_token_resolution_at_ns = time_ns()
+
+    health = feed.snapshot()
+    assert health["state"] == "RECONNECTING"
+    assert health["state_reason"] == "required_transport_disconnected"
+
+
+def test_underlying_feed_reports_failed_when_transport_close_is_stuck():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY",), tracker=tracker, concrete_tokens={"NIFTY": "99926000"}
+    )
+
+    class StuckTransportFeed:
+        def snapshot(self):
+            return {
+                "connected": False,
+                "disconnected_groups": ["3:0"],
+                "transport_close_timed_out_groups": ["3:0"],
+            }
+
+    feed._feed = StuckTransportFeed()
+    feed._last_resolved_tokens = {"NIFTY": "99926000"}
+    feed._last_token_resolution_at_ns = time_ns()
+
+    health = feed.snapshot()
+    assert health["state"] == "FAILED"
+    assert health["state_reason"] == "transport_close_timed_out"
