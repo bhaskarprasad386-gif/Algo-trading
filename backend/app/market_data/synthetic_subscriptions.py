@@ -63,18 +63,21 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
         key=lambda x: (_expiry_key(x.get("expiry")), str(x.get("token","")))
     )
     if not future_rows: raise LookupError(f"no current/near {future_type} contracts for {symbol}")
-    current = future_rows[0]
-    current_future_expiry = _expiry_key(current.get("expiry"))
-    target_expiry = _expiry_key(expiry) if expiry else current_future_expiry
-    # Synthetic Future uses one coherent contract month: current future plus
-    # CE/PE legs from the exact same expiry. Never subscribe to the near future
-    # here because there is no matching near-expiry option chain in this
-    # selection and the scanner cannot form a complete synthetic pair from it.
-    if target_expiry != current_future_expiry:
+    target_expiry = _expiry_key(expiry) if expiry else _expiry_key(future_rows[0].get("expiry"))
+    # Pair the exact future month selected by the monthly future/option expiry
+    # resolver. Previously the selector always chose the nearest future first,
+    # then rejected a valid later common expiry when the nearest future had no
+    # matching option chain. If no future exists for the requested expiry, fail
+    # closed rather than silently switching months.
+    matching_futures = [x for x in future_rows if _expiry_key(x.get("expiry")) == target_expiry]
+    if not matching_futures:
+        nearest_expiry = _expiry_key(future_rows[0].get("expiry"))
         raise LookupError(
-            f"synthetic option expiry {target_expiry} does not match "
-            f"current future expiry {current_future_expiry} for {symbol}"
+            f"synthetic option expiry {target_expiry} does not match current future expiry; "
+            f"available nearest future expiry is {nearest_expiry} for {symbol}"
         )
+    current = matching_futures[0]
+    current_future_expiry = _expiry_key(current.get("expiry"))
     option_expiries = (current_future_expiry,)
     options_by_expiry = {
         exp: [x for x in options if _expiry_key(x.get("expiry")) == exp]

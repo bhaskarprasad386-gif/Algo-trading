@@ -24,7 +24,7 @@ from app.market_data.common_websocket import CommonWebSocketManager
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
-CLOSE = time(15, 40)
+CLOSE = time(15, 30)
 
 _EXCHANGE_BY_TYPE = {1: "NSE", 2: "NFO", 3: "BSE", 4: "BFO", 5: "MCX", 7: "NCDEX"}
 
@@ -118,7 +118,7 @@ class LiveSyntheticOptionFutureRecorder:
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
         current = now or datetime.now(IST)
-        return current.weekday() < 5 and OPEN <= current.time() <= CLOSE
+        return current.weekday() < 5 and OPEN <= current.time() < CLOSE
 
     @staticmethod
     def _normalize(message: dict[str, Any], meta: SyntheticSubscription) -> dict[str, Any]:

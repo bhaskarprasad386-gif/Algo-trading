@@ -857,13 +857,31 @@ class LiveSyntheticRunner:
         scanner_diagnostics = (
             None if self._scanner is None else self._scanner.diagnostics_snapshot()
         )
+        running = self._running and not self._stop_requested.is_set()
+        feed_snapshot = None if feed is None else feed.snapshot()
+        recorder_snapshot = None if recorder is None else recorder.snapshot()
+        scanner_initialized = self._scanner is not None
+        if not running:
+            phase, phase_reason = "STOPPED", "runner_not_active_or_stop_requested"
+        elif not LiveSyntheticOptionFutureRecorder.market_open():
+            phase, phase_reason = "WAITING_FOR_MARKET_OPEN", "outside_configured_market_session"
+        elif scanner_initialized and recorder_snapshot and recorder_snapshot.get("running"):
+            phase, phase_reason = "SCANNING", "scanner_and_option_recorder_active"
+        elif feed_snapshot and feed_snapshot.get("state") in {"TOKEN_RESOLUTION_FAILED", "FAILED", "RECONNECTING", "CONNECTED_NO_TICKS", "STALE"}:
+            phase, phase_reason = "WAITING_FOR_UNDERLYING", str(feed_snapshot.get("state_reason") or feed_snapshot.get("state"))
+        elif not scanner_initialized:
+            phase, phase_reason = "INITIALIZING", "scanner_not_initialized_yet"
+        else:
+            phase, phase_reason = "WAITING_FOR_OBSERVATIONS", "scanner_initialized_without_active_recorder"
         return {
-            "running": self._running and not self._stop_requested.is_set(),
+            "running": running,
+            "phase": phase,
+            "phase_reason": phase_reason,
             "targets": len(self.targets),
-            "scanner_initialized": self._scanner is not None,
+            "scanner_initialized": scanner_initialized,
             "scanner_diagnostics": scanner_diagnostics,
-            "underlying_feed": None if feed is None else feed.snapshot(),
-            "option_recorder": None if recorder is None else recorder.snapshot(),
+            "underlying_feed": feed_snapshot,
+            "option_recorder": recorder_snapshot,
         }
 
     def pair_monitor_snapshot(self, limit: int = 200) -> dict:

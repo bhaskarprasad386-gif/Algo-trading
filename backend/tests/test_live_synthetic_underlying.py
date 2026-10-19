@@ -301,7 +301,7 @@ def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underly
     assert health["symbols"]["RELIANCE"]["last_tick_age_seconds"] is not None
     assert health["state"] == "LIVE"
     assert health["fresh_symbol_count"] == 1
-    assert health["stale_after_seconds"] == 10.0
+    assert health["stale_after_seconds"] == 5.0
 
 
 

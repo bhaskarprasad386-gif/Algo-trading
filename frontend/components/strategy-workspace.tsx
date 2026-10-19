@@ -88,6 +88,13 @@ function numberValue(row: Row, ...keys: string[]) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function formatExpiry(raw: unknown) {
+  if (raw === undefined || raw === null || raw === "") return "—";
+  const text = String(raw);
+  if (/^\d{8}$/.test(text)) return text.slice(0, 4) + "-" + text.slice(4, 6) + "-" + text.slice(6, 8);
+  return text;
+}
+
 function formatValue(raw: unknown) {
   if (raw === undefined || raw === null || raw === "") return "—";
   if (typeof raw === "boolean") return raw ? "YES" : "NO";
@@ -113,7 +120,10 @@ function formatCell(slug: string, column: string, row: Row) {
       Liquidity: ["liquidity_qty"], Direction: ["direction"], Signal: ["direction"],
     },
   };
-  return formatValue(value(row, ...(keys[slug]?.[column] ?? [])));
+  const raw = value(row, ...(keys[slug]?.[column] ?? []));
+  if (column === "Expiry") return formatExpiry(raw);
+  if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
+  return formatValue(raw);
 }
 
 function pairCell(slug: string, column: string, row: Row) {
@@ -124,8 +134,8 @@ function pairCell(slug: string, column: string, row: Row) {
       Edge: ["long_edge", "short_edge"], Liquidity: ["liquidity_qty"], State: ["direction", "qualifies"],
     },
     "synthetic-arbitrage": {
-      Time: ["timestamp_ns", "observed_at"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
-      Option: ["direction", "call_bid", "put_bid"], Future: ["future_bid", "future_ask"],
+      Time: ["timestamp_ns", "observed_at"], Underlying: ["underlying", "symbol"], Expiry: ["expiry"], Strike: ["strike"],
+      Option: ["option_summary", "call_bid", "put_bid"], Future: ["future_summary", "future_bid", "future_ask"],
       Edge: ["executable_edge"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
@@ -142,6 +152,7 @@ function pairCell(slug: string, column: string, row: Row) {
     const d = new Date(String(raw));
     return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false });
   }
+  if (column === "Expiry") return formatExpiry(raw);
   if (column === "State") {
     const edge = numberValue(row, "executable_edge", "long_edge", "short_edge");
     if (slug === "calendar-spread") return row.qualifies === true || edge > 0 ? "OPPORTUNITY" : "NO SIGNAL";
@@ -151,6 +162,49 @@ function pairCell(slug: string, column: string, row: Row) {
       return state + reason;
     }
     return edge > 0 ? "EDGE" : "NO EDGE";
+  }
+  return formatValue(raw);
+}
+
+async function copyTextWithFallback(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch { return false; }
+}
+
+function historyCell(slug: string, column: string, row: Row) {
+  if (slug !== "synthetic-arbitrage") return pairCell(slug, column, row);
+  const map: Record<string, string[]> = {
+    Time: ["observed_at", "timestamp_ns"], Underlying: ["symbol", "underlying"],
+    Expiry: ["expiry"], Strike: ["strike"], Direction: ["direction"],
+    Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"],
+    "Gross P&L": ["gross_pnl"], State: ["direction"],
+  };
+  const raw = value(row, ...(map[column] ?? []));
+  if (column === "Expiry") return formatExpiry(raw);
+  if (column === "Time") {
+    if (raw === undefined || raw === null || raw === "") return "—";
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 1000000000000) return new Date(n / 1000000).toLocaleTimeString("en-IN", { hour12: false });
+    const d = new Date(String(raw));
+    return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false });
   }
   return formatValue(raw);
 }
@@ -191,6 +245,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedTicks, setFeedTicks] = useState<number | null>(null);
@@ -413,6 +468,18 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     setRefreshing(false);
   };
 
+  const copyTableRows = async (kind: "history" | "pairs") => {
+    const source = kind === "history" ? historyRows : filteredPairRows;
+    const columns = kind === "history" && slug === "synthetic-arbitrage"
+      ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"]
+      : c.pairColumns;
+    const render = kind === "history" ? historyCell : pairCell;
+    const payload = [columns.join("\t"), ...source.map((row) => columns.map((column) => render(slug, column, row)).join("\t"))].join("\n");
+    const ok = await copyTextWithFallback(payload);
+    setCopyStatus(ok ? (kind === "history" ? "History copied" : "Pair rows copied") : "Copy failed — browser permission blocked copying");
+    window.setTimeout(() => setCopyStatus(""), 3500);
+  };
+
   const metricValue = (metric: string) => {
     if (loading) return "…";
     if (metric === "Eligible Contracts") return feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN");
@@ -525,6 +592,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <div><p className="text-xs theme-muted">Missing option legs</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_ce_or_pe_leg) ?? "—")}</p></div>
             <div><p className="text-xs theme-muted">Last scan age</p><p className="mt-1 text-base font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s" : "—"}</p></div>
           </div>
+          {typeof scannerDiagnostics?.phase_reason === "string" && scannerDiagnostics.phase_reason && <p className="mt-2 rounded-lg border theme-border theme-surface-2 p-2 text-xs theme-muted">Runner phase: {String(scannerDiagnostics.phase ?? scannerDiagnostics.status ?? "UNKNOWN")} · {String(scannerDiagnostics.phase_reason).replaceAll("_", " ")}</p>}
           <p className="mt-3 text-xs theme-muted">Zero signals can be a valid market result. A stale or incomplete scanner is shown as a health problem, not as a successful empty scan. Broker orders remain OFF.</p>
         </Card>
       )}
@@ -556,7 +624,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Every current pair/combo from the real backend snapshot is shown, including rows without a signal.</p></div>
-          <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • 1.5s refresh</span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => void copyTableRows("pairs")} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Copy rows</button>
+            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • 1.5s refresh</span>
+          </div>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live pairs</p><p className="mt-1 text-lg font-semibold theme-text">{monitorRows.length.toLocaleString("en-IN")}</p></div>
@@ -587,7 +658,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Post-Market {c.title} Pair History</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
-          <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
+            <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
+          </div>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Saved observations</p><p className="mt-1 text-lg font-semibold theme-text">{historyRows.length.toLocaleString("en-IN")}</p></div>
@@ -595,20 +669,28 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
-          {historyRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair history for this session.</div> : historyRows.map((row, index) => <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{pairCell(slug, c.pairColumns[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.pairColumns.filter((column) => column !== c.pairColumns[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{pairCell(slug, column, row)}</div></div>)}</div></div>)}
+          {historyRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair history for this session.</div> : historyRows.map((row, index) => {
+            const cols = slug === "synthetic-arbitrage" ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"] : c.pairColumns;
+            return <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{historyCell(slug, cols[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{cols.filter((column) => column !== cols[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{historyCell(slug, column, row)}</div></div>)}</div></div>;
+          })}
         </div>
         <div className="mt-4 hidden overflow-x-auto md:block">
           <table className="min-w-[1100px] w-full text-left text-sm">
-            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{(slug === "synthetic-arbitrage" ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"] : c.pairColumns).map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
-              {historyRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No saved pair history for this session.</td></tr> :
-              historyRows.map((row, index) => <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
-                {c.pairColumns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{pairCell(slug, column, row)}</td>)}
-              </tr>)}
+              {historyRows.length === 0 ? <tr><td colSpan={slug === "synthetic-arbitrage" ? 9 : c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No saved pair history for this session.</td></tr> :
+              historyRows.map((row, index) => {
+                const cols = slug === "synthetic-arbitrage" ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"] : c.pairColumns;
+                return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
+                  {cols.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{historyCell(slug, column, row)}</td>)}
+                </tr>;
+              })}
             </tbody>
           </table>
         </div>
       </Card>
+
+      {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
 
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>

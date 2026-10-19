@@ -143,6 +143,8 @@ def diagnostics():
         "status": status,
         "scanner": "synthetic-cash-carry-live-1s",
         "running": running,
+        "phase": snapshot.get("phase"),
+        "phase_reason": snapshot.get("phase_reason"),
         "target_count": snapshot.get("targets"),
         "scanner_initialized": bool(snapshot.get("scanner_initialized")),
         "observation_age_seconds": observation_age,

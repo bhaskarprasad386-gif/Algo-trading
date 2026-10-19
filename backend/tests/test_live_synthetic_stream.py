@@ -453,11 +453,11 @@ def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeyp
 
     assert not records
 
-def test_market_open_keeps_equity_derivatives_open_until_1540():
+def test_market_open_closes_at_regular_1530_session_boundary():
     ist = ZoneInfo("Asia/Kolkata")
-    assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 39, 59, tzinfo=ist))
-    assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 0, tzinfo=ist))
-    assert not LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 1, tzinfo=ist))
+    assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 29, 59, tzinfo=ist))
+    assert not LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 30, 0, tzinfo=ist))
+    assert not LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 30, 1, tzinfo=ist))
 
 
 
