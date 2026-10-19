@@ -7,8 +7,26 @@ strike set from the Angel One instrument master. It never invents a strike.
 from __future__ import annotations
 
 from bisect import bisect_left
+from datetime import datetime
 from threading import Lock
 from time import time_ns
+
+
+def _expiry_matches(left: object, right: object) -> bool:
+    """Compare Angel One expiry values by calendar date, not display format."""
+    def parsed(value: object):
+        text = str(value or "").strip().upper()
+        for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    left_date, right_date = parsed(left), parsed(right)
+    if left_date is not None and right_date is not None:
+        return left_date == right_date
+    return str(left or "").strip().upper() == str(right or "").strip().upper()
 
 
 def concrete_strikes_from_master(
@@ -21,7 +39,6 @@ def concrete_strikes_from_master(
 ) -> dict[str, tuple[float, ...]]:
     """Extract only concrete option strikes for the requested live expiry."""
     requested = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
-    expiry_key = str(expiry).strip().upper()
     result: dict[str, set[float]] = {symbol: set() for symbol in requested}
     for item in instruments:
         symbol = str(item.get("name") or "").strip().upper()
@@ -29,7 +46,7 @@ def concrete_strikes_from_master(
             continue
         if str(item.get("exch_seg") or "").strip().upper() != str(exchange_segment).strip().upper():
             continue
-        if str(item.get("expiry") or "").strip().upper() != expiry_key:
+        if not _expiry_matches(item.get("expiry"), expiry):
             continue
         if str(item.get("instrumenttype") or "").strip().upper() not in {
             str(value).strip().upper() for value in instrument_types
