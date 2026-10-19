@@ -241,3 +241,9 @@ def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underly
     assert descriptor.symbol == "RELIANCE"
     assert tracker.atm("RELIANCE") == 105.0
     assert observed == [("RELIANCE", 104.6, timestamp_ns)]
+
+    health = feed.snapshot()
+    assert health["symbols"]["RELIANCE"]["token_resolved"] is True
+    assert health["symbols"]["RELIANCE"]["token"] == "2885"
+    assert health["symbols"]["RELIANCE"]["last_price"] == 104.6
+    assert health["symbols"]["RELIANCE"]["last_tick_age_seconds"] is not None
