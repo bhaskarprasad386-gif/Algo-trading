@@ -13,6 +13,7 @@ from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 TOKEN_REFRESH_SECONDS = 30.0
+UNDERLYING_STALE_AFTER_SECONDS = 10.0
 
 
 def filter_resolvable_index_symbols(instrument_master: InstrumentMaster, symbols) -> tuple[str, ...]:
@@ -283,20 +284,37 @@ class LiveSyntheticUnderlyingFeed:
                 "last_tick_received_at_ns": received_at_ns,
                 "source_timestamp_ns": tick["source_timestamp_ns"] if tick else None,
             }
+        feed_snapshot = self._feed.snapshot() if self._feed is not None else {}
+        resolved_count = sum(1 for item in symbol_health.values() if item["token_resolved"])
+        tick_ages = [
+            item["last_tick_age_seconds"]
+            for item in symbol_health.values()
+            if item["last_tick_age_seconds"] is not None
+        ]
+        fresh_tick_count = sum(
+            1 for age in tick_ages if age <= UNDERLYING_STALE_AFTER_SECONDS
+        )
         if self._feed is None:
-            return {
-                "started": False,
-                "consumer": self.consumer,
-                "token_resolution_at_ns": resolved_at_ns,
-                "symbols": symbol_health,
-            }
-        snapshot = self._feed.snapshot()
+            state = "STARTING"
+        elif not resolved_count:
+            state = "TOKEN_RESOLUTION_FAILED"
+        elif not tick_ages:
+            state = "CONNECTED_NO_TICKS" if bool(feed_snapshot.get("connected")) else "STARTING"
+        elif fresh_tick_count:
+            state = "LIVE"
+        else:
+            state = "STALE"
         return {
-            "started": True,
+            "started": self._feed is not None,
             "consumer": self.consumer,
+            "state": state,
+            "stale_after_seconds": UNDERLYING_STALE_AFTER_SECONDS,
+            "resolved_symbol_count": resolved_count,
+            "configured_symbol_count": len(self.symbols),
+            "fresh_symbol_count": fresh_tick_count,
             "token_resolution_at_ns": resolved_at_ns,
             "symbols": symbol_health,
-            "feed": snapshot,
+            "feed": feed_snapshot if self._feed is not None else None,
         }
 
     def stop(self) -> None:
