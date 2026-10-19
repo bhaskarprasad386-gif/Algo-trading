@@ -995,3 +995,26 @@ def test_empty_subscription_diagnostic_identifies_missing_live_atm(monkeypatch):
     # Repeated 5-second retries should not flood logs with the same diagnosis.
     assert runner.build_subscriptions() == ()
     assert len(messages) == 1
+
+
+def test_zero_contract_diagnostic_includes_skip_reasons(monkeypatch):
+    import app.market_data.live_synthetic_runner as runner_module
+
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, None)],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: 100.0,
+    )
+    rendered = []
+    monkeypatch.setattr(
+        runner_module.app_logger,
+        "warning",
+        lambda message, *args: rendered.append(message.format(*args)),
+    )
+
+    assert runner.build_subscriptions() == ()
+    assert len(rendered) == 1
+    assert "targets=1" in rendered[0]
+    assert "monthly_expiry_unresolved=[NIFTY]" in rendered[0]
