@@ -70,8 +70,9 @@ jobs:
             if ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "FORCE_RESTART='$FORCE_RESTART' bash -s" < /tmp/vps_remote_deploy.sh; then
               printf 'REMOTE_DEPLOY_OK attempt=%s\\n' "$attempt"
               exit 0
+            else
+              rc=$?
             fi
-            rc=$?
             printf 'REMOTE_DEPLOY_ATTEMPT_FAILED=%s exit=%s\\n' "$attempt" "$rc" >&2
             if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 5)); fi
           done
