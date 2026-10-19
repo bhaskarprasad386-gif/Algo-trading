@@ -834,7 +834,7 @@ function connectDashboardWebSocket(){
  }
  dashboardSocket.onopen=()=>{
    dashboardReconnectDelay=1000;
-   document.getElementById('scanStatus').textContent='DASHBOARD STREAM CONNECTED • MARKET DATA FRESHNESS CHECKED SEPARATELY';
+   document.getElementById('scanStatus').textContent='DASHBOARD WS CONNECTED • MARKET DATA FRESHNESS CHECKED SEPARATELY';
    updateLiveBus(null,true);
    log('Dashboard WebSocket connected');
  };
