@@ -75,7 +75,9 @@ export default function HomePage() {
           if (failures >= 3) {
             setApiStatus("error");
             setApiDetail("API health endpoint unreachable after 3 consecutive probes: " +
-              (error instanceof Error ? error.message : "unknown network error"));
+              (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")
+                ? "Health check timed out after 4 seconds"
+                : "Network/HTTP health check failed"));
           } else {
             setApiDetail("API health probe missed (" + failures + "/3); retrying before changing connectivity status");
           }
