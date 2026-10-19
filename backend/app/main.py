@@ -703,77 +703,110 @@ def _update_live_synthetic_results(results: tuple) -> None:
 
 
 async def _live_box_spread_loop() -> None:
+    """Supervise the Box Spread runner with bounded retry backoff."""
     global live_box_spread_runner, live_box_spread_latest_results
-    master = InstrumentMaster()
-    try:
-        master.download()
-        today = datetime.now(IST).date()
-        stock_symbols, index_symbols = set(), set()
-        for item in master.instruments:
-            segment = str(item.get("exch_seg", "")).upper()
-            typ = str(item.get("instrumenttype", "")).upper()
-            expiry_text = str(item.get("expiry", "")).strip()
-            if not expiry_text:
-                continue
-            try:
-                expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
-            except ValueError:
-                try:
-                    expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
-                except ValueError:
+    retry_delay = 5.0
+    max_retry_delay = 60.0
+    while True:
+        master = InstrumentMaster()
+        runner = None
+        try:
+            master.download()
+            today = datetime.now(IST).date()
+            stock_symbols, index_symbols = set(), set()
+            for item in master.instruments:
+                segment = str(item.get("exch_seg", "")).strip().upper()
+                typ = str(item.get("instrumenttype", "")).strip().upper()
+                expiry_text = str(item.get("expiry", "")).strip()
+                if not expiry_text:
                     continue
-            if expiry < today:
+                try:
+                    expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
+                except ValueError:
+                    try:
+                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
+                    except ValueError:
+                        continue
+                if expiry < today:
+                    continue
+                name = str(item.get("name", "")).strip().upper()
+                if not name:
+                    continue
+                # Match Synthetic Future's authoritative Top-15 stock universe and
+                # accept only listed NSE stock futures; do not admit same-named rows
+                # from another segment into Box Spread targets.
+                if typ == "FUTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
+                    stock_symbols.add(name)
+                elif (
+                    typ == "FUTIDX"
+                    and name in OPTION_STRATEGY_INDEX_SYMBOLS
+                    and ((segment == "NFO" and name == "NIFTY") or (segment == "BFO" and name == "SENSEX"))
+                ):
+                    index_symbols.add(name)
+            stock_symbols = [
+                symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED
+                if symbol in stock_symbols
+            ]
+            # Resolve option expiry independently of future expiry; this selects
+            # the nearest genuine option chain available for the Box Spread.
+            targets_list = []
+            for symbol in stock_symbols:
+                expiry = select_nearest_option_expiry(
+                    master.instruments, underlying=symbol,
+                    instrument_class="STOCK", today=today,
+                )
+                if expiry:
+                    targets_list.append(BoxSpreadLiveTarget(symbol, "STOCK", expiry=expiry))
+            for symbol in sorted(index_symbols):
+                expiry = select_nearest_option_expiry(
+                    master.instruments, underlying=symbol,
+                    instrument_class="INDEX", today=today,
+                )
+                if expiry:
+                    targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=expiry))
+            targets = tuple(targets_list)
+            if not targets:
+                app_logger.warning(
+                    "Box Spread live runner found no current F&O targets; retrying in {:.1f}s",
+                    retry_delay,
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(max_retry_delay, retry_delay * 2.0)
                 continue
-            name = str(item.get("name", "")).strip().upper()
-            if not name:
-                continue
-            # Match Synthetic Future's authoritative Top-15 stock universe and
-            # accept only listed NSE stock futures; do not admit same-named rows
-            # from another segment into Box Spread targets.
-            if typ == "FUTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
-                stock_symbols.add(name)
-            elif typ == "FUTIDX" and name in OPTION_STRATEGY_INDEX_SYMBOLS and ((segment == "NFO" and name == "NIFTY") or (segment == "BFO" and name == "SENSEX")):
-                index_symbols.add(name)
-        stock_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol in stock_symbols]
-        # Resolve option expiry independently of future expiry; this selects the
-        # nearest genuine weekly option chain for NIFTY and SENSEX.
-        targets_list = []
-        for symbol in stock_symbols:
-            expiry = select_nearest_option_expiry(
-                master.instruments, underlying=symbol,
-                instrument_class="STOCK", today=today,
+            runner = LiveBoxSpreadRunner(
+                settings.BACKTEST_DATA_DB,
+                targets,
+                allowed_stock_symbols=frozenset(stock_symbols),
+                future_master=master,
+                auth=AngelOneAuth(),
+                on_results=lambda results: _update_live_box_spread_results(results),
             )
-            if expiry:
-                targets_list.append(BoxSpreadLiveTarget(symbol, "STOCK", expiry=expiry))
-        for symbol in sorted(index_symbols):
-            expiry = select_nearest_option_expiry(
-                master.instruments, underlying=symbol,
-                instrument_class="INDEX", today=today,
+            live_box_spread_runner = runner
+            await _run_live_runner_in_daemon_thread(
+                runner, name="live-box-spread-runner"
             )
-            if expiry:
-                targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=expiry))
-        targets = tuple(targets_list)
-        if not targets:
-            app_logger.warning("Box Spread live runner found no current F&O targets")
-            return
-        runner = LiveBoxSpreadRunner(
-            settings.BACKTEST_DATA_DB,
-            targets,
-            allowed_stock_symbols=frozenset(stock_symbols),
-            future_master=master,
-            auth=AngelOneAuth(),
-            on_results=lambda results: _update_live_box_spread_results(results),
-        )
-        live_box_spread_runner = runner
-        await _run_live_runner_in_daemon_thread(
-            runner, name="live-box-spread-runner"
-        )
-    finally:
-        runner = live_box_spread_runner
-        if runner is not None:
-            _stop_live_runner_nonblocking(runner, name="live-box-spread-final-stop")
-        live_box_spread_runner = None
-
+            if runner.stop_event.is_set():
+                return
+            app_logger.warning(
+                "Box Spread live runner exited unexpectedly; retrying in {:.1f}s",
+                retry_delay,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.error(
+                "Box Spread live runner failed; retrying in {:.1f}s: {}",
+                retry_delay, exc,
+            )
+        finally:
+            if runner is not None:
+                _stop_live_runner_nonblocking(
+                    runner, name="live-box-spread-final-stop"
+                )
+            if live_box_spread_runner is runner:
+                live_box_spread_runner = None
+        await asyncio.sleep(retry_delay)
+        retry_delay = min(max_retry_delay, retry_delay * 2.0)
 
 def _update_live_box_spread_results(results: tuple) -> None:
     global live_box_spread_latest_results
