@@ -70,6 +70,11 @@ class LiveSyntheticUnderlyingFeed:
         )
         self.stop_event = Event()
         self._feed: CommonStrategyMarketFeed | None = None
+        # The shared registry may keep another consumer's canonical display
+        # symbol (for example RELIANCE-EQ) for the same broker token. Track the
+        # configured underlying by instrument identity so ATM updates do not
+        # depend on whichever consumer registered the descriptor first.
+        self._symbol_by_instrument: dict[tuple[str, str, str], str] = {}
 
     def _needs_instrument_master(self) -> bool:
         """Return whether any configured symbol still needs lookup-based resolution."""
@@ -147,6 +152,7 @@ class LiveSyntheticUnderlyingFeed:
             self.instrument_master.download()
         tokens = self._tokens()
         descriptors = []
+        symbol_by_instrument: dict[tuple[str, str, str], str] = {}
         for symbol, token in tokens.items():
             if not token:
                 continue
@@ -156,19 +162,41 @@ class LiveSyntheticUnderlyingFeed:
                 exchange = "BSE"
             else:
                 exchange = "NSE"
-            descriptors.append(
-                CommonStrategyMarketFeed.descriptor(
-                    exchange=exchange,
-                    token=token,
-                    symbol=symbol,
-                    instrument_type="index" if symbol in self.index_symbols else "equity",
-                    segment=exchange,
-                )
+            descriptor = CommonStrategyMarketFeed.descriptor(
+                exchange=exchange,
+                token=token,
+                symbol=symbol,
+                instrument_type="index" if symbol in self.index_symbols else "equity",
+                segment=exchange,
             )
+            descriptors.append(descriptor)
+            key = descriptor.key
+            symbol_by_instrument[
+                (key.exchange.strip().upper(), key.segment.strip().upper(), key.token.strip())
+            ] = symbol
+        self._symbol_by_instrument = symbol_by_instrument
         return descriptors
 
     def _on_record(self, record) -> None:
-        symbol = record.symbol.strip().upper()
+        instrument = getattr(record, "instrument", None)
+        if instrument is not None:
+            identity = (
+                str(getattr(instrument, "exchange", "")).strip().upper(),
+                str(getattr(instrument, "segment", "")).strip().upper(),
+                str(getattr(instrument, "token", "")).strip(),
+            )
+            symbol = self._symbol_by_instrument.get(identity, "")
+        else:
+            symbol = ""
+        # A canonical record may carry the symbol registered by another shared
+        # consumer, not this strategy's underlying name. Fall back to that
+        # display symbol only when it is one of our configured underlyings.
+        if not symbol:
+            candidate = str(getattr(record, "symbol", "")).strip().upper()
+            if candidate in self.symbols:
+                symbol = candidate
+        if not symbol:
+            return
         price = record.ltp
         if price is None or price <= 0:
             return

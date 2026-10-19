@@ -105,6 +105,9 @@ def test_underlying_feed_resolves_index_from_master_when_declared():
         {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
     ]
     master._loaded = True
+    # Keep the declared-index lookup deterministic and offline; _tokens()
+    # may refresh the instrument master when its cache is not authoritative.
+    master.download = lambda force=False: master.instruments
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"})
@@ -205,3 +208,36 @@ def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monke
 
     # A descriptor exposes its broker token through key, not descriptor.token.
     assert feed._feed is None
+
+def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underlying():
+    from time import time_ns
+
+    from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"RELIANCE": (100.0, 105.0)})
+    observed = []
+    feed = LiveSyntheticUnderlyingFeed(
+        ("RELIANCE",),
+        tracker=tracker,
+        concrete_tokens={"RELIANCE": "2885"},
+        on_price=lambda symbol, price, timestamp: observed.append((symbol, price, timestamp)),
+    )
+
+    # The cash-future consumer may have registered this shared NSE token as
+    # RELIANCE-EQ first, so the normalized record's display symbol is not the
+    # underlying key that the synthetic ATM tracker expects.
+    descriptor = feed._descriptors()[0]
+    timestamp_ns = time_ns()
+    record = MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "2885"),
+        symbol="RELIANCE-EQ",
+        instrument_type=InstrumentType.EQUITY,
+        timestamp_ns=timestamp_ns,
+        ltp=104.6,
+    )
+
+    feed._on_record(record)
+
+    assert descriptor.symbol == "RELIANCE"
+    assert tracker.atm("RELIANCE") == 105.0
+    assert observed == [("RELIANCE", 104.6, timestamp_ns)]
