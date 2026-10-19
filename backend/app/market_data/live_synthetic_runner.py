@@ -311,38 +311,11 @@ class LiveSyntheticRunner:
             index_symbols=index_symbols,
             commodity_symbols=commodity_symbols,
         )
-        # Token resolution is transient: an empty token must not be treated as
-        # resolvable, and unresolved targets must remain in the universe so the
-        # feed can recover when the instrument master/token mapping is refreshed.
-        try:
-            resolved_tokens = {
-                str(symbol).strip().upper(): str(token).strip()
-                for symbol, token in feed._tokens().items()
-                if str(token).strip()
-            }
-        except Exception as exc:
-            resolved_tokens = {}
-            app_logger.warning(
-                "Synthetic underlying token resolution failed; retaining all targets for retry: %s",
-                exc,
-            )
-
-        unresolved = sorted(
-            {
-                target.underlying.strip().upper()
-                for target in self.targets
-                if target.underlying.strip().upper() not in resolved_tokens
-            }
-        )
-        if unresolved:
-            app_logger.warning(
-                "Synthetic underlying tokens unresolved; retaining targets for recovery: %s",
-                ", ".join(unresolved),
-            )
-        if not resolved_tokens:
-            app_logger.warning(
-                "Synthetic underlying feed currently has zero resolved tokens; retrying resolution"
-            )
+        # Do not resolve tokens synchronously here. The feed worker owns
+        # resolution/retry and exposes per-symbol diagnostics after its first
+        # attempt. Preflight resolution blocked runner startup on network I/O and
+        # duplicated the instrument-master download before the worker even started.
+        # Keep every target configured so transiently missing symbols can recover.
         return feed
 
     def _refresh_target_expiries(self) -> bool:
