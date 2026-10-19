@@ -118,7 +118,7 @@ class LiveSyntheticOptionFutureRecorder:
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
         current = now or datetime.now(IST)
-        return current.weekday() < 5 and OPEN <= current.time() <= CLOSE
+        return current.weekday() < 5 and OPEN <= current.time() < CLOSE
 
     @staticmethod
     def _normalize(message: dict[str, Any], meta: SyntheticSubscription) -> dict[str, Any]:
