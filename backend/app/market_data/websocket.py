@@ -43,7 +43,6 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
     itself, making the common-feed retirement gate wait forever. Keep the SDK
     call and any fallback bounded so callbacks and handshake admission unwind.
     """
-    completed = Event()
     failure: dict[str, Exception] = {}
 
     def _close() -> None:
@@ -51,8 +50,6 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
             socket.close_connection()
         except Exception as exc:
             failure["exception"] = exc
-        finally:
-            completed.set()
 
     worker = Thread(target=_close, name=f"angel-ws-sdk-close-{phase}", daemon=True)
     worker.start()
@@ -558,3 +555,192 @@ class MarketDataWebSocket:
         if isinstance(last_error, TradingAppException):
             raise last_error
         raise TradingAppException("WebSocketConnectionError", str(last_error), 502)
+
+    def subscribe_groups(self, groups: dict[int, list[str]], mode: Optional[int] = None) -> None:
+        """Add exchange/token groups to the shared Angel session."""
+        normalized: dict[int, list[str]] = {}
+        for exchange_type, tokens in groups.items():
+            if not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0:
+                raise ValueError("exchange_type must be a positive integer")
+            values = [str(token).strip() for token in tokens if str(token).strip()]
+            if values:
+                normalized[exchange_type] = list(dict.fromkeys(values))
+        if not normalized:
+            return
+        with self._lock:
+            for exchange_type, tokens in normalized.items():
+                current = self.subscriptions.setdefault(exchange_type, [])
+                self.subscriptions[exchange_type] = list(dict.fromkeys(current + tokens))
+            self.exchange_type = next(iter(self.subscriptions))
+            self.tokens = list(self.subscriptions[self.exchange_type])
+            if mode is not None:
+                self.mode = mode
+            socket = self.websocket
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+            payload = self._token_groups()
+        if socket and connected:
+            socket.subscribe(correlation_id, current_mode, payload)
+
+    def unsubscribe_groups(self, groups: dict[int, list[str]]) -> None:
+        """Remove exchange/token groups from the shared Angel session."""
+        normalized: dict[int, list[str]] = {}
+        for exchange_type, tokens in groups.items():
+            values = [str(token).strip() for token in tokens if str(token).strip()]
+            if values:
+                normalized[exchange_type] = list(dict.fromkeys(values))
+        if not normalized:
+            return
+        with self._lock:
+            for exchange_type, tokens in normalized.items():
+                current = self.subscriptions.get(exchange_type, [])
+                remaining = [token for token in current if token not in set(tokens)]
+                if remaining:
+                    self.subscriptions[exchange_type] = remaining
+                else:
+                    self.subscriptions.pop(exchange_type, None)
+            if self.subscriptions:
+                self.exchange_type = next(iter(self.subscriptions))
+                self.tokens = list(self.subscriptions[self.exchange_type])
+            else:
+                self.exchange_type = None
+                self.tokens = []
+            socket = self.websocket
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+        if socket and connected:
+            socket.unsubscribe(correlation_id, current_mode, [{"exchangeType": e, "tokens": t} for e, t in normalized.items()])
+
+    def subscribe(self, tokens: list[str], mode: Optional[int] = None):
+        """Replace the remembered token set and subscribe when connected."""
+        normalized = [str(token).strip() for token in tokens if str(token).strip()]
+        if not normalized:
+            raise ValueError("at least one WebSocket token is required")
+        if mode is not None and (not isinstance(mode, int) or isinstance(mode, bool) or mode not in {1, 2, 3, 4}):
+            raise ValueError("mode must be one of 1, 2, 3 or 4")
+        with self._lock:
+            self.tokens = list(dict.fromkeys(normalized))
+            exchange_type = self.exchange_type
+            if exchange_type is None:
+                raise ValueError("exchange_type is not configured")
+            self.subscriptions[exchange_type] = list(self.tokens)
+            if mode is not None:
+                self.mode = mode
+            socket = self.websocket
+            exchange_type = self.exchange_type
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+            current_tokens = list(self.tokens)
+        if socket and connected and exchange_type is not None:
+            socket.subscribe(correlation_id, current_mode, self._token_groups())
+
+    def unsubscribe(self, tokens: list[str]):
+        """Unsubscribe tokens and remove them from the remembered set."""
+        normalized = [str(token).strip() for token in tokens if str(token).strip()]
+        if not normalized:
+            return
+        with self._lock:
+            normalized_set = set(normalized)
+            self.tokens = [token for token in self.tokens if token not in normalized_set]
+            if self.exchange_type is not None:
+                if self.tokens:
+                    self.subscriptions[self.exchange_type] = list(self.tokens)
+                else:
+                    self.subscriptions.pop(self.exchange_type, None)
+            socket = self.websocket
+            exchange_type = self.exchange_type
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+        if socket and connected and exchange_type is not None:
+            socket.unsubscribe(correlation_id, current_mode, [{"exchangeType": exchange_type, "tokens": normalized}])
+
+    def close(self):
+        """Stop reconnects, close the SDK socket, and verify transport termination."""
+        with self._lock:
+            self._stopping = True
+            self._connected = False
+            self._connecting = False
+            socket = self.websocket
+            self.websocket = None
+            # connect() may still be waiting for the SDK handshake and therefore
+            # has not copied the SDK's transport thread onto this wrapper yet.
+            # Read the SDK-owned thread directly so close can retire it now.
+            transport_thread = self._transport_thread or getattr(socket, "_transport_thread", None)
+            if transport_thread is not None:
+                self._transport_thread = transport_thread
+        close_error = None
+        close_worker = None
+        if socket:
+            # SmartWebSocketV2.close_connection() calls into websocket-client
+            # synchronously and can itself block before we reach the transport
+            # join/abort below. Run it separately so the close deadline actually
+            # bounds this call as well as run_forever's shutdown.
+            def close_sdk_connection():
+                nonlocal close_error
+                try:
+                    socket.close_connection()
+                except Exception as exc:
+                    close_error = exc
+
+            close_worker = Thread(
+                target=close_sdk_connection,
+                name="angel-ws-close-call",
+                daemon=True,
+            )
+            close_worker.start()
+            close_worker.join(timeout=1.0)
+            if close_worker.is_alive():
+                app_logger.error(
+                    "Angel WebSocket SDK close_connection() exceeded 1s; "
+                    "continuing with bounded transport shutdown"
+                )
+                _log_transport_thread_stack(close_worker, phase="sdk-close-call-timeout")
+        # close_connection can return while run_forever is still unwinding, or
+        # remain blocked in SDK code. Give the transport a short graceful window,
+        # then abort the underlying TCP socket. This is especially important when
+        # close races with connect(): retirement must not wait forever while the
+        # manager holds broker admission.
+        if (
+            transport_thread is not None
+            and transport_thread is not current_thread()
+            and transport_thread.is_alive()
+        ):
+            transport_thread.join(timeout=1.0)
+        if (
+            transport_thread is not None
+            and transport_thread is not current_thread()
+            and transport_thread.is_alive()
+        ):
+            wsapp = getattr(socket, "wsapp", None) if socket is not None else None
+            low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
+            abort = getattr(low_level_socket, "abort", None)
+            if callable(abort):
+                try:
+                    abort()
+                except Exception as abort_exc:
+                    app_logger.error(f"Angel WebSocket transport abort failed during close: {abort_exc}")
+                transport_thread.join(timeout=6.0)
+        # A timed-out SDK close call may unwind after the transport is aborted.
+        # Do not let that helper hold the common-feed retirement worker forever.
+        if close_worker is not None and close_worker.is_alive():
+            close_worker.join(timeout=1.0)
+            if close_worker.is_alive():
+                _log_transport_thread_stack(close_worker, phase="sdk-close-call-after-abort")
+        still_alive = bool(transport_thread and transport_thread.is_alive())
+        with self._lock:
+            self._transport_close_timed_out = still_alive
+            if not still_alive:
+                self._transport_thread = None
+        if still_alive:
+            app_logger.error(
+                "Angel WebSocket transport did not terminate within close timeout; "
+                "possible orphan broker session"
+            )
+            _log_transport_thread_stack(transport_thread, phase="graceful-close-timeout")
+        if close_error is not None:
+            raise close_error
+        app_logger.info(f"Angel One WebSocket closed transport_alive={still_alive}")
