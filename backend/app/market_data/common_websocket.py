@@ -1135,10 +1135,12 @@ class CommonWebSocketManager:
                     }
                     primary_exchange_types = group_exchange_types.intersection({1, 2})
                     now_ns = time.time_ns()
-                    primary_exchange_stale = any(
+                    # Give every replacement generation a full silence window
+                    # to prove itself. A broker replaying an old snapshot must not
+                    # cause a reconnect loop every supervisor interval.
+                    primary_exchange_stale = age >= float(timeout) and any(
                         (
                             (group, exchange_type) not in self._latest_tick_timestamp_ns_by_group_exchange
-                            and age >= float(timeout)
                             and now - self._last_raw_frame_at_by_exchange_type.get(
                                 (group, exchange_type), 0.0
                             ) >= float(timeout)
