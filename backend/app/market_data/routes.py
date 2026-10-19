@@ -174,24 +174,59 @@ def get_live_data_health():
             })
         one_second = next(x for x in sources if x["source"] == "angelone-live-1s")
         common = shared_common_manager_snapshot()
-        runtime_age = None
-        runtime_live = False
-        if common and common.get("last_tick") and common.get("ticks_received", 0) > 0:
-            # Prefer the monotonic aggregate timestamp; fall back for older manager snapshots.
-            timestamp_ns = common.get("latest_tick_timestamp_ns")
-            if timestamp_ns is None:
-                timestamp_ns = common["last_tick"].get("timestamp_ns")
-            if timestamp_ns is not None:
-                raw_runtime_age = (now.timestamp() * 1_000_000_000 - timestamp_ns) / 1_000_000_000
-                # Do not turn future-dated source timestamps into fresh market data.
-                runtime_age = None if raw_runtime_age < -5.0 else max(0.0, raw_runtime_age)
-                runtime_live = market_open and runtime_age is not None and runtime_age <= 5.0
+        # NSE cash (Angel exchange type 1) and NFO derivatives (type 2) are
+        # the critical feeds for the cash-future and synthetic scanners. Do not
+        # let a fresh BFO/MCX tick mask stale or absent NSE/NFO observations.
+        now_ns = int(now.timestamp() * 1_000_000_000)
+        timestamps_by_exchange = (
+            common.get("latest_tick_timestamp_ns_by_exchange_type", {}) if common else {}
+        )
+        exchange_freshness: dict[str, dict[str, object]] = {}
+        for exchange_type, exchange_name in ((1, "NSE"), (2, "NFO")):
+            raw_timestamp = timestamps_by_exchange.get(str(exchange_type))
+            if raw_timestamp is None:
+                raw_timestamp = timestamps_by_exchange.get(exchange_type)
+            try:
+                timestamp_ns = int(raw_timestamp) if raw_timestamp is not None else None
+            except (TypeError, ValueError, OverflowError):
+                timestamp_ns = None
+            raw_age = (
+                (now_ns - timestamp_ns) / 1_000_000_000
+                if timestamp_ns is not None else None
+            )
+            age = (
+                None if raw_age is None or raw_age < -5.0
+                else max(0.0, raw_age)
+            )
+            exchange_freshness[exchange_name] = {
+                "exchange_type": exchange_type,
+                "latest_tick_timestamp_ns": timestamp_ns,
+                "age_seconds": age,
+                "status": (
+                    "LIVE" if market_open and age is not None and age <= 5.0
+                    else "STALE" if market_open and (age is not None or (common or {}).get("ticks_received", 0) > 0)
+                    else "NO_DATA" if market_open
+                    else "CLOSED"
+                ),
+            }
+        known_primary_ages = [
+            item["age_seconds"] for item in exchange_freshness.values()
+            if item["age_seconds"] is not None
+        ]
+        runtime_age = max(known_primary_ages) if known_primary_ages else None
+        runtime_live = market_open and all(
+            item["status"] == "LIVE" for item in exchange_freshness.values()
+        )
+        primary_any_data = any(
+            item["latest_tick_timestamp_ns"] is not None
+            for item in exchange_freshness.values()
+        )
         # Runtime tick freshness and persisted-source freshness are different signals.
-        # Never report persisted rows as evidence that the in-memory live feed is receiving ticks.
+        # Never report persisted rows or an unrelated exchange's ticks as NSE/NFO health.
         runtime_status = (
             "CLOSED" if not market_open else
             "LIVE" if runtime_live else
-            "STALE" if runtime_age is not None else
+            "STALE" if primary_any_data or (common or {}).get("ticks_received", 0) > 0 else
             "NO_DATA"
         )
         feed_status = runtime_status
@@ -217,6 +252,8 @@ def get_live_data_health():
                 "delivery_errors": common.get("delivery_errors", 0) if common else 0,
                 "status": runtime_status,
                 "age_seconds": runtime_age,
+                "exchange_freshness": exchange_freshness,
+                "required_exchange_types": [1, 2],
             },
             "sources": sources, "live_orders": "OFF",
         }
