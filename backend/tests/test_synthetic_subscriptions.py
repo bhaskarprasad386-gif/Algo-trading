@@ -113,3 +113,19 @@ def test_selection_keeps_only_matching_expiry_and_real_tokens():
     )
     assert selected.expiry=="29OCT2026"
     assert {x.token for x in selected.subscriptions}=={"10","20","21"}
+
+
+
+def test_explicit_monthly_expiry_selects_matching_future_not_nearest_unmatched_future():
+    items = [
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"22OCT2026","token":"9","symbol":"ABCOCTNEARFUT","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"29OCT2026","token":"10","symbol":"ABCOCTFUT","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"29OCT2026","token":"20","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"29OCT2026","token":"21","symbol":"ABC100PE","strike":"10000","lotsize":"10"},
+    ]
+    selected = select_synthetic_contracts(
+        _master(items), underlying="ABC", instrument_class="STOCK", atm_strike=100,
+        expiry="29OCT2026", allowed_stock_symbols=frozenset({"ABC"})
+    )
+    assert selected.expiry == "29OCT2026"
+    assert {item.token for item in selected.subscriptions} == {"10", "20", "21"}
