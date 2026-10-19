@@ -64,6 +64,13 @@ jobs:
             echo
           fi
 
+          live_health_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/live_health_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/market-data/live-health 2>/dev/null || true)
+          echo "LIVE_HEALTH_HTTP=$live_health_code"
+          if [ "$live_health_code" != "000" ]; then
+            cat /tmp/live_health_body || true
+            echo
+          fi
+
           echo "=== LIVE SCANNER SNAPSHOTS ==="
           for endpoint in \
             "/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=5" \
@@ -107,7 +114,8 @@ jobs:
 
           diag = load("/tmp/synthetic_diag_body")
           runtime = load("/tmp/runtime_body")
-          nodes = list(walk(runtime))
+          live_health = load("/tmp/live_health_body")
+          nodes = list(walk(runtime)) + list(walk(live_health))
           session = next((str(x.get("market_session", "")).upper() for x in nodes if x.get("market_session")), "")
           feed = diag.get("underlying_feed") if isinstance(diag.get("underlying_feed"), dict) else {}
           symbols = feed.get("symbols") if isinstance(feed.get("symbols"), dict) else {}
