@@ -35,6 +35,49 @@ def _log_transport_thread_stack(thread: Thread, *, phase: str) -> None:
 
 
 
+def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: float = 1.0) -> bool:
+    """Request SDK close off the transport callback and abort if SDK close stalls.
+
+    SmartAPI's close_connection() is not guaranteed to return. In particular,
+    calling it directly from on_open/on_data can block the run_forever thread
+    itself, making the common-feed retirement gate wait forever. Keep the SDK
+    call and any fallback bounded so callbacks and handshake admission unwind.
+    """
+    failure: dict[str, Exception] = {}
+
+    def _close() -> None:
+        try:
+            socket.close_connection()
+        except Exception as exc:
+            failure["exception"] = exc
+
+    worker = Thread(target=_close, name=f"angel-ws-sdk-close-{phase}", daemon=True)
+    worker.start()
+    worker.join(timeout=max(0.01, float(timeout_seconds)))
+    needs_abort = worker.is_alive() or "exception" in failure
+    if needs_abort:
+        wsapp = getattr(socket, "wsapp", None)
+        low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
+        abort = getattr(low_level_socket, "abort", None)
+        if callable(abort):
+            try:
+                abort()
+            except Exception as exc:
+                app_logger.warning(f"Angel WebSocket low-level abort failed phase={phase}: {exc}")
+        if worker.is_alive():
+            worker.join(timeout=max(0.01, float(timeout_seconds)))
+    if "exception" in failure:
+        app_logger.warning(
+            f"Angel WebSocket SDK close failed phase={phase}: {failure['exception']}"
+        )
+    if worker.is_alive():
+        app_logger.error(
+            f"Angel WebSocket SDK close worker still alive after bounded abort phase={phase}"
+        )
+        _log_transport_thread_stack(worker, phase=f"sdk-close-{phase}")
+    return not worker.is_alive()
+
+
 def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     """Start the transport in a tracked thread and return after handshake outcome.
 
@@ -113,10 +156,8 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     worker.start()
     timeout = max(1.0, float(getattr(socket, "_connect_handshake_timeout_seconds", 15.0)))
     if not ready.wait(timeout=timeout):
-        try:
-            socket.close_connection()
-        finally:
-            raise TimeoutError(f"Angel WebSocket handshake timed out after {timeout:.1f}s")
+        _close_sdk_connection_bounded(socket, phase="handshake-timeout")
+        raise TimeoutError(f"Angel WebSocket handshake timed out after {timeout:.1f}s")
     if not outcome.get("opened"):
         detail = outcome.get("error") or "transport exited before open"
         raise ConnectionError(f"Angel WebSocket failed before open: {detail}")
@@ -345,10 +386,7 @@ class MarketDataWebSocket:
         # The failed subscribe cannot be trusted, even when a recovery callback
         # exists. Close this transport now; the common manager (auto-reconnect
         # disabled) or this wrapper (auto-reconnect enabled) owns replacement.
-        try:
-            socket.close_connection()
-        except Exception as exc:
-            app_logger.warning(f"Angel One WebSocket close after initial-subscribe failure failed: {exc}")
+        _close_sdk_connection_bounded(socket, phase="initial-subscribe-failure")
         if self._auto_reconnect:
             self._schedule_reconnect()
 
@@ -476,10 +514,9 @@ class MarketDataWebSocket:
                 # Failed handshakes can leave run_forever unwinding after connect()
                 # raises. Request SDK close and wait boundedly before another attempt.
                 if sdk_socket is not None:
-                    try:
-                        sdk_socket.close_connection()
-                    except Exception:
-                        pass
+                    _close_sdk_connection_bounded(
+                        sdk_socket, phase=f"connect-attempt-{attempt + 1}-failure"
+                    )
                 if transport_thread is not None and transport_thread is not current_thread():
                     transport_thread.join(timeout=1.0)
                 if transport_thread is not None and transport_thread.is_alive():
