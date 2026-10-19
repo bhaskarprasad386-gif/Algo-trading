@@ -1634,6 +1634,7 @@ def test_latest_exchange_timestamp_never_regresses_on_out_of_order_ticks():
     registry.register(d)
     manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
     manager._recovery_interval_seconds = 60.0
+    manager.register_normalized_callback("cash", lambda record: None)
     try:
         manager.subscribe("cash", [d.key])
         group = SocketGroup(1, 0)
