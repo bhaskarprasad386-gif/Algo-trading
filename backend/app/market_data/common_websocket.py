@@ -256,6 +256,26 @@ class CommonWebSocketManager:
         return mapping[value]
 
     @staticmethod
+    def _has_provider_timestamp(payload: Any) -> bool:
+        """Do not treat the normalizer's local-clock fallback as source freshness."""
+        if not isinstance(payload, dict):
+            return False
+        for name in (
+            "exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
+            "exchange_timestamp_ms", "timestamp", "feed_time",
+        ):
+            value = payload.get(name)
+            if value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if isfinite(number):
+                return True
+        return False
+
+    @staticmethod
     def _consumer_name(consumer: str) -> str:
         value = str(consumer).strip()
         if not value:
@@ -1399,25 +1419,29 @@ class CommonWebSocketManager:
                         incoming_exchange_type = int(
                             exchange_type or self._resolve_exchange_type(key)
                         )
-                        previous_exchange_timestamp = self._latest_tick_timestamp_ns_by_exchange_type.get(
-                            incoming_exchange_type
-                        )
-                        if (
-                            previous_exchange_timestamp is None
-                            or incoming_timestamp_ns > previous_exchange_timestamp
-                        ):
-                            self._latest_tick_timestamp_ns_by_exchange_type[incoming_exchange_type] = incoming_timestamp_ns
-                        previous_group_timestamp = self._latest_tick_timestamp_ns_by_group_exchange.get(
-                            (group, incoming_exchange_type)
-                        )
-                        if (
-                            previous_group_timestamp is None
-                            or incoming_timestamp_ns > previous_group_timestamp
-                        ):
-                            self._latest_tick_timestamp_ns_by_group_exchange[
+                        # The normalizer deliberately falls back to local time
+                        # when the provider omits timestamps. That is useful for
+                        # generic consumers, but it is not proof of source freshness.
+                        if self._has_provider_timestamp(message):
+                            previous_exchange_timestamp = self._latest_tick_timestamp_ns_by_exchange_type.get(
+                                incoming_exchange_type
+                            )
+                            if (
+                                previous_exchange_timestamp is None
+                                or incoming_timestamp_ns > previous_exchange_timestamp
+                            ):
+                                self._latest_tick_timestamp_ns_by_exchange_type[incoming_exchange_type] = incoming_timestamp_ns
+                            previous_group_timestamp = self._latest_tick_timestamp_ns_by_group_exchange.get(
                                 (group, incoming_exchange_type)
-                            ] = incoming_timestamp_ns
-                        self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
+                            )
+                            if (
+                                previous_group_timestamp is None
+                                or incoming_timestamp_ns > previous_group_timestamp
+                            ):
+                                self._latest_tick_timestamp_ns_by_group_exchange[
+                                    (group, incoming_exchange_type)
+                                ] = incoming_timestamp_ns
+                            self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
                 callback(record)
                 with self._lock:
                     self._normalized_records_delivered += 1
