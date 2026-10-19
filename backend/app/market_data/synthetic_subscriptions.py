@@ -73,8 +73,8 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if not matching_futures:
         nearest_expiry = _expiry_key(future_rows[0].get("expiry"))
         raise LookupError(
-            f"synthetic option expiry {target_expiry} does not match "
-            f"available nearest future expiry {nearest_expiry} for {symbol}"
+            f"synthetic option expiry {target_expiry} does not match current future expiry; "
+            f"available nearest future expiry is {nearest_expiry} for {symbol}"
         )
     current = matching_futures[0]
     current_future_expiry = _expiry_key(current.get("expiry"))
