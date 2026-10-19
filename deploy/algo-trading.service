@@ -2,6 +2,8 @@
 Description=Algo Trading FastAPI Backend
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=20
 
 [Service]
 Type=simple
@@ -13,11 +15,15 @@ EnvironmentFile=-/opt/Algo-Trading/backend/.env
 ExecStart=/opt/Algo-Trading/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
-TimeoutStopSec=30
+TimeoutStartSec=180
+TimeoutStopSec=45
 KillSignal=SIGTERM
 KillMode=control-group
 FinalKillSignal=SIGKILL
 SendSIGKILL=yes
+LimitNOFILE=65535
+TasksMax=4096
+OOMScoreAdjust=-500
 
 [Install]
 WantedBy=multi-user.target
