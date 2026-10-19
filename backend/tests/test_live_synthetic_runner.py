@@ -347,11 +347,27 @@ def test_select_nearest_option_expiry_returns_none_without_options():
 
 def test_runner_filters_targets_to_resolvable_underlying_tokens(monkeypatch):
     from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
+
     class Feed:
-        def _tokens(self): return {"NIFTY": "26000"}
-    runner = LiveSyntheticRunner(":memory:", [SyntheticLiveTarget("NIFTY","INDEX","29OCT2026"), SyntheticLiveTarget("COPPER","COMMODITY","29OCT2026")], allowed_stock_symbols=frozenset())
+        # Production _tokens() retains unresolved symbols with empty values so
+        # it can retry them later; the runner must not treat those as resolvable.
+        def _tokens(self):
+            return {"NIFTY": "26000", "COPPER": "", "BANKNIFTY": None}
+
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [
+            SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026"),
+            SyntheticLiveTarget("COPPER", "COMMODITY", None, "29OCT2026"),
+            SyntheticLiveTarget("BANKNIFTY", "INDEX", None, "29OCT2026"),
+        ],
+        allowed_stock_symbols=frozenset(),
+    )
     monkeypatch.setattr(runner, "_atm_tracker", object())
-    monkeypatch.setattr("app.market_data.live_synthetic_runner.LiveSyntheticUnderlyingFeed", lambda *a, **k: Feed())
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticUnderlyingFeed",
+        lambda *a, **k: Feed(),
+    )
     feed = runner._ensure_underlying_feed()
     assert feed is not None
     assert [x.underlying for x in runner.targets] == ["NIFTY"]
