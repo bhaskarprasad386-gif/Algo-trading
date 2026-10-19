@@ -186,6 +186,7 @@ class CommonWebSocketManager:
         self._latest_tick_timestamp_ns_by_exchange_type: dict[int, int] = {}
         self._latest_tick_timestamp_ns_by_group_exchange: dict[tuple[SocketGroup, int], int] = {}
         self._last_exchange_tick_received_at: dict[int, float] = {}
+        self._last_raw_frame_at_by_exchange_type: dict[tuple[SocketGroup, int], float] = {}
         self._socket_created_at: dict[SocketGroup, float] = {}
         # Keep transport activity, successful routing, and consumer delivery as
         # separate clocks; a mapping/callback issue must not masquerade as a dead socket.
@@ -1138,6 +1139,9 @@ class CommonWebSocketManager:
                         (
                             (group, exchange_type) not in self._latest_tick_timestamp_ns_by_group_exchange
                             and age >= float(timeout)
+                            and now - self._last_raw_frame_at_by_exchange_type.get(
+                                (group, exchange_type), 0.0
+                            ) >= float(timeout)
                         )
                         or (
                             (group, exchange_type) in self._latest_tick_timestamp_ns_by_group_exchange
@@ -1285,6 +1289,8 @@ class CommonWebSocketManager:
                     self._invalid_exchange_type_frames += 1
                     return
 
+            if exchange_type is not None:
+                self._last_raw_frame_at_by_exchange_type[(group, exchange_type)] = time.monotonic()
             routes = self._route_index.get(group, {})
             if exchange_type is not None:
                 matching = tuple(routes.get((exchange_type, token), ()))
@@ -1716,6 +1722,11 @@ class CommonWebSocketManager:
                 "last_exchange_tick_received_age_seconds_by_exchange_type": {
                     str(exchange_type): max(0.0, time.monotonic() - received_at)
                     for exchange_type, received_at in self._last_exchange_tick_received_at.items()
+                },
+                "last_raw_frame_age_seconds_by_exchange_group": {
+                    f"{group.mode}:{group.shard}:{exchange_type}": max(0.0, time.monotonic() - received_at)
+                    for (group, exchange_type), received_at in self._last_raw_frame_at_by_exchange_type.items()
+                    if group in sockets
                 },
                 "connected_groups": [
                     f"{group.mode}:{group.shard}"
