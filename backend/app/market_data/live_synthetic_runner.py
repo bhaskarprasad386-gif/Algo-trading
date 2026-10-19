@@ -420,7 +420,7 @@ class LiveSyntheticRunner:
                 ) or "no targets configured after universe filtering"
                 app_logger.warning(
                     "Synthetic subscription selection produced zero contracts "
-                    "(targets=%d, skipped=%s)",
+                    "(targets={}, skipped={})",
                     len(self.targets),
                     details,
                 )
