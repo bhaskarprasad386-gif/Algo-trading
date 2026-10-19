@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Algo Trading local runtime watchdog
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=algo-trading-watchdog.service
+
+[Install]
+WantedBy=timers.target
