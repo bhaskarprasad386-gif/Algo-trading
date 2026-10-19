@@ -16,6 +16,10 @@ on:
       - "backend/app/market_data/tests/test_common_websocket_429_cooldown.py"
       - "backend/app/market_data/tests/test_websocket.py"
       - "backend/app/market_data/tests/test_batch_pq.py"
+      - "backend/app/market_data/live_synthetic_underlying.py"
+      - "backend/app/market_data/live_synthetic_runner.py"
+      - "backend/tests/test_live_synthetic_underlying.py"
+      - "backend/tests/test_live_synthetic_runner.py"
       - ".github/workflows/targeted-common-feed-tests.yml"
 
 jobs:
@@ -47,6 +51,8 @@ jobs:
           python -m py_compile app/market_data/normalizer.py
           python -m py_compile app/market_data/cash_future_opportunity.py
           python -m py_compile app/market_data/live_cash_future_common.py
+          python -m py_compile app/market_data/live_synthetic_underlying.py
+          python -m py_compile app/market_data/live_synthetic_runner.py
       - name: Run targeted common feed tests
         working-directory: backend
         env:
@@ -59,3 +65,12 @@ jobs:
             app/market_data/tests/test_batch_pq.py \
             app/market_data/tests/test_batch_k.py \
             tests/test_live_cash_future_common.py
+      - name: Run synthetic feed root-cause regressions
+        working-directory: backend
+        env:
+          PYTHONPATH: ..
+        run: |
+          python -m pytest -q \
+            tests/test_live_synthetic_underlying.py \
+            tests/test_live_synthetic_runner.py \
+            -k "underlying_feed_clears_old_subscription or underlying_feed_does_not_mark_recently_received_stale_exchange_tick or runner_does_not_block_startup_on_underlying_token_preflight or run_forever_starts_common_feed_without_descriptor_token_attribute or underlying_feed_retains_unresolved_target_and_recovers_token or underlying_feed_maps_shared_canonical_symbol_back_to_configured_underlying or underlying_feed_reports_connected_but_silent or underlying_feed_reports_stale_after_last_tick_expires or underlying_feed_reports_reconnecting_when_transport_is_down_without_ticks or underlying_feed_reports_failed_when_transport_close_is_stuck"

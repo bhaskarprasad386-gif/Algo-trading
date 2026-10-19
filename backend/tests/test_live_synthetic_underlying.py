@@ -201,7 +201,8 @@ def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monke
         {"exch_seg": "NSE", "instrumenttype": "EQ", "symbol": "ABC", "token": "123"}
     ]
     master._loaded = True
-    master.download = lambda force=False: master.instruments
+    download_calls = []
+    master.download = lambda force=False: (download_calls.append(force) or master.instruments)
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"ABC": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(("ABC",), tracker=tracker, instrument_master=master)
     holder["feed"] = feed
@@ -210,6 +211,57 @@ def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monke
 
     # A descriptor exposes its broker token through key, not descriptor.token.
     assert feed._feed is None
+    # One retry cycle must only download the instrument master once; _descriptors
+    # and the subscription loop share the same resolved token snapshot.
+    assert download_calls == [False]
+
+def test_underlying_feed_clears_old_subscription_when_all_tokens_become_unresolvable(monkeypatch):
+    from app.market_data import live_synthetic_underlying as module
+
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "instrumenttype": "EQ", "symbol": "ABC", "token": "123"}
+    ]
+    master._loaded = True
+    master.download = lambda force=False: master.instruments
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"ABC": (100.0, 105.0)})
+    holder = {}
+    original_descriptor = module.CommonStrategyMarketFeed.descriptor
+
+    class FakeFeed:
+        descriptor = staticmethod(original_descriptor)
+
+        def __init__(self, consumer, *, auth):
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start(self, descriptors, callback):
+            self.start_calls += 1
+            # Simulate an instrument-master refresh losing the token after a
+            # previously successful subscription. InstrumentMaster invalidates
+            # this derived index on a real download; mirror that here.
+            master.instruments = []
+            master._symbol_exchange_index = None
+
+        def stop(self):
+            self.stop_calls += 1
+            holder["feed"].stop_event.set()
+
+        def snapshot(self):
+            return {"connected": False}
+
+    monkeypatch.setattr(module, "CommonStrategyMarketFeed", FakeFeed)
+    monkeypatch.setattr(module, "TOKEN_REFRESH_SECONDS", 0.0)
+    feed = LiveSyntheticUnderlyingFeed(("ABC",), tracker=tracker, instrument_master=master)
+    holder["feed"] = feed
+
+    feed.run_forever()
+
+    assert feed._feed is None
+    # Old broker intent must be cleared immediately when the next resolution
+    # cycle has no descriptors, rather than remaining subscribed indefinitely.
+    assert holder["feed"].stop_event.is_set()
+
 
 def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underlying():
     from time import time_ns
@@ -298,6 +350,38 @@ def test_underlying_feed_reports_stale_after_last_tick_expires(monkeypatch):
     assert feed.snapshot()["state"] == "STALE"
     assert feed.snapshot()["symbols"]["NIFTY"]["last_tick_age_seconds"] >= 20.0
 
+
+
+def test_underlying_feed_does_not_mark_recently_received_stale_exchange_tick_as_fresh():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY",), tracker=tracker, concrete_tokens={"NIFTY": "99926000"}
+    )
+    now_ns = time_ns()
+    feed._last_resolved_tokens = {"NIFTY": "99926000"}
+    feed._last_token_resolution_at_ns = now_ns
+    feed._last_tick_by_symbol = {
+        "NIFTY": {
+            "price": 104.0,
+            "source_timestamp_ns": now_ns - 20_000_000_000,
+            "received_at_ns": now_ns,
+        }
+    }
+
+    class ConnectedFeed:
+        def snapshot(self):
+            return {"connected": True, "transport_thread_alive": True}
+
+    feed._feed = ConnectedFeed()
+    health = feed.snapshot()
+
+    assert health["symbols"]["NIFTY"]["receive_age_seconds"] < 1.0
+    assert health["symbols"]["NIFTY"]["source_timestamp_age_seconds"] >= 20.0
+    assert health["symbols"]["NIFTY"]["last_tick_age_seconds"] >= 20.0
+    assert health["fresh_symbol_count"] == 0
+    assert health["state"] == "STALE"
 
 
 def test_underlying_feed_reports_reconnecting_when_transport_is_down_without_ticks():
