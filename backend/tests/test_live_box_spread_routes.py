@@ -32,12 +32,16 @@ def test_live_box_route_serializes_bid_ask_snapshot(monkeypatch):
 
 def test_live_box_route_preserves_bse_index_identity(monkeypatch):
     result = _result(symbol="SENSEX", instrument_class="INDEX")
+    result.low.call_bid, result.low.call_ask = 100, 101
+    result.low.put_bid, result.low.put_ask = 110, 111
+    result.high.call_bid, result.high.call_ask = 90, 91
+    result.high.put_bid, result.high.put_ask = 120, 121
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     row = routes.live(10)["data"][0]
     assert row["symbol"] == "SENSEX"
     assert row["instrument_class"] == "INDEX"
-    assert row["low_call_bid"] == 10 and row["low_call_ask"] == 11
-    assert row["high_put_bid"] == 2 and row["high_put_ask"] == 3
+    assert row["low_call_bid"] == 100 and row["low_call_ask"] == 101
+    assert row["high_put_bid"] == 120 and row["high_put_ask"] == 121
 
 
 def test_live_box_route_rejects_stale_high_leg(monkeypatch):
@@ -56,6 +60,6 @@ def test_live_box_route_rejects_future_dated_leg(monkeypatch):
 
 def test_live_box_route_rejects_excessive_timestamp_skew(monkeypatch):
     now = time.time_ns()
-    result = _result(low_ts=now, high_ts=now - 6_000_000_000)
+    result = _result(low_ts=now, high_ts=now - 2_000_000_000)
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     assert routes.live(10, max_age_seconds=5)["count"] == 0
