@@ -32,6 +32,17 @@ def test_concrete_strikes_from_master_uses_real_chain_and_expiry():
     assert concrete_strikes_from_master(instruments, symbols=("NIFTY",), expiry="30SEP2026") == {"NIFTY": (95.0, 100.0)}
 
 
+def test_concrete_strikes_match_equivalent_expiry_formats_by_date():
+    instruments = [
+        {"name": "NIFTY", "exch_seg": "NFO", "instrumenttype": "OPTIDX", "expiry": "30SEP26", "strike": "2500000"},
+        {"name": "NIFTY", "exch_seg": "NFO", "instrumenttype": "OPTIDX", "expiry": "2026-09-30", "strike": "2510000"},
+        {"name": "NIFTY", "exch_seg": "NFO", "instrumenttype": "OPTIDX", "expiry": "30OCT2026", "strike": "2520000"},
+    ]
+    assert concrete_strikes_from_master(
+        instruments, symbols=("NIFTY",), expiry="30SEP2026"
+    ) == {"NIFTY": (25000.0, 25100.0)}
+
+
 def test_atm_tracker_rejects_stale_underlying_price():
     from time import time_ns
 
