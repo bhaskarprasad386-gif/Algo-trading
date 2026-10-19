@@ -146,3 +146,39 @@ def test_live_data_health_exposes_common_feed_recovery_telemetry(monkeypatch):
     assert runtime_feed["connect_failures"] == 2
     assert runtime_feed["last_connect_failure"]["error_type"] == "ConnectionError"
     assert runtime_feed["recovery_attempts"] == 4
+
+
+def test_live_data_health_does_not_use_fresh_mcx_tick_to_mask_stale_nse_nfo(monkeypatch):
+    import time
+
+    class FakeCommonManager:
+        def snapshot(self):
+            now_ns = time.time_ns()
+            return {
+                "socket_groups": 1,
+                "connected_groups": ["3:0"],
+                "disconnected_groups": [],
+                "ticks_received": 100,
+                # A global/MCX timestamp is fresh, but the scanner-critical
+                # NSE and NFO exchanges have not produced fresh ticks.
+                "latest_tick_timestamp_ns": now_ns,
+                "latest_tick_timestamp_ns_by_exchange_type": {
+                    "5": now_ns,
+                    "1": now_ns - 60_000_000_000,
+                    "2": now_ns - 60_000_000_000,
+                },
+                "last_tick": {"exchange_type": 5, "timestamp_ns": now_ns},
+            }
+
+    monkeypatch.setattr(
+        "app.market_data.common_strategy_feed.shared_common_manager_snapshot",
+        lambda: FakeCommonManager().snapshot(),
+    )
+    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
+    result = routes.get_live_data_health()
+
+    runtime_feed = result["runtime_feed"]
+    assert runtime_feed["status"] == "STALE"
+    assert runtime_feed["exchange_freshness"]["NSE"]["status"] == "STALE"
+    assert runtime_feed["exchange_freshness"]["NFO"]["status"] == "STALE"
+    assert runtime_feed["required_exchange_types"] == [1, 2]
