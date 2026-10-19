@@ -33,6 +33,7 @@ export default function HomePage() {
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
+  const healthFailureCountRef = useRef(0);
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
   const runnerCounterSampleAtRef = useRef<number | null>(null);
   const [runnerTps, setRunnerTps] = useState<Record<string, number>>({});
@@ -54,14 +55,23 @@ export default function HomePage() {
         if (!response.ok) throw new Error("health HTTP " + response.status);
         const body = await response.json();
         const healthy = body?.status === "ok" && String(body?.database ?? "").toLowerCase() === "connected";
+        healthFailureCountRef.current = 0;
         if (!cancelled) {
           setApiStatus(healthy ? "connected" : "degraded");
           setApiDetail(healthy ? "API and database healthy" : "API responding; database/status degraded (" + String(body?.database ?? body?.status ?? "unknown") + ")");
         }
       } catch (error) {
+        healthFailureCountRef.current += 1;
         if (!cancelled) {
-          setApiStatus("error");
-          setApiDetail(error instanceof Error ? error.message : "Health endpoint unreachable");
+          const failures = healthFailureCountRef.current;
+          // One slow mobile/network request is not proof that the VPS is offline.
+          // Require three consecutive failed probes before showing SERVER OFFLINE.
+          if (failures >= 3) {
+            setApiStatus("error");
+            setApiDetail(error instanceof Error ? error.message : "Health endpoint unreachable");
+          } else {
+            setApiDetail("Health probe missed (" + failures + "/3); confirming API availability");
+          }
         }
       }
     };
