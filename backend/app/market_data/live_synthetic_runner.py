@@ -863,10 +863,10 @@ class LiveSyntheticRunner:
         scanner_initialized = self._scanner is not None
         if not running:
             phase, phase_reason = "STOPPED", "runner_not_active_or_stop_requested"
-        elif scanner_initialized and recorder_snapshot and recorder_snapshot.get("running"):
-            phase, phase_reason = "SCANNING", "scanner_and_option_recorder_active"
         elif not LiveSyntheticOptionFutureRecorder.market_open():
             phase, phase_reason = "WAITING_FOR_MARKET_OPEN", "outside_configured_market_session"
+        elif scanner_initialized and recorder_snapshot and recorder_snapshot.get("running"):
+            phase, phase_reason = "SCANNING", "scanner_and_option_recorder_active"
         elif feed_snapshot and feed_snapshot.get("state") in {"TOKEN_RESOLUTION_FAILED", "FAILED", "RECONNECTING", "CONNECTED_NO_TICKS", "STALE"}:
             phase, phase_reason = "WAITING_FOR_UNDERLYING", str(feed_snapshot.get("state_reason") or feed_snapshot.get("state"))
         elif not scanner_initialized:
