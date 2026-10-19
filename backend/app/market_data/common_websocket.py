@@ -176,6 +176,9 @@ class CommonWebSocketManager:
         self._runtime_started_at = time.time()
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
+        # Highest valid exchange timestamp observed across normalized instruments.
+        # Arrival order is not timestamp order, so older ticks must not regress freshness.
+        self._latest_tick_timestamp_ns: int | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
         # Keep transport activity, successful routing, and consumer delivery as
         # separate clocks; a mapping/callback issue must not masquerade as a dead socket.
@@ -1336,6 +1339,13 @@ class CommonWebSocketManager:
                         "bid": record.bid,
                         "ask": record.ask,
                     }
+                    if record.timestamp_ns is not None:
+                        incoming_timestamp_ns = int(record.timestamp_ns)
+                        if (
+                            self._latest_tick_timestamp_ns is None
+                            or incoming_timestamp_ns > self._latest_tick_timestamp_ns
+                        ):
+                            self._latest_tick_timestamp_ns = incoming_timestamp_ns
                 callback(record)
                 with self._lock:
                     self._normalized_records_delivered += 1
@@ -1606,6 +1616,7 @@ class CommonWebSocketManager:
                 "runtime_started_at": self._runtime_started_at,
                 "ticks_by_exchange_type": dict(self._ticks_by_exchange),
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
+                "latest_tick_timestamp_ns": self._latest_tick_timestamp_ns,
                 "connected_groups": [
                     f"{group.mode}:{group.shard}"
                     for group, socket in sockets.items()
