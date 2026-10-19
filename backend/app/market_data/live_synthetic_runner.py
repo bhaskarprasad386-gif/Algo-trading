@@ -182,6 +182,7 @@ class LiveSyntheticRunner:
         self._stop_requested = Event()
         self._running = False
         self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
+        self._last_empty_subscription_diagnostic_ns = 0
 
     @property
     def stop_event(self) -> Event:
@@ -363,6 +364,12 @@ class LiveSyntheticRunner:
         self.instrument_master.download()
         subscriptions = []
         seen: set[tuple[int, str]] = set()
+        skipped: dict[str, list[str]] = {
+            "monthly_expiry_unresolved": [],
+            "live_atm_unavailable_or_stale": [],
+            "contract_selection_failed": [],
+            "selector_returned_no_contracts": [],
+        }
         for target in self.targets:
             if (
                 target.instrument_class.strip().upper() in {"STOCK", "INDEX"}
@@ -371,10 +378,7 @@ class LiveSyntheticRunner:
                 # Never let a transient expiry-resolution gap fall through to
                 # select_synthetic_contracts(expiry=None), which defaults to the
                 # current future expiry and can bypass the monthly-expiry policy.
-                app_logger.warning(
-                    "Skipping synthetic target until its monthly expiry is resolved: %s",
-                    target.underlying,
-                )
+                skipped["monthly_expiry_unresolved"].append(target.underlying)
                 continue
             live_atm = atm_provider(target.underlying, time_ns())
             atm_strike = (
@@ -384,6 +388,7 @@ class LiveSyntheticRunner:
             )
             if atm_strike is None:
                 # A missing underlying must not block ready symbols in the universe.
+                skipped["live_atm_unavailable_or_stale"].append(target.underlying)
                 continue
             try:
                 selection = select_synthetic_contracts(
@@ -396,13 +401,30 @@ class LiveSyntheticRunner:
                     policy=self.policy,
                 )
             except LookupError as exc:
-                app_logger.warning("Skipping unavailable synthetic target %s: %s", target.underlying, exc)
+                skipped["contract_selection_failed"].append(f"{target.underlying} ({exc})")
                 continue
+            if not selection.subscriptions:
+                skipped["selector_returned_no_contracts"].append(target.underlying)
             for item in selection.subscriptions:
                 key = (item.exchange_type, item.token)
                 if key not in seen:
                     seen.add(key)
                     subscriptions.append(item)
+        if not subscriptions:
+            now_ns = time_ns()
+            if now_ns - self._last_empty_subscription_diagnostic_ns >= 60_000_000_000:
+                details = "; ".join(
+                    f"{reason}=[{', '.join(symbols)}]"
+                    for reason, symbols in skipped.items()
+                    if symbols
+                ) or "no targets configured after universe filtering"
+                app_logger.warning(
+                    "Synthetic subscription selection produced zero contracts "
+                    "(targets=%d, skipped=%s)",
+                    len(self.targets),
+                    details,
+                )
+                self._last_empty_subscription_diagnostic_ns = now_ns
         return tuple(subscriptions)
 
     def _wait_for_live_atm(

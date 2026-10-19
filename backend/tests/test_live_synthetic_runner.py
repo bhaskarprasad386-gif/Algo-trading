@@ -970,3 +970,28 @@ def test_synthetic_recorder_discards_far_future_buffer_but_keeps_small_clock_ske
     assert recorder._latest == {}
     assert recorder._future_buffer_discards == 1
     assert emitted == []
+
+
+def test_empty_subscription_diagnostic_identifies_missing_live_atm(monkeypatch):
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+        atm_provider=lambda _symbol, _timestamp: None,
+    )
+    messages = []
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.app_logger.warning",
+        lambda message, *args: messages.append((message, args)),
+    )
+
+    assert runner.build_subscriptions() == ()
+    assert len(messages) == 1
+    assert "zero contracts" in messages[0][0]
+    assert "live_atm_unavailable_or_stale=[NIFTY]" in messages[0][1][1]
+
+    # Repeated 5-second retries should not flood logs with the same diagnosis.
+    assert runner.build_subscriptions() == ()
+    assert len(messages) == 1
