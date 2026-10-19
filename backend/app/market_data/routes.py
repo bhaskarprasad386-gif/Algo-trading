@@ -191,7 +191,7 @@ def get_live_data_health():
             "STALE" if runtime_age is not None else
             "NO_DATA"
         )
-        feed_status = "LIVE" if runtime_live else one_second["status"]
+        feed_status = runtime_status
         return {
             "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
             "checked_at": now.isoformat(), "persisted": one_second["records"] > 0,
