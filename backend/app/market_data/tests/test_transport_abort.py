@@ -50,3 +50,31 @@ def test_close_aborts_blocked_transport_after_graceful_timeout():
     assert low_level.abort_called is True
     assert not transport.is_alive()
     assert client.health["transport_close_timed_out"] is False
+
+
+
+def test_close_bounds_a_hung_sdk_close_connection_call():
+    release = Event()
+    low_level = AbortableLowLevelSocket(release)
+    transport = Thread(target=lambda: release.wait(timeout=5.0), daemon=True)
+    transport.start()
+
+    def hung_close_connection():
+        Event().wait(timeout=30.0)
+
+    sdk_socket = SimpleNamespace(
+        wsapp=SimpleNamespace(sock=low_level),
+        close_connection=hung_close_connection,
+    )
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.websocket = sdk_socket
+    client._transport_thread = transport
+
+    started = __import__("time").monotonic()
+    client.close()
+    elapsed = __import__("time").monotonic() - started
+
+    assert elapsed < 10.0
+    assert low_level.abort_called is True
+    assert not transport.is_alive()
+    assert client.health["transport_close_timed_out"] is False
