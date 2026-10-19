@@ -311,14 +311,38 @@ class LiveSyntheticRunner:
             index_symbols=index_symbols,
             commodity_symbols=commodity_symbols,
         )
-        resolvable = set(feed._tokens())
-        self.targets = tuple(
-            target for target in self.targets
-            if target.underlying.strip().upper() in resolvable
+        # Token resolution is transient: an empty token must not be treated as
+        # resolvable, and unresolved targets must remain in the universe so the
+        # feed can recover when the instrument master/token mapping is refreshed.
+        try:
+            resolved_tokens = {
+                str(symbol).strip().upper(): str(token).strip()
+                for symbol, token in feed._tokens().items()
+                if str(token).strip()
+            }
+        except Exception as exc:
+            resolved_tokens = {}
+            app_logger.warning(
+                "Synthetic underlying token resolution failed; retaining all targets for retry: %s",
+                exc,
+            )
+
+        unresolved = sorted(
+            {
+                target.underlying.strip().upper()
+                for target in self.targets
+                if target.underlying.strip().upper() not in resolved_tokens
+            }
         )
-        if not self.targets:
-            app_logger.warning("Synthetic live runner has no resolvable underlying tokens")
-            return None
+        if unresolved:
+            app_logger.warning(
+                "Synthetic underlying tokens unresolved; retaining targets for recovery: %s",
+                ", ".join(unresolved),
+            )
+        if not resolved_tokens:
+            app_logger.warning(
+                "Synthetic underlying feed currently has zero resolved tokens; retrying resolution"
+            )
         return feed
 
     def _refresh_target_expiries(self) -> bool:
