@@ -170,11 +170,14 @@ export default function HomePage() {
         if (!response.ok) throw new Error("feed health");
         const body = await response.json();
         if (cancelled) return;
-        const status = String(body?.feed_status ?? "").toUpperCase();
+        // The dashboard's feed badge represents live runtime ticks, not persisted history.
+        // Only the runtime tick signal can prove the live feed is receiving fresh ticks.
+        // Older backends without this field are UNKNOWN, never implicitly LIVE via persisted rows.
+        const status = String(body?.runtime_feed?.status ?? "NO_DATA").toUpperCase();
         const session = String(body?.market_session ?? "").toUpperCase();
         setFeedMarketSession(session === "OPEN" ? "OPEN" : session === "CLOSED" ? "CLOSED" : "UNKNOWN");
         setFeedHealthCheckedAt(new Date().toISOString());
-        const age = body?.runtime_feed?.age_seconds ?? body?.age_seconds;
+        const age = body?.runtime_feed?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
         if (session === "CLOSED") setFeedStatus("closed");
         else if (session !== "OPEN") setFeedStatus("no-data");

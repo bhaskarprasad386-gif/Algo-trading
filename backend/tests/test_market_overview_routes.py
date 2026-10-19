@@ -110,6 +110,9 @@ def test_live_data_health_reports_persisted_coverage(monkeypatch, tmp_path):
     assert result["records"] == 1
     assert result["instruments"] == 1
     assert result["persisted"] is True
+    # Persisted history must not imply that the in-memory runtime feed is receiving ticks.
+    assert result["runtime_feed"]["status"] == "NO_DATA"
+    assert result["runtime_feed"]["age_seconds"] is None
     assert result["live_orders"] == "OFF"
 
 
