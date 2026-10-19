@@ -177,7 +177,10 @@ def get_live_data_health():
         runtime_age = None
         runtime_live = False
         if common and common.get("last_tick") and common.get("ticks_received", 0) > 0:
-            timestamp_ns = common["last_tick"].get("timestamp_ns")
+            # Prefer the monotonic aggregate timestamp; fall back for older manager snapshots.
+            timestamp_ns = common.get("latest_tick_timestamp_ns")
+            if timestamp_ns is None:
+                timestamp_ns = common["last_tick"].get("timestamp_ns")
             if timestamp_ns is not None:
                 raw_runtime_age = (now.timestamp() * 1_000_000_000 - timestamp_ns) / 1_000_000_000
                 # Do not turn future-dated source timestamps into fresh market data.
