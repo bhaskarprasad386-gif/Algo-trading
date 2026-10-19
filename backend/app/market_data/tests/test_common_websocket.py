@@ -1626,3 +1626,28 @@ def test_consumer_refresh_removes_old_token_and_activates_new_token():
     assert new_socket is not old_socket
     assert new_socket.connect_calls[0]["subscriptions"] == {2: ["202"]}
     assert [sub.key.token for sub in registry.subscriptions()] == ["202"]
+
+
+def test_latest_exchange_timestamp_never_regresses_on_out_of_order_ticks():
+    registry = InstrumentRegistry()
+    d = descriptor("101", "NSE", "EQ")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        group = SocketGroup(1, 0)
+        manager._on_data(group, {
+            "token": "101", "exchange_type": 1, "ltp": 100,
+            "timestamp_ns": "1792386000000000000",
+        })
+        manager._on_data(group, {
+            "token": "101", "exchange_type": 1, "ltp": 99,
+            "timestamp_ns": "1792385990000000000",
+        })
+        snapshot = manager.snapshot()
+        assert snapshot["ticks_received"] == 2
+        assert snapshot["last_tick"]["timestamp_ns"] == 1792385990000000000
+        assert snapshot["latest_tick_timestamp_ns"] == 1792386000000000000
+    finally:
+        manager.close()
