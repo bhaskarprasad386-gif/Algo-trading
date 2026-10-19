@@ -562,6 +562,10 @@ class LiveSyntheticScanner:
                 return ()
             if atm is None:
                 self._count("missing_atm_price")
+                # Keep the aggregate counter for existing dashboards, but expose
+                # which underlying is losing its live ATM input. This is bounded
+                # by the configured underlying universe and contains no quote data.
+                self._count(f"missing_atm_price_by_symbol:{symbol}")
                 self._prune(timestamp_ns)
                 return ()
             try:

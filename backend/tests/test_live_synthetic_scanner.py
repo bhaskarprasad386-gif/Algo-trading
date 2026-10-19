@@ -579,6 +579,9 @@ def test_pair_monitor_reports_missing_atm_instead_of_ready():
         "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
         "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
     })
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["missing_atm_price"] == 1
+    assert counters["missing_atm_price_by_symbol:NIFTY"] == 1
     row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
     assert row["state"] == "INCOMPLETE"
     assert "MISSING_ATM" in row["reason"]
