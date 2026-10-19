@@ -727,11 +727,14 @@ async def _live_box_spread_loop() -> None:
             name = str(item.get("name", "")).strip().upper()
             if not name:
                 continue
-            if typ == "FUTSTK" and name in TOP15_LIQUID_STOCK_SYMBOLS:
+            # Match Synthetic Future's authoritative Top-15 stock universe and
+            # accept only listed NSE stock futures; do not admit same-named rows
+            # from another segment into Box Spread targets.
+            if typ == "FUTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
                 stock_symbols.add(name)
             elif typ == "FUTIDX" and name in OPTION_STRATEGY_INDEX_SYMBOLS and ((segment == "NFO" and name == "NIFTY") or (segment == "BFO" and name == "SENSEX")):
                 index_symbols.add(name)
-        stock_symbols = sorted(stock_symbols)
+        stock_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol in stock_symbols]
         # Resolve option expiry independently of future expiry; this selects the
         # nearest genuine weekly option chain for NIFTY and SENSEX.
         targets_list = []
