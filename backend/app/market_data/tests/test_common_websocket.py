@@ -1679,6 +1679,7 @@ def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
             (group, 5): now_ns,
         })
         manager._last_raw_frame_at_by_group[group] = time.monotonic()
+        manager._socket_created_at[group] -= 60.0
         snapshot = manager.snapshot()
         ages = snapshot["last_exchange_tick_age_seconds_by_exchange_type"]
         assert ages["1"] >= 59
