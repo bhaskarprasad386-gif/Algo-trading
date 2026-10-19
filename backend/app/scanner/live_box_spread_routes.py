@@ -7,7 +7,7 @@ from app.core.database import SessionLocal
 
 router=APIRouter(prefix="/api/v1/scanner/box-spread",tags=["box-spread"])
 _latest=()
-MAX_LEG_TIMESTAMP_SKEW_NS = 1_000_000_000
+MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
 
 def configure(getter):
     global _latest; _latest=getter
