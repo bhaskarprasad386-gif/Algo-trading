@@ -171,9 +171,9 @@ export default function HomePage() {
         const body = await response.json();
         if (cancelled) return;
         // The dashboard's feed badge represents live runtime ticks, not persisted history.
-        // Keep the legacy aggregate field as a fallback for older API deployments, but never
-        // substitute persisted-source age when runtime tick age is missing.
-        const status = String(body?.runtime_feed?.status ?? body?.feed_status ?? "").toUpperCase();
+        // Only the runtime tick signal can prove the live feed is receiving fresh ticks.
+        // Older backends without this field are UNKNOWN, never implicitly LIVE via persisted rows.
+        const status = String(body?.runtime_feed?.status ?? "NO_DATA").toUpperCase();
         const session = String(body?.market_session ?? "").toUpperCase();
         setFeedMarketSession(session === "OPEN" ? "OPEN" : session === "CLOSED" ? "CLOSED" : "UNKNOWN");
         setFeedHealthCheckedAt(new Date().toISOString());
