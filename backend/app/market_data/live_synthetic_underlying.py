@@ -286,16 +286,49 @@ class LiveSyntheticUnderlyingFeed:
             token = tokens.get(symbol, "")
             tick = last_ticks.get(symbol)
             received_at_ns = int(tick["received_at_ns"]) if tick else None
+            source_timestamp_ns = int(tick["source_timestamp_ns"]) if tick else 0
+            receive_age_seconds = (
+                max(0, now_ns - received_at_ns) / 1_000_000_000
+                if received_at_ns is not None else None
+            )
+            source_age_seconds = (
+                (now_ns - source_timestamp_ns) / 1_000_000_000
+                if source_timestamp_ns > 0 else None
+            )
+            # A frame arriving now is not fresh if its exchange timestamp is
+            # old. ATM tracking rejects source timestamps older than 5s and
+            # future-skewed timestamps; diagnostics must agree instead of
+            # reporting LIVE solely from a recent receive time.
+            if receive_age_seconds is None:
+                effective_age_seconds = None
+            elif source_age_seconds is None:
+                effective_age_seconds = receive_age_seconds
+            elif source_age_seconds < -1.0:
+                effective_age_seconds = max(
+                    receive_age_seconds, UNDERLYING_STALE_AFTER_SECONDS + 1.0
+                )
+            else:
+                effective_age_seconds = max(
+                    receive_age_seconds, max(0.0, source_age_seconds)
+                )
             symbol_health[symbol] = {
                 "token_resolved": bool(token),
                 "token": token or None,
                 "last_price": tick["price"] if tick else None,
                 "last_tick_age_seconds": (
-                    round(max(0, now_ns - received_at_ns) / 1_000_000_000, 3)
-                    if received_at_ns is not None else None
+                    round(effective_age_seconds, 3)
+                    if effective_age_seconds is not None else None
+                ),
+                "receive_age_seconds": (
+                    round(receive_age_seconds, 3)
+                    if receive_age_seconds is not None else None
+                ),
+                "source_timestamp_age_seconds": (
+                    round(max(0.0, source_age_seconds), 3)
+                    if source_age_seconds is not None else None
                 ),
                 "last_tick_received_at_ns": received_at_ns,
-                "source_timestamp_ns": tick["source_timestamp_ns"] if tick else None,
+                "source_timestamp_ns": source_timestamp_ns or None,
             }
         feed_snapshot = self._feed.snapshot() if self._feed is not None else {}
         resolved_count = sum(1 for item in symbol_health.values() if item["token_resolved"])
