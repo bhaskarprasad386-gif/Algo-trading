@@ -636,15 +636,37 @@ class MarketDataWebSocket:
             if transport_thread is not None:
                 self._transport_thread = transport_thread
         close_error = None
+        close_worker = None
         if socket:
-            try:
-                socket.close_connection()
-            except Exception as exc:
-                close_error = exc
-        # close_connection can return while run_forever is still unwinding. Give
-        # it a short graceful window, then abort the underlying TCP socket. This
-        # is especially important when close races with connect(): the manager
-        # must not wait forever for a retired handshake while holding admission.
+            # SmartWebSocketV2.close_connection() calls into websocket-client
+            # synchronously and can itself block before we reach the transport
+            # join/abort below. Run it separately so the close deadline actually
+            # bounds this call as well as run_forever's shutdown.
+            def close_sdk_connection():
+                nonlocal close_error
+                try:
+                    socket.close_connection()
+                except Exception as exc:
+                    close_error = exc
+
+            close_worker = Thread(
+                target=close_sdk_connection,
+                name="angel-ws-close-call",
+                daemon=True,
+            )
+            close_worker.start()
+            close_worker.join(timeout=1.0)
+            if close_worker.is_alive():
+                app_logger.error(
+                    "Angel WebSocket SDK close_connection() exceeded 1s; "
+                    "continuing with bounded transport shutdown"
+                )
+                _log_transport_thread_stack(close_worker, phase="sdk-close-call-timeout")
+        # close_connection can return while run_forever is still unwinding, or
+        # remain blocked in SDK code. Give the transport a short graceful window,
+        # then abort the underlying TCP socket. This is especially important when
+        # close races with connect(): retirement must not wait forever while the
+        # manager holds broker admission.
         if (
             transport_thread is not None
             and transport_thread is not current_thread()
@@ -665,6 +687,12 @@ class MarketDataWebSocket:
                 except Exception as abort_exc:
                     app_logger.error(f"Angel WebSocket transport abort failed during close: {abort_exc}")
                 transport_thread.join(timeout=6.0)
+        # A timed-out SDK close call may unwind after the transport is aborted.
+        # Do not let that helper hold the common-feed retirement worker forever.
+        if close_worker is not None and close_worker.is_alive():
+            close_worker.join(timeout=1.0)
+            if close_worker.is_alive():
+                _log_transport_thread_stack(close_worker, phase="sdk-close-call-after-abort")
         still_alive = bool(transport_thread and transport_thread.is_alive())
         with self._lock:
             self._transport_close_timed_out = still_alive
