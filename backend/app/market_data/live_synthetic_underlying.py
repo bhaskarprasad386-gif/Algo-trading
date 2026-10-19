@@ -1,7 +1,8 @@
 """Live underlying-price feed backed by the common market-data manager."""
 from __future__ import annotations
 
-from threading import Event
+from threading import Event, Lock
+from time import time_ns
 from typing import Callable
 
 from app.algo.auth import AngelOneAuth
@@ -12,6 +13,7 @@ from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 TOKEN_REFRESH_SECONDS = 30.0
+UNDERLYING_STALE_AFTER_SECONDS = 10.0
 
 
 def filter_resolvable_index_symbols(instrument_master: InstrumentMaster, symbols) -> tuple[str, ...]:
@@ -75,6 +77,10 @@ class LiveSyntheticUnderlyingFeed:
         # configured underlying by instrument identity so ATM updates do not
         # depend on whichever consumer registered the descriptor first.
         self._symbol_by_instrument: dict[tuple[str, str, str], str] = {}
+        self._diagnostics_lock = Lock()
+        self._last_resolved_tokens: dict[str, str] = {}
+        self._last_token_resolution_at_ns: int | None = None
+        self._last_tick_by_symbol: dict[str, dict[str, int | float]] = {}
 
     def _needs_instrument_master(self) -> bool:
         """Return whether any configured symbol still needs lookup-based resolution."""
@@ -133,6 +139,9 @@ class LiveSyntheticUnderlyingFeed:
                     exc,
                 )
             result[symbol] = str(token).strip()
+        with self._diagnostics_lock:
+            self._last_resolved_tokens = dict(result)
+            self._last_token_resolution_at_ns = time_ns()
         return result
 
     def _exchange_type(self, symbol: str) -> int:
@@ -201,7 +210,14 @@ class LiveSyntheticUnderlyingFeed:
         if price is None or price <= 0:
             return
         timestamp_ns = record.timestamp_ns
+        received_at_ns = time_ns()
         self.tracker.update(symbol, price, timestamp_ns)
+        with self._diagnostics_lock:
+            self._last_tick_by_symbol[symbol] = {
+                "price": float(price),
+                "source_timestamp_ns": int(timestamp_ns) if timestamp_ns else 0,
+                "received_at_ns": received_at_ns,
+            }
         if self.on_price is not None:
             self.on_price(symbol, price, timestamp_ns)
 
@@ -247,10 +263,80 @@ class LiveSyntheticUnderlyingFeed:
 
     def snapshot(self) -> dict:
         """Return non-persistent runtime telemetry for this feed."""
-        if self._feed is None:
-            return {"started": False, "consumer": self.consumer}
-        snapshot = self._feed.snapshot()
-        return {"started": True, "consumer": self.consumer, "feed": snapshot}
+        now_ns = time_ns()
+        with self._diagnostics_lock:
+            tokens = dict(self._last_resolved_tokens)
+            resolved_at_ns = self._last_token_resolution_at_ns
+            last_ticks = {symbol: dict(value) for symbol, value in self._last_tick_by_symbol.items()}
+        symbol_health = {}
+        for symbol in self.symbols:
+            token = tokens.get(symbol, "")
+            tick = last_ticks.get(symbol)
+            received_at_ns = int(tick["received_at_ns"]) if tick else None
+            symbol_health[symbol] = {
+                "token_resolved": bool(token),
+                "token": token or None,
+                "last_price": tick["price"] if tick else None,
+                "last_tick_age_seconds": (
+                    round(max(0, now_ns - received_at_ns) / 1_000_000_000, 3)
+                    if received_at_ns is not None else None
+                ),
+                "last_tick_received_at_ns": received_at_ns,
+                "source_timestamp_ns": tick["source_timestamp_ns"] if tick else None,
+            }
+        feed_snapshot = self._feed.snapshot() if self._feed is not None else {}
+        resolved_count = sum(1 for item in symbol_health.values() if item["token_resolved"])
+        tick_ages = [
+            item["last_tick_age_seconds"]
+            for item in symbol_health.values()
+            if item["last_tick_age_seconds"] is not None
+        ]
+        fresh_tick_count = sum(
+            1 for age in tick_ages if age <= UNDERLYING_STALE_AFTER_SECONDS
+        )
+        close_timed_out_groups = feed_snapshot.get("transport_close_timed_out_groups") or []
+        disconnected_groups = feed_snapshot.get("disconnected_groups") or []
+        if resolved_at_ns is None:
+            state = "STARTING"
+            state_reason = "token_resolution_not_attempted"
+        elif not resolved_count:
+            state = "TOKEN_RESOLUTION_FAILED"
+            state_reason = "no_configured_symbol_has_a_resolved_token"
+        elif close_timed_out_groups:
+            state = "FAILED"
+            state_reason = "transport_close_timed_out"
+        elif fresh_tick_count:
+            state = "LIVE"
+            state_reason = "at_least_one_underlying_has_a_fresh_tick"
+        elif tick_ages:
+            state = "STALE"
+            state_reason = "all_observed_underlying_ticks_exceeded_freshness_threshold"
+        elif bool(feed_snapshot.get("connected")):
+            state = "CONNECTED_NO_TICKS"
+            state_reason = "transport_connected_without_an_accepted_underlying_tick"
+        elif self._feed is not None:
+            state = "RECONNECTING"
+            state_reason = (
+                "required_transport_disconnected"
+                if disconnected_groups
+                else "transport_not_yet_connected"
+            )
+        else:
+            state = "STARTING"
+            state_reason = "feed_worker_not_started"
+        return {
+            "started": self._feed is not None,
+            "consumer": self.consumer,
+            "state": state,
+            "state_reason": state_reason,
+            "stale_after_seconds": UNDERLYING_STALE_AFTER_SECONDS,
+            "resolved_symbol_count": resolved_count,
+            "configured_symbol_count": len(self.symbols),
+            "fresh_symbol_count": fresh_tick_count,
+            "token_resolution_at_ns": resolved_at_ns,
+            "symbols": symbol_health,
+            "feed": feed_snapshot if self._feed is not None else None,
+        }
 
     def stop(self) -> None:
         self.stop_event.set()
