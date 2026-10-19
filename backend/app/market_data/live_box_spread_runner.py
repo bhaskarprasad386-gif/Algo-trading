@@ -152,7 +152,15 @@ class LiveBoxSpreadRunner:
                 self.recorder.run_forever()
                 self.recorder=None
         finally:
-            self.stop()
+            # Clean up this session without marking the whole runner stopped.
+            # The outer run_forever() supervisor must be able to retry if this
+            # session exits because of a transient exception.
+            feed, self.feed = self.feed, None
+            recorder, self.recorder = self.recorder, None
+            if recorder is not None:
+                recorder.stop()
+            if feed is not None:
+                feed.stop()
 
     def snapshot(self):
         """Return lightweight runtime state for shared-feed diagnostics."""
