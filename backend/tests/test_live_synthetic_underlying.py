@@ -164,6 +164,7 @@ def test_underlying_feed_retains_unresolved_target_and_recovers_token():
 
     assert feed._tokens() == {"NIFTY": ""}
     assert feed.symbols == ("NIFTY",)
+    assert feed.snapshot()["state"] == "TOKEN_RESOLUTION_FAILED"
 
     master.instruments = [
         {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
@@ -247,3 +248,6 @@ def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underly
     assert health["symbols"]["RELIANCE"]["token"] == "2885"
     assert health["symbols"]["RELIANCE"]["last_price"] == 104.6
     assert health["symbols"]["RELIANCE"]["last_tick_age_seconds"] is not None
+    assert health["state"] == "LIVE"
+    assert health["fresh_symbol_count"] == 1
+    assert health["stale_after_seconds"] == 10.0
