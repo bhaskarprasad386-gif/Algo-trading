@@ -7,6 +7,7 @@ from app.core.database import SessionLocal
 
 router=APIRouter(prefix="/api/v1/scanner/box-spread",tags=["box-spread"])
 _latest=()
+MAX_LEG_TIMESTAMP_SKEW_NS = 1_000_000_000
 
 def configure(getter):
     global _latest; _latest=getter
@@ -17,6 +18,7 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
     now_ns=time.time_ns()
     max_age_ns=int(max_age_seconds*1_000_000_000)
     cutoff=now_ns-max_age_ns
+    max_skew_ns=min(max_age_ns,MAX_LEG_TIMESTAMP_SKEW_NS)
     fresh_rows=[]
     for row in rows:
         low_ts=int(getattr(row.low,"timestamp_ns",0) or 0)
@@ -25,7 +27,7 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
         # in time to represent one coherent executable snapshot.
         if not (cutoff <= low_ts <= now_ns and cutoff <= high_ts <= now_ns):
             continue
-        if abs(low_ts-high_ts)>max_age_ns:
+        if abs(low_ts-high_ts)>max_skew_ns:
             continue
         fresh_rows.append(row)
     rows=fresh_rows[:limit]
