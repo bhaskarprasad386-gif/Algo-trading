@@ -1,7 +1,8 @@
 """Live underlying-price feed backed by the common market-data manager."""
 from __future__ import annotations
 
-from threading import Event
+from threading import Event, Lock
+from time import time_ns
 from typing import Callable
 
 from app.algo.auth import AngelOneAuth
@@ -75,6 +76,10 @@ class LiveSyntheticUnderlyingFeed:
         # configured underlying by instrument identity so ATM updates do not
         # depend on whichever consumer registered the descriptor first.
         self._symbol_by_instrument: dict[tuple[str, str, str], str] = {}
+        self._diagnostics_lock = Lock()
+        self._last_resolved_tokens: dict[str, str] = {}
+        self._last_token_resolution_at_ns: int | None = None
+        self._last_tick_by_symbol: dict[str, dict[str, int | float]] = {}
 
     def _needs_instrument_master(self) -> bool:
         """Return whether any configured symbol still needs lookup-based resolution."""
@@ -133,6 +138,9 @@ class LiveSyntheticUnderlyingFeed:
                     exc,
                 )
             result[symbol] = str(token).strip()
+        with self._diagnostics_lock:
+            self._last_resolved_tokens = dict(result)
+            self._last_token_resolution_at_ns = time_ns()
         return result
 
     def _exchange_type(self, symbol: str) -> int:
@@ -201,7 +209,14 @@ class LiveSyntheticUnderlyingFeed:
         if price is None or price <= 0:
             return
         timestamp_ns = record.timestamp_ns
+        received_at_ns = time_ns()
         self.tracker.update(symbol, price, timestamp_ns)
+        with self._diagnostics_lock:
+            self._last_tick_by_symbol[symbol] = {
+                "price": float(price),
+                "source_timestamp_ns": int(timestamp_ns) if timestamp_ns else 0,
+                "received_at_ns": received_at_ns,
+            }
         if self.on_price is not None:
             self.on_price(symbol, price, timestamp_ns)
 
@@ -247,10 +262,42 @@ class LiveSyntheticUnderlyingFeed:
 
     def snapshot(self) -> dict:
         """Return non-persistent runtime telemetry for this feed."""
+        now_ns = time_ns()
+        with self._diagnostics_lock:
+            tokens = dict(self._last_resolved_tokens)
+            resolved_at_ns = self._last_token_resolution_at_ns
+            last_ticks = {symbol: dict(value) for symbol, value in self._last_tick_by_symbol.items()}
+        symbol_health = {}
+        for symbol in self.symbols:
+            token = tokens.get(symbol, "")
+            tick = last_ticks.get(symbol)
+            received_at_ns = int(tick["received_at_ns"]) if tick else None
+            symbol_health[symbol] = {
+                "token_resolved": bool(token),
+                "token": token or None,
+                "last_price": tick["price"] if tick else None,
+                "last_tick_age_seconds": (
+                    round(max(0, now_ns - received_at_ns) / 1_000_000_000, 3)
+                    if received_at_ns is not None else None
+                ),
+                "last_tick_received_at_ns": received_at_ns,
+                "source_timestamp_ns": tick["source_timestamp_ns"] if tick else None,
+            }
         if self._feed is None:
-            return {"started": False, "consumer": self.consumer}
+            return {
+                "started": False,
+                "consumer": self.consumer,
+                "token_resolution_at_ns": resolved_at_ns,
+                "symbols": symbol_health,
+            }
         snapshot = self._feed.snapshot()
-        return {"started": True, "consumer": self.consumer, "feed": snapshot}
+        return {
+            "started": True,
+            "consumer": self.consumer,
+            "token_resolution_at_ns": resolved_at_ns,
+            "symbols": symbol_health,
+            "feed": snapshot,
+        }
 
     def stop(self) -> None:
         self.stop_event.set()
