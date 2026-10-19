@@ -1653,6 +1653,25 @@ def test_latest_exchange_timestamp_never_regresses_on_out_of_order_ticks():
     finally:
         manager.close()
 
+def test_local_timestamp_fallback_does_not_count_as_exchange_source_freshness():
+    registry = InstrumentRegistry()
+    item = descriptor("414", "NSE", "EQ")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.register_normalized_callback("cash", lambda record: None)
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {
+            "token": "414", "exchange_type": 1, "ltp": 100,
+        })
+        snapshot = manager.snapshot()
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["latest_tick_timestamp_ns_by_exchange_type"] == {}
+    finally:
+        manager.close()
+
+
 def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
     registry = InstrumentRegistry()
     items = [
