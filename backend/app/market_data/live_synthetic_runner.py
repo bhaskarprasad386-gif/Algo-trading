@@ -246,10 +246,33 @@ class LiveSyntheticRunner:
             if target.underlying.strip().upper() not in strikes
         ]
         if missing:
+            target_expiries = {
+                target.underlying.strip().upper(): {
+                    "class": target.instrument_class.strip().upper(),
+                    "expiry": target.expiry,
+                    "segment": (
+                        "MCX" if target.instrument_class.strip().upper() == "COMMODITY"
+                        else (
+                            "BFO"
+                            if target.instrument_class.strip().upper() == "INDEX"
+                            and target.underlying.strip().upper() in {"SENSEX", "BANKEX"}
+                            else "NFO"
+                        )
+                    ),
+                }
+                for target in self.targets
+                if target.underlying.strip().upper() in {s.strip().upper() for s in missing}
+            }
+            strike_counts = {
+                symbol: len(values)
+                for symbol, values in strikes.items()
+            }
             app_logger.warning(
-                "Synthetic live targets skipped because no concrete option strikes "
-                "exist for their selected expiry: %s",
+                "Synthetic live targets missing concrete option strikes: "
+                "symbols=%s selected_expiries=%s concrete_strike_counts=%s",
                 ", ".join(sorted(set(missing))),
+                target_expiries,
+                strike_counts,
             )
             supported = tuple(
                 target for target in self.targets
