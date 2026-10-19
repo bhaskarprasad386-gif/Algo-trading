@@ -288,7 +288,15 @@ class LiveSyntheticRunner:
             index_symbols=index_symbols,
             commodity_symbols=commodity_symbols,
         )
-        resolvable = set(feed._tokens())
+        resolved_tokens = feed._tokens()
+        # _tokens() deliberately retains unresolved symbols with an empty token
+        # so the feed can retry later. Only symbols with a concrete token can
+        # receive underlying ticks; keeping empty-token targets in the runner
+        # makes them permanently report MISSING_ATM and pollute the active universe.
+        resolvable = {
+            symbol for symbol, token in resolved_tokens.items()
+            if str(token or "").strip()
+        }
         self.targets = tuple(
             target for target in self.targets
             if target.underlying.strip().upper() in resolvable
