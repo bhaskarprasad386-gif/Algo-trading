@@ -104,6 +104,8 @@ def test_live_data_health_reports_persisted_coverage(monkeypatch, tmp_path):
         catalog.close()
 
     monkeypatch.setattr(settings, "BACKTEST_DATA_DB", str(db))
+    # Keep this assertion independent of the wall-clock NSE session.
+    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
     result = routes.get_live_data_health()
     assert result["status"] == "success"
     assert result["source"] == "angelone-live-1s"
