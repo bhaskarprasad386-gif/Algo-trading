@@ -23,6 +23,36 @@ def _master():
     return master
 
 
+def test_runner_does_not_block_startup_on_underlying_token_preflight(monkeypatch):
+    import app.market_data.live_synthetic_runner as runner_module
+    from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker
+
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+    )
+    runner._atm_tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={"NIFTY": (100.0, 105.0)}
+    )
+
+    class FeedCreatedWithoutNetworkPreflight:
+        def __init__(self, *args, **kwargs):
+            self.stop_event = None
+
+        def _tokens(self):
+            raise AssertionError("runner must leave token resolution to the feed worker")
+
+    monkeypatch.setattr(
+        runner_module, "LiveSyntheticUnderlyingFeed", FeedCreatedWithoutNetworkPreflight
+    )
+
+    feed = runner._ensure_underlying_feed()
+
+    assert isinstance(feed, FeedCreatedWithoutNetworkPreflight)
+
+
 def test_runner_skips_targets_until_monthly_expiry_is_resolved():
     runner = LiveSyntheticRunner(
         ":memory:",
