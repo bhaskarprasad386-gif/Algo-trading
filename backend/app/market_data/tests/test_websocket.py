@@ -361,8 +361,8 @@ def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
 
     assert calls["url"].startswith("wss://")
     assert calls["run_forever"]["sslopt"]["cert_reqs"] == ssl.CERT_REQUIRED
-    assert calls["run_forever"]["ping_interval"] == 10
-    assert calls["run_forever"]["ping_timeout"] == 5
+    assert calls["run_forever"]["ping_interval"] == 20
+    assert calls["run_forever"]["ping_timeout"] == 10
     assert calls["callbacks"]["on_open"] is sdk_socket._on_open
 
 
