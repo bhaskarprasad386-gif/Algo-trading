@@ -115,6 +115,7 @@ jobs:
           diag = load("/tmp/synthetic_diag_body")
           runtime = load("/tmp/runtime_body")
           live_health = load("/tmp/live_health_body")
+          common = load("/tmp/common_body")
           nodes = list(walk(runtime)) + list(walk(live_health))
           session = next((str(x.get("market_session", "")).upper() for x in nodes if x.get("market_session")), "")
           feed = diag.get("underlying_feed") if isinstance(diag.get("underlying_feed"), dict) else {}
@@ -126,6 +127,22 @@ jobs:
           initialized = bool(diag.get("scanner_initialized"))
           state = str(feed.get("state") or "NO_FEED_SNAPSHOT")
           reason = str(feed.get("state_reason") or "no_underlying_feed_snapshot")
+
+          def first_dict(root, key):
+              for node in walk(root):
+                  value = node.get(key)
+                  if isinstance(value, dict):
+                      return value
+              return {}
+
+          exchange_ages = first_dict(common, "last_exchange_tick_received_age_seconds_by_exchange_type")
+          raw_ages = first_dict(common, "last_raw_frame_age_seconds_by_exchange_group")
+          def age_for(exchange_type):
+              value = exchange_ages.get(str(exchange_type))
+              return float(value) if isinstance(value, (int, float)) else None
+
+          nse_age = age_for(1)
+          nfo_age = age_for(2)
           print(f"MARKET_SESSION={session or 'UNKNOWN'}")
           print(f"UNDERLYING_FEED_STATE={state}")
           print(f"UNDERLYING_FEED_REASON={reason}")
@@ -133,10 +150,16 @@ jobs:
           print(f"FRESH_TICKS_LE_10S={len(fresh)}/{len(symbols)}")
           print(f"ATM_READY_SYMBOLS={len(ready_symbols)}")
           print(f"SCANNER_INITIALIZED={initialized}")
+          print(f"NSE_SOURCE_TICK_AGE_SECONDS={nse_age}")
+          print(f"NFO_SOURCE_TICK_AGE_SECONDS={nfo_age}")
+          print(f"RAW_FRAME_AGE_ENTRIES={len(raw_ages)}")
+
           if session != "OPEN":
               print("ACCEPTANCE_RESULT=DEFERRED_MARKET_NOT_OPEN")
           else:
               checks = {
+                  "nse_source_freshness": nse_age is not None and nse_age <= 10,
+                  "nfo_source_freshness": nfo_age is not None and nfo_age <= 10,
                   "token_resolution": bool(resolved),
                   "fresh_ticks": bool(fresh),
                   "atm_readiness": bool(ready_symbols),
