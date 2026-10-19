@@ -294,16 +294,18 @@ class LiveSyntheticUnderlyingFeed:
         fresh_tick_count = sum(
             1 for age in tick_ages if age <= UNDERLYING_STALE_AFTER_SECONDS
         )
-        if self._feed is None:
+        if resolved_at_ns is None:
             state = "STARTING"
         elif not resolved_count:
             state = "TOKEN_RESOLUTION_FAILED"
-        elif not tick_ages:
-            state = "CONNECTED_NO_TICKS" if bool(feed_snapshot.get("connected")) else "STARTING"
         elif fresh_tick_count:
             state = "LIVE"
-        else:
+        elif tick_ages:
             state = "STALE"
+        elif bool(feed_snapshot.get("connected")):
+            state = "CONNECTED_NO_TICKS"
+        else:
+            state = "STARTING"
         return {
             "started": self._feed is not None,
             "consumer": self.consumer,
