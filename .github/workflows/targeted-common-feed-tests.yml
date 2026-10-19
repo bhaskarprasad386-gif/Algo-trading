@@ -16,6 +16,10 @@ on:
       - "backend/app/market_data/tests/test_common_websocket_429_cooldown.py"
       - "backend/app/market_data/tests/test_websocket.py"
       - "backend/app/market_data/tests/test_batch_pq.py"
+      - "backend/app/market_data/live_synthetic_underlying.py"
+      - "backend/app/market_data/live_synthetic_runner.py"
+      - "backend/tests/test_live_synthetic_underlying.py"
+      - "backend/tests/test_live_synthetic_runner.py"
       - ".github/workflows/targeted-common-feed-tests.yml"
 
 jobs:
@@ -47,6 +51,8 @@ jobs:
           python -m py_compile app/market_data/normalizer.py
           python -m py_compile app/market_data/cash_future_opportunity.py
           python -m py_compile app/market_data/live_cash_future_common.py
+          python -m py_compile app/market_data/live_synthetic_underlying.py
+          python -m py_compile app/market_data/live_synthetic_runner.py
       - name: Run targeted common feed tests
         working-directory: backend
         env:
@@ -58,4 +64,6 @@ jobs:
             app/market_data/tests/test_websocket.py \
             app/market_data/tests/test_batch_pq.py \
             app/market_data/tests/test_batch_k.py \
-            tests/test_live_cash_future_common.py
+            tests/test_live_cash_future_common.py \
+            tests/test_live_synthetic_underlying.py \
+            tests/test_live_synthetic_runner.py
