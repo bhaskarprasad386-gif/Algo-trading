@@ -184,6 +184,7 @@ class CommonWebSocketManager:
         # A fresh MCX/BFO tick must never make the NSE/NFO feed look healthy.
         # Track source timestamps independently for each Angel exchange type.
         self._latest_tick_timestamp_ns_by_exchange_type: dict[int, int] = {}
+        self._latest_tick_timestamp_ns_by_group_exchange: dict[tuple[SocketGroup, int], int] = {}
         self._last_exchange_tick_received_at: dict[int, float] = {}
         self._socket_created_at: dict[SocketGroup, float] = {}
         # Keep transport activity, successful routing, and consumer delivery as
@@ -537,6 +538,13 @@ class CommonWebSocketManager:
                         generation = self._socket_generation_counter.get(group, 0) + 1
                         self._socket_generation_counter[group] = generation
                         self._socket_generation[group] = generation
+                        # A new socket generation must prove its own exchange
+                        # freshness; never inherit a previous generation's tick.
+                        for freshness_key in [
+                            key for key in self._latest_tick_timestamp_ns_by_group_exchange
+                            if key[0] == group
+                        ]:
+                            self._latest_tick_timestamp_ns_by_group_exchange.pop(freshness_key, None)
                         # Register the socket before broker I/O. Angel's
                         # SmartWebSocketV2.connect() is asynchronous and may
                         # invoke on_open/on_data before connect() returns.
@@ -1127,10 +1135,19 @@ class CommonWebSocketManager:
                     primary_exchange_types = group_exchange_types.intersection({1, 2})
                     now_ns = time.time_ns()
                     primary_exchange_stale = any(
-                        exchange_type not in self._latest_tick_timestamp_ns_by_exchange_type
-                        or now_ns - self._latest_tick_timestamp_ns_by_exchange_type[exchange_type]
-                        > int(float(timeout) * 1_000_000_000)
-                        or self._latest_tick_timestamp_ns_by_exchange_type[exchange_type] > now_ns + 5_000_000_000
+                        (
+                            (group, exchange_type) not in self._latest_tick_timestamp_ns_by_group_exchange
+                            and age >= float(timeout)
+                        )
+                        or (
+                            (group, exchange_type) in self._latest_tick_timestamp_ns_by_group_exchange
+                            and (
+                                now_ns - self._latest_tick_timestamp_ns_by_group_exchange[(group, exchange_type)]
+                                > int(float(timeout) * 1_000_000_000)
+                                or self._latest_tick_timestamp_ns_by_group_exchange[(group, exchange_type)]
+                                > now_ns + 5_000_000_000
+                            )
+                        )
                         for exchange_type in primary_exchange_types
                     )
                     last_transport_activity_at = self._last_raw_frame_at_by_group.get(group, created_at)
@@ -1382,6 +1399,16 @@ class CommonWebSocketManager:
                             or incoming_timestamp_ns > previous_exchange_timestamp
                         ):
                             self._latest_tick_timestamp_ns_by_exchange_type[incoming_exchange_type] = incoming_timestamp_ns
+                        previous_group_timestamp = self._latest_tick_timestamp_ns_by_group_exchange.get(
+                            (group, incoming_exchange_type)
+                        )
+                        if (
+                            previous_group_timestamp is None
+                            or incoming_timestamp_ns > previous_group_timestamp
+                        ):
+                            self._latest_tick_timestamp_ns_by_group_exchange[
+                                (group, incoming_exchange_type)
+                            ] = incoming_timestamp_ns
                         self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
                 callback(record)
                 with self._lock:
@@ -1675,6 +1702,11 @@ class CommonWebSocketManager:
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
                 "latest_tick_timestamp_ns": self._latest_tick_timestamp_ns,
                 "latest_tick_timestamp_ns_by_exchange_type": dict(self._latest_tick_timestamp_ns_by_exchange_type),
+                "latest_tick_timestamp_ns_by_group_exchange": {
+                    f"{group.mode}:{group.shard}:{exchange_type}": timestamp_ns
+                    for (group, exchange_type), timestamp_ns in self._latest_tick_timestamp_ns_by_group_exchange.items()
+                    if group in sockets
+                },
                 "last_exchange_tick_age_seconds_by_exchange_type": {
                     str(exchange_type): max(
                         0.0, time.time() - timestamp_ns / 1_000_000_000
