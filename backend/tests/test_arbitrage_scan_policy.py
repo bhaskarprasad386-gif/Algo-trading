@@ -85,3 +85,18 @@ def test_index_synthetic_scope_is_up_to_fifteen_actual_strikes_per_side_without_
     assert upper[-1] == (175.0, 15)
     assert 20.0 not in {strike for strike, _, _ in selected}
     assert 180.0 not in {strike for strike, _, _ in selected}
+
+
+
+def test_box_scan_accepts_filtered_chain_without_atm_contract():
+    strikes = tuple(value for value in STRIKES if value != 100)
+    pairs = enumerate_box_pairs(strikes, atm_strike=100, instrument_class="STOCK")
+    assert pairs
+    assert {distance for _, _, distance in pairs} == {3, 4, 5}
+
+
+def test_strike_distance_anchors_to_insertion_position_when_atm_missing():
+    strikes = (90, 95, 105, 110, 115)
+    assert strike_distance_from_atm(strikes, atm_strike=100, strike=95) == 1
+    assert strike_distance_from_atm(strikes, atm_strike=100, strike=105) == 1
+    assert strike_distance_from_atm(strikes, atm_strike=100, strike=115) == 3

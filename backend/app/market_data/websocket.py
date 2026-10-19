@@ -97,8 +97,11 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         try:
             socket.wsapp.run_forever(
                 sslopt={"cert_reqs": ssl.CERT_REQUIRED},
-                ping_interval=10,
-                ping_timeout=5,
+                # VPS/network jitter can delay control-frame pong responses even
+                # while market frames continue. Avoid recycling a healthy session
+                # on a single 5-second heartbeat miss.
+                ping_interval=20,
+                ping_timeout=10,
             )
         finally:
             if not ready.is_set():

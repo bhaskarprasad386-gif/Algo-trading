@@ -32,16 +32,23 @@ def ordered_strikes_around_atm(strikes: Iterable[float], *, atm_strike: float) -
     ordered = tuple(sorted(set(float(s) for s in strikes)))
     if not ordered:
         raise ValueError("option chain must contain at least one strike")
-    if float(atm_strike) not in ordered:
-        raise ValueError("atm_strike must exist in the supplied option chain")
+    # The ATM contract may be absent from a filtered executable-quote snapshot.
+    # Keep the actual listed chain and use ATM's insertion position as the anchor.
     return ordered
 
 def strike_distance_from_atm(strikes: Iterable[float], *, atm_strike: float, strike: float) -> int:
     ordered = ordered_strikes_around_atm(strikes, atm_strike=atm_strike)
     try:
-        return abs(ordered.index(float(strike)) - ordered.index(float(atm_strike)))
+        strike_index = ordered.index(float(strike))
     except ValueError as exc:
         raise ValueError("strike must exist in the supplied option chain") from exc
+    atm = float(atm_strike)
+    atm_index = bisect_left(ordered, atm)
+    if atm_index < len(ordered) and ordered[atm_index] == atm:
+        return abs(strike_index - atm_index)
+    # If ATM itself is not listed, the nearest listed strike on either side
+    # is one chain position away; no synthetic strike is inserted.
+    return atm_index - strike_index if strike_index < atm_index else strike_index - atm_index + 1
 
 def enumerate_box_pairs(strikes: Iterable[float], *, atm_strike: float, instrument_class: InstrumentClass,
                         policy: ScanPolicy | None = None) -> tuple[tuple[float, float, int], ...]:
