@@ -350,6 +350,38 @@ def test_underlying_feed_reports_stale_after_last_tick_expires(monkeypatch):
 
 
 
+def test_underlying_feed_does_not_mark_recently_received_stale_exchange_tick_as_fresh():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY",), tracker=tracker, concrete_tokens={"NIFTY": "99926000"}
+    )
+    now_ns = time_ns()
+    feed._last_resolved_tokens = {"NIFTY": "99926000"}
+    feed._last_token_resolution_at_ns = now_ns
+    feed._last_tick_by_symbol = {
+        "NIFTY": {
+            "price": 104.0,
+            "source_timestamp_ns": now_ns - 20_000_000_000,
+            "received_at_ns": now_ns,
+        }
+    }
+
+    class ConnectedFeed:
+        def snapshot(self):
+            return {"connected": True, "transport_thread_alive": True}
+
+    feed._feed = ConnectedFeed()
+    health = feed.snapshot()
+
+    assert health["symbols"]["NIFTY"]["receive_age_seconds"] < 1.0
+    assert health["symbols"]["NIFTY"]["source_timestamp_age_seconds"] >= 20.0
+    assert health["symbols"]["NIFTY"]["last_tick_age_seconds"] >= 20.0
+    assert health["fresh_symbol_count"] == 0
+    assert health["state"] == "STALE"
+
+
 def test_underlying_feed_reports_reconnecting_when_transport_is_down_without_ticks():
     from time import time_ns
 
