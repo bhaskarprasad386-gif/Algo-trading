@@ -32,7 +32,7 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
         auth=object(),
     )
     try:
-        runner.run_forever()
+        runner._run_session()
     except RuntimeError:
         pass
     assert captured == ["29OCT2026"]
