@@ -1673,6 +1673,11 @@ def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
             2: now_ns - 60_000_000_000,
             5: now_ns,
         })
+        manager._latest_tick_timestamp_ns_by_group_exchange.update({
+            (group, 1): now_ns - 60_000_000_000,
+            (group, 2): now_ns - 60_000_000_000,
+            (group, 5): now_ns,
+        })
         manager._last_raw_frame_at_by_group[group] = time.monotonic()
         snapshot = manager.snapshot()
         ages = snapshot["last_exchange_tick_age_seconds_by_exchange_type"]
