@@ -181,6 +181,10 @@ class CommonWebSocketManager:
         # Highest valid exchange timestamp observed across normalized instruments.
         # Arrival order is not timestamp order, so older ticks must not regress freshness.
         self._latest_tick_timestamp_ns: int | None = None
+        # A fresh MCX/BFO tick must never make the NSE/NFO feed look healthy.
+        # Track source timestamps independently for each Angel exchange type.
+        self._latest_tick_timestamp_ns_by_exchange_type: dict[int, int] = {}
+        self._last_exchange_tick_received_at: dict[int, float] = {}
         self._socket_created_at: dict[SocketGroup, float] = {}
         # Keep transport activity, successful routing, and consumer delivery as
         # separate clocks; a mapping/callback issue must not masquerade as a dead socket.
@@ -1111,14 +1115,33 @@ class CommonWebSocketManager:
                     continue
                 if connected and not connecting:
                     timeout = self._silent_feed_timeout_seconds if silent_age_seconds is None else silent_age_seconds
-                    # Silence recovery is a transport-liveness decision, so use
-                    # raw frame activity rather than successful consumer delivery.
-                    # A routing/callback failure must be diagnosed as a data-path
-                    # problem, not trigger needless broker reconnects.
-                    last_transport_activity_at = self._last_raw_frame_at_by_group.get(
-                        group, created_at
+                    if timeout < 0:
+                        continue
+                    # Socket activity from a different exchange is not proof that
+                    # this shard's NSE/NFO subscriptions are delivering fresh data.
+                    # Recover a shard if any primary exchange represented on it has
+                    # no fresh source timestamp, even when another exchange is busy.
+                    group_exchange_types = {
+                        exchange_type for exchange_type, _ in self._socket_tokens.get(group, set())
+                    }
+                    primary_exchange_types = group_exchange_types.intersection({1, 2})
+                    now_ns = time.time_ns()
+                    primary_exchange_stale = any(
+                        exchange_type not in self._latest_tick_timestamp_ns_by_exchange_type
+                        or now_ns - self._latest_tick_timestamp_ns_by_exchange_type[exchange_type]
+                        > int(float(timeout) * 1_000_000_000)
+                        or self._latest_tick_timestamp_ns_by_exchange_type[exchange_type] > now_ns + 5_000_000_000
+                        for exchange_type in primary_exchange_types
                     )
-                    if timeout < 0 or now - last_transport_activity_at < float(timeout):
+                    last_transport_activity_at = self._last_raw_frame_at_by_group.get(group, created_at)
+                    transport_silent = now - last_transport_activity_at >= float(timeout)
+                    # Preserve the general transport silence detector for groups
+                    # without NSE/NFO subscriptions; for primary exchange groups,
+                    # exchange-specific freshness is authoritative.
+                    if primary_exchange_types:
+                        if not primary_exchange_stale:
+                            continue
+                    elif not transport_silent:
                         continue
                 stale.append((group, socket, tokens, created_at))
 
@@ -1348,6 +1371,18 @@ class CommonWebSocketManager:
                             or incoming_timestamp_ns > self._latest_tick_timestamp_ns
                         ):
                             self._latest_tick_timestamp_ns = incoming_timestamp_ns
+                        incoming_exchange_type = int(
+                            exchange_type or self._resolve_exchange_type(key)
+                        )
+                        previous_exchange_timestamp = self._latest_tick_timestamp_ns_by_exchange_type.get(
+                            incoming_exchange_type
+                        )
+                        if (
+                            previous_exchange_timestamp is None
+                            or incoming_timestamp_ns > previous_exchange_timestamp
+                        ):
+                            self._latest_tick_timestamp_ns_by_exchange_type[incoming_exchange_type] = incoming_timestamp_ns
+                        self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
                 callback(record)
                 with self._lock:
                     self._normalized_records_delivered += 1
@@ -1639,6 +1674,17 @@ class CommonWebSocketManager:
                 "ticks_by_exchange_type": dict(self._ticks_by_exchange),
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
                 "latest_tick_timestamp_ns": self._latest_tick_timestamp_ns,
+                "latest_tick_timestamp_ns_by_exchange_type": dict(self._latest_tick_timestamp_ns_by_exchange_type),
+                "last_exchange_tick_age_seconds_by_exchange_type": {
+                    str(exchange_type): max(
+                        0.0, time.time() - timestamp_ns / 1_000_000_000
+                    )
+                    for exchange_type, timestamp_ns in self._latest_tick_timestamp_ns_by_exchange_type.items()
+                },
+                "last_exchange_tick_received_age_seconds_by_exchange_type": {
+                    str(exchange_type): max(0.0, time.monotonic() - received_at)
+                    for exchange_type, received_at in self._last_exchange_tick_received_at.items()
+                },
                 "connected_groups": [
                     f"{group.mode}:{group.shard}"
                     for group, socket in sockets.items()
