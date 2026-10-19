@@ -238,8 +238,10 @@ def test_underlying_feed_clears_old_subscription_when_all_tokens_become_unresolv
         def start(self, descriptors, callback):
             self.start_calls += 1
             # Simulate an instrument-master refresh losing the token after a
-            # previously successful subscription.
+            # previously successful subscription. InstrumentMaster invalidates
+            # this derived index on a real download; mirror that here.
             master.instruments = []
+            master._symbol_exchange_index = None
 
         def stop(self):
             self.stop_calls += 1
