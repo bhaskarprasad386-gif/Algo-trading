@@ -71,6 +71,10 @@ class LiveSyntheticUnderlyingFeed:
         self.stop_event = Event()
         self._feed: CommonStrategyMarketFeed | None = None
 
+    def _needs_instrument_master(self) -> bool:
+        """Return whether any configured symbol still needs lookup-based resolution."""
+        return any(symbol not in self.concrete_tokens for symbol in self.symbols)
+
     @staticmethod
     def _price(message: dict) -> float | None:
         try:
@@ -100,7 +104,11 @@ class LiveSyntheticUnderlyingFeed:
         keeps the target in its logical universe and can recover it after the
         instrument master becomes resolvable again.
         """
-        self.instrument_master.download()
+        # An authoritative token supplied by the caller is already resolved;
+        # downloading the entire instrument master adds no value and can turn
+        # an offline token-resolution path into a network timeout.
+        if self._needs_instrument_master():
+            self.instrument_master.download()
         result = {}
         for symbol in self.symbols:
             token = ""
@@ -135,7 +143,8 @@ class LiveSyntheticUnderlyingFeed:
         return groups
 
     def _descriptors(self):
-        self.instrument_master.download()
+        if self._needs_instrument_master():
+            self.instrument_master.download()
         tokens = self._tokens()
         descriptors = []
         for symbol, token in tokens.items():
