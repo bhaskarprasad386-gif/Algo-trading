@@ -294,22 +294,41 @@ class LiveSyntheticUnderlyingFeed:
         fresh_tick_count = sum(
             1 for age in tick_ages if age <= UNDERLYING_STALE_AFTER_SECONDS
         )
+        close_timed_out_groups = feed_snapshot.get("transport_close_timed_out_groups") or []
+        disconnected_groups = feed_snapshot.get("disconnected_groups") or []
         if resolved_at_ns is None:
             state = "STARTING"
+            state_reason = "token_resolution_not_attempted"
         elif not resolved_count:
             state = "TOKEN_RESOLUTION_FAILED"
+            state_reason = "no_configured_symbol_has_a_resolved_token"
+        elif close_timed_out_groups:
+            state = "FAILED"
+            state_reason = "transport_close_timed_out"
         elif fresh_tick_count:
             state = "LIVE"
+            state_reason = "at_least_one_underlying_has_a_fresh_tick"
         elif tick_ages:
             state = "STALE"
+            state_reason = "all_observed_underlying_ticks_exceeded_freshness_threshold"
         elif bool(feed_snapshot.get("connected")):
             state = "CONNECTED_NO_TICKS"
+            state_reason = "transport_connected_without_an_accepted_underlying_tick"
+        elif self._feed is not None:
+            state = "RECONNECTING"
+            state_reason = (
+                "required_transport_disconnected"
+                if disconnected_groups
+                else "transport_not_yet_connected"
+            )
         else:
             state = "STARTING"
+            state_reason = "feed_worker_not_started"
         return {
             "started": self._feed is not None,
             "consumer": self.consumer,
             "state": state,
+            "state_reason": state_reason,
             "stale_after_seconds": UNDERLYING_STALE_AFTER_SECONDS,
             "resolved_symbol_count": resolved_count,
             "configured_symbol_count": len(self.symbols),
