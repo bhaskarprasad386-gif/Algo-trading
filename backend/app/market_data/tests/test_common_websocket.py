@@ -1652,3 +1652,69 @@ def test_latest_exchange_timestamp_never_regresses_on_out_of_order_ticks():
         assert snapshot["latest_tick_timestamp_ns"] == 1792386000000000000
     finally:
         manager.close()
+
+def test_local_timestamp_fallback_does_not_count_as_exchange_source_freshness():
+    registry = InstrumentRegistry()
+    item = descriptor("414", "NSE", "EQ")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.register_normalized_callback("cash", lambda record: None)
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {
+            "token": "414", "exchange_type": 1, "ltp": 100,
+        })
+        snapshot = manager.snapshot()
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["latest_tick_timestamp_ns_by_exchange_type"] == {}
+    finally:
+        manager.close()
+
+
+def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
+    registry = InstrumentRegistry()
+    items = [
+        descriptor("101", "NSE", "EQ"),
+        descriptor("202", "NFO", "DERIVATIVES"),
+        descriptor("303", "MCX", "COMMODITY"),
+    ]
+    registry.register_many(items)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.register_normalized_callback("quotes", lambda record: None)
+    try:
+        manager.subscribe("quotes", [item.key for item in items], mode=3)
+        group = SocketGroup(3, 0)
+        now_ns = time.time_ns()
+        manager._latest_tick_timestamp_ns_by_exchange_type.update({
+            1: now_ns - 60_000_000_000,
+            2: now_ns - 60_000_000_000,
+            5: now_ns,
+        })
+        manager._latest_tick_timestamp_ns_by_group_exchange.update({
+            (group, 1): now_ns - 60_000_000_000,
+            (group, 2): now_ns - 60_000_000_000,
+            (group, 5): now_ns,
+        })
+        manager._last_raw_frame_at_by_group[group] = time.monotonic()
+        manager._socket_created_at[group] -= 60.0
+        snapshot = manager.snapshot()
+        ages = snapshot["last_exchange_tick_age_seconds_by_exchange_type"]
+        assert ages["1"] >= 59
+        assert ages["2"] >= 59
+        assert ages["5"] < 5
+
+        # Recent raw frames from MCX must not prevent recovery of a shard whose
+        # subscribed NSE/NFO exchanges have both stopped producing fresh ticks.
+        manager._silent_feed_timeout_seconds = 30.0
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=30.0
+        )
+        assert recovered == 1
+        assert FakeSocket.instances[0].closed is True
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        manager.close()
+
+

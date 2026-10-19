@@ -310,7 +310,7 @@ th{font-size:7px!important}
 <div class="page">
 <header class="topbar">
  <div class="top-brand"><span class="top-brand-mark">↗</span><strong class="top-brand-name">Algo Trading</strong><span class="top-tagline">Trade Smart&nbsp; | &nbsp;Analyze&nbsp; | &nbsp;Execute&nbsp; | &nbsp;Grow</span></div>
- <div class="top-actions"><span class="live-pill" id="topLive">● LIVE DATA (WebSocket)</span><span id="liveBus" class="live-bus"><i class="bus-dot"></i> DATA BUS CONNECTING</span></div>
+ <div class="top-actions"><span class="live-pill" id="topLive">● MARKET DATA CHECKING</span><span id="liveBus" class="live-bus"><i class="bus-dot"></i> DATA BUS CONNECTING</span></div>
  <div class="top-meta"><span><span class="top-clock" id="topClock">--:--:--</span><span class="top-date" id="topDate">--</span></span><button class="notify-btn" onclick="openAlertModal()" title="Notifications">♧<span class="notify-badge" id="topNotify">0</span></button><div class="profile-pill"><span class="profile-avatar">P</span><span class="profile-copy">Scanner Workspace<small>Read-only</small></span></div><button class="icon-btn" onclick="loadAll()" title="Refresh">↻</button></div>
 </header>
 <main class="content" id="home">
@@ -722,12 +722,11 @@ async function loadMarketOverview(){
  try{
   const r=await fetch(base()+'/api/v1/market-data/overview',{cache:'no-store'});if(!r.ok)throw new Error('Market API '+r.status);
   const p=await r.json();liveSnapshot=p;renderMarketCards(p.indices||[],p.commodities||[]);
-  status.textContent=(p.errors||[]).length?'Feed: PARTIAL • '+p.errors.length+' source errors':'Feed: ONLINE • Angel One • LIVE DATA • ORDERS OFF';
+  status.textContent=(p.nse_market_session||p.market_session)==='CLOSED'?'Feed: NSE MARKET CLOSED • LAST CLOSE SNAPSHOT':(p.errors||[]).length?'Feed: OVERVIEW PARTIAL • '+p.errors.length+' source errors':'Feed: OVERVIEW LOADED • FRESHNESS CHECKED SEPARATELY';
   document.getElementById('homeBackend').textContent='ONLINE';document.getElementById('homeBackend').className='health-state up';
-  document.getElementById('homeFeed').textContent='LIVE SNAPSHOT';document.getElementById('homeFeed').className='health-state up';
-  document.getElementById('topLive').textContent='● LIVE DATA • '+stamp();
+  document.getElementById('homeFeed').textContent=(p.nse_market_session||p.market_session)==='CLOSED'?'MARKET CLOSED':'CHECK FRESHNESS';document.getElementById('homeFeed').className='health-state neutral';
  }catch(e){
-  status.textContent='Feed: ERROR • '+e.message;document.getElementById('homeBackend').textContent='ERROR';document.getElementById('homeBackend').className='health-state down';document.getElementById('topLive').textContent='● DATA ERROR';log('Market overview failed: '+e.message);
+  status.textContent='Overview error • '+e.message;document.getElementById('homeBackend').textContent='ERROR';document.getElementById('homeBackend').className='health-state down';log('Market overview failed: '+e.message);
  }
 }
 async function loadLiveDataHealth(){
@@ -735,12 +734,17 @@ async function loadLiveDataHealth(){
   const r=await fetch(base()+'/api/v1/market-data/live-health',{cache:'no-store'});if(!r.ok)throw new Error('Health API '+r.status);
   const p=await r.json();const cf=(p.sources||[]).find(x=>x.source==='angelone-live-1s')||{};
   document.getElementById('livePersisted').textContent=p.persisted?'YES':'NO';document.getElementById('liveFeedStatus').textContent=p.feed_status||'—';document.getElementById('liveRecordCount').textContent=fmt(p.records);document.getElementById('liveInstrumentCount').textContent=fmt(p.instruments);
-  const ok=p.feed_status==='LIVE';document.getElementById('liveDataHealthBadge').textContent=ok?'LIVE':'CHECK';document.getElementById('liveDataHealthBadge').className=ok?'up':'neutral';
+  const feedStatus=String(p.feed_status||'NO_DATA').toUpperCase();const ok=feedStatus==='LIVE';
+  document.getElementById('liveDataHealthBadge').textContent=feedStatus;
+  document.getElementById('liveDataHealthBadge').className=ok?'up':feedStatus==='CLOSED'?'neutral':'down';
+  document.getElementById('topLive').textContent=ok?'● MARKET DATA LIVE • NSE/NFO':feedStatus==='CLOSED'?'● NSE/NFO MARKET CLOSED':feedStatus==='STALE'?'● MARKET DATA STALE':'● MARKET DATA '+feedStatus;
   document.getElementById('liveDataHealthStatus').textContent='Session '+p.market_session+' • age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s')+' • source '+p.source+' • '+p.timeframe+' • orders '+p.live_orders;
   document.getElementById('homeData').textContent=p.persisted?'READY':'NO DATA';document.getElementById('homeData').className='health-state '+(p.persisted?'up':'neutral');
-  document.getElementById('sideSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('sideApi').textContent=ok?'Connected':'CHECK';document.getElementById('sideDb').textContent=p.persisted?'Connected':'CHECK';document.getElementById('sideMarket').textContent=ok?'Live':'CHECK';document.getElementById('sideLast').textContent='Data age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s');
-  document.getElementById('dashSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('dashHealth').textContent=ok?'HEALTHY':'CHECK';document.getElementById('dashHealth').className='v '+(ok?'up':'neutral');
- }catch(e){document.getElementById('liveDataHealthBadge').textContent='ERROR';document.getElementById('homeData').textContent='ERROR';log('Live health failed: '+e.message)}
+  document.getElementById('homeFeed').textContent=feedStatus;document.getElementById('homeFeed').className='health-state '+(ok?'up':feedStatus==='CLOSED'?'neutral':'down');
+  // API/system connectivity is independent from whether the exchange feed is fresh.
+  document.getElementById('sideSystem').textContent='ONLINE';document.getElementById('sideApi').textContent='Connected';document.getElementById('sideDb').textContent=p.persisted?'Connected':'CHECK';document.getElementById('sideMarket').textContent=feedStatus;document.getElementById('sideLast').textContent='NSE/NFO data age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s');
+  document.getElementById('dashSystem').textContent='ONLINE';document.getElementById('dashHealth').textContent=feedStatus;document.getElementById('dashHealth').className='v '+(ok?'up':feedStatus==='CLOSED'?'neutral':'down');
+ }catch(e){document.getElementById('liveDataHealthBadge').textContent='ERROR';document.getElementById('topLive').textContent='● MARKET DATA HEALTH ERROR';document.getElementById('homeData').textContent='ERROR';log('Live health failed: '+e.message)}
 }
 function setScanSummary(p){const count=Number(p.opportunity_count||0);document.getElementById('summarySymbols').textContent=(p.symbols_requested||[]).length;document.getElementById('summaryObservations').textContent=p.scanned_observations||0;document.getElementById('summaryOpportunities').textContent=count;document.getElementById('summaryErrors').textContent=(p.errors||[]).length;document.getElementById('dashOpp').textContent=count;document.getElementById('homeCfCount').textContent=count}
 function applyScannerPayload(p){
@@ -765,8 +769,8 @@ function applyScannerPayload(p){
  mini.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('') || '<tr><td colspan="5">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
  document.getElementById('lastScan').textContent=stamp();
  renderAlerts(data); renderAlertTab();
- document.getElementById('dashSystem').textContent='ONLINE • LIVE 1s';
- document.getElementById('topLive').textContent='● Live Data (WebSocket)';document.getElementById('sideWs').textContent='Connected';document.getElementById('topNotify').textContent=document.getElementById('activeAlertCount')?.textContent||'0';
+ document.getElementById('dashSystem').textContent='ONLINE • SCANNER RESPONSE';
+ document.getElementById('sideWs').textContent='Connected';document.getElementById('topNotify').textContent=document.getElementById('activeAlertCount')?.textContent||'0';
 }
 
 async function scan(){
@@ -830,8 +834,7 @@ function connectDashboardWebSocket(){
  }
  dashboardSocket.onopen=()=>{
    dashboardReconnectDelay=1000;
-   document.getElementById('topLive').textContent='● LIVE DATA • WS CONNECTED';
-   document.getElementById('scanStatus').textContent='LIVE 1s STREAM CONNECTED • UNIFIED DATA BUS';
+   document.getElementById('scanStatus').textContent='DASHBOARD WS CONNECTED • MARKET DATA FRESHNESS CHECKED SEPARATELY';
    updateLiveBus(null,true);
    log('Dashboard WebSocket connected');
  };
@@ -853,10 +856,9 @@ function connectDashboardWebSocket(){
      scheduleLiveWorkspaceRefresh();
    }catch(e){log('Dashboard WebSocket payload error: '+e.message)}
  };
- dashboardSocket.onerror=()=>{document.getElementById('topLive').textContent='● LIVE DATA • WS ERROR';updateLiveBus(null,false)};
+ dashboardSocket.onerror=()=>{updateLiveBus(null,false)};
  dashboardSocket.onclose=()=>{
-   document.getElementById('topLive').textContent='● LIVE DATA • WS RECONNECTING';
-   document.getElementById('scanStatus').textContent='LIVE STREAM RECONNECTING…';
+   document.getElementById('scanStatus').textContent='DASHBOARD STREAM RECONNECTING…';
    updateLiveBus(null,false);
    scheduleDashboardReconnect();
  };
