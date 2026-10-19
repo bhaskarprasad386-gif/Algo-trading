@@ -157,8 +157,8 @@ class LiveSyntheticUnderlyingFeed:
         return groups
 
     def _descriptors(self):
-        if self._needs_instrument_master():
-            self.instrument_master.download()
+        # _tokens() owns the single instrument-master refresh for this cycle.
+        # Downloading here as well doubled the network work before every subscribe.
         tokens = self._tokens()
         descriptors = []
         symbol_by_instrument: dict[tuple[str, str, str], str] = {}
@@ -232,10 +232,23 @@ class LiveSyntheticUnderlyingFeed:
             while not self.stop_event.is_set():
                 try:
                     descriptors = self._descriptors()
-                    current_token_set = {
-                        symbol: token for symbol, token in self._tokens().items() if token
-                    }
+                    # _descriptors() already resolved every configured symbol and
+                    # recorded the result for diagnostics. Re-resolving here used to
+                    # download the same instrument master a second time per cycle.
+                    with self._diagnostics_lock:
+                        current_token_set = {
+                            symbol: token
+                            for symbol, token in self._last_resolved_tokens.items()
+                            if token
+                        }
                     if not descriptors:
+                        # If resolution regresses after a previously successful
+                        # cycle, actively release the old subscription set. Keeping
+                        # it registered would make the feed look subscribed while
+                        # all current targets are unresolved.
+                        if active_tokens:
+                            self._feed.stop()
+                            active_tokens = {}
                         app_logger.warning("Synthetic underlying feed found no resolvable live symbols; retrying")
                         self.stop_event.wait(TOKEN_REFRESH_SECONDS)
                         continue
