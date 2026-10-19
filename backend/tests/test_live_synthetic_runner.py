@@ -345,16 +345,33 @@ def test_select_nearest_option_expiry_returns_none_without_options():
     assert expiry is None
 
 
-def test_runner_filters_targets_to_resolvable_underlying_tokens(monkeypatch):
+def test_runner_preserves_unresolved_targets_for_token_recovery(monkeypatch):
     from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
+
     class Feed:
-        def _tokens(self): return {"NIFTY": "26000"}
-    runner = LiveSyntheticRunner(":memory:", [SyntheticLiveTarget("NIFTY","INDEX","29OCT2026"), SyntheticLiveTarget("COPPER","COMMODITY","29OCT2026")], allowed_stock_symbols=frozenset())
+        def _tokens(self):
+            # An unresolved symbol is still present as a key, but has no token.
+            return {"NIFTY": "26000", "COPPER": ""}
+
+    targets = [
+        SyntheticLiveTarget("NIFTY", "INDEX", "29OCT2026"),
+        SyntheticLiveTarget("COPPER", "COMMODITY", "29OCT2026"),
+    ]
+    runner = LiveSyntheticRunner(
+        ":memory:", targets, allowed_stock_symbols=frozenset()
+    )
     monkeypatch.setattr(runner, "_atm_tracker", object())
-    monkeypatch.setattr("app.market_data.live_synthetic_runner.LiveSyntheticUnderlyingFeed", lambda *a, **k: Feed())
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.LiveSyntheticUnderlyingFeed",
+        lambda *a, **k: Feed(),
+    )
+
     feed = runner._ensure_underlying_feed()
+
     assert feed is not None
-    assert [x.underlying for x in runner.targets] == ["NIFTY"]
+    # Token readiness must not destructively remove a target; token mappings
+    # can recover on a later instrument-master refresh.
+    assert [x.underlying for x in runner.targets] == ["NIFTY", "COPPER"]
 
 
 def test_runner_exposes_supervisor_stop_event_alias():
