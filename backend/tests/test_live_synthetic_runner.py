@@ -619,6 +619,8 @@ def test_runner_snapshot_does_not_claim_running_before_run_forever():
     )
     snapshot = runner.snapshot()
     assert snapshot["running"] is False
+    assert snapshot["phase"] == "STOPPED"
+    assert snapshot["phase_reason"] == "runner_not_active_or_stop_requested"
     assert snapshot["scanner_initialized"] is False
 
 
