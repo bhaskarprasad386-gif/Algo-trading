@@ -190,6 +190,36 @@ def test_diagnostics_exposes_atm_chain_readiness_without_raw_payloads():
     assert "raw_broker_payload" not in response
 
 
+def test_atm_readiness_summary_accepts_live_tracker_field_names():
+    live_synthetic_routes.configure_diagnostics(lambda: {
+        "running": True,
+        "scanner_diagnostics": {"counters": {}},
+        "atm_tracker_diagnostics": {
+            "symbols": [
+                {"underlying": "RELIANCE", "atm_ready": True, "concrete_strike_count": 9,
+                 "has_underlying_price": True, "last_underlying_price": 1482.5,
+                 "source_age_seconds": 0.4, "atm_strike": 1480},
+                {"underlying": "TCS", "atm_ready": False, "concrete_strike_count": 0,
+                 "has_underlying_price": False, "last_underlying_price": None,
+                 "source_age_seconds": None, "atm_strike": None},
+            ],
+        },
+    })
+    response = live_synthetic_routes.diagnostics()
+    summary = response["atm_readiness_summary"]
+    assert summary["ready_symbols"] == 1
+    assert summary["ready_underlyings"] == ["RELIANCE"]
+    assert summary["not_ready_symbols"] == [{
+        "underlying": "TCS",
+        "reason": "underlying_price_unavailable",
+        "concrete_strike_count": 0,
+        "underlying_price_present": False,
+        "underlying_price": None,
+        "atm_strike": None,
+        "source_age_seconds": None,
+    }]
+
+
 def test_live_route_normalizes_string_broker_expiry():
     result = _result()
     result.option.expiry = "29OCT2026"
