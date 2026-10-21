@@ -90,8 +90,25 @@ function numberValue(row: Row, ...keys: string[]) {
 
 function formatExpiry(raw: unknown) {
   if (raw === undefined || raw === null || raw === "") return "—";
-  const text = String(raw);
-  if (/^\d{8}$/.test(text)) return text.slice(0, 4) + "-" + text.slice(4, 6) + "-" + text.slice(6, 8);
+  let text = String(raw).trim();
+  // Numeric JSON values can arrive as YYYYMMDD.0 and bypass the old 8-digit check.
+  if (/^\d{8}\.0+$/.test(text)) text = text.split(".")[0];
+  if (/^\d{8}$/.test(text)) {
+    const year = Number(text.slice(0, 4));
+    const month = Number(text.slice(4, 6));
+    const day = Number(text.slice(6, 8));
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+      return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+    }
+  }
+  // Parse common instrument-master expiry formats; leave unknown text untouched
+  // rather than showing a misleading locale-formatted numeric value.
+  const match = text.match(/^(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{2,4})$/);
+  if (match) {
+    const parsed = new Date(Date.parse(match[1] + " " + match[2] + " " + match[3] + " UTC"));
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+  }
   return text;
 }
 
@@ -145,6 +162,21 @@ function pairCell(slug: string, column: string, row: Row) {
     },
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
+  if (slug === "synthetic-arbitrage" && (column === "Future" || column === "Option")) {
+    const bidAsk = (bid: unknown, ask: unknown) =>
+      bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== null && ask !== ""
+        ? formatValue(bid) + " / " + formatValue(ask)
+        : bid !== undefined && bid !== null && bid !== "" ? formatValue(bid)
+        : ask !== undefined && ask !== null && ask !== "" ? "— / " + formatValue(ask) : "—";
+    if (column === "Future") {
+      if (row.future_summary !== undefined && row.future_summary !== null && row.future_summary !== "") return formatValue(row.future_summary);
+      return bidAsk(row.future_bid, row.future_ask);
+    }
+    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return formatValue(row.option_summary);
+    const call = bidAsk(row.call_bid, row.call_ask);
+    const put = bidAsk(row.put_bid, row.put_ask);
+    return "CE " + call + " • PE " + put;
+  }
   if (column === "Time") {
     if (raw === undefined || raw === null || raw === "") return "—";
     const n = Number(raw);
