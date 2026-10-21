@@ -698,9 +698,55 @@ def _fresh_live_synthetic_results(results: tuple, max_age_seconds: float = 5.0) 
     return tuple(fresh)
 
 
+# The scanner callback can run once per underlying/scan bucket. Replacing the
+# global tuple on every callback lets a quiet stock or index erase fresh results
+# emitted by another symbol milliseconds earlier. Keep a bounded, freshness-only
+# cross-symbol snapshot; the live API still enforces its own five-second cutoff.
+_live_synthetic_results_lock = threading.Lock()
+
+
+def _synthetic_result_key(result) -> tuple:
+    option = getattr(result, "option", None)
+    if option is None:
+        return ("", "", "", "", "")
+    try:
+        strike = format(float(getattr(option, "strike", "")), ".12g")
+    except (TypeError, ValueError, OverflowError):
+        strike = str(getattr(option, "strike", "") or "").strip().upper()
+    return (
+        str(getattr(option, "underlying", "") or "").strip().upper(),
+        str(getattr(option, "instrument_class", "") or "").strip().upper(),
+        str(getattr(option, "expiry", "") or "").strip().upper(),
+        strike,
+        str(getattr(result, "direction", "") or "").strip().upper(),
+    )
+
+
 def _update_live_synthetic_results(results: tuple) -> None:
     global live_synthetic_latest_results
-    live_synthetic_latest_results = tuple(results)
+    # Keep only genuinely fresh results and merge by contract/direction. Empty
+    # per-symbol scans must not erase other symbols' still-fresh opportunities.
+    with _live_synthetic_results_lock:
+        combined = _fresh_live_synthetic_results(
+            tuple(live_synthetic_latest_results) + tuple(results or ())
+        )
+        latest = {}
+        for result in combined:
+            key = _synthetic_result_key(result)
+            try:
+                timestamp_ns = int(result.option.timestamp_ns)
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                continue
+            try:
+                edge = float(getattr(result, "executable_edge", 0) or 0)
+            except (TypeError, ValueError, OverflowError):
+                edge = 0.0
+            previous = latest.get(key)
+            if previous is None or timestamp_ns > previous[0] or (
+                timestamp_ns == previous[0] and edge > previous[1]
+            ):
+                latest[key] = (timestamp_ns, edge, result)
+        live_synthetic_latest_results = tuple(item[2] for item in latest.values())
 
 
 async def _live_box_spread_loop() -> None:
