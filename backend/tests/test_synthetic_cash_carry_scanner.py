@@ -146,3 +146,25 @@ def test_min_executable_edge_rejects_negative_values():
 
     with pytest.raises(ValueError, match="min_executable_edge must be non-negative"):
         SyntheticScanConfig(min_executable_edge=-0.01)
+
+
+def test_displayed_edge_is_raw_executable_difference_without_carry_or_fees():
+    quote = option(1, 95, cb=20, ca=21, pb=1, pa=2)
+    future_quote = future(1, bid=130, ask=131)
+    config = SyntheticScanConfig(
+        rate=0.50,
+        time_to_expiry_years=1.0,
+        fees_per_unit=50.0,
+    )
+
+    results = scan_synthetic_snapshot(
+        (quote,), future_quote, atm_strike=100, config=config,
+    )
+    long_result = next(row for row in results if row.direction == "LONG")
+
+    # Synthetic Ask = strike + CE Ask - PE Bid = 95 + 21 - 1 = 115.
+    # Raw LONG edge = Future Bid - Synthetic Ask = 130 - 115 = 15.
+    assert long_result.executable_edge == 15.0
+    assert long_result.carry_adjusted_synthetic_buy == 115.0
+    assert long_result.carry_factor == 1.0
+    assert long_result.fees_per_unit == 0.0
