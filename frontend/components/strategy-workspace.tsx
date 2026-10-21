@@ -505,6 +505,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     return latest == null || current > latest ? current : latest;
   }, null);
 
+  const diagnosticSummary = (scannerDiagnostics?.calculation_summary && typeof scannerDiagnostics.calculation_summary === "object"
+    ? scannerDiagnostics.calculation_summary : {}) as Row;
+  const diagnosticBlockers = (Array.isArray(scannerDiagnostics?.top_blockers) ? scannerDiagnostics.top_blockers : []) as Row[];
+  const diagnosticStatus = String(scannerDiagnostics?.status ?? "LOADING").replaceAll("_", " ");
+
   const refresh = async () => {
     setRefreshing(true);
     await Promise.all([load(), loadHistory(), loadPairs()]);
@@ -663,6 +668,61 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </table>
         </div>
       </Card>
+
+      {slug === "synthetic-arbitrage" && (
+        <Card className="theme-border theme-surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold theme-text">Synthetic Scanner Diagnostics</h2>
+              <p className="mt-1 text-xs theme-muted">Calculation health and actual backend blockers • refreshes every 1.5 seconds</p>
+            </div>
+            <span className={"rounded-lg border px-2.5 py-1 text-xs font-semibold " + (diagnosticStatus === "SCANNING" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>{diagnosticStatus}</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            {([
+              ["Evaluations", diagnosticSummary.evaluations],
+              ["Successful pairs", diagnosticSummary.successful_pairs],
+              ["Opportunities emitted", diagnosticSummary.opportunities_emitted],
+              ["Empty calculations", diagnosticSummary.empty_calculations],
+              ["Last result count", diagnosticSummary.last_result_count],
+            ] as Array<[string, unknown]>).map(([label, raw]) => (
+              <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3">
+                <p className="text-xs theme-muted">{label}</p>
+                <p className="mt-1 text-lg font-semibold theme-text">{typeof raw === "number" ? raw.toLocaleString("en-IN") : "—"}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-xl border theme-border theme-surface-2 p-3">
+              <p className="text-xs theme-muted">Last observation age</p>
+              <p className="mt-1 text-sm font-semibold theme-text">{typeof scannerDiagnostics?.observation_age_seconds === "number" ? scannerDiagnostics.observation_age_seconds.toFixed(1) + "s" : "—"}</p>
+            </div>
+            <div className="rounded-xl border theme-border theme-surface-2 p-3">
+              <p className="text-xs theme-muted">Last successful calculation</p>
+              <p className="mt-1 text-sm font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s ago" : "Not yet completed"}</p>
+              <p className="mt-1 text-[11px] theme-muted">This is calculation age, not merely the latest pair snapshot.</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold theme-text">Top blockers</p>
+              <p className="text-[10px] theme-muted">Cumulative events; categories may overlap</p>
+            </div>
+            {diagnosticBlockers.length === 0 ? (
+              <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">{scannerDiagnostics?.status === "DIAGNOSTICS_UNAVAILABLE" || scannerDiagnostics?.status === "unavailable" ? "Diagnostics endpoint/provider unavailable; backend deployment may be pending." : "No reported blocker counters yet."}</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {diagnosticBlockers.map((item, index) => (
+                  <div key={String(item.reason ?? index)} className="flex items-center justify-between gap-3 rounded-lg border theme-border px-3 py-2">
+                    <span className="min-w-0 break-words text-xs theme-muted">{String(item.reason ?? "Unknown blocker").replaceAll("_", " ")}</span>
+                    <span className="shrink-0 text-sm font-semibold theme-text">{typeof item.count === "number" ? item.count.toLocaleString("en-IN") : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
 
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
