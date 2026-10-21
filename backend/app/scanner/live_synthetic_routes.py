@@ -171,6 +171,10 @@ def _serialize(result) -> dict:
         "executable_edge": result.executable_edge,
         "edge_per_lot": result.edge_per_lot,
         "gross_pnl": result.gross_pnl,
+        "carry_adjusted_synthetic_buy": getattr(result, "carry_adjusted_synthetic_buy", None),
+        "carry_adjusted_synthetic_sell": getattr(result, "carry_adjusted_synthetic_sell", None),
+        "carry_factor": getattr(result, "carry_factor", None),
+        "fees_per_unit": getattr(result, "fees_per_unit", None),
         "strike_distance": result.strike_distance,
         "strike_side": result.strike_side,
     }
