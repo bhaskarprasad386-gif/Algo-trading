@@ -51,6 +51,8 @@ class LiveSyntheticScanner:
         self._last_observation_at_ns: int | None = None
         self._last_successful_calculation_at_ns: int | None = None
         self._last_result_count = 0
+        # Latest completed scan outcome per configured underlying (a gauge, not a cumulative counter).
+        self._latest_scan_by_symbol: dict[str, dict[str, int]] = {}
         self._buckets: dict[tuple[str, int, int], dict] = {}
 
     def _count(self, reason: str, amount: int = 1) -> None:
@@ -83,6 +85,9 @@ class LiveSyntheticScanner:
             counters["last_observation_at_ns"] = self._last_observation_at_ns
             counters["last_successful_calculation_at_ns"] = self._last_successful_calculation_at_ns
             counters["last_result_count"] = self._last_result_count
+            for symbol, outcome in self._latest_scan_by_symbol.items():
+                counters[f"latest_scan_result_count_by_symbol:{symbol}"] = outcome["result_count"]
+                counters[f"latest_scan_at_ns_by_symbol:{symbol}"] = outcome["scan_at_ns"]
         return {"counters": counters}
 
     @staticmethod
@@ -646,6 +651,10 @@ class LiveSyntheticScanner:
             # observe() already holds _lock while evaluating this complete snapshot.
             self._last_successful_calculation_at_ns = time.time_ns()
             self._last_result_count = len(results)
+            self._latest_scan_by_symbol[symbol] = {
+                "result_count": len(results),
+                "scan_at_ns": self._last_successful_calculation_at_ns,
+            }
             self._count("successful_pairs", len(option_quotes))
             if results:
                 self._count("opportunities_emitted", len(results))
