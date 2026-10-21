@@ -1089,7 +1089,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Saved observations</p><p className="mt-1 text-lg font-semibold theme-text">{historyRows.length.toLocaleString("en-IN")}</p></div>
-          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live monitor</p><p className="mt-1 text-lg font-semibold theme-success">CONNECTED</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live monitor</p><p className={"mt-1 text-lg font-semibold " + (pairMonitorStatus === "LIVE" ? "theme-success" : "theme-muted")}>{pairMonitorStatus}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "synthetic-arbitrage" ? "Saved live pair snapshots (5s sampling)" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
@@ -1100,11 +1100,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </div>
         <div className="mt-4 hidden overflow-x-auto md:block">
           <table className="min-w-[1100px] w-full text-left text-sm">
-            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{(slug === "synthetic-arbitrage" ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"] : c.pairColumns).map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
               {historyRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled.</td></tr> :
               historyRows.map((row, index) => {
-                const cols = slug === "synthetic-arbitrage" ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"] : c.pairColumns;
+                const cols = c.pairColumns;
                 return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
                   {cols.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{historyCell(slug, column, row)}</td>)}
                 </tr>;
