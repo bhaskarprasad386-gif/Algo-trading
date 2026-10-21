@@ -39,7 +39,7 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Synthetic Arbitrage",
     description: "Dedicated synthetic future/cash-carry scanner with the live option + future universe.",
     universe: "SUPPORTED INDEX + NIFTY TOP 15 LIQUID F&O STOCKS",
-    columns: ["Underlying", "Expiry", "Strike", "Option", "Future", "Executable Edge", "Liquidity", "Signal"],
+    columns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Future", "Executable Edge", "Liquidity", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
@@ -138,8 +138,8 @@ function formatCell(slug: string, column: string, row: Row) {
       "Volume / OI": ["liquidity_qty"], Signal: ["direction"],
     },
     "synthetic-arbitrage": {
-      Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
-      Option: ["call_bid", "put_bid"], Future: ["future_bid", "future_ask"],
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
+      Option: ["option_summary"], Future: ["future_summary", "future_bid", "future_ask"],
       "Executable Edge": ["executable_edge"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
@@ -151,6 +151,23 @@ function formatCell(slug: string, column: string, row: Row) {
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
   if (column === "Expiry") return formatExpiry(raw);
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
+  if (slug === "synthetic-arbitrage" && column === "Time") {
+    if (raw === undefined || raw === null || raw === "") return "—";
+    const n = Number(raw);
+    const date = Number.isFinite(n) && n > 1_000_000_000_000
+      ? new Date(n / 1_000_000)
+      : new Date(String(raw));
+    return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+  }
+  if (slug === "synthetic-arbitrage" && column === "Option") {
+    const bidAsk = (bid: unknown, ask: unknown) =>
+      bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== ""
+        ? formatValue(bid) + " / " + formatValue(ask)
+        : bid !== undefined && bid !== null && bid !== "" ? formatValue(bid)
+        : ask !== undefined && ask !== null && ask !== "" ? "— / " + formatValue(ask) : "—";
+    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return formatValue(row.option_summary);
+    return "CE " + bidAsk(row.call_bid, row.call_ask) + " • PE " + bidAsk(row.put_bid, row.put_ask);
+  }
   return formatValue(raw);
 }
 
