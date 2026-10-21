@@ -119,16 +119,25 @@ def test_pairs_endpoint_returns_empty_snapshot():
 
 
 def test_pairs_endpoint_sanitizes_snapshot_rows():
-    live_synthetic_routes.configure_pairs(lambda: {"status": "success", "data": [{
-        "timestamp_ns": 123, "underlying": "NIFTY", "expiry": 20261029, "strike": 25000,
-        "instrument_class": "INDEX",
-        "future_bid": 25099.0, "future_ask": 25101.0,
-        "call_bid": 100.0, "call_ask": 101.0, "put_bid": 99.0, "put_ask": 100.0,
-        "edge_per_lot": 125.0, "gross_pnl": 125.0, "strike_distance": 0.0, "strike_side": "ATM",
-        "state": "INCOMPLETE", "reason": "AWAITING_SCANNER_QUALIFICATION",
-        "readiness_scope": "STRUCTURAL_ONLY", "opportunity_confirmed": False,
-        "qualification_status": "NOT_CONFIRMED", "raw_broker_payload": {"secret": "must not escape"},
-    }]})
+    live_synthetic_routes.configure_pairs(lambda: {
+        "status": "success",
+        "data": [{
+            "timestamp_ns": 123, "underlying": "NIFTY", "expiry": 20261029, "strike": 25000,
+            "instrument_class": "INDEX",
+            "future_bid": 25099.0, "future_ask": 25101.0,
+            "call_bid": 100.0, "call_ask": 101.0, "put_bid": 99.0, "put_ask": 100.0,
+            "edge_per_lot": 125.0, "gross_pnl": 125.0, "strike_distance": 0.0, "strike_side": "ATM",
+            "state": "INCOMPLETE", "reason": "AWAITING_SCANNER_QUALIFICATION",
+            "readiness_scope": "STRUCTURAL_ONLY", "opportunity_confirmed": False,
+            "qualification_status": "NOT_CONFIRMED", "raw_broker_payload": {"secret": "must not escape"},
+        }],
+        "summary": {
+            "total_rows": 1, "symbols": {"NIFTY": {"rows": 1, "future_quotes": 1}},
+            "blocker_counts": {"MISSING_CALL": 1}, "readiness_scope": "STRUCTURAL_ONLY",
+            "opportunity_confirmed": False, "raw_broker_payload": {"secret": "must not escape"},
+        },
+        "raw_broker_payload": {"secret": "must not escape"},
+    })
     response = live_synthetic_routes.pairs(limit=10)
     assert response["count"] == 1
     assert response["data"][0]["underlying"] == "NIFTY"
@@ -140,6 +149,11 @@ def test_pairs_endpoint_sanitizes_snapshot_rows():
     assert response["data"][0]["future_bid"] == 25099.0
     assert response["data"][0]["call_bid"] == 100.0
     assert response["data"][0]["put_ask"] == 100.0
+    assert response["summary"]["total_rows"] == 1
+    assert response["summary"]["blocker_counts"] == {"MISSING_CALL": 1}
+    assert response["summary"]["opportunity_confirmed"] is False
+    assert "raw_broker_payload" not in response
+    assert "raw_broker_payload" not in response["summary"]
     assert response["data"][0]["edge_per_lot"] == 125.0
     assert response["data"][0]["strike_side"] == "ATM"
     assert "raw_broker_payload" not in response["data"][0]
