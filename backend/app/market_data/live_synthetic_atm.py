@@ -140,5 +140,36 @@ class LiveSyntheticAtmTracker:
         lower, upper = strikes[index - 1], strikes[index]
         return lower if price - lower <= upper - price else upper
 
+    def diagnostics_snapshot(self, now_ns: int | None = None) -> dict:
+        """Expose chain coverage and live ATM readiness without inventing quotes."""
+        now = int(now_ns) if now_ns is not None else time_ns()
+        with self._lock:
+            prices = dict(self._prices)
+            strike_sets = dict(self._strikes)
+        symbols = []
+        for symbol, strikes in sorted(strike_sets.items()):
+            quote = prices.get(symbol)
+            source_ns = int(quote[1]) if quote else None
+            age_seconds = (
+                (now - source_ns) / 1_000_000_000
+                if source_ns is not None else None
+            )
+            atm_strike = self.atm(symbol, now)
+            symbols.append({
+                "underlying": symbol,
+                "concrete_strike_count": len(strikes),
+                "has_underlying_price": quote is not None,
+                "last_underlying_price": float(quote[0]) if quote else None,
+                "source_age_seconds": round(age_seconds, 3) if age_seconds is not None else None,
+                "atm_strike": atm_strike,
+                "atm_ready": atm_strike is not None,
+            })
+        return {
+            "tracked_symbol_count": len(strike_sets),
+            "atm_ready_symbol_count": sum(1 for item in symbols if item["atm_ready"]),
+            "symbols_without_concrete_chain": [],
+            "symbols": symbols,
+        }
+
 
 __all__ = ["LiveSyntheticAtmTracker", "concrete_strikes_from_master"]
