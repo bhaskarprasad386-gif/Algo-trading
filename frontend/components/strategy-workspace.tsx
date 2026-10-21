@@ -300,33 +300,16 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
 }
 
 function historyCell(slug: string, column: string, row: Row) {
-  if (slug === "synthetic-arbitrage") {
-    if (column === "Time") {
-      const observed = row.observed_at;
-      if (observed !== undefined && observed !== null && observed !== "") {
-        const date = new Date(String(observed));
-        if (!Number.isNaN(date.getTime())) return date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+  if (slug === "synthetic-arbitrage" && column === "Time") {
+    const observed = row.observed_at;
+    if (observed !== undefined && observed !== null && observed !== "") {
+      const date = new Date(String(observed));
+      if (!Number.isNaN(date.getTime())) {
+        return date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
       }
     }
-    return pairCell(slug, column, row);
   }
   return pairCell(slug, column, row);
-  const map: Record<string, string[]> = {
-    Time: ["timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"],
-    Expiry: ["expiry"], Strike: ["strike"], Direction: ["direction"],
-    Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"],
-    "Gross P&L": ["gross_pnl"], State: ["direction"],
-  };
-  const raw = value(row, ...(map[column] ?? []));
-  if (column === "Expiry") return formatExpiry(raw);
-  if (column === "Time") {
-    if (raw === undefined || raw === null || raw === "") return "—";
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 1000000000000) return new Date(n / 1000000).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
-    const d = new Date(String(raw));
-    return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false });
-  }
-  return formatValue(raw);
 }
 
 function isSignal(slug: string, row: Row) {
