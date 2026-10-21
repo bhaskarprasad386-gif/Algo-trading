@@ -698,7 +698,14 @@ class LiveSyntheticScanner:
                     future_expiry = self._expiry(future.get("expiry")) if future.get("expiry") else expiry
                 except ValueError:
                     future_expiry = None
-                for strike, legs in bucket.get("options", {}).items():
+                option_buckets = bucket.get("options", {})
+                # A future-only snapshot is still actionable diagnostic information:
+                # otherwise a symbol receiving FUT ticks but no option legs vanishes
+                # completely from the pair monitor. Represent it as one explicitly
+                # unstruck structural row rather than inventing a strike.
+                if future and not option_buckets:
+                    option_buckets = {None: {}}
+                for strike, legs in option_buckets.items():
                     ce, pe = legs.get("CE") or {}, legs.get("PE") or {}
                     missing = []
                     if future and future_expiry != expiry:
