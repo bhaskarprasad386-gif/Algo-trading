@@ -141,9 +141,11 @@ def scan_synthetic_snapshot(
             opportunity = SyntheticCashCarryBacktester.evaluate(
                 option,
                 future,
-                rate=config.rate,
-                time_to_expiry_years=config.time_to_expiry_years,
-                fees_per_unit=config.fees_per_unit,
+                # Scanner Edge is the raw executable quote difference only.
+                # Do not apply carry or fees to the displayed/qualified edge.
+                rate=0.0,
+                time_to_expiry_years=0.0,
+                fees_per_unit=0.0,
                 direction=direction,
                 liquidity=config.liquidity,
             )
@@ -154,9 +156,8 @@ def scan_synthetic_snapshot(
             required_edge = max(class_minimum, config.min_executable_edge)
             if opportunity is None or opportunity.executable_edge <= required_edge:
                 continue
-            # Publish the exact prices used by the evaluator so the UI can explain
-            # the edge without accidentally comparing the opposite bid/ask sides.
-            carry_factor = exp(config.rate * config.time_to_expiry_years)
+            # Publish raw executable synthetic prices: no carry and no fees.
+            carry_factor = 1.0
             results.append(
                 SyntheticScanResult(
                     option=option,
@@ -170,7 +171,7 @@ def scan_synthetic_snapshot(
                     carry_adjusted_synthetic_buy=option.strike + (option.call_ask - option.put_bid) * carry_factor,
                     carry_adjusted_synthetic_sell=option.strike + (option.call_bid - option.put_ask) * carry_factor,
                     carry_factor=carry_factor,
-                    fees_per_unit=config.fees_per_unit,
+                    fees_per_unit=0.0,
                 )
             )
 
