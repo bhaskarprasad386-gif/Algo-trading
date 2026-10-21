@@ -199,6 +199,46 @@ def alerts(days: int = Query(30, ge=1, le=30), limit: int = Query(500, ge=1, le=
         db.close()
 
 
+def _pair_readiness_summary(snapshot) -> dict:
+    """Summarize structural pair blockers per underlying without exposing quote payloads."""
+    if not isinstance(snapshot, dict):
+        return {"available": False, "row_count": 0, "symbols": []}
+    source_rows = snapshot.get("data")
+    if not isinstance(source_rows, list):
+        return {"available": True, "row_count": 0, "symbols": []}
+    grouped = {}
+    for row in source_rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("underlying") or row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        item = grouped.setdefault(symbol, {
+            "underlying": symbol, "row_count": 0, "ready_to_evaluate_count": 0,
+            "incomplete_count": 0, "blocker_counts": {},
+        })
+        item["row_count"] += 1
+        state = str(row.get("state") or "").strip().upper()
+        if state == "READY_TO_EVALUATE":
+            item["ready_to_evaluate_count"] += 1
+        else:
+            item["incomplete_count"] += 1
+        reason = str(row.get("reason") or "").strip().upper()
+        for blocker in (part.strip() for part in reason.split(",")):
+            if not blocker or blocker == "AWAITING_SCANNER_QUALIFICATION":
+                continue
+            item["blocker_counts"][blocker] = item["blocker_counts"].get(blocker, 0) + 1
+    symbols = []
+    for symbol in sorted(grouped):
+        item = grouped[symbol]
+        item["blocker_counts"] = [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(item["blocker_counts"].items(), key=lambda pair: (-pair[1], pair[0]))
+        ]
+        symbols.append(item)
+    return {"available": True, "row_count": sum(item["row_count"] for item in symbols), "symbols": symbols}
+
+
 @router.get("/diagnostics")
 def diagnostics():
     """Expose scanner health, per-symbol subscription, and ATM-chain readiness."""
@@ -269,6 +309,8 @@ def diagnostics():
         "last_result_count": counters.get("last_result_count", 0),
     }
     atm_tracker = snapshot.get("atm_tracker_diagnostics")
+    pair_snapshot = _pairs_provider() if _pairs_provider is not None else None
+    pair_readiness = _pair_readiness_summary(pair_snapshot)
     return {
         "status": status,
         "scanner": "synthetic-cash-carry-live-1s",
@@ -283,6 +325,7 @@ def diagnostics():
         "subscription_diagnostics": snapshot.get("subscription_diagnostics"),
         "atm_tracker_diagnostics": atm_tracker,
         "atm_readiness_summary": _atm_readiness_summary(atm_tracker),
+        "pair_readiness_summary": pair_readiness,
         "observation_age_seconds": observation_age,
         "last_scan_age_seconds": scan_age,
         "last_observation_at_ns": last_observation_ns,
