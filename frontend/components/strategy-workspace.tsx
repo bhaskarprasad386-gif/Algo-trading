@@ -582,11 +582,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const metricValue = (metric: string) => {
     if (loading) return "…";
+    const staleSuffix = slug === "synthetic-arbitrage" && rowsStale ? " · STALE" : "";
     if (metric === "Eligible Contracts") return feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN");
-    if (metric === "Spread Opportunities" || metric === "Executable Edges" || metric === "Executable Gaps") return rows.length.toLocaleString("en-IN");
-    if (metric === "Signals") return signals.toLocaleString("en-IN");
-    if (metric === "Eligible Combos" || metric === "Eligible Boxes") return rows.length.toLocaleString("en-IN");
-    if (metric === "Last Scan") return lastScan ? "LIVE" : "—";
+    if (metric === "Spread Opportunities" || metric === "Executable Edges" || metric === "Executable Gaps") return rows.length.toLocaleString("en-IN") + staleSuffix;
+    if (metric === "Signals") return signals.toLocaleString("en-IN") + staleSuffix;
+    if (metric === "Eligible Combos" || metric === "Eligible Boxes") return rows.length.toLocaleString("en-IN") + staleSuffix;
+    if (metric === "Last Scan") return rowsStale && slug === "synthetic-arbitrage" ? "STALE" : lastScan ? "LIVE" : "—";
     return "—";
   };
 
