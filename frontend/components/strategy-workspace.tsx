@@ -39,11 +39,11 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Synthetic Arbitrage",
     description: "Dedicated synthetic future/cash-carry scanner with the live option + future universe.",
     universe: "SUPPORTED INDEX + NIFTY TOP 15 LIQUID F&O STOCKS",
-    columns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Future", "Executable Edge", "Liquidity", "Signal"],
+    columns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Synthetic Future (K + CE − PE)", "Future", "Executable Edge", "Liquidity", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Future", "Edge", "Direction", "State"],
+    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Synthetic Future (K + CE − PE)", "Future", "Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/alerts?days=1&limit=100",
     pairEndpoint: "/api/v1/scanner/synthetic-cash-carry/pairs?limit=200",
   },
@@ -129,6 +129,20 @@ function formatExpiry(raw: unknown) {
   return text;
 }
 
+function syntheticFutureValue(row: Row) {
+  const strike = nullableNumber(value(row, "strike"));
+  const callBid = nullableNumber(value(row, "call_bid"));
+  const callAsk = nullableNumber(value(row, "call_ask"));
+  const putBid = nullableNumber(value(row, "put_bid"));
+  const putAsk = nullableNumber(value(row, "put_ask"));
+  if (strike === null) return "K + CE − PE = — (strike missing)";
+  // Executable synthetic bid sells the put at its ask; executable ask buys the put at its bid.
+  const syntheticBid = callBid !== null && putAsk !== null ? strike + callBid - putAsk : null;
+  const syntheticAsk = callAsk !== null && putBid !== null ? strike + callAsk - putBid : null;
+  const shown = (n: number | null) => n === null ? "—" : formatValue(n);
+  return "K " + formatValue(strike) + " + CE − PE | Bid " + shown(syntheticBid) + " / Ask " + shown(syntheticAsk);
+}
+
 function formatValue(raw: unknown) {
   if (raw === undefined || raw === null || raw === "") return "—";
   if (typeof raw === "boolean") return raw ? "YES" : "NO";
@@ -163,7 +177,7 @@ function formatCell(slug: string, column: string, row: Row) {
     "synthetic-arbitrage": {
       Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
       Option: ["option_summary"], Future: ["future_summary", "future_bid", "future_ask"],
-      "Executable Edge": ["executable_edge"], Liquidity: ["lot_size"], Signal: ["direction"],
+      "Synthetic Future (K + CE − PE)": ["strike"], "Executable Edge": ["executable_edge"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
       Underlying: ["symbol"], Expiry: ["expiry"], "Low Strike": ["low_strike"],
@@ -182,6 +196,7 @@ function formatCell(slug: string, column: string, row: Row) {
       : new Date(String(raw));
     return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
   }
+  if (slug === "synthetic-arbitrage" && column === "Synthetic Future (K + CE − PE)") return withQuoteTimestamp(syntheticFutureValue(row), row);
   if (slug === "synthetic-arbitrage" && column === "Option") {
     const bidAsk = (bid: unknown, ask: unknown) =>
       bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== null && ask !== ""
@@ -213,6 +228,7 @@ function pairCell(slug: string, column: string, row: Row) {
     },
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
+  if (slug === "synthetic-arbitrage" && column === "Synthetic Future (K + CE − PE)") return withQuoteTimestamp(syntheticFutureValue(row), row);
   if (slug === "synthetic-arbitrage" && (column === "Future" || column === "Option")) {
     const bidAsk = (bid: unknown, ask: unknown) =>
       bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== null && ask !== ""
@@ -233,7 +249,7 @@ function pairCell(slug: string, column: string, row: Row) {
     const n = Number(raw);
     if (Number.isFinite(n) && n > 1_000_000_000_000) return new Date(n / 1_000_000).toLocaleTimeString("en-IN", { hour12: false });
     const d = new Date(String(raw));
-    return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false });
+    return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
   }
   if (column === "Expiry") return formatExpiry(raw);
   if (slug === "synthetic-arbitrage" && column === "Edge") {
@@ -296,7 +312,7 @@ function historyCell(slug: string, column: string, row: Row) {
   if (column === "Time") {
     if (raw === undefined || raw === null || raw === "") return "—";
     const n = Number(raw);
-    if (Number.isFinite(n) && n > 1000000000000) return new Date(n / 1000000).toLocaleTimeString("en-IN", { hour12: false });
+    if (Number.isFinite(n) && n > 1000000000000) return new Date(n / 1000000).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
     const d = new Date(String(raw));
     return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false });
   }
@@ -1081,10 +1097,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Saved observations</p><p className="mt-1 text-lg font-semibold theme-text">{historyRows.length.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live monitor</p><p className="mt-1 text-lg font-semibold theme-success">CONNECTED</p></div>
-          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "synthetic-arbitrage" ? "Saved qualifying alerts only" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
-          {historyRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair history for this session.</div> : historyRows.map((row, index) => {
+          {historyRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved qualifying alerts in this time window.</div> : historyRows.map((row, index) => {
             const cols = slug === "synthetic-arbitrage" ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"] : c.pairColumns;
             return <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{historyCell(slug, cols[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{cols.filter((column) => column !== cols[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{historyCell(slug, column, row)}</div></div>)}</div></div>;
           })}
