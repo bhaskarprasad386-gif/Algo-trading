@@ -574,6 +574,7 @@ class LiveSyntheticScanner:
             except Exception:
                 self._count("atm_provider_errors")
                 self._count(f"atm_provider_errors_by_symbol:{symbol}")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "ATM_ERROR"}
                 self._prune(timestamp_ns)
                 return ()
             if atm is None:
@@ -582,6 +583,7 @@ class LiveSyntheticScanner:
                 # which underlying is losing its live ATM input. This is bounded
                 # by the configured underlying universe and contains no quote data.
                 self._count(f"missing_atm_price_by_symbol:{symbol}")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "ATM_MISSING"}
                 self._prune(timestamp_ns)
                 return ()
             try:
@@ -589,10 +591,12 @@ class LiveSyntheticScanner:
             except Exception:
                 self._count("config_provider_errors")
                 self._count(f"config_provider_errors_by_symbol:{symbol}")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "CONFIG_ERROR"}
                 self._prune(timestamp_ns)
                 return ()
             if not isinstance(config, SyntheticScanConfig):
                 self._count("invalid_scanner_config")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "CONFIG_ERROR"}
                 self._prune(timestamp_ns)
                 return ()
             # Derive carry horizon from this contract's actual expiry, not a static default.
@@ -606,6 +610,7 @@ class LiveSyntheticScanner:
                     continue
             if expiry_date is None:
                 self._count("invalid_expiry_for_pricing")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "EXPIRY_ERROR"}
                 self._prune(timestamp_ns)
                 return ()
             tz = ZoneInfo("Asia/Kolkata")
