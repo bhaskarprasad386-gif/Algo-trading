@@ -432,3 +432,47 @@ def test_underlying_feed_reports_failed_when_transport_close_is_stuck():
     health = feed.snapshot()
     assert health["state"] == "FAILED"
     assert health["state_reason"] == "transport_close_timed_out"
+
+
+def test_underlying_feed_reports_health_independently_for_each_symbol():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={
+            "NIFTY": (100.0, 105.0),
+            "RELIANCE": (100.0, 105.0),
+            "TCS": (100.0, 105.0),
+            "SBIN": (100.0, 105.0),
+        }
+    )
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY", "RELIANCE", "TCS", "SBIN"),
+        tracker=tracker,
+        concrete_tokens={"NIFTY": "99926000", "RELIANCE": "2885", "TCS": "11536"},
+    )
+    now_ns = time_ns()
+    feed._last_resolved_tokens = {
+        "NIFTY": "99926000",
+        "RELIANCE": "2885",
+        "TCS": "11536",
+        "SBIN": "",
+    }
+    feed._last_token_resolution_at_ns = now_ns
+    feed._last_tick_by_symbol = {
+        "NIFTY": {
+            "price": 25000.0,
+            "source_timestamp_ns": now_ns,
+            "received_at_ns": now_ns,
+        },
+        "RELIANCE": {
+            "price": 1500.0,
+            "source_timestamp_ns": now_ns - 20_000_000_000,
+            "received_at_ns": now_ns - 20_000_000_000,
+        },
+    }
+
+    health = feed.snapshot()["symbols"]
+    assert health["NIFTY"]["state"] == "LIVE"
+    assert health["RELIANCE"]["state"] == "STALE"
+    assert health["TCS"]["state"] == "WAITING_FOR_TICK"
+    assert health["SBIN"]["state"] == "TOKEN_MISSING"
