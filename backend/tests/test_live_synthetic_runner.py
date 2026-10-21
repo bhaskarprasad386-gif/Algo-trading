@@ -102,6 +102,18 @@ def test_runner_builds_concrete_real_tokens_without_duplicates():
     assert {"f1", "c100", "p100", "c105", "p105", "c95", "p95"} <= tokens
     assert "f2" not in tokens
 
+    # Readiness diagnostics must distinguish a selected ATM and complete CE/PE
+    # pairs from merely having an underlying feed tick.
+    detail = runner.snapshot()["subscription_diagnostics"]["symbols"][0]
+    assert detail["underlying"] == "NIFTY"
+    assert detail["atm_strike"] == 100.0
+    assert detail["exchange_segment"] == "NFO"
+    assert detail["future_count"] == 1
+    assert detail["call_count"] == 3
+    assert detail["put_count"] == 3
+    assert detail["complete_pair_count"] == 3
+    assert detail["status"] == "SUBSCRIBED"
+
 
 def test_runner_build_subscriptions_follow_live_atm():
     master = _master()
