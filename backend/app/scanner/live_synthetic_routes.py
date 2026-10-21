@@ -207,6 +207,8 @@ def diagnostics():
     # These are rejection/health events, not unique or mutually exclusive pair counts.
     blocker_prefixes = (
         "missing_ce_or_pe_leg",
+        "missing_call_leg",
+        "missing_put_leg",
         "missing_future_leg",
         "timestamp_mismatch",
         "expiry_mismatch",
