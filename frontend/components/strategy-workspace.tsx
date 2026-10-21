@@ -309,6 +309,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   ]);
   const [universeAvailability, setUniverseAvailability] = useState<{
     eligible_future_symbols?: string[]; missing_future_symbols?: string[];
+    configured_index_symbols?: string[]; eligible_index_symbols?: string[]; missing_index_underlyings?: string[];
     eligible_target_symbols?: string[]; missing_option_expiry_symbols?: string[]; checked_at?: string | null;
   } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -696,6 +697,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 <p className="theme-muted">Missing futures ({universeAvailability.missing_future_symbols?.length ?? 0}): {(universeAvailability.missing_future_symbols ?? []).join(" • ") || "None reported"}</p>
                 <p className="theme-text">Scan-ready targets ({universeAvailability.eligible_target_symbols?.filter((symbol) => top15StockSymbols.includes(symbol)).length ?? 0}/15): {(universeAvailability.eligible_target_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "Not yet checked"}</p>
                 <p className="theme-muted">Missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "None reported"}</p>
+                {control === "ALL" && <>
+                  <p className="theme-text">Eligible index futures ({universeAvailability.eligible_index_symbols?.length ?? 0}/{universeAvailability.configured_index_symbols?.length ?? 6}): {(universeAvailability.eligible_index_symbols ?? []).join(" • ") || "Not yet checked"}</p>
+                  <p className="theme-muted">Index symbols skipped (unresolvable token): {(universeAvailability.missing_index_underlyings ?? []).join(" • ") || "None reported"}</p>
+                  <p className="theme-muted">Indices missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => (universeAvailability.configured_index_symbols ?? []).includes(symbol)).join(" • ") || "None reported"}</p>
+                </>}
                 <p className="theme-muted">Availability is from the last backend universe check, not a guarantee of live quotes.</p>
               </div>
             )}
