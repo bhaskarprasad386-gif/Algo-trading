@@ -1,6 +1,6 @@
 """Durable sampled snapshots from the live synthetic pair monitor."""
 from datetime import datetime
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
@@ -14,7 +14,7 @@ class LiveSyntheticPairHistory(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
-    timestamp_ns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timestamp_ns: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     underlying: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     instrument_class: Mapped[str | None] = mapped_column(String(16), nullable=True)
     expiry: Mapped[str | None] = mapped_column(String(32), nullable=True)
