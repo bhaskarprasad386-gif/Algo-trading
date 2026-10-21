@@ -494,20 +494,52 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
       const responseStatus = String(body?.status ?? "UNKNOWN").toUpperCase();
-      // Empty/waiting snapshots can occur during a runner refresh or temporary
-      // API recovery. Keep the last real pair rows visible, explicitly marked STALE.
+      // Keep the last real pair snapshot across reloads as well as transient API errors.
+      // Cached rows are historical observations only; the UI labels them STALE.
       if (data.length > 0) {
         setPairRows(data);
+        if (slug === "synthetic-arbitrage") {
+          try {
+            window.localStorage.setItem("algo:synthetic-arbitrage:last-pairs:v1", JSON.stringify({
+              savedAt: Date.now(),
+              rows: data,
+            }));
+          } catch { /* Storage may be unavailable; live rendering still works. */ }
+        }
         setPairMonitorStatus(responseStatus === "SUCCESS" ? "LIVE" : responseStatus);
-      } else if (pairRows.length > 0) {
-        setPairMonitorStatus("STALE");
       } else {
-        setPairRows([]);
-        setPairMonitorStatus(responseStatus === "UNAVAILABLE" ? "UNAVAILABLE" : "WAITING");
+        let cachedRows: Row[] = [];
+        if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
+          try {
+            const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-pairs:v1") || "null");
+            if (Array.isArray(cached?.rows)) {
+              cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+            }
+          } catch { /* Ignore invalid/unavailable cache and keep normal empty state. */ }
+        }
+        const retained = pairRows.length > 0 ? pairRows : cachedRows;
+        if (retained.length > 0) {
+          setPairRows(retained);
+          setPairMonitorStatus("STALE");
+        } else {
+          setPairRows([]);
+          setPairMonitorStatus(responseStatus === "UNAVAILABLE" ? "UNAVAILABLE" : "WAITING");
+        }
       }
     } catch {
-      // Preserve the last good snapshot but never label it as live after an API error.
-      setPairMonitorStatus(pairRows.length > 0 ? "STALE" : "UNAVAILABLE");
+      // On a transient error, preserve the last good snapshot and fall back to cache after reload.
+      let cachedRows: Row[] = [];
+      if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
+        try {
+          const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-pairs:v1") || "null");
+          if (Array.isArray(cached?.rows)) {
+            cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+          }
+        } catch { /* Ignore invalid/unavailable cache and keep normal empty state. */ }
+      }
+      const retained = pairRows.length > 0 ? pairRows : cachedRows;
+      if (retained.length > 0) setPairRows(retained);
+      setPairMonitorStatus(retained.length > 0 ? "STALE" : "UNAVAILABLE");
     }
   };
 
