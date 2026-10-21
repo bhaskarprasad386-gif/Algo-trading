@@ -1381,8 +1381,7 @@ def test_pair_monitor_summary_counts_real_quotes_and_blockers():
 
 
 
-def test_live_result_exposes_the_exact_carry_adjusted_prices_used_for_edge():
-    from math import exp
+def test_live_result_exposes_raw_executable_prices_and_edge_without_carry_or_fees():
     from app.backtesting.arbitrage_backtester import FutureQuote, OptionQuote
     from app.scanner.synthetic_cash_carry import scan_synthetic_snapshot
 
@@ -1395,13 +1394,13 @@ def test_live_result_exposes_the_exact_carry_adjusted_prices_used_for_edge():
         timestamp_ns=1_000_000_000, underlying="NIFTY", expiry=20261029,
         bid=130.0, ask=131.0, lot_size=1, instrument_class="INDEX",
     )
+    # Deliberately non-zero config proves displayed edge ignores carry and fees.
     config = SyntheticScanConfig(rate=0.05, time_to_expiry_years=0.2, fees_per_unit=1.0)
     rows = scan_synthetic_snapshot([option], future, atm_strike=100.0, config=config)
     long_row = next(row for row in rows if row.direction == "LONG")
 
-    carry = exp(0.05 * 0.2)
-    expected_synthetic_buy = 105.0 + (11.0 - 4.0) * carry
-    assert abs(long_row.carry_factor - carry) < 1e-12
-    assert abs(long_row.carry_adjusted_synthetic_buy - expected_synthetic_buy) < 1e-12
-    assert abs(long_row.executable_edge - (130.0 - expected_synthetic_buy - 1.0)) < 1e-12
-    assert long_row.fees_per_unit == 1.0
+    # Synthetic Ask = strike + CE Ask - PE Bid = 105 + 11 - 4 = 112.
+    assert long_row.carry_factor == 1.0
+    assert long_row.carry_adjusted_synthetic_buy == 112.0
+    assert long_row.executable_edge == 18.0  # Future Bid 130 - Synthetic Ask 112.
+    assert long_row.fees_per_unit == 0.0
