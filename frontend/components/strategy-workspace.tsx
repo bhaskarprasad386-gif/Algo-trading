@@ -954,7 +954,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                     : previous.feed_state ?? underlyingFeed.state),
                 token_resolved: typeof item.token_resolved === "boolean" ? item.token_resolved : previous.token_resolved,
                 last_tick_age_seconds: typeof tickAge === "number" ? tickAge : previous.last_tick_age_seconds,
-                source_age_seconds: previous.source_age_seconds ?? (typeof tickAge === "number" ? tickAge : undefined),
+                // Prefer the actual underlying-feed tick age over an older ATM/subscription age.
+                // Otherwise the merged row can show stale feed age even after a fresh tick arrives.
+                source_age_seconds: typeof tickAge === "number" ? tickAge : previous.source_age_seconds,
                 reason: previous.reason || item.state_reason || item.reason,
               });
             }
