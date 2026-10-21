@@ -90,6 +90,22 @@ def test_pairs_endpoint_sanitizes_snapshot_rows():
     assert response["data"][0]["qualification_status"] == "NOT_CONFIRMED"
     assert "raw_broker_payload" not in response["data"][0]
 
+def test_pairs_endpoint_normalizes_common_broker_expiry_formats():
+    formats = ("20261029", "29OCT2026", "29OCT26", "29-10-2026", "2026-10-29")
+    live_synthetic_routes.configure_pairs(
+        lambda: {
+            "status": "success",
+            "data": [
+                {"underlying": "NIFTY", "expiry": expiry, "strike": 25000}
+                for expiry in formats
+            ],
+        }
+    )
+
+    response = live_synthetic_routes.pairs(limit=10)
+
+    assert [row["expiry"] for row in response["data"]] == ["2026-10-29"] * len(formats)
+
 def test_dashboard_synthetic_results_exclude_stale_entries():
     from app.main import _fresh_live_synthetic_results
 
