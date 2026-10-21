@@ -679,13 +679,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <span className={"rounded-lg border px-2.5 py-1 text-xs font-semibold " + (diagnosticStatus === "SCANNING" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>{diagnosticStatus}</span>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-            {[
+            {([
               ["Evaluations", diagnosticSummary.evaluations],
               ["Successful pairs", diagnosticSummary.successful_pairs],
               ["Opportunities emitted", diagnosticSummary.opportunities_emitted],
               ["Empty calculations", diagnosticSummary.empty_calculations],
               ["Last result count", diagnosticSummary.last_result_count],
-            ].map(([label, raw]) => (
+            ] as Array<[string, unknown]>).map(([label, raw]) => (
               <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3">
                 <p className="text-xs theme-muted">{label}</p>
                 <p className="mt-1 text-lg font-semibold theme-text">{typeof raw === "number" ? raw.toLocaleString("en-IN") : "—"}</p>
