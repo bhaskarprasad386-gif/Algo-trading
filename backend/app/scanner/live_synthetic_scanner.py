@@ -418,6 +418,13 @@ class LiveSyntheticScanner:
             for option_strike, legs in strikes.items():
                 ce, pe = legs.get("CE"), legs.get("PE")
                 if ce is None or pe is None:
+                    # Split the aggregate blocker into directional counters so the
+                    # operator can distinguish missing CALL subscriptions from missing
+                    # PUT subscriptions without exposing raw market payloads.
+                    if ce is None:
+                        self._count("missing_call_leg")
+                    if pe is None:
+                        self._count("missing_put_leg")
                     self._count("missing_ce_or_pe_leg")
                     continue
                 leg_classes = {
