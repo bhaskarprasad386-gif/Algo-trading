@@ -226,3 +226,28 @@ def test_live_route_normalizes_string_broker_expiry():
     response = live_synthetic_routes.live(limit=10)
 
     assert response["data"][0]["expiry"] == "2026-10-29"
+
+
+def test_live_synthetic_callback_merges_fresh_symbols_instead_of_overwriting(monkeypatch):
+    from app import main
+
+    index_result = _result()
+    index_result.option.underlying = "SENSEX"
+    index_result.option.instrument_class = "INDEX"
+    index_result.option.timestamp_ns = time.time_ns()
+
+    stock_result = _result()
+    stock_result.option.underlying = "RELIANCE"
+    stock_result.option.instrument_class = "STOCK"
+    stock_result.option.expiry = "2026-10-29"
+    stock_result.option.timestamp_ns = time.time_ns()
+
+    monkeypatch.setattr(main, "live_synthetic_latest_results", ())
+    main._update_live_synthetic_results((index_result,))
+    main._update_live_synthetic_results((stock_result,))
+    # An empty per-symbol scan must not wipe either still-fresh symbol.
+    main._update_live_synthetic_results(())
+
+    assert {row.option.underlying for row in main.live_synthetic_latest_results} == {
+        "SENSEX", "RELIANCE"
+    }
