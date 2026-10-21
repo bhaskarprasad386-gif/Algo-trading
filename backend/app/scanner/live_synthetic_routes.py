@@ -258,18 +258,21 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
         if underlying:
             row["underlying"] = str(underlying).strip().upper()
         # Normalize common broker expiry representations to ISO YYYY-MM-DD.
+        # Angel One and other sources may send YYYYMMDD, 29OCT2026, 29OCT26,
+        # DD-MM-YYYY, or an already-normalized ISO date.
         expiry = source.get("expiry")
         if expiry is not None:
-            text = str(expiry).strip()
-            if text.endswith(".0") and text[:-2].isdigit():
-                text = text[:-2]
-            if len(text) == 8 and text.isdigit():
+            expiry_text = str(expiry).strip().upper()
+            if expiry_text.endswith(".0") and expiry_text[:-2].isdigit():
+                expiry_text = expiry_text[:-2]
+            normalized_expiry = None
+            for expiry_format in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%d-%m-%Y", "%Y-%m-%d"):
                 try:
-                    row["expiry"] = datetime.strptime(text, "%Y%m%d").date().isoformat()
+                    normalized_expiry = datetime.strptime(expiry_text, expiry_format).date().isoformat()
+                    break
                 except ValueError:
-                    row["expiry"] = expiry
-            else:
-                row["expiry"] = expiry
+                    continue
+            row["expiry"] = normalized_expiry if normalized_expiry is not None else expiry
         rows.append(row)
     return {
         "status": str(snapshot.get("status") or "success"),
