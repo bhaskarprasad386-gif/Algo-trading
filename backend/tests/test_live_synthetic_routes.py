@@ -358,7 +358,10 @@ def test_pair_history_endpoint_returns_sampled_quotes(monkeypatch):
     assert response["data"][0]["call_bid"] == 35.0
     assert response["data"][0]["put_ask"] == 33.0
     assert response["data"][0]["future_bid"] == 1482.0
+    assert response["data"][0]["synthetic_bid"] == 1482.0
+    assert response["data"][0]["synthetic_ask"] == 1484.0
     assert response["data"][0]["opportunity_confirmed"] is False
+    assert response["persistence"]["storage"] == "DATABASE"
 
 
 
@@ -377,3 +380,24 @@ def test_synthetic_price_formula_requires_real_quotes():
     })
     assert incomplete["synthetic_bid"] == 1018
     assert incomplete["synthetic_ask"] is None
+
+
+
+def test_pair_history_direct_call_accepts_default_query_parameter(monkeypatch):
+    from app.core import database
+
+    class Query:
+        def filter(self, *_args): return self
+        def order_by(self, *_args): return self
+        def limit(self, *_args): return self
+        def all(self): return []
+
+    class FakeDB:
+        def query(self, *_args): return Query()
+        def close(self): pass
+
+    monkeypatch.setattr(database, "SessionLocal", lambda: FakeDB())
+    response = live_synthetic_routes.pair_history(days=1, limit=10)
+    assert response["underlying"] is None
+    assert response["count"] == 0
+    assert response["persistence"]["storage"] == "DATABASE"
