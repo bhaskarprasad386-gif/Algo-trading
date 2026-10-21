@@ -185,7 +185,7 @@ def test_diagnostics_exposes_atm_chain_readiness_without_raw_payloads():
     assert response["atm_readiness_summary"]["ready_underlyings"] == ["RELIANCE"]
     assert response["atm_readiness_summary"]["not_ready_symbols"] == [{
         "underlying": "TCS", "reason": "underlying_price_unavailable", "concrete_strike_count": 0,
-        "underlying_price_present": False, "source_age_seconds": None,
+        "underlying_price_present": False, "underlying_price": None, "atm_strike": None, "source_age_seconds": None,
     }]
     assert "raw_broker_payload" not in response
 
