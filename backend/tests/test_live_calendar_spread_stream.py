@@ -307,3 +307,37 @@ def test_calendar_mcx_close_tracks_us_daylight_saving_transition():
     # After the transition, the published winter close extends to 23:55 IST.
     assert collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 50, tzinfo=IST))
     assert not collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 56, tzinfo=IST))
+
+
+def test_calendar_runtime_snapshot_exposes_exchange_and_contract_family_coverage(monkeypatch):
+    import app.market_data.live_calendar_spread_stream as stream
+
+    collector = LiveCalendarSpreadOneSecondCollector("unused")
+    collector._kind_by_key = {
+        ("NFO", "101"): "STOCK_FUTURE",
+        ("NFO", "102"): "INDEX_FUTURE",
+        ("BFO", "201"): "INDEX_FUTURE",
+        ("MCX", "301"): "COMMODITY_FUTURE",
+        ("MCX", "302"): "COMMODITY_FUTURE",
+    }
+    monkeypatch.setattr(
+        stream,
+        "exchange_is_open",
+        lambda exchange, _now: exchange == "MCX",
+    )
+
+    snapshot = collector.snapshot()
+
+    assert snapshot["registered_instruments"] == 5
+    assert snapshot["contracts_by_exchange"] == {"NFO": 2, "BFO": 1, "MCX": 2}
+    assert snapshot["contracts_by_family"] == {
+        "STOCK_FUTURE": 1,
+        "INDEX_FUTURE": 2,
+        "COMMODITY_FUTURE": 2,
+    }
+    assert snapshot["session_by_exchange"]["NFO"]["open"] is False
+    assert snapshot["session_by_exchange"]["BFO"]["open"] is False
+    assert snapshot["session_by_exchange"]["MCX"]["open"] is True
+    assert snapshot["open_exchanges"] == ["MCX"]
+    assert snapshot["diagnostics"]["records_received_by_exchange"] == {}
+
