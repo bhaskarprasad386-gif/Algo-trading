@@ -88,7 +88,9 @@ class LiveSyntheticScanner:
     @staticmethod
     def _expiry(value: object) -> int:
         text = str(value or "").strip().upper()
-        for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%m-%Y"):
+        if text.endswith(".0") and text[:-2].isdigit():
+            text = text[:-2]
+        for fmt in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%m-%Y"):
             try:
                 return int(datetime.strptime(text, fmt).strftime("%Y%m%d"))
             except ValueError:
