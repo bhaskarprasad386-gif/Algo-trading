@@ -61,6 +61,21 @@ def test_live_route_deduplicates_same_contract_and_direction_by_newest_timestamp
     assert response["data"][0]["future_bid"] == 25100.0
 
 
+def test_live_route_normalizes_numeric_strike_identity():
+    text_strike = _result()
+    numeric_strike = _result()
+    text_strike.option.strike = "25000"
+    text_strike.option.timestamp_ns = time.time_ns() - 1_000_000
+    numeric_strike.option.strike = 25000.0
+    numeric_strike.option.timestamp_ns = time.time_ns()
+    live_synthetic_routes.configure(lambda: (text_strike, numeric_strike))
+
+    response = live_synthetic_routes.live(limit=10)
+
+    assert len(response["data"]) == 1
+    assert response["data"][0]["strike"] == 25000.0
+
+
 def test_live_route_keeps_different_directions_for_same_contract():
     long_result = _result()
     short_result = _result()
