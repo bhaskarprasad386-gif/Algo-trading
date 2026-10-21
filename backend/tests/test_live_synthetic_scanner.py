@@ -1297,3 +1297,42 @@ def test_live_scanner_accepts_explicit_boolean_logical_timestamp_configuration()
         allow_logical_timestamps=False,
     )
     assert scanner.diagnostics_snapshot()["counters"].get("invalid_timestamp_unit", 0) == 0
+
+
+
+def test_latest_scan_status_records_atm_and_config_blockers_instead_of_old_results():
+    import time
+
+    expiry = "29OCT2026"
+    ts = time.time_ns()
+
+    def feed_complete_pair(scanner):
+        scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
+        scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
+        scanner.observe({
+            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+            "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
+            "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
+        })
+
+    atm_error = LiveSyntheticScanner(atm_provider=lambda _s, _t: (_ for _ in ()).throw(RuntimeError("ATM unavailable")))
+    feed_complete_pair(atm_error)
+    counters = atm_error.diagnostics_snapshot()["counters"]
+    assert counters["latest_scan_status_by_symbol:NIFTY"] == "ATM_ERROR"
+    assert counters["latest_scan_result_count_by_symbol:NIFTY"] == 0
+    assert counters["latest_scan_at_ns_by_symbol:NIFTY"] > 0
+
+    atm_missing = LiveSyntheticScanner(atm_provider=lambda _s, _t: None)
+    feed_complete_pair(atm_missing)
+    counters = atm_missing.diagnostics_snapshot()["counters"]
+    assert counters["latest_scan_status_by_symbol:NIFTY"] == "ATM_MISSING"
+    assert counters["latest_scan_result_count_by_symbol:NIFTY"] == 0
+
+    config_error = LiveSyntheticScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        config_provider=lambda _s: (_ for _ in ()).throw(RuntimeError("config unavailable")),
+    )
+    feed_complete_pair(config_error)
+    counters = config_error.diagnostics_snapshot()["counters"]
+    assert counters["latest_scan_status_by_symbol:NIFTY"] == "CONFIG_ERROR"
+    assert counters["latest_scan_result_count_by_symbol:NIFTY"] == 0
