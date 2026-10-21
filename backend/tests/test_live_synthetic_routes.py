@@ -404,3 +404,37 @@ def test_pair_history_direct_call_accepts_default_query_parameter(monkeypatch):
     assert response["underlying"] is None
     assert response["count"] == 0
     assert response["persistence"]["storage"] == "DATABASE"
+
+
+def test_synthetic_prices_require_real_quotes_and_never_invent_missing_values():
+    complete = live_synthetic_routes._synthetic_prices({
+        "strike": 25000,
+        "call_bid": 100,
+        "call_ask": 101,
+        "put_bid": 90,
+        "put_ask": 91,
+    })
+    assert complete["synthetic_bid"] == 25009
+    assert complete["synthetic_ask"] == 25011
+
+    incomplete = live_synthetic_routes._synthetic_prices({
+        "strike": 25000,
+        "call_bid": 100,
+        "call_ask": 101,
+        "put_bid": 90,
+        "put_ask": None,
+    })
+    assert incomplete["synthetic_bid"] is None
+    assert incomplete["synthetic_ask"] == 25011
+
+
+def test_synthetic_prices_reject_boolean_and_non_finite_quote_values():
+    prices = live_synthetic_routes._synthetic_prices({
+        "strike": 25000,
+        "call_bid": True,
+        "call_ask": float("nan"),
+        "put_bid": 90,
+        "put_ask": 91,
+    })
+    assert prices["synthetic_bid"] is None
+    assert prices["synthetic_ask"] is None
