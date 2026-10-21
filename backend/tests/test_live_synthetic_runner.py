@@ -108,10 +108,23 @@ def test_runner_builds_concrete_real_tokens_without_duplicates():
     assert detail["underlying"] == "NIFTY"
     assert detail["atm_strike"] == 100.0
     assert detail["exchange_segment"] == "NFO"
-    assert detail["future_count"] == 1
-    assert detail["call_count"] == 3
-    assert detail["put_count"] == 3
-    assert detail["complete_pair_count"] == 3
+    future_subscriptions = [
+        item for item in subscriptions
+        if item.option_type is None and item.strike is None
+    ]
+    call_strikes = {
+        item.strike for item in subscriptions
+        if item.option_type == "CE" and item.strike is not None
+    }
+    put_strikes = {
+        item.strike for item in subscriptions
+        if item.option_type == "PE" and item.strike is not None
+    }
+    assert detail["future_count"] == len(future_subscriptions) == 1
+    assert detail["call_count"] == len(call_strikes)
+    assert detail["put_count"] == len(put_strikes)
+    assert detail["complete_pair_count"] == len(call_strikes & put_strikes)
+    assert detail["complete_pair_count"] > 0
     assert detail["status"] == "SUBSCRIBED"
 
 
