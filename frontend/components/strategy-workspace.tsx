@@ -39,11 +39,11 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Synthetic Arbitrage",
     description: "Dedicated synthetic future/cash-carry scanner with the live option + future universe.",
     universe: "SUPPORTED INDEX + NIFTY TOP 15 LIQUID F&O STOCKS",
-    columns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Synthetic Future (K + CE − PE)", "Future", "Executable Edge", "Liquidity", "Signal"],
+    columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future (K + CE − PE)", "Executable Edge", "Liquidity", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Synthetic Future (K + CE − PE)", "Future", "Edge", "Direction", "State"],
+    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future (K + CE − PE)", "Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
     pairEndpoint: "/api/v1/scanner/synthetic-cash-carry/pairs?limit=200",
   },
@@ -140,7 +140,8 @@ function syntheticFutureValue(row: Row) {
   const syntheticBid = callBid !== null && putAsk !== null ? strike + callBid - putAsk : null;
   const syntheticAsk = callAsk !== null && putBid !== null ? strike + callAsk - putBid : null;
   const shown = (n: number | null) => n === null ? "—" : formatValue(n);
-  return "K " + formatValue(strike) + " + CE − PE | Bid " + shown(syntheticBid) + " / Ask " + shown(syntheticAsk);
+  const callBidText = shown(callBid), callAskText = shown(callAsk), putBidText = shown(putBid), putAskText = shown(putAsk);
+  return "Bid: K " + formatValue(strike) + " + CE Bid " + callBidText + " − PE Ask " + putAskText + " = " + shown(syntheticBid) + " | Ask: K " + formatValue(strike) + " + CE Ask " + callAskText + " − PE Bid " + putBidText + " = " + shown(syntheticAsk);
 }
 
 function formatValue(raw: unknown) {
@@ -176,7 +177,7 @@ function formatCell(slug: string, column: string, row: Row) {
     },
     "synthetic-arbitrage": {
       Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
-      Option: ["option_summary"], Future: ["future_summary", "future_bid", "future_ask"],
+      Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
       "Synthetic Future (K + CE − PE)": ["strike"], "Executable Edge": ["executable_edge"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
@@ -197,14 +198,14 @@ function formatCell(slug: string, column: string, row: Row) {
     return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
   }
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future (K + CE − PE)") return withQuoteTimestamp(syntheticFutureValue(row), row);
-  if (slug === "synthetic-arbitrage" && column === "Option") {
-    const bidAsk = (bid: unknown, ask: unknown) =>
-      bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== null && ask !== ""
-        ? formatValue(bid) + " / " + formatValue(ask)
-        : bid !== undefined && bid !== null && bid !== "" ? formatValue(bid)
-        : ask !== undefined && ask !== null && ask !== "" ? "— / " + formatValue(ask) : "—";
-    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return withQuoteTimestamp(formatValue(row.option_summary), row);
-    return withQuoteTimestamp("CE " + bidAsk(row.call_bid, row.call_ask) + " • PE " + bidAsk(row.put_bid, row.put_ask), row);
+  if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
+    const bid = column === "Future" ? row.future_bid : column === "Call (CE)" ? row.call_bid : row.put_bid;
+    const ask = column === "Future" ? row.future_ask : column === "Call (CE)" ? row.call_ask : row.put_ask;
+    const summary = column === "Future" ? row.future_summary : undefined;
+    const shownBid = bid !== undefined && bid !== null && bid !== "" ? formatValue(bid) : "—";
+    const shownAsk = ask !== undefined && ask !== null && ask !== "" ? formatValue(ask) : "—";
+    if ((bid === undefined || bid === null || bid === "") && (ask === undefined || ask === null || ask === "") && summary !== undefined && summary !== null && summary !== "") return withQuoteTimestamp(formatValue(summary), row);
+    return withQuoteTimestamp("Bid " + shownBid + " / Ask " + shownAsk, row);
   }
   return formatValue(raw);
 }
@@ -218,7 +219,7 @@ function pairCell(slug: string, column: string, row: Row) {
     },
     "synthetic-arbitrage": {
       Time: ["timestamp_ns", "observed_at"], Underlying: ["underlying", "symbol"], Expiry: ["expiry"], Strike: ["strike"],
-      Option: ["option_summary", "call_bid", "put_bid"], Future: ["future_summary", "future_bid", "future_ask"],
+      Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
       Edge: ["executable_edge"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
@@ -229,20 +230,14 @@ function pairCell(slug: string, column: string, row: Row) {
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future (K + CE − PE)") return withQuoteTimestamp(syntheticFutureValue(row), row);
-  if (slug === "synthetic-arbitrage" && (column === "Future" || column === "Option")) {
-    const bidAsk = (bid: unknown, ask: unknown) =>
-      bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== null && ask !== ""
-        ? formatValue(bid) + " / " + formatValue(ask)
-        : bid !== undefined && bid !== null && bid !== "" ? formatValue(bid)
-        : ask !== undefined && ask !== null && ask !== "" ? "— / " + formatValue(ask) : "—";
-    if (column === "Future") {
-      if (row.future_summary !== undefined && row.future_summary !== null && row.future_summary !== "") return withQuoteTimestamp(formatValue(row.future_summary), row);
-      return withQuoteTimestamp(bidAsk(row.future_bid, row.future_ask), row);
-    }
-    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return withQuoteTimestamp(formatValue(row.option_summary), row);
-    const call = bidAsk(row.call_bid, row.call_ask);
-    const put = bidAsk(row.put_bid, row.put_ask);
-    return withQuoteTimestamp("CE " + call + " • PE " + put, row);
+  if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
+    const bid = column === "Future" ? row.future_bid : column === "Call (CE)" ? row.call_bid : row.put_bid;
+    const ask = column === "Future" ? row.future_ask : column === "Call (CE)" ? row.call_ask : row.put_ask;
+    const summary = column === "Future" ? row.future_summary : undefined;
+    const shownBid = bid !== undefined && bid !== null && bid !== "" ? formatValue(bid) : "—";
+    const shownAsk = ask !== undefined && ask !== null && ask !== "" ? formatValue(ask) : "—";
+    if ((bid === undefined || bid === null || bid === "") && (ask === undefined || ask === null || ask === "") && summary !== undefined && summary !== null && summary !== "") return withQuoteTimestamp(formatValue(summary), row);
+    return withQuoteTimestamp("Bid " + shownBid + " / Ask " + shownAsk, row);
   }
   if (column === "Time") {
     if (raw === undefined || raw === null || raw === "") return "—";
