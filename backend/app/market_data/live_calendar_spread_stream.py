@@ -147,6 +147,10 @@ class LiveCalendarSpreadOneSecondCollector:
             "persistence_dropped": 0,
             "callback_errors": 0,
             "source_timestamp_dropped": 0,
+            "records_received_by_exchange": {},
+            "records_emitted_by_exchange": {},
+            "source_timestamp_dropped_by_exchange": {},
+            "out_of_session_dropped_by_exchange": {},
         }
 
     @staticmethod
@@ -211,11 +215,15 @@ class LiveCalendarSpreadOneSecondCollector:
         source_timestamp_ns = _source_timestamp_ns(raw_payload if isinstance(raw_payload, dict) else {})
         with self._lock:
             self._stats["records_received"] += 1
+            received_by_exchange = self._stats["records_received_by_exchange"]
+            received_by_exchange[exchange] = received_by_exchange.get(exchange, 0) + 1
         if source_timestamp_ns is None:
             # The common normalizer can use receive time for other consumers,
             # but Calendar Spread must not trade on a timestamp whose source is unknown.
             with self._lock:
                 self._stats["source_timestamp_dropped"] += 1
+                dropped_by_exchange = self._stats["source_timestamp_dropped_by_exchange"]
+                dropped_by_exchange[exchange] = dropped_by_exchange.get(exchange, 0) + 1
             return
         if record.timestamp_ns != source_timestamp_ns:
             record = replace(record, timestamp_ns=source_timestamp_ns)
@@ -223,6 +231,8 @@ class LiveCalendarSpreadOneSecondCollector:
         if not self._exchange_open(exchange, local):
             with self._lock:
                 self._stats["out_of_session_dropped"] += 1
+                dropped_by_exchange = self._stats["out_of_session_dropped_by_exchange"]
+                dropped_by_exchange[exchange] = dropped_by_exchange.get(exchange, 0) + 1
             return
         key = (exchange, record.instrument.token.strip())
         second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
@@ -274,6 +284,9 @@ class LiveCalendarSpreadOneSecondCollector:
             payload["contract_month"] = record.expiry[:7]
         with self._lock:
             self._stats["records_emitted"] += 1
+            emitted_by_exchange = self._stats["records_emitted_by_exchange"]
+            exchange = record.instrument.exchange.strip().upper()
+            emitted_by_exchange[exchange] = emitted_by_exchange.get(exchange, 0) + 1
         # Deliver to the in-memory scanner first. Optional disk persistence is
         # best-effort and uses a short-timeout NORMAL queue entry below.
         if self.on_observation is not None:
@@ -373,8 +386,25 @@ class LiveCalendarSpreadOneSecondCollector:
         feed = self._feed
         ingestor = self._ingestor
         with self._lock:
-            stats = dict(self._stats)
+            stats = {
+                key: (dict(value) if isinstance(value, dict) else value)
+                for key, value in self._stats.items()
+            }
             latest_buckets = len(self._latest)
+            contract_metadata = tuple(self._kind_by_key.items())
+        contracts_by_exchange: dict[str, int] = {}
+        contracts_by_family: dict[str, int] = {}
+        for (exchange, _token), family in contract_metadata:
+            contracts_by_exchange[exchange] = contracts_by_exchange.get(exchange, 0) + 1
+            contracts_by_family[family] = contracts_by_family.get(family, 0) + 1
+        now = datetime.now(IST)
+        session_by_exchange = {
+            exchange: {
+                "open": self._exchange_open(exchange, now),
+                "checked_at": now.isoformat(),
+            }
+            for exchange in EXCHANGE_TYPES
+        }
         worker = getattr(self, "_runner_worker", None)
         worker_alive = bool(worker is not None and worker.is_alive())
         stop_requested = self.stop_event.is_set()
@@ -395,6 +425,10 @@ class LiveCalendarSpreadOneSecondCollector:
             "stop_requested": stop_requested,
             "feed_connected": feed_connected,
             "registered_instruments": len(self._kind_by_key),
+            "contracts_by_exchange": contracts_by_exchange,
+            "contracts_by_family": contracts_by_family,
+            "session_by_exchange": session_by_exchange,
+            "open_exchanges": [exchange for exchange, state in session_by_exchange.items() if state["open"]],
             "latest_instrument_buckets": latest_buckets,
             "session_calendar": {
                 "supported_years": sorted(SUPPORTED_YEARS),
