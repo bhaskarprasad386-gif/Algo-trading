@@ -274,6 +274,9 @@ def diagnostics():
         "phase_reason": snapshot.get("phase_reason"),
         "target_count": snapshot.get("targets"),
         "scanner_initialized": bool(snapshot.get("scanner_initialized")),
+        # Per-symbol subscription outcomes explain why an underlying is not
+        # producing a pair before quote-level scanner blockers are considered.
+        "subscription_diagnostics": snapshot.get("subscription_diagnostics"),
         "observation_age_seconds": observation_age,
         "last_scan_age_seconds": scan_age,
         "last_observation_at_ns": last_observation_ns,
