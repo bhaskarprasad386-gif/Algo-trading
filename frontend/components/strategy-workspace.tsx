@@ -943,21 +943,26 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               if (!key) continue;
               const previous = symbolRows.get(key) ?? {};
               const tickAge = item.last_tick_age_seconds ?? item.receive_age_seconds ?? item.source_timestamp_age_seconds;
+              const feedState = item.state ?? item.status ?? item.feed_state
+                ?? (item.token_resolved === false ? "TOKEN_UNRESOLVED"
+                  : typeof tickAge === "number" ? (tickAge <= 5 ? "LIVE" : "STALE")
+                  : item.token_resolved === true ? "WAITING_FOR_TICK"
+                  : previous.feed_state ?? underlyingFeed.state);
+              const feedReason = feedState === "TOKEN_UNRESOLVED" ? "underlying_token_unresolved"
+                : feedState === "WAITING_FOR_TICK" ? "token_resolved_waiting_for_first_tick"
+                : feedState === "STALE" ? "underlying_tick_stale"
+                : undefined;
               symbolRows.set(key, {
                 ...previous,
                 ...item,
                 underlying: key,
-                feed_state: item.state ?? item.status ?? item.feed_state
-                  ?? (item.token_resolved === false ? "TOKEN_UNRESOLVED"
-                    : typeof tickAge === "number" ? (tickAge <= 5 ? "LIVE" : "STALE")
-                    : item.token_resolved === true ? "WAITING_FOR_TICK"
-                    : previous.feed_state ?? underlyingFeed.state),
+                feed_state: feedState,
                 token_resolved: typeof item.token_resolved === "boolean" ? item.token_resolved : previous.token_resolved,
                 last_tick_age_seconds: typeof tickAge === "number" ? tickAge : previous.last_tick_age_seconds,
                 // Prefer the actual underlying-feed tick age over an older ATM/subscription age.
                 // Otherwise the merged row can show stale feed age even after a fresh tick arrives.
                 source_age_seconds: typeof tickAge === "number" ? tickAge : previous.source_age_seconds,
-                reason: previous.reason || item.state_reason || item.reason,
+                reason: previous.reason || item.state_reason || item.reason || feedReason,
               });
             }
             const rows = Array.from(symbolRows.values()).sort((a, b) => String(a.underlying ?? "").localeCompare(String(b.underlying ?? "")));
