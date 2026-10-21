@@ -44,7 +44,7 @@ const configs: Record<string, WorkspaceConfig> = {
     controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Synthetic Future (K + CE − PE)", "Future", "Edge", "Direction", "State"],
-    historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=1&limit=1000",
+    historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
     pairEndpoint: "/api/v1/scanner/synthetic-cash-carry/pairs?limit=200",
   },
   "box-spread": {
@@ -1119,7 +1119,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "synthetic-arbitrage" ? "Saved live pair snapshots (5s sampling)" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
-          {historyRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair snapshots yet. Keep this page open while the live pair monitor runs.</div> : visibleHistoryRows.map((row, index) => {
+          {filteredHistoryRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{historyRows.length === 0 ? "No saved pair snapshots yet. Keep this page open while the live pair monitor runs." : "No history rows match this symbol filter."}</div> : visibleHistoryRows.map((row, index) => {
             const cols = c.pairColumns;
             return <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{historyCell(slug, cols[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{cols.filter((column) => column !== cols[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{historyCell(slug, column, row)}</div></div>)}</div></div>;
           })}
@@ -1128,7 +1128,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <table className="min-w-[1100px] w-full text-left text-sm">
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
-              {historyRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled.</td></tr> :
+              {filteredHistoryRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">{historyRows.length === 0 ? "No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled." : "No history rows match this symbol filter."}</td></tr> :
               visibleHistoryRows.map((row, index) => {
                 const cols = c.pairColumns;
                 return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
