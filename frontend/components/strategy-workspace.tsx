@@ -302,7 +302,7 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
 function historyCell(slug: string, column: string, row: Row) {
   if (slug !== "synthetic-arbitrage") return pairCell(slug, column, row);
   const map: Record<string, string[]> = {
-    Time: ["observed_at", "timestamp_ns"], Underlying: ["symbol", "underlying"],
+    Time: ["timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"],
     Expiry: ["expiry"], Strike: ["strike"], Direction: ["direction"],
     Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"],
     "Gross P&L": ["gross_pnl"], State: ["direction"],
