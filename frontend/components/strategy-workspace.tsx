@@ -137,8 +137,11 @@ function syntheticFutureValue(row: Row) {
   const putAsk = nullableNumber(value(row, "put_ask"));
   if (strike === null) return "K + CE − PE = — (strike missing)";
   // Executable synthetic bid sells the put at its ask; executable ask buys the put at its bid.
-  const syntheticBid = callBid !== null && putAsk !== null ? strike + callBid - putAsk : null;
-  const syntheticAsk = callAsk !== null && putBid !== null ? strike + callAsk - putBid : null;
+  const computedBid = callBid !== null && putAsk !== null ? strike + callBid - putAsk : null;
+  const computedAsk = callAsk !== null && putBid !== null ? strike + callAsk - putBid : null;
+  // Prefer the backend's independently serialized values; calculate locally only for older/history payloads.
+  const syntheticBid = nullableNumber(value(row, "synthetic_bid")) ?? computedBid;
+  const syntheticAsk = nullableNumber(value(row, "synthetic_ask")) ?? computedAsk;
   const shown = (n: number | null) => n === null ? "—" : formatValue(n);
   const callBidText = shown(callBid), callAskText = shown(callAsk), putBidText = shown(putBid), putAskText = shown(putAsk);
   return "Bid: K " + formatValue(strike) + " + CE Bid " + callBidText + " − PE Ask " + putAskText + " = " + shown(syntheticBid) + " | Ask: K " + formatValue(strike) + " + CE Ask " + callAskText + " − PE Bid " + putBidText + " = " + shown(syntheticAsk);
