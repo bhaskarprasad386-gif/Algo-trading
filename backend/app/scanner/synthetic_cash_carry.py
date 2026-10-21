@@ -9,7 +9,7 @@ ATM; stock scope remains governed by its existing synthetic strike policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite
+from math import exp, isfinite
 from typing import Iterable
 
 from app.backtesting.arbitrage_backtester import (
@@ -69,6 +69,10 @@ class SyntheticScanResult:
     gross_pnl: float
     strike_distance: int
     strike_side: str
+    carry_adjusted_synthetic_buy: float | None = None
+    carry_adjusted_synthetic_sell: float | None = None
+    carry_factor: float | None = None
+    fees_per_unit: float = 0.0
 
 
 def _validate_universe(
@@ -150,6 +154,9 @@ def scan_synthetic_snapshot(
             required_edge = max(class_minimum, config.min_executable_edge)
             if opportunity is None or opportunity.executable_edge <= required_edge:
                 continue
+            # Publish the exact prices used by the evaluator so the UI can explain
+            # the edge without accidentally comparing the opposite bid/ask sides.
+            carry_factor = exp(config.rate * config.time_to_expiry_years)
             results.append(
                 SyntheticScanResult(
                     option=option,
@@ -160,6 +167,10 @@ def scan_synthetic_snapshot(
                     gross_pnl=opportunity.gross_pnl,
                     strike_distance=distance,
                     strike_side=side,
+                    carry_adjusted_synthetic_buy=option.strike + (option.call_ask - option.put_bid) * carry_factor,
+                    carry_adjusted_synthetic_sell=option.strike + (option.call_bid - option.put_ask) * carry_factor,
+                    carry_factor=carry_factor,
+                    fees_per_unit=config.fees_per_unit,
                 )
             )
 
