@@ -39,11 +39,11 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Synthetic Arbitrage",
     description: "Dedicated synthetic future/cash-carry scanner with the live option + future universe.",
     universe: "SUPPORTED INDEX + NIFTY TOP 15 LIQUID F&O STOCKS",
-    columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future (K + CE − PE)", "Executable Edge", "Liquidity", "Signal"],
+    columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future (K + CE − PE)", "Executable Edge", "Edge / Lot", "Gross P&L", "Liquidity", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future (K + CE − PE)", "Edge", "Direction", "State"],
+    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future (K + CE − PE)", "Edge", "Edge / Lot", "Gross P&L", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
     pairEndpoint: "/api/v1/scanner/synthetic-cash-carry/pairs?limit=200",
   },
@@ -190,7 +190,7 @@ function formatCell(slug: string, column: string, row: Row) {
     "synthetic-arbitrage": {
       Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
       Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
-      "Synthetic Future (K + CE − PE)": ["strike"], "Executable Edge": ["executable_edge"], Liquidity: ["lot_size"], Signal: ["direction"],
+      "Synthetic Future (K + CE − PE)": ["strike"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
       Underlying: ["symbol"], Expiry: ["expiry"], "Low Strike": ["low_strike"],
@@ -272,7 +272,7 @@ function pairCell(slug: string, column: string, row: Row) {
       : direction.includes("SHORT")
         ? "Synthetic Ask " + formatValue(syntheticAsk) + " − Future Bid " + formatValue(futureBid)
         : "backend executable pricing";
-    return formatValue(raw) + " (backend executable edge; " + comparison + "; carry/expiry/fees rules apply)";
+    return formatValue(raw) + " pts (backend executable edge; " + comparison + "; carry/expiry/fees included by configured evaluator)";
   }
   if (slug === "synthetic-arbitrage" && column === "Direction") {
     return raw === undefined ? "NOT EVALUATED" : formatValue(raw);
