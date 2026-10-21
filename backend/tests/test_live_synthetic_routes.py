@@ -44,6 +44,35 @@ def test_live_route_serializes_latest_results(monkeypatch):
     assert response["data"][0]["executable_edge"] == 5.0
 
 
+def test_live_route_deduplicates_same_contract_and_direction_by_newest_timestamp():
+    older = _result()
+    newer = _result()
+    now_ns = time.time_ns()
+    older.option.timestamp_ns = now_ns - 1_000_000_000
+    older.future.bid = 25090.0
+    newer.option.timestamp_ns = now_ns
+    newer.future.bid = 25100.0
+    live_synthetic_routes.configure(lambda: (older, newer))
+
+    response = live_synthetic_routes.live(limit=10)
+
+    assert len(response["data"]) == 1
+    assert response["data"][0]["timestamp_ns"] == now_ns
+    assert response["data"][0]["future_bid"] == 25100.0
+
+
+def test_live_route_keeps_different_directions_for_same_contract():
+    long_result = _result()
+    short_result = _result()
+    short_result.direction = "SHORT"
+    live_synthetic_routes.configure(lambda: (long_result, short_result))
+
+    response = live_synthetic_routes.live(limit=10)
+
+    assert len(response["data"]) == 2
+    assert {row["direction"] for row in response["data"]} == {"LONG", "SHORT"}
+
+
 def test_live_route_limits_results():
     result = _result()
     live_synthetic_routes.configure(lambda: (result, result))
