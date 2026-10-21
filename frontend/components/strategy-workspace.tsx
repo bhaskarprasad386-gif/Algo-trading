@@ -150,13 +150,11 @@ function syntheticEdgeExplanation(row: Row, raw: unknown) {
   const futureBid = value(row, "future_bid"), futureAsk = value(row, "future_ask");
   const syntheticBuy = value(row, "carry_adjusted_synthetic_buy");
   const syntheticSell = value(row, "carry_adjusted_synthetic_sell");
-  const fees = nullableNumber(value(row, "fees_per_unit"));
-  const feeText = fees === null ? "" : " − fees " + formatValue(fees);
   const comparison = direction.includes("LONG") && syntheticBuy !== undefined && syntheticBuy !== null
-    ? "Future Bid " + formatValue(futureBid) + " − carry-adjusted Synthetic Ask " + formatValue(syntheticBuy) + feeText
+    ? "Future Bid " + formatValue(futureBid) + " − Synthetic Ask " + formatValue(syntheticBuy)
     : direction.includes("SHORT") && syntheticSell !== undefined && syntheticSell !== null
-      ? "carry-adjusted Synthetic Bid " + formatValue(syntheticSell) + " − Future Ask " + formatValue(futureAsk) + feeText
-      : "backend executable pricing (carry/fees applied)";
+      ? "Synthetic Bid " + formatValue(syntheticSell) + " − Future Ask " + formatValue(futureAsk)
+      : "raw executable bid/ask difference (no carry or fees)";
   return formatValue(raw) + " pts (" + comparison + ")";
 }
 
