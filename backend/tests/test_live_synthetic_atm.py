@@ -78,3 +78,22 @@ def test_atm_tracker_does_not_let_future_tick_poison_timestamp_ordering():
     # A valid tick arriving after the rejected future-skewed tick is accepted.
     assert tracker.update("NIFTY", 102.0, time_ns()) == 100.0
     assert tracker.atm("NIFTY") == 100.0
+
+
+def test_atm_tracker_diagnostics_separate_missing_chain_from_missing_price():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={"NIFTY": (100.0, 105.0), "ABC": (200.0, 205.0)}
+    )
+    tracker.update("NIFTY", 104.0, time_ns())
+    snapshot = tracker.diagnostics_snapshot()
+    by_symbol = {item["underlying"]: item for item in snapshot["symbols"]}
+
+    assert snapshot["tracked_symbol_count"] == 2
+    assert snapshot["atm_ready_symbol_count"] == 1
+    assert by_symbol["NIFTY"]["concrete_strike_count"] == 2
+    assert by_symbol["NIFTY"]["atm_ready"] is True
+    assert by_symbol["ABC"]["concrete_strike_count"] == 2
+    assert by_symbol["ABC"]["has_underlying_price"] is False
+    assert by_symbol["ABC"]["atm_ready"] is False
