@@ -287,6 +287,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
   const [pairRows, setPairRows] = useState<Row[]>([]);
+  const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
   const [historyLoading, setHistoryLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const [loading, setLoading] = useState(true);
@@ -379,8 +380,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
       setPairRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      setPairMonitorStatus(String(body?.status ?? "UNKNOWN").toUpperCase());
     } catch {
-      // Keep the last pair snapshot during a transient backend failure.
+      // Preserve the last good snapshot, but never present it as a confirmed live response.
+      setPairMonitorStatus("UNAVAILABLE");
     }
   };
 
@@ -729,7 +732,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Every current pair/combo from the real backend snapshot is shown, including rows without a signal.</p></div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("pairs")} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Copy rows</button>
-            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • 1.5s refresh</span>
+            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}1.5s refresh</span>
           </div>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
