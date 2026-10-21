@@ -88,6 +88,7 @@ class LiveSyntheticScanner:
             for symbol, outcome in self._latest_scan_by_symbol.items():
                 counters[f"latest_scan_result_count_by_symbol:{symbol}"] = outcome["result_count"]
                 counters[f"latest_scan_at_ns_by_symbol:{symbol}"] = outcome["scan_at_ns"]
+                counters[f"latest_scan_status_by_symbol:{symbol}"] = outcome.get("status", "COMPLETED")
         return {"counters": counters}
 
     @staticmethod
@@ -640,6 +641,13 @@ class LiveSyntheticScanner:
             except Exception:
                 self._count("scan_calculation_errors")
                 self._count(f"scan_calculation_errors_by_symbol:{symbol}")
+                # A recent failed attempt must not leave an older successful result looking current.
+                failed_at_ns = time.time_ns()
+                self._latest_scan_by_symbol[symbol] = {
+                    "result_count": 0,
+                    "scan_at_ns": failed_at_ns,
+                    "status": "CALC_ERROR",
+                }
                 self._prune(timestamp_ns)
                 return ()
             self._prune(timestamp_ns)
@@ -654,6 +662,7 @@ class LiveSyntheticScanner:
             self._latest_scan_by_symbol[symbol] = {
                 "result_count": len(results),
                 "scan_at_ns": self._last_successful_calculation_at_ns,
+                "status": "RESULTS" if results else "NO_EDGE",
             }
             self._count("successful_pairs", len(option_quotes))
             if results:
