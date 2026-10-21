@@ -8,6 +8,16 @@ def LiveSyntheticScanner(*args, **kwargs):
     return _LiveSyntheticScanner(*args, **kwargs)
 
 
+def test_live_scanner_normalizes_numeric_broker_expiry_formats():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+
+    assert scanner._expiry(20261029) == 20261029
+    assert scanner._expiry("20261029") == 20261029
+    assert scanner._expiry("20261029.0") == 20261029
+    assert scanner._expiry("29OCT2026") == 20261029
+    assert scanner._expiry("2026-10-29") == 20261029
+
+
 def test_synthetic_pricing_config_accepts_explicit_carry_and_cost_estimate():
     config = SyntheticScanConfig(rate=0.055, fees_per_unit=1.0)
     assert config.rate == 0.055
