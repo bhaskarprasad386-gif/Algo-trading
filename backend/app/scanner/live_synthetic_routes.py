@@ -182,8 +182,12 @@ def diagnostics():
     blockers = [
         {"reason": key, "count": value}
         for key, value in counters.items()
-        if (key in blocker_prefixes or key.startswith("missing_atm_price_by_symbol:"))
-        and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+        if (
+            (key in blocker_prefixes or key.startswith("missing_atm_price_by_symbol:"))
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 0
+        )
     ]
     blockers.sort(key=lambda item: (-item["count"], item["reason"]))
     calculation_summary = {
