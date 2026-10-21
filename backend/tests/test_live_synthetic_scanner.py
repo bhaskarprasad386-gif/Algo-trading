@@ -1336,3 +1336,24 @@ def test_latest_scan_status_records_atm_and_config_blockers_instead_of_old_resul
     counters = config_error.diagnostics_snapshot()["counters"]
     assert counters["latest_scan_status_by_symbol:NIFTY"] == "CONFIG_ERROR"
     assert counters["latest_scan_result_count_by_symbol:NIFTY"] == 0
+
+
+def test_pair_monitor_exposes_future_only_bucket_without_inventing_strike():
+    ts = 35_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe({
+        "underlying": "RELIANCE", "instrument_class": "STOCK", "option_type": "",
+        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 250,
+        "source_timestamp_ns": ts, "symbol": "RELIANCE29OCT2026FUT",
+        "volume": 100, "oi": 1000,
+    })
+
+    rows = scanner.pair_monitor_snapshot(limit=10)["data"]
+    row = next(item for item in rows if item["underlying"] == "RELIANCE")
+    assert row["strike"] is None
+    assert row["future_bid"] == 117.0
+    assert row["future_ask"] == 118.0
+    assert row["call_bid"] is None and row["put_bid"] is None
+    assert row["state"] == "INCOMPLETE"
+    assert "MISSING_CALL" in row["reason"]
+    assert "MISSING_PUT" in row["reason"]
