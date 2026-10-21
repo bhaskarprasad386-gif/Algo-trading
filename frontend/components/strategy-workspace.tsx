@@ -135,16 +135,29 @@ function syntheticFutureValue(row: Row) {
   const callAsk = nullableNumber(value(row, "call_ask"));
   const putBid = nullableNumber(value(row, "put_bid"));
   const putAsk = nullableNumber(value(row, "put_ask"));
-  if (strike === null) return "K + CE − PE = — (strike missing)";
-  // Executable synthetic bid sells the put at its ask; executable ask buys the put at its bid.
+  if (strike === null) return "Bid — / Ask —";
+  // Raw parity values: K + CE Bid - PE Ask; K + CE Ask - PE Bid.
   const computedBid = callBid !== null && putAsk !== null ? strike + callBid - putAsk : null;
   const computedAsk = callAsk !== null && putBid !== null ? strike + callAsk - putBid : null;
-  // Prefer the backend's independently serialized values; calculate locally only for older/history payloads.
   const syntheticBid = nullableNumber(value(row, "synthetic_bid")) ?? computedBid;
   const syntheticAsk = nullableNumber(value(row, "synthetic_ask")) ?? computedAsk;
-  const shown = (n: number | null) => n === null ? "—" : formatValue(n);
-  const callBidText = shown(callBid), callAskText = shown(callAsk), putBidText = shown(putBid), putAskText = shown(putAsk);
-  return "Bid: K " + formatValue(strike) + " + CE Bid " + callBidText + " − PE Ask " + putAskText + " = " + shown(syntheticBid) + " | Ask: K " + formatValue(strike) + " + CE Ask " + callAskText + " − PE Bid " + putBidText + " = " + shown(syntheticAsk);
+  return "Bid " + formatValue(syntheticBid) + " / Ask " + formatValue(syntheticAsk);
+}
+
+function syntheticEdgeExplanation(row: Row, raw: unknown) {
+  if (raw === undefined || raw === null || raw === "") return "NOT EVALUATED — executable quotes/config required";
+  const direction = String(value(row, "direction") ?? "").toUpperCase();
+  const futureBid = value(row, "future_bid"), futureAsk = value(row, "future_ask");
+  const syntheticBuy = value(row, "carry_adjusted_synthetic_buy");
+  const syntheticSell = value(row, "carry_adjusted_synthetic_sell");
+  const fees = nullableNumber(value(row, "fees_per_unit"));
+  const feeText = fees === null ? "" : " − fees " + formatValue(fees);
+  const comparison = direction.includes("LONG") && syntheticBuy !== undefined && syntheticBuy !== null
+    ? "Future Bid " + formatValue(futureBid) + " − carry-adjusted Synthetic Ask " + formatValue(syntheticBuy) + feeText
+    : direction.includes("SHORT") && syntheticSell !== undefined && syntheticSell !== null
+      ? "carry-adjusted Synthetic Bid " + formatValue(syntheticSell) + " − Future Ask " + formatValue(futureAsk) + feeText
+      : "backend executable pricing (carry/fees applied)";
+  return formatValue(raw) + " pts (" + comparison + ")";
 }
 
 function formatValue(raw: unknown) {
@@ -207,6 +220,7 @@ function formatCell(slug: string, column: string, row: Row) {
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
   if (slug === "synthetic-arbitrage" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future (K + CE − PE)") return withQuoteTimestamp(syntheticFutureValue(row), row);
+  if (slug === "synthetic-arbitrage" && column === "Executable Edge") return syntheticEdgeExplanation(row, raw);
   if (slug === "calendar-spread" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
     const bid = column === "Future" ? row.future_bid : column === "Call (CE)" ? row.call_bid : row.put_bid;
@@ -251,18 +265,7 @@ function pairCell(slug: string, column: string, row: Row) {
   }
   if (column === "Time") return formatTimestamp(raw);
   if (column === "Expiry") return formatExpiry(raw);
-  if (slug === "synthetic-arbitrage" && column === "Edge") {
-    if (raw === undefined || raw === null || raw === "") return "NOT EVALUATED — executable quotes/config required";
-    const direction = String(value(row, "direction") ?? "").toUpperCase();
-    const futureBid = value(row, "future_bid"), futureAsk = value(row, "future_ask");
-    const syntheticBid = value(row, "synthetic_bid"), syntheticAsk = value(row, "synthetic_ask");
-    const comparison = direction.includes("LONG")
-      ? "Synthetic Bid − Future Ask = " + formatValue(syntheticBid) + " − " + formatValue(futureAsk)
-      : direction.includes("SHORT")
-        ? "Future Bid − Synthetic Ask = " + formatValue(futureBid) + " − " + formatValue(syntheticAsk)
-        : "backend executable pricing";
-    return formatValue(raw) + " pts (backend executable edge; " + comparison + "; configured carry, expiry and fees rules apply)";
-  }
+  if (slug === "synthetic-arbitrage" && column === "Edge") return syntheticEdgeExplanation(row, raw);
   if (slug === "synthetic-arbitrage" && column === "Direction") {
     return raw === undefined ? "NOT EVALUATED" : formatValue(raw);
   }
