@@ -542,7 +542,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <span className={"inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold " +
           (loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" :
           feedStatus === "LIVE" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>
-          {loading ? "CONNECTING" : error ? "BACKEND ERROR" : feedStatus === "LIVE" ? "LIVE FEED" : feedStatus === "UNAVAILABLE" ? "FEED UNAVAILABLE" : "FEED CONNECTED"}
+          {loading ? "CONNECTING" : error ? "BACKEND ERROR" : feedStatus === "LIVE" ? "LIVE FEED" : feedStatus === "UNAVAILABLE" ? "FEED UNAVAILABLE" : feedStatus.replaceAll("_", " ")}
         </span>
       </div>
 
