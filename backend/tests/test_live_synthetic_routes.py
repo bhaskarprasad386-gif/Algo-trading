@@ -31,6 +31,9 @@ def test_live_route_serializes_latest_results(monkeypatch):
     assert response["data"][0]["underlying"] == "NIFTY"
     assert response["data"][0]["expiry"] == "2026-09-30"
     assert response["data"][0]["executable_edge"] == 5.0
+    assert response["data"][0]["synthetic_bid"] == 25009.0
+    assert response["data"][0]["synthetic_ask"] == 25011.0
+    assert response["data"][0]["synthetic_formula"] == "strike + call - put"
 
 
 def test_live_route_deduplicates_same_contract_and_direction_by_newest_timestamp():
