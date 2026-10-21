@@ -832,7 +832,37 @@ class LiveSyntheticScanner:
                         "qualification_status": "NOT_CONFIRMED",
                     })
         rows.sort(key=lambda row: int(row.get("timestamp_ns") or 0), reverse=True)
-        return {"status": "success", "data": rows[:max(1, min(int(limit), 500))]}
+        bounded_rows = rows[:max(1, min(int(limit), 500))]
+        # Compact, real-data summary lets clients distinguish "no opportunity"
+        # from missing legs without trying to infer state from the visible rows.
+        symbol_summary: dict[str, dict] = {}
+        blocker_counts: Counter[str] = Counter()
+        for row in rows:
+            symbol = str(row.get("underlying") or "UNKNOWN")
+            summary = symbol_summary.setdefault(symbol, {
+                "rows": 0, "ready_to_evaluate": 0, "incomplete": 0,
+                "future_quotes": 0, "call_quotes": 0, "put_quotes": 0,
+            })
+            summary["rows"] += 1
+            summary["ready_to_evaluate"] += int(row.get("state") == "READY_TO_EVALUATE")
+            summary["incomplete"] += int(row.get("state") == "INCOMPLETE")
+            summary["future_quotes"] += int(row.get("future_bid") is not None and row.get("future_ask") is not None)
+            summary["call_quotes"] += int(row.get("call_bid") is not None and row.get("call_ask") is not None)
+            summary["put_quotes"] += int(row.get("put_bid") is not None and row.get("put_ask") is not None)
+            for reason in str(row.get("reason") or "").split(","):
+                if reason and reason != "INCOMPLETE":
+                    blocker_counts[reason] += 1
+        return {
+            "status": "success",
+            "data": bounded_rows,
+            "summary": {
+                "total_rows": len(rows),
+                "symbols": symbol_summary,
+                "blocker_counts": dict(blocker_counts),
+                "readiness_scope": "STRUCTURAL_ONLY",
+                "opportunity_confirmed": False,
+            },
+        }
 
     TIMESTAMP_TOLERANCE_NS = 1_000_000_000
 
