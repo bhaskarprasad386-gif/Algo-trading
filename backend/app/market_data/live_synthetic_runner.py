@@ -896,6 +896,20 @@ class LiveSyntheticRunner:
         feed_snapshot = None if feed is None else feed.snapshot()
         recorder_snapshot = None if recorder is None else recorder.snapshot()
         scanner_initialized = self._scanner is not None
+        atm_tracker_diagnostics = (
+            None if self._atm_tracker is None
+            else self._atm_tracker.diagnostics_snapshot()
+        )
+        if atm_tracker_diagnostics is not None:
+            tracked_symbols = {
+                str(item.get("underlying") or "").strip().upper()
+                for item in atm_tracker_diagnostics["symbols"]
+            }
+            atm_tracker_diagnostics["symbols_without_concrete_chain"] = sorted({
+                target.underlying.strip().upper()
+                for target in self.targets
+                if target.underlying.strip().upper() not in tracked_symbols
+            })
         if not running:
             phase, phase_reason = "STOPPED", "runner_not_active_or_stop_requested"
         elif not LiveSyntheticOptionFutureRecorder.market_open():
@@ -915,10 +929,7 @@ class LiveSyntheticRunner:
             "targets": len(self.targets),
             "scanner_initialized": scanner_initialized,
             "scanner_diagnostics": scanner_diagnostics,
-            "atm_tracker_diagnostics": (
-                None if self._atm_tracker is None
-                else self._atm_tracker.diagnostics_snapshot()
-            ),
+            "atm_tracker_diagnostics": atm_tracker_diagnostics,
             "subscription_diagnostics": {
                 "target_count": len(self.targets),
                 "subscribed_symbol_count": sum(1 for item in self._subscription_diagnostics.values() if item.get("status") == "SUBSCRIBED"),
