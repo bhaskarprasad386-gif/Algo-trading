@@ -406,6 +406,14 @@ class LiveSyntheticRunner:
                 "future_count": 0,
                 "call_count": 0,
                 "put_count": 0,
+                "atm_strike": None,
+                "exchange_segment": (
+                    "BFO"
+                    if target.instrument_class.strip().upper() == "INDEX"
+                    and symbol in {"SENSEX", "BANKEX"}
+                    else ("MCX" if target.instrument_class.strip().upper() == "COMMODITY" else "NFO")
+                ),
+                "complete_pair_count": 0,
             }
             if (
                 target.instrument_class.strip().upper() in {"STOCK", "INDEX"}
@@ -428,6 +436,7 @@ class LiveSyntheticRunner:
                 skipped["live_atm_unavailable_or_stale"].append(target.underlying)
                 per_symbol[symbol].update(status="WAITING_FOR_ATM", reason="live_atm_unavailable_or_stale")
                 continue
+            per_symbol[symbol]["atm_strike"] = atm_strike
             try:
                 selection = select_synthetic_contracts(
                     self.instrument_master,
@@ -446,6 +455,17 @@ class LiveSyntheticRunner:
             if not selection.subscriptions:
                 skipped["selector_returned_no_contracts"].append(target.underlying)
                 per_symbol[symbol].update(status="BLOCKED", reason="selector_returned_no_contracts")
+            call_strikes = {
+                float(item.strike)
+                for item in selection.subscriptions
+                if item.option_type == "CE" and item.strike is not None
+            }
+            put_strikes = {
+                float(item.strike)
+                for item in selection.subscriptions
+                if item.option_type == "PE" and item.strike is not None
+            }
+            per_symbol[symbol]["complete_pair_count"] = len(call_strikes & put_strikes)
             for item in selection.subscriptions:
                 per_symbol[symbol]["subscription_count"] += 1
                 if item.option_type == "CE":
