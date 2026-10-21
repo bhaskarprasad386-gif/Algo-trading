@@ -11,6 +11,8 @@ router = APIRouter(
 _latest_provider: Callable[[], tuple] | None = None
 _diagnostics_provider: Callable[[], dict | None] | None = None
 _pairs_provider: Callable[[], dict | None] | None = None
+_pair_history_last_saved: dict[str, float] = {}
+_pair_history_last_cleanup = 0.0
 
 
 def configure(provider: Callable[[], tuple]) -> None:
@@ -416,6 +418,78 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
             normalized_expiry = _normalize_expiry(expiry)
             row["expiry"] = normalized_expiry
         rows.append(row)
+
+    # Persist sampled real observations, including incomplete pairs, at a bounded rate.
+    now_monotonic = _time.monotonic()
+    try:
+        from app.core.database import SessionLocal
+        from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
+
+        db = SessionLocal()
+        try:
+            history_rows = []
+            for row in rows:
+                underlying = str(row.get("underlying") or "").strip().upper()
+                if not underlying:
+                    continue
+                expiry_key = str(row.get("expiry") or "")
+                strike_key = str(row.get("strike") if row.get("strike") is not None else "NO_STRIKE")
+                key = "|".join((underlying, expiry_key, strike_key))
+                if now_monotonic - _pair_history_last_saved.get(key, -1e9) < 5.0:
+                    continue
+
+                def _number(field):
+                    value = row.get(field)
+                    if value is None or isinstance(value, bool):
+                        return None
+                    try:
+                        parsed = float(value)
+                        return parsed if parsed == parsed and abs(parsed) != float("inf") else None
+                    except (TypeError, ValueError):
+                        return None
+
+                raw_ts = row.get("timestamp_ns")
+                try:
+                    timestamp_ns = int(raw_ts) if raw_ts is not None else None
+                except (TypeError, ValueError, OverflowError):
+                    timestamp_ns = None
+                lot_size = _number("lot_size")
+                history_rows.append(LiveSyntheticPairHistory(
+                    observed_at=datetime.utcnow(),
+                    timestamp_ns=timestamp_ns,
+                    underlying=underlying,
+                    instrument_class=str(row.get("instrument_class") or "") or None,
+                    expiry=expiry_key or None,
+                    strike=_number("strike"),
+                    future_bid=_number("future_bid"),
+                    future_ask=_number("future_ask"),
+                    call_bid=_number("call_bid"),
+                    call_ask=_number("call_ask"),
+                    put_bid=_number("put_bid"),
+                    put_ask=_number("put_ask"),
+                    lot_size=int(lot_size) if lot_size is not None else None,
+                    state=str(row.get("state") or "") or None,
+                    reason=str(row.get("reason") or "") or None,
+                    direction=str(row.get("direction") or "") or None,
+                    executable_edge=_number("executable_edge"),
+                    edge_per_lot=_number("edge_per_lot"),
+                ))
+                _pair_history_last_saved[key] = now_monotonic
+            if history_rows:
+                db.add_all(history_rows)
+            global _pair_history_last_cleanup
+            if now_monotonic - _pair_history_last_cleanup > 300:
+                db.query(LiveSyntheticPairHistory).filter(
+                    LiveSyntheticPairHistory.observed_at < datetime.utcnow() - timedelta(days=2)
+                ).delete(synchronize_session=False)
+                _pair_history_last_cleanup = now_monotonic
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        # History storage must not take down the live monitor endpoint.
+        pass
+
     response = {
         "status": str(snapshot.get("status") or "success"),
         "scanner": "synthetic-cash-carry-live-1s",
@@ -434,3 +508,49 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
             "opportunity_confirmed": bool(summary.get("opportunity_confirmed", False)),
         }
     return response
+
+
+@router.get("/pair-history")
+def pair_history(days: int = Query(1, ge=1, le=2), limit: int = Query(1000, ge=1, le=5000)):
+    """Return durable sampled live-pair observations, including incomplete pairs."""
+    from app.core.database import SessionLocal
+    from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(LiveSyntheticPairHistory)
+            .filter(LiveSyntheticPairHistory.observed_at >= cutoff)
+            .order_by(LiveSyntheticPairHistory.observed_at.desc())
+            .limit(limit)
+            .all()
+        )
+        data = []
+        for item in rows:
+            data.append({
+                "id": item.id,
+                "timestamp_ns": item.timestamp_ns,
+                "observed_at": item.observed_at.isoformat(),
+                "underlying": item.underlying,
+                "instrument_class": item.instrument_class,
+                "expiry": item.expiry,
+                "strike": item.strike,
+                "future_bid": item.future_bid,
+                "future_ask": item.future_ask,
+                "call_bid": item.call_bid,
+                "call_ask": item.call_ask,
+                "put_bid": item.put_bid,
+                "put_ask": item.put_ask,
+                "lot_size": item.lot_size,
+                "state": item.state,
+                "reason": item.reason,
+                "direction": item.direction,
+                "executable_edge": item.executable_edge,
+                "edge_per_lot": item.edge_per_lot,
+                "readiness_scope": "HISTORICAL_OBSERVATION",
+                "opportunity_confirmed": False,
+            })
+        return {"status": "success", "scanner": "synthetic-cash-carry-pair-history", "days": days, "count": len(data), "data": data}
+    finally:
+        db.close()
