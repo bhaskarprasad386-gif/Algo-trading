@@ -76,6 +76,29 @@ def test_live_route_skips_malformed_timestamps_without_failing():
     assert response["data"][0]["underlying"] == "NIFTY"
 
 
+def test_live_route_fairly_distributes_limited_rows_across_underlyings():
+    index_rows, stock_rows = [], []
+    for strike in range(25000, 25005):
+        index_row = _result()
+        index_row.option.underlying = "SENSEX"
+        index_row.option.instrument_class = "INDEX"
+        index_row.option.strike = strike
+        index_row.option.timestamp_ns = time.time_ns()
+        index_rows.append(index_row)
+        stock_row = _result()
+        stock_row.option.underlying = "RELIANCE"
+        stock_row.option.instrument_class = "STOCK"
+        stock_row.option.strike = strike
+        stock_row.option.timestamp_ns = time.time_ns()
+        stock_rows.append(stock_row)
+    live_synthetic_routes.configure(lambda: tuple(index_rows + stock_rows))
+    response = live_synthetic_routes.live(limit=4)
+    symbols = [row["underlying"] for row in response["data"]]
+    assert len(symbols) == 4
+    assert symbols.count("SENSEX") == 2
+    assert symbols.count("RELIANCE") == 2
+
+
 def test_live_route_limits_results():
     result = _result()
     live_synthetic_routes.configure(lambda: (result, result))
