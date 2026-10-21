@@ -359,3 +359,21 @@ def test_pair_history_endpoint_returns_sampled_quotes(monkeypatch):
     assert response["data"][0]["put_ask"] == 33.0
     assert response["data"][0]["future_bid"] == 1482.0
     assert response["data"][0]["opportunity_confirmed"] is False
+
+
+
+def test_synthetic_price_formula_requires_real_quotes():
+    complete = live_synthetic_routes._synthetic_prices({
+        "strike": 1000, "call_bid": 50, "call_ask": 52,
+        "put_bid": 30, "put_ask": 32,
+    })
+    assert complete["synthetic_bid"] == 1018
+    assert complete["synthetic_ask"] == 1022
+    assert complete["synthetic_formula"] == "strike + call - put"
+
+    incomplete = live_synthetic_routes._synthetic_prices({
+        "strike": 1000, "call_bid": 50, "call_ask": None,
+        "put_bid": 30, "put_ask": 32,
+    })
+    assert incomplete["synthetic_bid"] == 1018
+    assert incomplete["synthetic_ask"] is None
