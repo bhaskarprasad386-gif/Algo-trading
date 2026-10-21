@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowLeft, Bell, Filter, RefreshCw, Search, ShieldCheck, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -313,6 +313,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
+  const loadRequestRef = useRef(0);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
@@ -374,25 +375,28 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   const load = async (showLoading = false) => {
+    const requestId = ++loadRequestRef.current;
     if (!endpoint) {
       setRows([]);
       setLoading(false);
       return;
     }
     if (showLoading) setLoading(true);
-    setError(null);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + endpoint, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || c.title + " HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
+      if (requestId !== loadRequestRef.current) return;
       setRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      setError(null);
     } catch (e) {
-      setRows([]);
+      if (requestId !== loadRequestRef.current) return;
+      // Preserve the last good rows during a temporary API failure.
       setError(e instanceof Error ? e.message : "Backend unavailable");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   };
 
