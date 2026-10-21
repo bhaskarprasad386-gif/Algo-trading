@@ -146,15 +146,34 @@ def diagnostics():
         "missing_future_leg",
         "timestamp_mismatch",
         "expiry_mismatch",
+        "invalid_expiry",
+        "invalid_expiry_for_pricing",
+        "invalid_strike",
         "instrument_class_mismatch",
+        "invalid_future_instrument_class",
+        "invalid_future_expiry",
+        "invalid_future_timestamp",
+        "invalid_future_lot_size",
         "illiquid_or_incomplete_option_leg",
         "lot_size_mismatch",
         "invalid_option_lot_size",
+        "invalid_option_timestamp",
         "invalid_future_quote",
         "no_executable_ce_pe_pair",
+        "waiting_for_executable_quote",
         "missing_atm_price",
         "atm_provider_errors",
+        "monitor_atm_provider_errors",
         "config_provider_errors",
+        "invalid_scanner_config",
+        "scan_calculation_errors",
+        "result_callback_errors",
+        "invalid_payload_or_scope",
+        "invalid_option_type",
+        "invalid_option_instrument",
+        "underlying_symbol_mismatch",
+        "future_timestamp",
+        "out_of_order_leg_updates",
         "invalid_quote",
         "stale_timestamp",
         "invalid_timestamp",
@@ -163,7 +182,12 @@ def diagnostics():
     blockers = [
         {"reason": key, "count": value}
         for key, value in counters.items()
-        if key in blocker_prefixes and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+        if (
+            (key in blocker_prefixes or key.startswith("missing_atm_price_by_symbol:"))
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 0
+        )
     ]
     blockers.sort(key=lambda item: (-item["count"], item["reason"]))
     calculation_summary = {

@@ -121,6 +121,8 @@ def test_diagnostics_summarizes_calculations_and_top_blockers():
                     "empty_calculations": 7,
                     "timestamp_mismatch": 9,
                     "missing_atm_price": 4,
+                    "scan_calculation_errors": 3,
+                    "missing_atm_price_by_symbol:RELIANCE": 2,
                     "unrelated_counter": 100,
                 }
             },
@@ -137,6 +139,8 @@ def test_diagnostics_summarizes_calculations_and_top_blockers():
     assert response["top_blockers"] == [
         {"reason": "timestamp_mismatch", "count": 9},
         {"reason": "missing_atm_price", "count": 4},
+        {"reason": "scan_calculation_errors", "count": 3},
+        {"reason": "missing_atm_price_by_symbol:RELIANCE", "count": 2},
     ]
     assert "unrelated_counter" not in [item["reason"] for item in response["top_blockers"]]
     assert "cumulative" in response["blocker_counter_note"]
