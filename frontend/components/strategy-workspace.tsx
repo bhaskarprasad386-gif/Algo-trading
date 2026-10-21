@@ -339,6 +339,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
   const [historyLoading, setHistoryLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
+  const [copyFallbackText, setCopyFallbackText] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedTicks, setFeedTicks] = useState<number | null>(null);
@@ -688,8 +689,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     const render = kind === "history" ? historyCell : pairCell;
     const payload = [columns.join("\t"), ...source.map((row) => columns.map((column) => render(slug, column, row)).join("\t"))].join("\n");
     const ok = await copyTextWithFallback(payload);
-    setCopyStatus(ok ? (kind === "history" ? "History copied" : "Pair rows copied") : "Copy failed — browser permission blocked copying");
-    window.setTimeout(() => setCopyStatus(""), 3500);
+    if (ok) {
+      setCopyFallbackText("");
+      setCopyStatus(kind === "history" ? "History copied" : "Pair rows copied");
+    } else {
+      // Android WebViews may deny both Clipboard API and execCommand. Keep a
+      // selectable text copy of the exact table payload instead of a dead end.
+      setCopyFallbackText(payload);
+      setCopyStatus("Automatic copy blocked — tap the text below, then Select all and Copy");
+    }
+    window.setTimeout(() => setCopyStatus(""), 6000);
   };
 
   const metricValue = (metric: string) => {
@@ -1002,6 +1011,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       </Card>
 
       {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
+      {copyFallbackText && <div className="space-y-2 rounded-xl border theme-border theme-surface p-3">
+        <label htmlFor="copy-fallback-text" className="text-xs font-semibold theme-text">Manual copy fallback</label>
+        <textarea id="copy-fallback-text" readOnly value={copyFallbackText} onFocus={(event) => event.currentTarget.select()} className="min-h-28 w-full rounded-lg border theme-border theme-surface-2 p-2 text-xs theme-text" />
+        <p className="text-xs theme-muted">Tap the text, choose Select all, then Copy. Rows are tab-separated for pasting into a spreadsheet.</p>
+        <button type="button" onClick={() => { setCopyFallbackText(""); setCopyStatus(""); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Close</button>
+      </div>}
 
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>
