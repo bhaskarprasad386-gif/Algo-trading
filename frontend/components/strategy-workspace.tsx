@@ -26,7 +26,7 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Calendar Spread",
     description: "Dedicated near-vs-far expiry spread scanner using the common live market-data feed.",
     universe: "F&O + INDEX + COMMODITIES",
-    columns: ["Underlying", "Exchange", "Near", "Far", "Spread", "Gap / Edge", "Volume / OI", "Signal"],
+    columns: ["Time", "Underlying", "Exchange", "Near", "Far", "Spread", "Gap / Edge", "Volume / OI", "Signal"],
     metrics: ["Eligible Contracts", "Spread Opportunities", "Signals", "Last Scan"],
     controls: ["All Eligible", "INDEX PRIORITY", "Near/Far", "Edge Threshold"],
     pairTitle: "Near / Far Pair Monitor",
@@ -166,6 +166,15 @@ function quoteTimestamp(row: Row) {
     : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
 }
 
+function formatTimestamp(raw: unknown) {
+  if (raw === undefined || raw === null || raw === "") return "—";
+  const n = Number(raw);
+  const date = Number.isFinite(n) && n > 1_000_000_000_000
+    ? new Date(n / 1_000_000)
+    : new Date(String(raw));
+  return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+}
+
 function withQuoteTimestamp(text: string, row: Row) {
   const timestamp = quoteTimestamp(row);
   return timestamp && text !== "—" ? text + " · " + timestamp : text;
@@ -174,7 +183,7 @@ function withQuoteTimestamp(text: string, row: Row) {
 function formatCell(slug: string, column: string, row: Row) {
   const keys: Record<string, Record<string, string[]>> = {
     "calendar-spread": {
-      Underlying: ["underlying"], Exchange: ["exchange"], Near: ["near_contract_month"],
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Exchange: ["exchange"], Near: ["near_contract_month"],
       Far: ["far_contract_month"], Spread: ["gap_points"], "Gap / Edge": ["long_edge", "short_edge"],
       "Volume / OI": ["liquidity_qty"], Signal: ["direction"],
     },
@@ -201,6 +210,7 @@ function formatCell(slug: string, column: string, row: Row) {
     return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
   }
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future (K + CE − PE)") return withQuoteTimestamp(syntheticFutureValue(row), row);
+  if (slug === "calendar-spread" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
     const bid = column === "Future" ? row.future_bid : column === "Call (CE)" ? row.call_bid : row.put_bid;
     const ask = column === "Future" ? row.future_ask : column === "Call (CE)" ? row.call_ask : row.put_ask;
@@ -216,7 +226,7 @@ function formatCell(slug: string, column: string, row: Row) {
 function pairCell(slug: string, column: string, row: Row) {
   const maps: Record<string, Record<string, string[]>> = {
     "calendar-spread": {
-      Time: ["timestamp_ns", "observed_at"], Underlying: ["underlying"], Exchange: ["exchange"],
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Exchange: ["exchange"],
       Near: ["near_contract_month"], Far: ["far_contract_month"], Spread: ["gap_points"],
       Edge: ["long_edge", "short_edge"], Liquidity: ["liquidity_qty"], State: ["direction", "qualifies"],
     },
@@ -245,15 +255,24 @@ function pairCell(slug: string, column: string, row: Row) {
   if (column === "Time") {
     if (raw === undefined || raw === null || raw === "") return "—";
     const n = Number(raw);
-    if (Number.isFinite(n) && n > 1_000_000_000_000) return new Date(n / 1_000_000).toLocaleTimeString("en-IN", { hour12: false });
-    const d = new Date(String(raw));
+    const d = Number.isFinite(n) && n > 1_000_000_000_000
+      ? new Date(n / 1_000_000)
+      : new Date(String(raw));
     return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
   }
   if (column === "Expiry") return formatExpiry(raw);
   if (slug === "synthetic-arbitrage" && column === "Edge") {
-    // The pair endpoint intentionally exposes structural readiness, not a
-    // fabricated calculation. Keep an absent edge distinct from a real zero.
-    return raw === undefined ? "NOT EVALUATED" : formatValue(raw);
+    // Keep backend's executable edge distinct from the parity display formula.
+    if (raw === undefined || raw === null || raw === "") return "NOT EVALUATED — executable quotes/config required";
+    const direction = String(value(row, "direction") ?? "").toUpperCase();
+    const futureBid = value(row, "future_bid"), futureAsk = value(row, "future_ask");
+    const syntheticBid = value(row, "synthetic_bid"), syntheticAsk = value(row, "synthetic_ask");
+    const comparison = direction.includes("LONG")
+      ? "Future Ask " + formatValue(futureAsk) + " − Synthetic Bid " + formatValue(syntheticBid)
+      : direction.includes("SHORT")
+        ? "Synthetic Ask " + formatValue(syntheticAsk) + " − Future Bid " + formatValue(futureBid)
+        : "backend executable pricing";
+    return formatValue(raw) + " (backend executable edge; " + comparison + "; carry/expiry/fees rules apply)";
   }
   if (slug === "synthetic-arbitrage" && column === "Direction") {
     return raw === undefined ? "NOT EVALUATED" : formatValue(raw);
