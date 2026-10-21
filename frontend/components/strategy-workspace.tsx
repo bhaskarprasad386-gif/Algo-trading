@@ -185,11 +185,22 @@ function pairCell(slug: string, column: string, row: Row) {
     return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false });
   }
   if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "synthetic-arbitrage" && column === "Edge") {
+    // The pair endpoint intentionally exposes structural readiness, not a
+    // fabricated calculation. Keep an absent edge distinct from a real zero.
+    return raw === undefined ? "NOT EVALUATED" : formatValue(raw);
+  }
+  if (slug === "synthetic-arbitrage" && column === "Direction") {
+    return raw === undefined ? "NOT EVALUATED" : formatValue(raw);
+  }
   if (column === "State") {
+    const edgeRaw = value(row, "executable_edge", "long_edge", "short_edge");
     const edge = numberValue(row, "executable_edge", "long_edge", "short_edge");
     if (slug === "calendar-spread") return row.qualifies === true || edge > 0 ? "OPPORTUNITY" : "NO SIGNAL";
     if (slug === "synthetic-arbitrage") {
-      const state = typeof row.state === "string" ? row.state.replaceAll("_", " ") : (edge > 0 ? "EDGE" : "NO EDGE");
+      const state = typeof row.state === "string" && row.state
+        ? row.state.replaceAll("_", " ")
+        : edgeRaw === undefined ? "NOT EVALUATED" : (edge > 0 ? "EDGE" : "NO EDGE");
       const reason = typeof row.reason === "string" && row.reason ? " · " + row.reason.replaceAll("_", " ") : "";
       return state + reason;
     }
@@ -531,7 +542,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <span className={"inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold " +
           (loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" :
           feedStatus === "LIVE" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>
-          {loading ? "CONNECTING" : error ? "BACKEND ERROR" : feedStatus === "LIVE" ? "LIVE FEED" : feedStatus === "UNAVAILABLE" ? "FEED UNAVAILABLE" : "FEED CONNECTED"}
+          {loading ? "CONNECTING" : error ? "BACKEND ERROR" : feedStatus === "LIVE" ? "LIVE FEED" : feedStatus === "UNAVAILABLE" ? "FEED UNAVAILABLE" : feedStatus.replaceAll("_", " ")}
         </span>
       </div>
 
