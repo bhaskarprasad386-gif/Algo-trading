@@ -9,6 +9,7 @@ from pydantic import BaseModel
 import asyncio
 import queue
 import threading
+import math
 import time as time_module
 import uuid
 from datetime import datetime, time
@@ -1031,10 +1032,39 @@ def market_data_runtime_health():
     synthetic_runner = live_synthetic_runner
     box_runner = live_box_spread_runner
     calendar_counts = live_calendar_spread_scanner.counts_snapshot()
+    common_feed = manager.snapshot()
+    # CommonWebSocketManager.snapshot() reports transport counters and per-exchange
+    # receive ages, but does not itself publish the summary fields consumed by the
+    # frontend. Derive those fields from actual received ticks/socket health here.
+    received_ages = common_feed.get("last_exchange_tick_received_age_seconds_by_exchange_type")
+    if isinstance(received_ages, dict):
+        valid_ages = []
+        for raw_age in received_ages.values():
+            try:
+                age = float(raw_age)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(age) and age >= 0:
+                valid_ages.append(age)
+        feed_age_seconds = min(valid_ages) if valid_ages else None
+    else:
+        feed_age_seconds = None
+    unconnected = common_feed.get("unconnected_required_groups") or []
+    missing_groups = common_feed.get("missing_socket_groups") or []
+    if unconnected or missing_groups:
+        feed_status = "DISCONNECTED"
+    elif feed_age_seconds is None:
+        feed_status = "WAITING_FOR_TICKS" if int(common_feed.get("ticks_received") or 0) == 0 else "AGE_UNAVAILABLE"
+    elif feed_age_seconds > 5:
+        feed_status = "STALE"
+    else:
+        feed_status = "LIVE"
+    common_feed["age_seconds"] = feed_age_seconds
+    common_feed["status"] = feed_status
     return {
         "status": "ok",
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
-        "common_feed": manager.snapshot(),
+        "common_feed": common_feed,
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
             "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
