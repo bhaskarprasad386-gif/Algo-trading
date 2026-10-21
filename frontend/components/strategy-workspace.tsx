@@ -826,7 +826,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             const readiness = (scannerDiagnostics?.atm_readiness_summary && typeof scannerDiagnostics.atm_readiness_summary === "object" ? scannerDiagnostics.atm_readiness_summary : {}) as Row;
             const atmTracker = (scannerDiagnostics?.atm_tracker_diagnostics && typeof scannerDiagnostics.atm_tracker_diagnostics === "object" ? scannerDiagnostics.atm_tracker_diagnostics : {}) as Row;
             const subscriptions = (scannerDiagnostics?.subscription_diagnostics && typeof scannerDiagnostics.subscription_diagnostics === "object" ? scannerDiagnostics.subscription_diagnostics : {}) as Row;
-            const atmSymbols = (Array.isArray(readiness.not_ready_symbols) ? readiness.not_ready_symbols : Array.isArray(atmTracker.symbols) ? atmTracker.symbols : []) as Row[];
+            const atmSymbols = (Array.isArray(atmTracker.symbols) ? atmTracker.symbols : Array.isArray(readiness.not_ready_symbols) ? readiness.not_ready_symbols : []) as Row[];
             const subscriptionSymbols = (Array.isArray(subscriptions.symbols) ? subscriptions.symbols : []) as Row[];
             const symbolRows = new Map<string, Row>();
             for (const item of atmSymbols) symbolRows.set(String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase(), { ...item, diagnostic_source: "ATM" });
