@@ -451,6 +451,7 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
         db = SessionLocal()
         try:
             history_rows = []
+            pending_history_keys = []
             for row in rows:
                 underlying = str(row.get("underlying") or "").strip().upper()
                 if not underlying:
@@ -497,7 +498,7 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
                     executable_edge=_number("executable_edge"),
                     edge_per_lot=_number("edge_per_lot"),
                 ))
-                _pair_history_last_saved[key] = now_monotonic
+                pending_history_keys.append(key)
             if history_rows:
                 db.add_all(history_rows)
             global _pair_history_last_cleanup
@@ -507,6 +508,8 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
                 ).delete(synchronize_session=False)
                 _pair_history_last_cleanup = now_monotonic
             db.commit()
+            for key in pending_history_keys:
+                _pair_history_last_saved[key] = now_monotonic
         finally:
             db.close()
     except Exception:
