@@ -153,6 +153,7 @@ jobs:
               if not all(checks.values()):
                   raise SystemExit(1)
           PY
+          acceptance_status=$?
 
           echo "=== SERVICE MEMORY / PROCESS ==="
           systemctl show algo-trading.service --no-pager \
@@ -191,6 +192,7 @@ jobs:
 
           echo "=== LISTENING ==="
           ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)\\b' || true
+          exit "$acceptance_status"
           REMOTE
 
       - name: Upload VPS health evidence
