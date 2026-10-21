@@ -416,4 +416,21 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
             normalized_expiry = _normalize_expiry(expiry)
             row["expiry"] = normalized_expiry
         rows.append(row)
-    return {"status": str(snapshot.get("status") or "success"), "scanner": "synthetic-cash-carry-live-1s", "count": len(rows), "data": rows}
+    response = {
+        "status": str(snapshot.get("status") or "success"),
+        "scanner": "synthetic-cash-carry-live-1s",
+        "count": len(rows),
+        "data": rows,
+    }
+    # Forward only the scanner's bounded, pre-sanitized numeric summary. Never
+    # pass through arbitrary provider metadata or raw broker payloads.
+    summary = snapshot.get("summary")
+    if isinstance(summary, dict):
+        response["summary"] = {
+            "total_rows": int(summary.get("total_rows") or 0),
+            "symbols": summary.get("symbols") if isinstance(summary.get("symbols"), dict) else {},
+            "blocker_counts": summary.get("blocker_counts") if isinstance(summary.get("blocker_counts"), dict) else {},
+            "readiness_scope": str(summary.get("readiness_scope") or "STRUCTURAL_ONLY"),
+            "opportunity_confirmed": bool(summary.get("opportunity_confirmed", False)),
+        }
+    return response
