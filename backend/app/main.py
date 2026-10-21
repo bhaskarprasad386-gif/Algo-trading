@@ -23,6 +23,7 @@ from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
 from app.models import User, Instrument, Session, Position, SystemLog
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
+from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
 from app.algo.auth import AngelOneAuth
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
