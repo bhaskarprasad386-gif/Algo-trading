@@ -55,7 +55,7 @@ jobs:
             -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Upload debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: algo-trading-debug-apk
           path: mobile/android/**/build/outputs/apk/**/*.apk
