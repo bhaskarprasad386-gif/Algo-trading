@@ -88,6 +88,12 @@ function numberValue(row: Row, ...keys: string[]) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function nullableNumber(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 function formatExpiry(raw: unknown) {
   if (raw === undefined || raw === null || raw === "") return "—";
   let text = String(raw).trim();
@@ -613,14 +619,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const body = await response.json();
         if (cancelled) return;
         const feed = body?.common_feed ?? {};
-        setFeedTicks(Number.isFinite(Number(feed.ticks_received)) ? Number(feed.ticks_received) : null);
-        setFeedAge(Number.isFinite(Number(feed.age_seconds)) ? Number(feed.age_seconds) : null);
+        // Number(null) and Number("") are 0; preserve missing backend values as unknown.
+        setFeedTicks(nullableNumber(feed.ticks_received));
+        setFeedAge(nullableNumber(feed.age_seconds));
         setFeedExchangeFreshness(
           feed.exchange_freshness && typeof feed.exchange_freshness === "object"
             ? feed.exchange_freshness as Record<string, { age_seconds?: number | null; status?: string }>
             : null,
         );
-        setFeedInstruments(Number.isFinite(Number(feed.active_instruments)) ? Number(feed.active_instruments) : null);
+        setFeedInstruments(nullableNumber(feed.active_instruments));
         setFeedStatus(String(feed.status ?? body?.feed_status ?? "UNKNOWN").toUpperCase());
         setFeedErrors({
           delivery: Number(feed.delivery_errors ?? 0) || 0,
