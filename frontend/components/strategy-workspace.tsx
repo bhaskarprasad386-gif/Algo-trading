@@ -822,6 +822,27 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               </div>
             )}
           </div>
+          {(() => {
+            const readiness = (scannerDiagnostics?.atm_readiness_summary && typeof scannerDiagnostics.atm_readiness_summary === "object" ? scannerDiagnostics.atm_readiness_summary : {}) as Row;
+            const atmTracker = (scannerDiagnostics?.atm_tracker_diagnostics && typeof scannerDiagnostics.atm_tracker_diagnostics === "object" ? scannerDiagnostics.atm_tracker_diagnostics : {}) as Row;
+            const subscriptions = (scannerDiagnostics?.subscription_diagnostics && typeof scannerDiagnostics.subscription_diagnostics === "object" ? scannerDiagnostics.subscription_diagnostics : {}) as Row;
+            const atmSymbols = (Array.isArray(readiness.not_ready_symbols) ? readiness.not_ready_symbols : Array.isArray(atmTracker.symbols) ? atmTracker.symbols : []) as Row[];
+            const subscriptionSymbols = (Array.isArray(subscriptions.symbols) ? subscriptions.symbols : []) as Row[];
+            const symbolRows = new Map<string, Row>();
+            for (const item of atmSymbols) symbolRows.set(String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase(), { ...item, diagnostic_source: "ATM" });
+            for (const item of subscriptionSymbols) {
+              const key = String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase();
+              symbolRows.set(key, { ...(symbolRows.get(key) ?? {}), ...item, underlying: key });
+            }
+            const rows = Array.from(symbolRows.values()).sort((a, b) => String(a.underlying ?? "").localeCompare(String(b.underlying ?? "")));
+            return <div className="mt-4 border-t theme-border pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div><h3 className="text-sm font-semibold theme-text">Per-symbol readiness</h3><p className="mt-1 text-xs theme-muted">Live diagnostics only; missing fields are shown as —.</p></div>
+                <span className="rounded-lg border theme-border px-2 py-1 text-xs theme-muted">{typeof readiness.ready_symbols === "number" ? readiness.ready_symbols : "—"} ready / {typeof readiness.tracked_symbols === "number" ? readiness.tracked_symbols : "—"} tracked</span>
+              </div>
+              {rows.length === 0 ? <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">Per-symbol readiness has not been supplied by the backend yet. Check universe/ATM diagnostics endpoint.</p> : <div className="mt-3 overflow-x-auto rounded-lg border theme-border"><table className="w-full min-w-[720px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Symbol","Class","Status","Expiry","Futures","Calls","Puts","ATM / price","Reason"].map(label => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{rows.map((item, index) => <tr key={String(item.underlying ?? index)} className="border-t theme-border"><td className="px-3 py-2 font-semibold theme-text">{String(item.underlying ?? item.symbol ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.instrument_class ?? item.asset_class ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.status ?? (item.ready === true ? "READY" : item.ready === false ? "WAITING_FOR_ATM" : "—")).replaceAll("_", " ")}</td><td className="px-3 py-2 theme-muted">{String(item.expiry ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.future_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.call_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.put_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.underlying_price ?? item.price ?? (item.underlying_price_present === true ? "present" : "—"))}</td><td className="px-3 py-2 theme-muted">{String(item.reason ?? item.blocker ?? "—").replaceAll("_", " ")}</td></tr>)}</tbody></table></div>}
+            </div>;
+          })()}
         </Card>
       )}
 
