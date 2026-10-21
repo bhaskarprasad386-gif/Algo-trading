@@ -1,3 +1,4 @@
+from datetime import datetime
 from types import SimpleNamespace
 import time
 
@@ -324,3 +325,37 @@ def test_diagnostics_summarizes_pair_blockers_per_underlying():
             "incomplete_count": 0, "blocker_counts": [],
         },
     ]
+
+
+
+def test_pair_history_endpoint_returns_sampled_quotes(monkeypatch):
+    from app.core import database
+
+    now = datetime(2026, 10, 21, 10, 15, 0)
+    row = SimpleNamespace(
+        id=9, timestamp_ns=1_800_000_000_000_000_000, observed_at=now,
+        underlying="RELIANCE", instrument_class="STOCK", expiry="2026-10-29",
+        strike=1480.0, future_bid=1482.0, future_ask=1483.0,
+        call_bid=35.0, call_ask=36.0, put_bid=32.0, put_ask=33.0,
+        lot_size=250, state="INCOMPLETE", reason="AWAITING_SCANNER_QUALIFICATION",
+        direction=None, executable_edge=None, edge_per_lot=None,
+    )
+
+    class Query:
+        def filter(self, *_args): return self
+        def order_by(self, *_args): return self
+        def limit(self, *_args): return self
+        def all(self): return [row]
+
+    class FakeDB:
+        def query(self, *_args): return Query()
+        def close(self): pass
+
+    monkeypatch.setattr(database, "SessionLocal", lambda: FakeDB())
+    response = live_synthetic_routes.pair_history(days=1, limit=10)
+    assert response["count"] == 1
+    assert response["data"][0]["underlying"] == "RELIANCE"
+    assert response["data"][0]["call_bid"] == 35.0
+    assert response["data"][0]["put_ask"] == 33.0
+    assert response["data"][0]["future_bid"] == 1482.0
+    assert response["data"][0]["opportunity_confirmed"] is False
