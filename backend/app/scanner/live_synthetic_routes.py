@@ -41,6 +41,42 @@ def _normalize_expiry(value):
     return value
 
 
+def _deduplicate_latest_results(results: tuple) -> tuple:
+    """Keep one newest result per contract/direction in a single live snapshot.
+
+    A completed scan is one coherent snapshot. If a faulty provider supplies the
+    same contract/direction more than once, retain the newest source timestamp;
+    ties keep the higher-edge result. Different expiries, strikes, classes, and
+    LONG/SHORT directions remain distinct.
+    """
+    latest = {}
+    for result in results:
+        option = getattr(result, "option", None)
+        if option is None:
+            continue
+        try:
+            timestamp_ns = int(getattr(option, "timestamp_ns", 0) or 0)
+        except (TypeError, ValueError, OverflowError):
+            timestamp_ns = 0
+        try:
+            edge = float(getattr(result, "executable_edge", 0) or 0)
+        except (TypeError, ValueError, OverflowError):
+            edge = 0.0
+        key = (
+            str(getattr(option, "underlying", "") or "").strip().upper(),
+            str(getattr(option, "instrument_class", "") or "").strip().upper(),
+            str(_normalize_expiry(getattr(option, "expiry", "")) or ""),
+            str(getattr(option, "strike", "") or ""),
+            str(getattr(result, "direction", "") or "").strip().upper(),
+        )
+        previous = latest.get(key)
+        if previous is None:
+            latest[key] = (timestamp_ns, edge, result)
+        elif timestamp_ns > previous[0] or (timestamp_ns == previous[0] and edge > previous[1]):
+            latest[key] = (timestamp_ns, edge, result)
+    return tuple(item[2] for item in latest.values())
+
+
 def _serialize(result) -> dict:
     option, future = result.option, result.future
     return {
@@ -72,7 +108,11 @@ def live(
 ):
     results = _latest_provider() if _latest_provider is not None else ()
     cutoff = _time.time_ns() - int(max_age_seconds * 1_000_000_000)
-    results = tuple(r for r in results if int(getattr(r.option, "timestamp_ns", 0)) >= cutoff)
+    results = tuple(
+        r for r in results
+        if int(getattr(r.option, "timestamp_ns", 0)) >= cutoff
+    )
+    results = _deduplicate_latest_results(tuple(results))
     rows = [_serialize(result) for result in results[:limit]]
     return {
         "status": "success",
