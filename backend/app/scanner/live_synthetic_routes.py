@@ -139,10 +139,47 @@ def diagnostics():
         status = "NO_RECENT_COMPLETE_SCAN"
     else:
         status = "SCANNING"
+    # Aggregate existing counters into an operator-friendly diagnosis.
+    # These are rejection/health events, not unique or mutually exclusive pair counts.
+    blocker_prefixes = (
+        "missing_ce_or_pe_leg",
+        "missing_future_leg",
+        "timestamp_mismatch",
+        "expiry_mismatch",
+        "instrument_class_mismatch",
+        "illiquid_or_incomplete_option_leg",
+        "lot_size_mismatch",
+        "invalid_option_lot_size",
+        "invalid_future_quote",
+        "no_executable_ce_pe_pair",
+        "missing_atm_price",
+        "atm_provider_errors",
+        "config_provider_errors",
+        "invalid_quote",
+        "stale_timestamp",
+        "invalid_timestamp",
+        "invalid_timestamp_unit",
+    )
+    blockers = [
+        {"reason": key, "count": value}
+        for key, value in counters.items()
+        if key in blocker_prefixes and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+    ]
+    blockers.sort(key=lambda item: (-item["count"], item["reason"]))
+    calculation_summary = {
+        "evaluations": counters.get("scan_evaluations", 0),
+        "successful_pairs": counters.get("successful_pairs", 0),
+        "opportunities_emitted": counters.get("opportunities_emitted", 0),
+        "empty_calculations": counters.get("empty_calculations", 0),
+        "last_result_count": counters.get("last_result_count", 0),
+    }
     return {
         "status": status,
         "scanner": "synthetic-cash-carry-live-1s",
         "running": running,
+        "calculation_summary": calculation_summary,
+        "top_blockers": blockers[:8],
+        "blocker_counter_note": "Counters can overlap and are cumulative; they are diagnostic events, not unique pair totals.",
         "phase": snapshot.get("phase"),
         "phase_reason": snapshot.get("phase_reason"),
         "target_count": snapshot.get("targets"),

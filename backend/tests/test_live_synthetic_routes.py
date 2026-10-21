@@ -99,3 +99,44 @@ def test_dashboard_synthetic_results_exclude_stale_entries():
 
     assert _fresh_live_synthetic_results((fresh, stale)) == (fresh,)
     assert _fresh_live_synthetic_results((stale,)) == ()
+
+
+
+def test_diagnostics_summarizes_calculations_and_top_blockers():
+    live_synthetic_routes.configure_diagnostics(
+        lambda: {
+            "running": True,
+            "phase": "SCANNING",
+            "phase_reason": None,
+            "targets": 16,
+            "scanner_initialized": True,
+            "scanner_diagnostics": {
+                "counters": {
+                    "last_observation_at_ns": time.time_ns(),
+                    "last_successful_calculation_at_ns": time.time_ns(),
+                    "last_result_count": 0,
+                    "scan_evaluations": 12,
+                    "successful_pairs": 7,
+                    "opportunities_emitted": 0,
+                    "empty_calculations": 7,
+                    "timestamp_mismatch": 9,
+                    "missing_atm_price": 4,
+                    "unrelated_counter": 100,
+                }
+            },
+        }
+    )
+    response = live_synthetic_routes.diagnostics()
+    assert response["calculation_summary"] == {
+        "evaluations": 12,
+        "successful_pairs": 7,
+        "opportunities_emitted": 0,
+        "empty_calculations": 7,
+        "last_result_count": 0,
+    }
+    assert response["top_blockers"] == [
+        {"reason": "timestamp_mismatch", "count": 9},
+        {"reason": "missing_atm_price", "count": 4},
+    ]
+    assert "unrelated_counter" not in [item["reason"] for item in response["top_blockers"]]
+    assert "cumulative" in response["blocker_counter_note"]
