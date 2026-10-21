@@ -180,16 +180,36 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
     if not isinstance(source_rows, list):
         source_rows = []
     allowed = (
-        "timestamp_ns", "underlying", "expiry", "strike",
-        "future_bid", "future_ask", "call_bid", "call_ask",
-        "put_bid", "put_ask", "lot_size", "state", "reason",
-        "readiness_scope", "opportunity_confirmed", "qualification_status",
+        "timestamp_ns", "underlying", "symbol", "expiry", "strike",
+        "future_bid", "future_ask", "future_summary", "call_bid", "call_ask",
+        "put_bid", "put_ask", "option_summary", "lot_size", "state", "reason",
+        "direction", "executable_edge", "readiness_scope", "opportunity_confirmed",
+        "qualification_status",
     )
-    rows = [
-        {key: row.get(key) for key in allowed}
-        for row in source_rows[:limit]
-        if isinstance(row, dict)
-    ]
+    rows = []
+    for source in source_rows[:limit]:
+        if not isinstance(source, dict):
+            continue
+        row = {key: source.get(key) for key in allowed if key in source}
+        # Older pair snapshots may call the underlying field "symbol". Normalize
+        # it here so the UI never loses the name during sanitization.
+        underlying = source.get("underlying") or source.get("symbol")
+        if underlying:
+            row["underlying"] = str(underlying).strip().upper()
+        # Normalize common broker expiry representations to ISO YYYY-MM-DD.
+        expiry = source.get("expiry")
+        if expiry is not None:
+            text = str(expiry).strip()
+            if text.endswith(".0") and text[:-2].isdigit():
+                text = text[:-2]
+            if len(text) == 8 and text.isdigit():
+                try:
+                    row["expiry"] = datetime.strptime(text, "%Y%m%d").date().isoformat()
+                except ValueError:
+                    row["expiry"] = expiry
+            else:
+                row["expiry"] = expiry
+        rows.append(row)
     return {
         "status": str(snapshot.get("status") or "success"),
         "scanner": "synthetic-cash-carry-live-1s",
