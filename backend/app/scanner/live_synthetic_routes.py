@@ -28,12 +28,25 @@ def configure_pairs(provider: Callable[[], dict | None]) -> None:
     _pairs_provider = provider
 
 
+def _normalize_expiry(value):
+    """Serialize broker expiry values as ISO dates for every live API consumer."""
+    text = str(value or "").strip().upper()
+    if text.endswith(".0") and text[:-2].isdigit():
+        text = text[:-2]
+    for fmt in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%d-%m-%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return value
+
+
 def _serialize(result) -> dict:
     option, future = result.option, result.future
     return {
         "underlying": option.underlying,
         "instrument_class": option.instrument_class,
-        "expiry": option.expiry,
+        "expiry": _normalize_expiry(option.expiry),
         "strike": option.strike,
         "direction": result.direction,
         "timestamp_ns": option.timestamp_ns,
