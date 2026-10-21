@@ -62,11 +62,17 @@ def _deduplicate_latest_results(results: tuple) -> tuple:
             edge = float(getattr(result, "executable_edge", 0) or 0)
         except (TypeError, ValueError, OverflowError):
             edge = 0.0
+        raw_strike = getattr(option, "strike", "")
+        try:
+            numeric_strike = float(raw_strike)
+            strike_key = format(numeric_strike, ".12g") if numeric_strike == numeric_strike else str(raw_strike).strip()
+        except (TypeError, ValueError, OverflowError):
+            strike_key = str(raw_strike or "").strip().upper()
         key = (
             str(getattr(option, "underlying", "") or "").strip().upper(),
             str(getattr(option, "instrument_class", "") or "").strip().upper(),
             str(_normalize_expiry(getattr(option, "expiry", "")) or ""),
-            str(getattr(option, "strike", "") or ""),
+            strike_key,
             str(getattr(result, "direction", "") or "").strip().upper(),
         )
         previous = latest.get(key)
