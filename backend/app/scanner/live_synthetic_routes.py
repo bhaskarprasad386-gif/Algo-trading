@@ -393,9 +393,14 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
     if not isinstance(source_rows, list):
         source_rows = []
     allowed = (
-        "timestamp_ns", "underlying", "symbol", "expiry", "strike", "future_bid", "future_ask",
-        "future_summary", "call_bid", "call_ask", "put_bid", "put_ask", "option_summary", "lot_size",
-        "state", "reason", "direction", "executable_edge", "readiness_scope", "opportunity_confirmed",
+        # Contract identity and row/quote time used by both desktop and mobile pair monitors.
+        "timestamp_ns", "observed_at", "underlying", "symbol", "instrument_class", "expiry", "strike",
+        # Keep the actual quote legs visible; never replace missing prices with fabricated values.
+        "future_bid", "future_ask", "future_summary", "call_bid", "call_ask", "put_bid", "put_ask",
+        "option_summary", "lot_size",
+        # Preserve the complete edge/direction context emitted by the scanner.
+        "state", "reason", "direction", "executable_edge", "edge_per_lot", "gross_pnl",
+        "strike_distance", "strike_side", "readiness_scope", "opportunity_confirmed",
         "qualification_status",
     )
     rows = []
