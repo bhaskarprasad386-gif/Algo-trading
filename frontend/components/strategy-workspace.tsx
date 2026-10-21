@@ -475,12 +475,22 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const response = await fetch(base + c.pairEndpoint, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
-      const data = Array.isArray(body?.data) ? body.data : [];
-      setPairRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
-      setPairMonitorStatus(String(body?.status ?? "UNKNOWN").toUpperCase());
+      const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
+      const responseStatus = String(body?.status ?? "UNKNOWN").toUpperCase();
+      // Empty/waiting snapshots can occur during a runner refresh or temporary
+      // API recovery. Keep the last real pair rows visible, explicitly marked STALE.
+      if (data.length > 0) {
+        setPairRows(data);
+        setPairMonitorStatus(responseStatus === "SUCCESS" ? "LIVE" : responseStatus);
+      } else if (pairRows.length > 0) {
+        setPairMonitorStatus("STALE");
+      } else {
+        setPairRows([]);
+        setPairMonitorStatus(responseStatus === "UNAVAILABLE" ? "UNAVAILABLE" : "WAITING");
+      }
     } catch {
-      // Preserve the last good snapshot, but never present it as a confirmed live response.
-      setPairMonitorStatus("UNAVAILABLE");
+      // Preserve the last good snapshot but never label it as live after an API error.
+      setPairMonitorStatus(pairRows.length > 0 ? "STALE" : "UNAVAILABLE");
     }
   };
 
@@ -518,7 +528,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     void loadPairs();
     const timer = window.setInterval(() => void loadPairs(), 1500);
     return () => window.clearInterval(timer);
-  }, [isCustom, c.pairEndpoint]);
+  }, [isCustom, c.pairEndpoint, pairRows.length]);
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") {
@@ -874,12 +884,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Every current pair/combo from the real backend snapshot is shown, including rows without a signal.</p></div>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("pairs")} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Copy rows</button>
             <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}1.5s refresh</span>
           </div>
         </div>
+        {slug === "synthetic-arbitrage" && pairMonitorStatus === "STALE" && <div role="status" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm theme-text">STALE SNAPSHOT — backend pair data is temporarily empty or unavailable. Showing the last real rows with their original timestamps; these are not confirmed live opportunities.</div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live pairs</p><p className="mt-1 text-lg font-semibold theme-text">{monitorRows.length.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Signals / edges</p><p className="mt-1 text-lg font-semibold theme-text">{signals.toLocaleString("en-IN")}</p></div>
