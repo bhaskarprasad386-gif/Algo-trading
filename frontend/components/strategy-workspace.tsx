@@ -958,7 +958,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 // Keep the real ATM tracker values so stock/index readiness is not hidden.
                 atm_ready: typeof item.atm_ready === "boolean" ? item.atm_ready : previous.atm_ready,
                 has_underlying_price: typeof item.has_underlying_price === "boolean" ? item.has_underlying_price : previous.has_underlying_price,
-                last_underlying_price: item.last_underlying_price ?? previous.last_underlying_price,
+                last_price: item.last_price ?? item.last_underlying_price ?? previous.last_price ?? previous.last_underlying_price,
+                last_underlying_price: item.last_underlying_price ?? item.last_price ?? previous.last_underlying_price ?? previous.last_price,
                 source_age_seconds: item.source_age_seconds ?? previous.source_age_seconds,
                 concrete_strike_count: typeof previous.concrete_strike_count === "number" ? previous.concrete_strike_count : item.concrete_strike_count,
                 reason: item.reason || previous.reason,
@@ -985,6 +986,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 feed_state: feedState,
                 feed_reason: item.state_reason || item.reason || feedReason || previous.feed_reason,
                 token_resolved: typeof item.token_resolved === "boolean" ? item.token_resolved : previous.token_resolved,
+                // Normalize the feed's canonical last_price while preserving a previously observed real price if this diagnostic omits it.
+                last_price: item.last_price ?? item.last_underlying_price ?? previous.last_price ?? previous.last_underlying_price,
+                last_underlying_price: item.last_underlying_price ?? item.last_price ?? previous.last_underlying_price ?? previous.last_price,
                 last_tick_age_seconds: typeof tickAge === "number" ? tickAge : previous.last_tick_age_seconds,
                 // Prefer the actual underlying-feed tick age over an older ATM/subscription age.
                 // Otherwise the merged row can show stale feed age even after a fresh tick arrives.
