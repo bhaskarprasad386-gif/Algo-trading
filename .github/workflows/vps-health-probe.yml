@@ -120,26 +120,31 @@ jobs:
           feed = diag.get("underlying_feed") if isinstance(diag.get("underlying_feed"), dict) else {}
           symbols = feed.get("symbols") if isinstance(feed.get("symbols"), dict) else {}
           resolved = [name for name, item in symbols.items() if isinstance(item, dict) and item.get("token_resolved")]
-          fresh = [name for name, item in symbols.items() if isinstance(item, dict) and isinstance(item.get("last_tick_age_seconds"), (int, float)) and item["last_tick_age_seconds"] <= 10]
+          fresh_10s = [name for name, item in symbols.items() if isinstance(item, dict) and isinstance(item.get("last_tick_age_seconds"), (int, float)) and item["last_tick_age_seconds"] <= 10]
+          fresh_5s = [name for name, item in symbols.items() if isinstance(item, dict) and isinstance(item.get("last_tick_age_seconds"), (int, float)) and item["last_tick_age_seconds"] <= 5]
           readiness = next((x for x in nodes if isinstance(x.get("ready_symbols"), list) and isinstance(x.get("waiting_symbols"), list)), {})
           ready_symbols = readiness.get("ready_symbols", [])
           initialized = bool(diag.get("scanner_initialized"))
           state = str(feed.get("state") or "NO_FEED_SNAPSHOT")
           reason = str(feed.get("state_reason") or "no_underlying_feed_snapshot")
+          expected = max(len(symbols), int(diag.get("target_count") or 0))
+          minimum_ready = max(1, (expected + 1) // 2)
           print(f"MARKET_SESSION={session or 'UNKNOWN'}")
           print(f"UNDERLYING_FEED_STATE={state}")
           print(f"UNDERLYING_FEED_REASON={reason}")
           print(f"TOKENS_RESOLVED={len(resolved)}/{len(symbols)}")
-          print(f"FRESH_TICKS_LE_10S={len(fresh)}/{len(symbols)}")
-          print(f"ATM_READY_SYMBOLS={len(ready_symbols)}")
+          print(f"FRESH_TICKS_LE_10S={len(fresh_10s)}/{len(symbols)}")
+          print(f"FRESH_TICKS_LE_5S={len(fresh_5s)}/{len(symbols)}")
+          print(f"ATM_READY_SYMBOLS={len(ready_symbols)}/{expected}")
+          print(f"ATM_READY_MINIMUM_REQUIRED={minimum_ready}")
           print(f"SCANNER_INITIALIZED={initialized}")
           if session != "OPEN":
               print("ACCEPTANCE_RESULT=DEFERRED_MARKET_NOT_OPEN")
           else:
               checks = {
-                  "token_resolution": bool(resolved),
-                  "fresh_ticks": bool(fresh),
-                  "atm_readiness": bool(ready_symbols),
+                  "token_resolution": bool(symbols) and len(resolved) == len(symbols),
+                  "fresh_ticks_le_5s": bool(symbols) and len(fresh_5s) >= minimum_ready,
+                  "atm_readiness": len(ready_symbols) >= minimum_ready,
                   "scanner_initialization": initialized,
               }
               for name, passed in checks.items():
