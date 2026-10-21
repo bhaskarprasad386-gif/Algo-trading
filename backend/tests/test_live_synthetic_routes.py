@@ -168,6 +168,10 @@ def test_diagnostics_summarizes_calculations_and_top_blockers():
             "last_result_count": 0, "scan_evaluations": 12, "successful_pairs": 7,
             "opportunities_emitted": 0, "empty_calculations": 7, "timestamp_mismatch": 9,
             "missing_atm_price": 4, "scan_calculation_errors": 3,
+            "scan_evaluations_by_symbol:RELIANCE": 4,
+            "successful_pairs_by_symbol:RELIANCE": 2,
+            "opportunities_emitted_by_symbol:RELIANCE": 1,
+            "empty_calculations_by_symbol:RELIANCE": 3,
             "missing_atm_price_by_symbol:RELIANCE": 2, "unrelated_counter": 100,
         }},
     })
@@ -179,6 +183,11 @@ def test_diagnostics_summarizes_calculations_and_top_blockers():
         {"reason": "scan_calculation_errors", "count": 3},
         {"reason": "missing_atm_price_by_symbol:RELIANCE", "count": 2},
     ]
+    # Symbol-scoped outcome counters remain available to the dashboard.
+    assert response["counters"]["scan_evaluations_by_symbol:RELIANCE"] == 4
+    assert response["counters"]["successful_pairs_by_symbol:RELIANCE"] == 2
+    assert response["counters"]["opportunities_emitted_by_symbol:RELIANCE"] == 1
+    assert response["counters"]["empty_calculations_by_symbol:RELIANCE"] == 3
     assert "unrelated_counter" not in [item["reason"] for item in response["top_blockers"]]
     assert "cumulative" in response["blocker_counter_note"]
     assert response["subscription_diagnostics"]["subscribed_symbol_count"] == 1
