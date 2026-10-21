@@ -263,3 +263,31 @@ def test_live_synthetic_callback_merges_fresh_symbols_instead_of_overwriting(mon
     main._update_live_synthetic_results((stock_result,))
     main._update_live_synthetic_results(())
     assert {row.option.underlying for row in main.live_synthetic_latest_results} == {"SENSEX", "RELIANCE"}
+
+
+
+def test_diagnostics_summarizes_pair_blockers_per_underlying():
+    live_synthetic_routes.configure_diagnostics(lambda: {
+        "running": True,
+        "scanner_diagnostics": {"counters": {}},
+    })
+    live_synthetic_routes.configure_pairs(lambda: {"status": "success", "data": [
+        {"underlying": "RELIANCE", "state": "INCOMPLETE", "reason": "MISSING_CALL,MISSING_PUT"},
+        {"underlying": "RELIANCE", "state": "INCOMPLETE", "reason": "MISSING_CALL"},
+        {"underlying": "TCS", "state": "READY_TO_EVALUATE", "reason": "AWAITING_SCANNER_QUALIFICATION"},
+    ]})
+    response = live_synthetic_routes.diagnostics()
+    summary = response["pair_readiness_summary"]
+    assert summary["available"] is True
+    assert summary["row_count"] == 3
+    assert summary["symbols"] == [
+        {
+            "underlying": "RELIANCE", "row_count": 2, "ready_to_evaluate_count": 0,
+            "incomplete_count": 2,
+            "blocker_counts": [{"reason": "MISSING_CALL", "count": 2}, {"reason": "MISSING_PUT", "count": 1}],
+        },
+        {
+            "underlying": "TCS", "row_count": 1, "ready_to_evaluate_count": 1,
+            "incomplete_count": 0, "blocker_counts": [],
+        },
+    ]
