@@ -1075,6 +1075,51 @@ def set_synthetic_universe(payload: SyntheticUniverseSelection):
     }
 
 
+def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
+    """Summarize NSE/NFO tick freshness without allowing unrelated exchanges to mask gaps."""
+    raw_ages = common_feed.get("last_exchange_tick_received_age_seconds_by_exchange_type")
+    raw_ages = raw_ages if isinstance(raw_ages, dict) else {}
+    exchange_freshness = {}
+    for exchange_type, exchange_name in ((1, "NSE"), (2, "NFO")):
+        raw_age = raw_ages.get(str(exchange_type), raw_ages.get(exchange_type))
+        try:
+            age = float(raw_age) if raw_age is not None else None
+        except (TypeError, ValueError, OverflowError):
+            age = None
+        if age is not None and (not math.isfinite(age) or age < 0):
+            age = None
+        exchange_freshness[exchange_name] = {
+            "exchange_type": exchange_type,
+            "age_seconds": age,
+            "status": "NO_DATA" if age is None else "STALE" if age > 5.0 else "LIVE",
+        }
+
+    primary_ages = [
+        item["age_seconds"] for item in exchange_freshness.values()
+        if item["age_seconds"] is not None
+    ]
+    feed_age_seconds = max(primary_ages) if primary_ages else None
+    unconnected = common_feed.get("unconnected_required_groups") or []
+    missing_groups = common_feed.get("missing_socket_groups") or []
+    if unconnected or missing_groups:
+        status = "DISCONNECTED"
+    elif any(item["status"] == "STALE" for item in exchange_freshness.values()):
+        status = "STALE"
+    elif any(item["status"] == "NO_DATA" for item in exchange_freshness.values()):
+        status = (
+            "WAITING_FOR_TICKS"
+            if int(common_feed.get("ticks_received") or 0) == 0
+            else "WAITING_FOR_PRIMARY_EXCHANGE_TICKS"
+        )
+    else:
+        status = "LIVE"
+    return {
+        "status": status,
+        "age_seconds": feed_age_seconds,
+        "exchange_freshness": exchange_freshness,
+    }
+
+
 @app.get("/api/v1/market-data/runtime/health")
 def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
@@ -1085,34 +1130,13 @@ def market_data_runtime_health():
     box_runner = live_box_spread_runner
     calendar_counts = live_calendar_spread_scanner.counts_snapshot()
     common_feed = manager.snapshot()
-    # CommonWebSocketManager.snapshot() reports transport counters and per-exchange
-    # receive ages, but does not itself publish the summary fields consumed by the
-    # frontend. Derive those fields from actual received ticks/socket health here.
-    received_ages = common_feed.get("last_exchange_tick_received_age_seconds_by_exchange_type")
-    if isinstance(received_ages, dict):
-        valid_ages = []
-        for raw_age in received_ages.values():
-            try:
-                age = float(raw_age)
-            except (TypeError, ValueError, OverflowError):
-                continue
-            if math.isfinite(age) and age >= 0:
-                valid_ages.append(age)
-        feed_age_seconds = max(valid_ages) if valid_ages else None
-    else:
-        feed_age_seconds = None
-    unconnected = common_feed.get("unconnected_required_groups") or []
-    missing_groups = common_feed.get("missing_socket_groups") or []
-    if unconnected or missing_groups:
-        feed_status = "DISCONNECTED"
-    elif feed_age_seconds is None:
-        feed_status = "WAITING_FOR_TICKS" if int(common_feed.get("ticks_received") or 0) == 0 else "AGE_UNAVAILABLE"
-    elif feed_age_seconds > 5:
-        feed_status = "STALE"
-    else:
-        feed_status = "LIVE"
-    common_feed["age_seconds"] = feed_age_seconds
-    common_feed["status"] = feed_status
+    # The synthetic scanner needs both NSE underlying and NFO derivatives.
+    # A fresh tick from another exchange must not mask a missing/stale primary feed.
+    feed_health = _summarize_primary_exchange_feed(common_feed)
+    common_feed["age_seconds"] = feed_health["age_seconds"]
+    common_feed["status"] = feed_health["status"]
+    common_feed["exchange_freshness"] = feed_health["exchange_freshness"]
+    common_feed["required_exchange_types"] = [1, 2]
     return {
         "status": "ok",
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
