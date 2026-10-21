@@ -311,7 +311,23 @@ class LiveSyntheticUnderlyingFeed:
                 effective_age_seconds = max(
                     receive_age_seconds, max(0.0, source_age_seconds)
                 )
+            # Report health per symbol, not only at feed level. A single
+            # healthy index must not make every configured stock appear live.
+            if not token:
+                symbol_state = "TOKEN_MISSING"
+                symbol_reason = "underlying_token_unresolved"
+            elif effective_age_seconds is None:
+                symbol_state = "WAITING_FOR_TICK"
+                symbol_reason = "no_underlying_tick_received"
+            elif effective_age_seconds <= UNDERLYING_STALE_AFTER_SECONDS:
+                symbol_state = "LIVE"
+                symbol_reason = "fresh_underlying_tick"
+            else:
+                symbol_state = "STALE"
+                symbol_reason = "underlying_tick_exceeded_freshness_threshold"
             symbol_health[symbol] = {
+                "state": symbol_state,
+                "state_reason": symbol_reason,
                 "token_resolved": bool(token),
                 "token": token or None,
                 "last_price": tick["price"] if tick else None,
