@@ -183,6 +183,9 @@ class LiveSyntheticRunner:
         self._running = False
         self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
         self._last_empty_subscription_diagnostic_ns = 0
+        # Latest per-symbol contract-selection outcome. This makes missing stock
+        # opportunities diagnosable without fabricating scanner rows.
+        self._subscription_diagnostics: dict[str, dict] = {}
 
     @property
     def stop_event(self) -> Event:
@@ -390,7 +393,20 @@ class LiveSyntheticRunner:
             "contract_selection_failed": [],
             "selector_returned_no_contracts": [],
         }
+        per_symbol: dict[str, dict] = {}
         for target in self.targets:
+            symbol = target.underlying.strip().upper()
+            per_symbol[symbol] = {
+                "underlying": symbol,
+                "instrument_class": target.instrument_class.strip().upper(),
+                "expiry": target.expiry,
+                "status": "CHECKING",
+                "reason": None,
+                "subscription_count": 0,
+                "future_count": 0,
+                "call_count": 0,
+                "put_count": 0,
+            }
             if (
                 target.instrument_class.strip().upper() in {"STOCK", "INDEX"}
                 and not target.expiry
@@ -399,6 +415,7 @@ class LiveSyntheticRunner:
                 # select_synthetic_contracts(expiry=None), which defaults to the
                 # current future expiry and can bypass the monthly-expiry policy.
                 skipped["monthly_expiry_unresolved"].append(target.underlying)
+                per_symbol[symbol].update(status="BLOCKED", reason="monthly_expiry_unresolved")
                 continue
             live_atm = atm_provider(target.underlying, time_ns())
             atm_strike = (
@@ -409,6 +426,7 @@ class LiveSyntheticRunner:
             if atm_strike is None:
                 # A missing underlying must not block ready symbols in the universe.
                 skipped["live_atm_unavailable_or_stale"].append(target.underlying)
+                per_symbol[symbol].update(status="WAITING_FOR_ATM", reason="live_atm_unavailable_or_stale")
                 continue
             try:
                 selection = select_synthetic_contracts(
@@ -421,15 +439,32 @@ class LiveSyntheticRunner:
                     policy=self.policy,
                 )
             except LookupError as exc:
-                skipped["contract_selection_failed"].append(f"{target.underlying} ({exc})")
+                reason = str(exc)
+                skipped["contract_selection_failed"].append(f"{target.underlying} ({reason})")
+                per_symbol[symbol].update(status="BLOCKED", reason=reason)
                 continue
             if not selection.subscriptions:
                 skipped["selector_returned_no_contracts"].append(target.underlying)
+                per_symbol[symbol].update(status="BLOCKED", reason="selector_returned_no_contracts")
             for item in selection.subscriptions:
+                per_symbol[symbol]["subscription_count"] += 1
+                if item.option_type == "CE":
+                    per_symbol[symbol]["call_count"] += 1
+                elif item.option_type == "PE":
+                    per_symbol[symbol]["put_count"] += 1
+                elif item.contract_role == "CURRENT":
+                    per_symbol[symbol]["future_count"] += 1
                 key = (item.exchange_type, item.token)
                 if key not in seen:
                     seen.add(key)
                     subscriptions.append(item)
+            if selection.subscriptions:
+                detail = per_symbol[symbol]
+                if detail["future_count"] and detail["call_count"] and detail["put_count"]:
+                    detail.update(status="SUBSCRIBED", reason=None)
+                else:
+                    detail.update(status="INCOMPLETE_SELECTION", reason="missing_future_or_CE_PE_subscription")
+        self._subscription_diagnostics = per_symbol
         if not subscriptions:
             now_ns = time_ns()
             if now_ns - self._last_empty_subscription_diagnostic_ns >= 60_000_000_000:
@@ -880,6 +915,12 @@ class LiveSyntheticRunner:
             "targets": len(self.targets),
             "scanner_initialized": scanner_initialized,
             "scanner_diagnostics": scanner_diagnostics,
+            "subscription_diagnostics": {
+                "target_count": len(self.targets),
+                "subscribed_symbol_count": sum(1 for item in self._subscription_diagnostics.values() if item.get("status") == "SUBSCRIBED"),
+                "blocked_symbol_count": sum(1 for item in self._subscription_diagnostics.values() if item.get("status") != "SUBSCRIBED"),
+                "symbols": list(self._subscription_diagnostics.values()),
+            },
             "underlying_feed": feed_snapshot,
             "option_recorder": recorder_snapshot,
         }
