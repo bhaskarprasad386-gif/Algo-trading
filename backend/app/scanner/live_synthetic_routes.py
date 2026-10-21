@@ -531,7 +531,7 @@ def pair_history(days: int = Query(1, ge=1, le=2), limit: int = Query(1000, ge=1
             data.append({
                 "id": item.id,
                 "timestamp_ns": item.timestamp_ns,
-                "observed_at": item.observed_at.isoformat(),
+                "observed_at": item.observed_at.isoformat() + "Z",
                 "underlying": item.underlying,
                 "instrument_class": item.instrument_class,
                 "expiry": item.expiry,
