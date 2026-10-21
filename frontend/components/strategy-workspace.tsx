@@ -313,6 +313,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
+  const [rowsStale, setRowsStale] = useState(false);
+  const rowsRef = useRef<Row[]>([]);
   const loadRequestRef = useRef(0);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
   const [pairRows, setPairRows] = useState<Row[]>([]);
@@ -377,7 +379,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const load = async (showLoading = false) => {
     const requestId = ++loadRequestRef.current;
     if (!endpoint) {
+      rowsRef.current = [];
       setRows([]);
+      setRowsStale(false);
       setLoading(false);
       return;
     }
@@ -387,13 +391,26 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const response = await fetch(base + endpoint, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || c.title + " HTTP " + response.status);
-      const data = Array.isArray(body?.data) ? body.data : [];
+      const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
       if (requestId !== loadRequestRef.current) return;
-      setRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      if (data.length > 0) {
+        rowsRef.current = data;
+        setRows(data);
+        setRowsStale(false);
+      } else if (slug === "synthetic-arbitrage" && rowsRef.current.length > 0) {
+        // Empty snapshots can be transient while the scanner recalculates.
+        // Keep the last observed opportunities visible, explicitly marked stale.
+        setRowsStale(true);
+      } else {
+        rowsRef.current = [];
+        setRows([]);
+        setRowsStale(false);
+      }
       setError(null);
     } catch (e) {
       if (requestId !== loadRequestRef.current) return;
       // Preserve the last good rows during a temporary API failure.
+      if (slug === "synthetic-arbitrage" && rowsRef.current.length > 0) setRowsStale(true);
       setError(e instanceof Error ? e.message : "Backend unavailable");
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);
@@ -684,7 +701,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <Card className="overflow-hidden theme-border theme-surface">
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p></div>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
           <span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span>
         </div>
         <div className="grid gap-2 p-3 md:hidden">
