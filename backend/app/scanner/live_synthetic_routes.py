@@ -160,6 +160,13 @@ def _serialize(result) -> dict:
         "call_ask": option.call_ask,
         "put_bid": option.put_bid,
         "put_ask": option.put_ask,
+        **_synthetic_prices({
+            "strike": option.strike,
+            "call_bid": option.call_bid,
+            "call_ask": option.call_ask,
+            "put_bid": option.put_bid,
+            "put_ask": option.put_ask,
+        }),
         "lot_size": future.lot_size,
         "executable_edge": result.executable_edge,
         "edge_per_lot": result.edge_per_lot,
