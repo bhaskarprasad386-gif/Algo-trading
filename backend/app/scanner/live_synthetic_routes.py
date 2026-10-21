@@ -114,10 +114,15 @@ def live(
 ):
     results = _latest_provider() if _latest_provider is not None else ()
     cutoff = _time.time_ns() - int(max_age_seconds * 1_000_000_000)
-    results = tuple(
-        r for r in results
-        if int(getattr(r.option, "timestamp_ns", 0)) >= cutoff
-    )
+    fresh_results = []
+    for result in results:
+        try:
+            timestamp_ns = int(getattr(getattr(result, "option", None), "timestamp_ns", 0))
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            continue
+        if timestamp_ns >= cutoff:
+            fresh_results.append(result)
+    results = tuple(fresh_results)
     results = _deduplicate_latest_results(tuple(results))
     rows = [_serialize(result) for result in results[:limit]]
     return {
