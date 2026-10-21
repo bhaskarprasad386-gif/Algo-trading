@@ -832,7 +832,20 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             for (const item of atmSymbols) symbolRows.set(String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase(), { ...item, diagnostic_source: "ATM" });
             for (const item of subscriptionSymbols) {
               const key = String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase();
-              symbolRows.set(key, { ...(symbolRows.get(key) ?? {}), ...item, underlying: key });
+              const previous = symbolRows.get(key) ?? {};
+              symbolRows.set(key, {
+                ...previous,
+                ...item,
+                underlying: key,
+                // Subscription snapshots may omit ATM fields or provide nulls.
+                // Keep the real ATM tracker values so stock/index readiness is not hidden.
+                atm_ready: typeof item.atm_ready === "boolean" ? item.atm_ready : previous.atm_ready,
+                has_underlying_price: typeof item.has_underlying_price === "boolean" ? item.has_underlying_price : previous.has_underlying_price,
+                last_underlying_price: item.last_underlying_price ?? previous.last_underlying_price,
+                source_age_seconds: item.source_age_seconds ?? previous.source_age_seconds,
+                concrete_strike_count: typeof previous.concrete_strike_count === "number" ? previous.concrete_strike_count : item.concrete_strike_count,
+                reason: item.reason || previous.reason,
+              });
             }
             const rows = Array.from(symbolRows.values()).sort((a, b) => String(a.underlying ?? "").localeCompare(String(b.underlying ?? "")));
             return <div className="mt-4 border-t theme-border pt-4">
