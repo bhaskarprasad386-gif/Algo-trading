@@ -88,6 +88,18 @@ def test_live_route_keeps_different_directions_for_same_contract():
     assert {row["direction"] for row in response["data"]} == {"LONG", "SHORT"}
 
 
+def test_live_route_skips_malformed_timestamps_without_failing():
+    valid = _result()
+    malformed = _result()
+    malformed.option.timestamp_ns = "not-a-timestamp"
+    live_synthetic_routes.configure(lambda: (malformed, valid))
+
+    response = live_synthetic_routes.live(limit=10)
+
+    assert len(response["data"]) == 1
+    assert response["data"][0]["underlying"] == "NIFTY"
+
+
 def test_live_route_limits_results():
     result = _result()
     live_synthetic_routes.configure(lambda: (result, result))
