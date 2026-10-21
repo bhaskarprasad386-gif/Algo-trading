@@ -121,6 +121,10 @@ def test_pairs_endpoint_returns_empty_snapshot():
 def test_pairs_endpoint_sanitizes_snapshot_rows():
     live_synthetic_routes.configure_pairs(lambda: {"status": "success", "data": [{
         "timestamp_ns": 123, "underlying": "NIFTY", "expiry": 20261029, "strike": 25000,
+        "instrument_class": "INDEX",
+        "future_bid": 25099.0, "future_ask": 25101.0,
+        "call_bid": 100.0, "call_ask": 101.0, "put_bid": 99.0, "put_ask": 100.0,
+        "edge_per_lot": 125.0, "gross_pnl": 125.0, "strike_distance": 0.0, "strike_side": "ATM",
         "state": "INCOMPLETE", "reason": "AWAITING_SCANNER_QUALIFICATION",
         "readiness_scope": "STRUCTURAL_ONLY", "opportunity_confirmed": False,
         "qualification_status": "NOT_CONFIRMED", "raw_broker_payload": {"secret": "must not escape"},
@@ -132,6 +136,12 @@ def test_pairs_endpoint_sanitizes_snapshot_rows():
     assert response["data"][0]["readiness_scope"] == "STRUCTURAL_ONLY"
     assert response["data"][0]["opportunity_confirmed"] is False
     assert response["data"][0]["qualification_status"] == "NOT_CONFIRMED"
+    assert response["data"][0]["instrument_class"] == "INDEX"
+    assert response["data"][0]["future_bid"] == 25099.0
+    assert response["data"][0]["call_bid"] == 100.0
+    assert response["data"][0]["put_ask"] == 100.0
+    assert response["data"][0]["edge_per_lot"] == 125.0
+    assert response["data"][0]["strike_side"] == "ATM"
     assert "raw_broker_payload" not in response["data"][0]
 
 
