@@ -130,6 +130,23 @@ function formatValue(raw: unknown) {
   return String(raw);
 }
 
+function quoteTimestamp(row: Row) {
+  const raw = value(row, "timestamp_ns", "observed_at", "timestamp");
+  if (raw === undefined || raw === null || raw === "") return "";
+  const n = Number(raw);
+  const date = Number.isFinite(n) && n > 1_000_000_000_000
+    ? new Date(n / 1_000_000)
+    : new Date(String(raw));
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+}
+
+function withQuoteTimestamp(text: string, row: Row) {
+  const timestamp = quoteTimestamp(row);
+  return timestamp && text !== "—" ? text + " · " + timestamp : text;
+}
+
 function formatCell(slug: string, column: string, row: Row) {
   const keys: Record<string, Record<string, string[]>> = {
     "calendar-spread": {
@@ -165,8 +182,8 @@ function formatCell(slug: string, column: string, row: Row) {
         ? formatValue(bid) + " / " + formatValue(ask)
         : bid !== undefined && bid !== null && bid !== "" ? formatValue(bid)
         : ask !== undefined && ask !== null && ask !== "" ? "— / " + formatValue(ask) : "—";
-    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return formatValue(row.option_summary);
-    return "CE " + bidAsk(row.call_bid, row.call_ask) + " • PE " + bidAsk(row.put_bid, row.put_ask);
+    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return withQuoteTimestamp(formatValue(row.option_summary), row);
+    return withQuoteTimestamp("CE " + bidAsk(row.call_bid, row.call_ask) + " • PE " + bidAsk(row.put_bid, row.put_ask), row);
   }
   return formatValue(raw);
 }
@@ -197,13 +214,13 @@ function pairCell(slug: string, column: string, row: Row) {
         : bid !== undefined && bid !== null && bid !== "" ? formatValue(bid)
         : ask !== undefined && ask !== null && ask !== "" ? "— / " + formatValue(ask) : "—";
     if (column === "Future") {
-      if (row.future_summary !== undefined && row.future_summary !== null && row.future_summary !== "") return formatValue(row.future_summary);
-      return bidAsk(row.future_bid, row.future_ask);
+      if (row.future_summary !== undefined && row.future_summary !== null && row.future_summary !== "") return withQuoteTimestamp(formatValue(row.future_summary), row);
+      return withQuoteTimestamp(bidAsk(row.future_bid, row.future_ask), row);
     }
-    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return formatValue(row.option_summary);
+    if (row.option_summary !== undefined && row.option_summary !== null && row.option_summary !== "") return withQuoteTimestamp(formatValue(row.option_summary), row);
     const call = bidAsk(row.call_bid, row.call_ask);
     const put = bidAsk(row.put_bid, row.put_ask);
-    return "CE " + call + " • PE " + put;
+    return withQuoteTimestamp("CE " + call + " • PE " + put, row);
   }
   if (column === "Time") {
     if (raw === undefined || raw === null || raw === "") return "—";
