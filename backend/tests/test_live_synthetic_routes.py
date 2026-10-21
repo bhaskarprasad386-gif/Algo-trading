@@ -183,6 +183,15 @@ def test_diagnostics_summarizes_calculations_and_top_blockers():
             "phase_reason": None,
             "targets": 16,
             "scanner_initialized": True,
+            "subscription_diagnostics": {
+                "target_count": 2,
+                "subscribed_symbol_count": 1,
+                "blocked_symbol_count": 1,
+                "symbols": [
+                    {"underlying": "RELIANCE", "status": "SUBSCRIBED"},
+                    {"underlying": "TCS", "status": "WAITING_FOR_ATM", "reason": "live_atm_unavailable_or_stale"},
+                ],
+            },
             "scanner_diagnostics": {
                 "counters": {
                     "last_observation_at_ns": time.time_ns(),
@@ -217,6 +226,9 @@ def test_diagnostics_summarizes_calculations_and_top_blockers():
     ]
     assert "unrelated_counter" not in [item["reason"] for item in response["top_blockers"]]
     assert "cumulative" in response["blocker_counter_note"]
+    assert response["subscription_diagnostics"]["subscribed_symbol_count"] == 1
+    assert response["subscription_diagnostics"]["symbols"][1]["underlying"] == "TCS"
+    assert response["subscription_diagnostics"]["symbols"][1]["reason"] == "live_atm_unavailable_or_stale"
 
 def test_live_route_normalizes_string_broker_expiry():
     result = _result()
