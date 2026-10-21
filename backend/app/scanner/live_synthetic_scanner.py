@@ -567,6 +567,7 @@ class LiveSyntheticScanner:
                 atm = self.atm_provider(symbol, future_timestamp_ns)
             except Exception:
                 self._count("atm_provider_errors")
+                self._count(f"atm_provider_errors_by_symbol:{symbol}")
                 self._prune(timestamp_ns)
                 return ()
             if atm is None:
