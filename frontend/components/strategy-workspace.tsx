@@ -326,6 +326,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [error, setError] = useState<string | null>(null);
   const [feedTicks, setFeedTicks] = useState<number | null>(null);
   const [feedAge, setFeedAge] = useState<number | null>(null);
+  const [feedExchangeFreshness, setFeedExchangeFreshness] = useState<Record<string, { age_seconds?: number | null; status?: string }> | null>(null);
   const [feedStatus, setFeedStatus] = useState("CHECKING");
   const [feedInstruments, setFeedInstruments] = useState<number | null>(null);
   const [runner, setRunner] = useState<{ running: boolean; detail: string } | null>(null);
@@ -554,6 +555,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const feed = body?.common_feed ?? {};
         setFeedTicks(Number.isFinite(Number(feed.ticks_received)) ? Number(feed.ticks_received) : null);
         setFeedAge(Number.isFinite(Number(feed.age_seconds)) ? Number(feed.age_seconds) : null);
+        setFeedExchangeFreshness(
+          feed.exchange_freshness && typeof feed.exchange_freshness === "object"
+            ? feed.exchange_freshness as Record<string, { age_seconds?: number | null; status?: string }>
+            : null,
+        );
         setFeedInstruments(Number.isFinite(Number(feed.active_instruments)) ? Number(feed.active_instruments) : null);
         setFeedStatus(String(feed.status ?? body?.feed_status ?? "UNKNOWN").toUpperCase());
         setFeedErrors({
@@ -721,7 +727,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       <Card className="theme-border theme-surface p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <div><p className="text-xs theme-muted">Common Feed Ticks</p><p className="mt-1 text-lg font-semibold theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p><p className="text-[11px] theme-muted">Actual cumulative feed counter</p></div>
-          <div><p className="text-xs theme-muted">Feed Age</p><p className="mt-1 text-lg font-semibold theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p></div>
+          <div><p className="text-xs theme-muted">Feed Age (NSE/NFO)</p><p className="mt-1 text-lg font-semibold theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p><p className="text-[11px] theme-muted">Oldest required exchange tick</p></div>
+          <div><p className="text-xs theme-muted">NSE / NFO Tick Status</p><p className="mt-1 text-sm font-semibold theme-text">NSE: {String(feedExchangeFreshness?.NSE?.status ?? "—")} {typeof feedExchangeFreshness?.NSE?.age_seconds === "number" ? "(" + feedExchangeFreshness.NSE.age_seconds.toFixed(1) + "s)" : ""}</p><p className="text-sm font-semibold theme-text">NFO: {String(feedExchangeFreshness?.NFO?.status ?? "—")} {typeof feedExchangeFreshness?.NFO?.age_seconds === "number" ? "(" + feedExchangeFreshness.NFO.age_seconds.toFixed(1) + "s)" : ""}</p></div>
           <div><p className="text-xs theme-muted">Active Instruments</p><p className="mt-1 text-lg font-semibold theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</p></div>
           <div><p className="text-xs theme-muted">Runner</p><p className={"mt-1 text-lg font-semibold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED"}</p></div>
           <div><p className="text-xs theme-muted">Feed Delivery Errors</p><p className="mt-1 text-lg font-semibold theme-text">{feedErrors?.delivery ?? "—"}</p></div>
