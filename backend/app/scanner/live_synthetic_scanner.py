@@ -582,6 +582,7 @@ class LiveSyntheticScanner:
                 config = self.config_provider(symbol)
             except Exception:
                 self._count("config_provider_errors")
+                self._count(f"config_provider_errors_by_symbol:{symbol}")
                 self._prune(timestamp_ns)
                 return ()
             if not isinstance(config, SyntheticScanConfig):
@@ -633,6 +634,7 @@ class LiveSyntheticScanner:
                 )
             except Exception:
                 self._count("scan_calculation_errors")
+                self._count(f"scan_calculation_errors_by_symbol:{symbol}")
                 self._prune(timestamp_ns)
                 return ()
             self._prune(timestamp_ns)
