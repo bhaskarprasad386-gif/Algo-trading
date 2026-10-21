@@ -423,6 +423,7 @@ def test_live_scanner_accepts_executable_depth_when_volume_and_oi_are_missing(mo
     assert counters.get("opportunities_emitted_by_symbol:NIFTY", 0) == 0
     assert counters.get("latest_scan_result_count_by_symbol:NIFTY", 0) == 0
     assert counters.get("latest_scan_at_ns_by_symbol:NIFTY", 0) > 0
+    assert counters.get("latest_scan_status_by_symbol:NIFTY") == "NO_EDGE"
 
 
 def test_ltp_only_update_does_not_erase_executable_book_or_refresh_its_timestamp():
