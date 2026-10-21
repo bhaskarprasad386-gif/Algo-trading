@@ -947,7 +947,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 ...previous,
                 ...item,
                 underlying: key,
-                feed_state: item.state ?? item.status ?? item.feed_state ?? previous.feed_state,
+                feed_state: item.state ?? item.status ?? item.feed_state
+                  ?? (item.token_resolved === false ? "TOKEN_UNRESOLVED"
+                    : typeof tickAge === "number" ? (tickAge <= 5 ? "LIVE" : "STALE")
+                    : item.token_resolved === true ? "WAITING_FOR_TICK"
+                    : previous.feed_state ?? underlyingFeed.state),
                 token_resolved: typeof item.token_resolved === "boolean" ? item.token_resolved : previous.token_resolved,
                 last_tick_age_seconds: typeof tickAge === "number" ? tickAge : previous.last_tick_age_seconds,
                 source_age_seconds: previous.source_age_seconds ?? (typeof tickAge === "number" ? tickAge : undefined),
