@@ -40,6 +40,7 @@ def test_live_route_serializes_latest_results(monkeypatch):
     assert response["scanner"] == "synthetic-cash-carry-live-1s"
     assert response["opportunity_count"] == 1
     assert response["data"][0]["underlying"] == "NIFTY"
+    assert response["data"][0]["expiry"] == "2026-09-30"
     assert response["data"][0]["executable_edge"] == 5.0
 
 
@@ -160,3 +161,12 @@ def test_diagnostics_summarizes_calculations_and_top_blockers():
     ]
     assert "unrelated_counter" not in [item["reason"] for item in response["top_blockers"]]
     assert "cumulative" in response["blocker_counter_note"]
+
+def test_live_route_normalizes_string_broker_expiry():
+    result = _result()
+    result.option.expiry = "29OCT2026"
+    live_synthetic_routes.configure(lambda: (result,))
+
+    response = live_synthetic_routes.live(limit=10)
+
+    assert response["data"][0]["expiry"] == "2026-10-29"
