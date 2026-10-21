@@ -823,6 +823,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <div><p className="text-xs theme-muted">Last scan age</p><p className="mt-1 text-base font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s" : "—"}</p></div>
           </div>
           {typeof scannerDiagnostics?.phase_reason === "string" && scannerDiagnostics.phase_reason && <p className="mt-2 rounded-lg border theme-border theme-surface-2 p-2 text-xs theme-muted">Runner phase: {String(scannerDiagnostics.phase ?? scannerDiagnostics.status ?? "UNKNOWN")} · {String(scannerDiagnostics.phase_reason).replaceAll("_", " ")}</p>}
+          {(() => {
+            const counters = (scannerDiagnostics?.counters && typeof scannerDiagnostics.counters === "object" ? scannerDiagnostics.counters : {}) as Record<string, unknown>;
+            const symbols = Object.keys(counters)
+              .filter((key) => /^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations)_by_symbol:/.test(key))
+              .reduce((map, key) => {
+                const match = key.match(/^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations)_by_symbol:(.+)$/);
+                if (!match) return map;
+                const symbol = match[2];
+                const row = map.get(symbol) ?? { underlying: symbol };
+                row[match[1]] = counters[key];
+                map.set(symbol, row);
+                return map;
+              }, new Map<string, Record<string, unknown>>());
+            const rows = Array.from(symbols.values()).sort((a, b) => String(a.underlying).localeCompare(String(b.underlying)));
+            return <div className="mt-4 border-t theme-border pt-3">
+              <div><h3 className="text-sm font-semibold theme-text">Per-symbol scan outcomes</h3><p className="mt-1 text-xs theme-muted">Calculation and emitted-result counts; these are not trading recommendations.</p></div>
+              {rows.length === 0 ? <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">Per-symbol scan counters have not arrived yet. Refresh after the backend deployment completes.</p> : <div className="mt-2 overflow-x-auto rounded-lg border theme-border"><table className="w-full min-w-[560px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Symbol", "Calculations", "Pairs evaluated", "Results emitted", "Empty calculations"].map((label) => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={String(row.underlying)} className="border-t theme-border"><td className="px-3 py-2 font-semibold theme-text">{String(row.underlying)}</td><td className="px-3 py-2 theme-muted">{String(row.scan_evaluations ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.successful_pairs ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.opportunities_emitted ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.empty_calculations ?? "—")}</td></tr>)}</tbody></table></div>}
+            </div>;
+          })()}
           <p className="mt-3 text-xs theme-muted">Zero signals can be a valid market result. A stale or incomplete scanner is shown as a health problem, not as a successful empty scan. Broker orders remain OFF.</p>
         </Card>
       )}
