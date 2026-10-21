@@ -13,6 +13,9 @@ _diagnostics_provider: Callable[[], dict | None] | None = None
 _pairs_provider: Callable[[], dict | None] | None = None
 _pair_history_last_saved: dict[str, float] = {}
 _pair_history_last_cleanup = 0.0
+_pair_history_last_error: str | None = None
+_pair_history_last_saved_at: str | None = None
+_pair_history_last_saved_count = 0
 
 
 def configure(provider: Callable[[], tuple]) -> None:
@@ -510,11 +513,14 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
             db.commit()
             for key in pending_history_keys:
                 _pair_history_last_saved[key] = now_monotonic
+            globals()["_pair_history_last_error"] = None
+            globals()["_pair_history_last_saved_at"] = datetime.utcnow().isoformat() + "Z"
+            globals()["_pair_history_last_saved_count"] = len(history_rows)
         finally:
             db.close()
-    except Exception:
+    except Exception as exc:
         # History storage must not take down the live monitor endpoint.
-        pass
+        globals()["_pair_history_last_error"] = type(exc).__name__
 
     response = {
         "status": str(snapshot.get("status") or "success"),
@@ -547,13 +553,16 @@ def pair_history(
     from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
 
     cutoff = datetime.utcnow() - timedelta(days=days)
+    # FastAPI resolves Query defaults at request time; direct unit calls can pass
+    # the Query object itself, so normalize only actual strings here.
+    filter_symbol = underlying.strip().upper() if isinstance(underlying, str) and underlying.strip() else None
     db = SessionLocal()
     try:
         query = db.query(LiveSyntheticPairHistory).filter(
             LiveSyntheticPairHistory.observed_at >= cutoff
         )
-        if underlying:
-            query = query.filter(LiveSyntheticPairHistory.underlying == underlying.strip().upper())
+        if filter_symbol:
+            query = query.filter(LiveSyntheticPairHistory.underlying == filter_symbol)
         rows = query.order_by(LiveSyntheticPairHistory.observed_at.desc()).limit(limit).all()
         data = []
         for item in rows:
@@ -586,8 +595,14 @@ def pair_history(
             "status": "success",
             "scanner": "synthetic-cash-carry-pair-history",
             "days": days,
-            "underlying": underlying.strip().upper() if underlying else None,
+            "underlying": filter_symbol,
             "count": len(data),
+            "persistence": {
+                "last_save_at": _pair_history_last_saved_at,
+                "last_saved_count": _pair_history_last_saved_count,
+                "last_error": _pair_history_last_error,
+                "storage": "DATABASE",
+            },
             "data": data,
         }
     finally:
