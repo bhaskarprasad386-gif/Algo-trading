@@ -367,6 +367,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [runner, setRunner] = useState<{ running: boolean; detail: string } | null>(null);
   const [feedErrors, setFeedErrors] = useState<{ delivery: number; normalizer: number } | null>(null);
   const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
+  const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") return;
@@ -647,6 +648,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           delivery: Number(feed.delivery_errors ?? 0) || 0,
           normalizer: Number(feed.normalizer_errors ?? 0) || 0,
         });
+        const rawCalendarRunner = body?.runners?.calendar_spread;
+        setCalendarRuntime(
+          slug === "calendar-spread" && rawCalendarRunner && typeof rawCalendarRunner === "object"
+            ? rawCalendarRunner as Record<string, unknown>
+            : null,
+        );
         const rawRunner = body?.runners?.[slug === "synthetic-arbitrage" ? "synthetic" : slug.replace("-", "_")];
         const alternate = slug === "synthetic-arbitrage" ? body?.runners?.synthetic_arbitrage : slug === "box-spread" ? body?.runners?.box_spread : body?.runners?.calendar_spread;
         const selected = rawRunner ?? alternate;
@@ -1154,6 +1161,30 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>
+        {slug === "calendar-spread" && <Card className="theme-border theme-surface p-4">
+          <div className="text-sm font-semibold theme-text">Exchange Coverage Diagnostics</div>
+          <p className="mt-2 text-xs leading-5 theme-muted">This is the runner's actual contract/session/tick report. A closed exchange can have subscribed contracts but no valid live ticks; no historical quote is relabelled as live.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {[
+              ["NFO contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.NFO],
+              ["BFO contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.BFO],
+              ["MCX contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.MCX],
+              ["Stock futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.STOCK_FUTURE],
+              ["Index futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.INDEX_FUTURE],
+              ["Commodity futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.COMMODITY_FUTURE],
+            ].map(([label, value]) => <div key={String(label)} className="rounded-lg border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{String(label)}</p><p className="mt-1 text-base font-semibold theme-text">{value == null ? "—" : String(value)}</p></div>)}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            {(["NFO", "BFO", "MCX"] as const).map((exchange) => {
+              const sessions = (calendarRuntime?.session_by_exchange ?? {}) as Record<string, { open?: boolean }>;
+              const received = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.records_received_by_exchange as Record<string, unknown> | undefined;
+              const emitted = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.records_emitted_by_exchange as Record<string, unknown> | undefined;
+              const isOpen = sessions[exchange]?.open;
+              return <div key={exchange} className="rounded-lg border theme-border p-3"><div className="flex items-center justify-between gap-2"><span className="text-sm font-semibold theme-text">{exchange}</span><span className={"text-xs font-semibold " + (isOpen === true ? "theme-success" : isOpen === false ? "theme-warning" : "theme-muted")}>{isOpen === true ? "SESSION OPEN" : isOpen === false ? "SESSION CLOSED" : "SESSION UNKNOWN"}</span></div><p className="mt-2 text-xs theme-muted">Ticks received: {String(received?.[exchange] ?? 0)} · emitted: {String(emitted?.[exchange] ?? 0)}</p></div>;
+            })}
+          </div>
+          {!calendarRuntime && <p className="mt-3 rounded-lg border theme-border p-3 text-xs theme-muted">Calendar runner diagnostics are not available yet. Check backend deployment and runner health.</p>}
+        </Card>}
         <Card className="theme-border theme-surface p-4"><div className="text-sm font-semibold theme-text">Session Diagnostics</div><p className="mt-2 text-xs leading-5 theme-muted">MCX can remain live after NSE closes. Calendar/commodity output therefore follows the common feed and actual exchange session rather than the NSE-only status.</p></Card>
       </div>
     </div>
