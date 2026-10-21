@@ -915,6 +915,10 @@ class LiveSyntheticRunner:
             "targets": len(self.targets),
             "scanner_initialized": scanner_initialized,
             "scanner_diagnostics": scanner_diagnostics,
+            "atm_tracker_diagnostics": (
+                None if self._atm_tracker is None
+                else self._atm_tracker.diagnostics_snapshot()
+            ),
             "subscription_diagnostics": {
                 "target_count": len(self.targets),
                 "subscribed_symbol_count": sum(1 for item in self._subscription_diagnostics.values() if item.get("status") == "SUBSCRIBED"),
