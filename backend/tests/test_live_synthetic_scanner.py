@@ -1357,3 +1357,24 @@ def test_pair_monitor_exposes_future_only_bucket_without_inventing_strike():
     assert row["state"] == "INCOMPLETE"
     assert "MISSING_CALL" in row["reason"]
     assert "MISSING_PUT" in row["reason"]
+
+
+def test_pair_monitor_summary_counts_real_quotes_and_blockers():
+    ts = 35_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe({
+        "underlying": "RELIANCE", "instrument_class": "STOCK", "option_type": "",
+        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 250,
+        "source_timestamp_ns": ts, "symbol": "RELIANCE29OCT2026FUT",
+        "volume": 100, "oi": 1000,
+    })
+
+    snapshot = scanner.pair_monitor_snapshot(limit=10)
+    summary = snapshot["summary"]
+    assert summary["total_rows"] == 1
+    assert summary["symbols"]["RELIANCE"]["future_quotes"] == 1
+    assert summary["symbols"]["RELIANCE"]["call_quotes"] == 0
+    assert summary["symbols"]["RELIANCE"]["put_quotes"] == 0
+    assert summary["blocker_counts"]["MISSING_CALL"] == 1
+    assert summary["blocker_counts"]["MISSING_PUT"] == 1
+    assert summary["opportunity_confirmed"] is False
