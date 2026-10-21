@@ -42,13 +42,7 @@ def _normalize_expiry(value):
 
 
 def _deduplicate_latest_results(results: tuple) -> tuple:
-    """Keep one newest result per contract/direction in a single live snapshot.
-
-    A completed scan is one coherent snapshot. If a faulty provider supplies the
-    same contract/direction more than once, retain the newest source timestamp;
-    ties keep the higher-edge result. Different expiries, strikes, classes, and
-    LONG/SHORT directions remain distinct.
-    """
+    """Keep one newest result per contract/direction in a single live snapshot."""
     latest = {}
     for result in results:
         option = getattr(result, "option", None)
@@ -76,9 +70,7 @@ def _deduplicate_latest_results(results: tuple) -> tuple:
             str(getattr(result, "direction", "") or "").strip().upper(),
         )
         previous = latest.get(key)
-        if previous is None:
-            latest[key] = (timestamp_ns, edge, result)
-        elif timestamp_ns > previous[0] or (timestamp_ns == previous[0] and edge > previous[1]):
+        if previous is None or timestamp_ns > previous[0] or (timestamp_ns == previous[0] and edge > previous[1]):
             latest[key] = (timestamp_ns, edge, result)
     return tuple(item[2] for item in latest.values())
 
@@ -122,8 +114,7 @@ def live(
             continue
         if timestamp_ns >= cutoff:
             fresh_results.append(result)
-    results = tuple(fresh_results)
-    results = _deduplicate_latest_results(tuple(results))
+    results = _deduplicate_latest_results(tuple(fresh_results))
     rows = [_serialize(result) for result in results[:limit]]
     return {
         "status": "success",
@@ -164,10 +155,9 @@ def alerts(days: int = Query(30, ge=1, le=30), limit: int = Query(500, ge=1, le=
         db.close()
 
 
-
 @router.get("/diagnostics")
 def diagnostics():
-    """Expose scanner health separately from common-feed ticks and opportunities."""
+    """Expose scanner health, per-symbol subscription, and ATM-chain readiness."""
     snapshot = _diagnostics_provider() if _diagnostics_provider is not None else None
     if not isinstance(snapshot, dict):
         return {
@@ -182,12 +172,14 @@ def diagnostics():
     now_ns = _time.time_ns()
     last_observation_ns = counters.get("last_observation_at_ns")
     last_scan_ns = counters.get("last_successful_calculation_at_ns")
+
     def age_seconds(value):
         try:
             stamp = int(value)
         except (TypeError, ValueError, OverflowError):
             return None
         return max(0.0, (now_ns - stamp) / 1_000_000_000) if stamp > 0 else None
+
     observation_age = age_seconds(last_observation_ns)
     scan_age = age_seconds(last_scan_ns)
     running = bool(snapshot.get("running"))
@@ -203,57 +195,26 @@ def diagnostics():
         status = "NO_RECENT_COMPLETE_SCAN"
     else:
         status = "SCANNING"
-    # Aggregate existing counters into an operator-friendly diagnosis.
-    # These are rejection/health events, not unique or mutually exclusive pair counts.
+
     blocker_prefixes = (
-        "missing_ce_or_pe_leg",
-        "missing_call_leg",
-        "missing_put_leg",
-        "missing_future_leg",
-        "timestamp_mismatch",
-        "expiry_mismatch",
-        "invalid_expiry",
-        "invalid_expiry_for_pricing",
-        "invalid_strike",
-        "instrument_class_mismatch",
-        "invalid_future_instrument_class",
-        "invalid_future_expiry",
-        "invalid_future_timestamp",
-        "invalid_future_lot_size",
-        "illiquid_or_incomplete_option_leg",
-        "lot_size_mismatch",
-        "invalid_option_lot_size",
-        "invalid_option_timestamp",
-        "invalid_future_quote",
-        "no_executable_ce_pe_pair",
-        "waiting_for_executable_quote",
-        "missing_atm_price",
-        "atm_provider_errors",
-        "monitor_atm_provider_errors",
-        "config_provider_errors",
-        "invalid_scanner_config",
-        "scan_calculation_errors",
-        "result_callback_errors",
-        "invalid_payload_or_scope",
-        "invalid_option_type",
-        "invalid_option_instrument",
-        "underlying_symbol_mismatch",
-        "future_timestamp",
-        "out_of_order_leg_updates",
-        "invalid_quote",
-        "stale_timestamp",
-        "invalid_timestamp",
+        "missing_ce_or_pe_leg", "missing_call_leg", "missing_put_leg", "missing_future_leg",
+        "timestamp_mismatch", "expiry_mismatch", "invalid_expiry", "invalid_expiry_for_pricing",
+        "invalid_strike", "instrument_class_mismatch", "invalid_future_instrument_class",
+        "invalid_future_expiry", "invalid_future_timestamp", "illiquid_or_incomplete_option_leg",
+        "lot_size_mismatch", "invalid_option_lot_size", "invalid_option_timestamp",
+        "invalid_future_quote", "no_executable_ce_pe_pair", "waiting_for_executable_quote",
+        "missing_atm_price", "atm_provider_errors", "monitor_atm_provider_errors",
+        "config_provider_errors", "invalid_scanner_config", "scan_calculation_errors",
+        "result_callback_errors", "invalid_payload_or_scope", "invalid_option_type",
+        "invalid_option_instrument", "underlying_symbol_mismatch", "future_timestamp",
+        "out_of_order_leg_updates", "invalid_quote", "stale_timestamp", "invalid_timestamp",
         "invalid_timestamp_unit",
     )
     blockers = [
         {"reason": key, "count": value}
         for key, value in counters.items()
-        if (
-            (key in blocker_prefixes or key.startswith("missing_atm_price_by_symbol:"))
-            and isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and value > 0
-        )
+        if ((key in blocker_prefixes or key.startswith("missing_atm_price_by_symbol:"))
+            and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0)
     ]
     blockers.sort(key=lambda item: (-item["count"], item["reason"]))
     calculation_summary = {
@@ -263,6 +224,7 @@ def diagnostics():
         "empty_calculations": counters.get("empty_calculations", 0),
         "last_result_count": counters.get("last_result_count", 0),
     }
+    atm_tracker = snapshot.get("atm_tracker_diagnostics")
     return {
         "status": status,
         "scanner": "synthetic-cash-carry-live-1s",
@@ -274,18 +236,15 @@ def diagnostics():
         "phase_reason": snapshot.get("phase_reason"),
         "target_count": snapshot.get("targets"),
         "scanner_initialized": bool(snapshot.get("scanner_initialized")),
-        # Per-symbol subscription outcomes explain why an underlying is not
-        # producing a pair before quote-level scanner blockers are considered.
         "subscription_diagnostics": snapshot.get("subscription_diagnostics"),
+        "atm_tracker_diagnostics": atm_tracker,
+        "atm_readiness_summary": _atm_readiness_summary(atm_tracker),
         "observation_age_seconds": observation_age,
         "last_scan_age_seconds": scan_age,
         "last_observation_at_ns": last_observation_ns,
         "last_successful_calculation_at_ns": last_scan_ns,
         "last_result_count": counters.get("last_result_count", 0),
         "counters": counters,
-        # Surface the actual underlying transport/consumer state. Without this,
-        # WAITING_FOR_OBSERVATIONS cannot distinguish missing ATM ticks from a
-        # dead worker, unresolved tokens, or a disconnected shared socket.
         "underlying_feed": snapshot.get("underlying_feed"),
         "option_recorder": {
             "running": option_recorder.get("running") if isinstance(option_recorder, dict) else None,
@@ -295,25 +254,58 @@ def diagnostics():
     }
 
 
+def _atm_readiness_summary(atm_tracker) -> dict:
+    """Return a compact, UI-safe summary of concrete ATM-chain readiness."""
+    if not isinstance(atm_tracker, dict):
+        return {"available": False, "tracked_symbols": 0, "ready_symbols": 0, "not_ready_symbols": []}
+    symbols = atm_tracker.get("symbols")
+    if not isinstance(symbols, list):
+        return {"available": True, "tracked_symbols": 0, "ready_symbols": 0, "not_ready_symbols": []}
+    ready = []
+    not_ready = []
+    for item in symbols:
+        if not isinstance(item, dict):
+            continue
+        underlying = str(item.get("underlying") or "").strip().upper()
+        if not underlying:
+            continue
+        if bool(item.get("ready")):
+            ready.append(underlying)
+        else:
+            not_ready.append({
+                "underlying": underlying,
+                "reason": item.get("reason") or "atm_not_ready",
+                "concrete_strike_count": item.get("concrete_strike_count", item.get("strike_count", 0)),
+                "underlying_price_present": bool(item.get("underlying_price_present", item.get("price_present", False))),
+                "source_age_seconds": item.get("source_age_seconds"),
+            })
+    return {
+        "available": True,
+        "tracked_symbols": len(ready) + len(not_ready),
+        "ready_symbols": len(ready),
+        "ready_underlyings": sorted(ready),
+        "not_ready_symbols": sorted(not_ready, key=lambda row: row["underlying"]),
+        "symbols_without_concrete_chain": sorted({
+            str(symbol).strip().upper()
+            for symbol in (atm_tracker.get("symbols_without_concrete_chain") or [])
+            if str(symbol).strip()
+        }),
+    }
+
+
 @router.get("/pairs")
 def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
     """Return a bounded, sanitized live combo snapshot, including incomplete legs."""
     snapshot = _pairs_provider() if _pairs_provider is not None else None
     if not isinstance(snapshot, dict):
-        return {
-            "status": "unavailable",
-            "scanner": "synthetic-cash-carry-live-1s",
-            "count": 0,
-            "data": [],
-        }
+        return {"status": "unavailable", "scanner": "synthetic-cash-carry-live-1s", "count": 0, "data": []}
     source_rows = snapshot.get("data")
     if not isinstance(source_rows, list):
         source_rows = []
     allowed = (
-        "timestamp_ns", "underlying", "symbol", "expiry", "strike",
-        "future_bid", "future_ask", "future_summary", "call_bid", "call_ask",
-        "put_bid", "put_ask", "option_summary", "lot_size", "state", "reason",
-        "direction", "executable_edge", "readiness_scope", "opportunity_confirmed",
+        "timestamp_ns", "underlying", "symbol", "expiry", "strike", "future_bid", "future_ask",
+        "future_summary", "call_bid", "call_ask", "put_bid", "put_ask", "option_summary", "lot_size",
+        "state", "reason", "direction", "executable_edge", "readiness_scope", "opportunity_confirmed",
         "qualification_status",
     )
     rows = []
@@ -321,31 +313,12 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
         if not isinstance(source, dict):
             continue
         row = {key: source.get(key) for key in allowed if key in source}
-        # Older pair snapshots may call the underlying field "symbol". Normalize
-        # it here so the UI never loses the name during sanitization.
         underlying = source.get("underlying") or source.get("symbol")
         if underlying:
             row["underlying"] = str(underlying).strip().upper()
-        # Normalize common broker expiry representations to ISO YYYY-MM-DD.
-        # Angel One and other sources may send YYYYMMDD, 29OCT2026, 29OCT26,
-        # DD-MM-YYYY, or an already-normalized ISO date.
         expiry = source.get("expiry")
         if expiry is not None:
-            expiry_text = str(expiry).strip().upper()
-            if expiry_text.endswith(".0") and expiry_text[:-2].isdigit():
-                expiry_text = expiry_text[:-2]
-            normalized_expiry = None
-            for expiry_format in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%d-%m-%Y", "%Y-%m-%d"):
-                try:
-                    normalized_expiry = datetime.strptime(expiry_text, expiry_format).date().isoformat()
-                    break
-                except ValueError:
-                    continue
-            row["expiry"] = normalized_expiry if normalized_expiry is not None else expiry
+            normalized_expiry = _normalize_expiry(expiry)
+            row["expiry"] = normalized_expiry
         rows.append(row)
-    return {
-        "status": str(snapshot.get("status") or "success"),
-        "scanner": "synthetic-cash-carry-live-1s",
-        "count": len(rows),
-        "data": rows,
-    }
+    return {"status": str(snapshot.get("status") or "success"), "scanner": "synthetic-cash-carry-live-1s", "count": len(rows), "data": rows}
