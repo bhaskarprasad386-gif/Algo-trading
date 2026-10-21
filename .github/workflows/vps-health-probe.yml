@@ -190,7 +190,7 @@ jobs:
 
       - name: Upload VPS health evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: vps-health-evidence-${{ github.run_id }}
           path: /tmp/vps-health-probe.txt
