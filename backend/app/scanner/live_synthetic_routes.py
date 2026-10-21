@@ -75,6 +75,49 @@ def _deduplicate_latest_results(results: tuple) -> tuple:
     return tuple(item[2] for item in latest.values())
 
 
+def _limit_results_fairly(results: tuple, limit: int) -> tuple:
+    """Round-robin fresh results by underlying so one busy index cannot hide stocks."""
+    grouped: dict[str, list] = {}
+    for result in results:
+        option = getattr(result, "option", None)
+        if option is None:
+            continue
+        symbol = str(getattr(option, "underlying", "") or "").strip().upper() or "UNKNOWN"
+        grouped.setdefault(symbol, []).append(result)
+    for symbol_rows in grouped.values():
+        def sort_key(result):
+            try:
+                stamp = int(getattr(getattr(result, "option", None), "timestamp_ns", 0) or 0)
+            except (TypeError, ValueError, OverflowError):
+                stamp = 0
+            try:
+                edge = float(getattr(result, "executable_edge", 0) or 0)
+            except (TypeError, ValueError, OverflowError):
+                edge = 0.0
+            return stamp, edge
+        symbol_rows.sort(key=sort_key, reverse=True)
+    def newest_stamp(symbol):
+        try:
+            return int(getattr(getattr(grouped[symbol][0], "option", None), "timestamp_ns", 0) or 0)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+    symbols = sorted(grouped, key=lambda symbol: (newest_stamp(symbol), symbol), reverse=True)
+    selected = []
+    depth = 0
+    while len(selected) < limit:
+        added = False
+        for symbol in symbols:
+            if depth < len(grouped[symbol]):
+                selected.append(grouped[symbol][depth])
+                added = True
+                if len(selected) >= limit:
+                    break
+        if not added:
+            break
+        depth += 1
+    return tuple(selected)
+
+
 def _serialize(result) -> dict:
     option, future = result.option, result.future
     return {
@@ -115,7 +158,8 @@ def live(
         if timestamp_ns >= cutoff:
             fresh_results.append(result)
     results = _deduplicate_latest_results(tuple(fresh_results))
-    rows = [_serialize(result) for result in results[:limit]]
+    results = _limit_results_fairly(results, limit)
+    rows = [_serialize(result) for result in results]
     return {
         "status": "success",
         "scanner": "synthetic-cash-carry-live-1s",
