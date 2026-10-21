@@ -961,6 +961,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 last_price: item.last_price ?? item.last_underlying_price ?? previous.last_price ?? previous.last_underlying_price,
                 last_underlying_price: item.last_underlying_price ?? item.last_price ?? previous.last_underlying_price ?? previous.last_price,
                 source_age_seconds: item.source_age_seconds ?? previous.source_age_seconds,
+                // Diagnostic endpoints can emit partial snapshots. Nulls must not erase concrete subscription counts.
+                future_count: item.future_count ?? previous.future_count,
+                call_count: item.call_count ?? previous.call_count,
+                put_count: item.put_count ?? previous.put_count,
+                complete_pair_count: item.complete_pair_count ?? previous.complete_pair_count,
+                subscription_count: item.subscription_count ?? previous.subscription_count,
+                expiry: item.expiry ?? previous.expiry,
+                atm_strike: item.atm_strike ?? previous.atm_strike,
+                feed_state: item.feed_state ?? previous.feed_state,
+                feed_reason: item.feed_reason ?? previous.feed_reason,
                 concrete_strike_count: typeof previous.concrete_strike_count === "number" ? previous.concrete_strike_count : item.concrete_strike_count,
                 reason: item.reason || previous.reason,
               });
@@ -993,6 +1003,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 // Prefer the actual underlying-feed tick age over an older ATM/subscription age.
                 // Otherwise the merged row can show stale feed age even after a fresh tick arrives.
                 source_age_seconds: typeof tickAge === "number" ? tickAge : previous.source_age_seconds,
+                // Feed-only snapshots must not blank subscription/ATM readiness values.
+                future_count: item.future_count ?? previous.future_count,
+                call_count: item.call_count ?? previous.call_count,
+                put_count: item.put_count ?? previous.put_count,
+                complete_pair_count: item.complete_pair_count ?? previous.complete_pair_count,
+                subscription_count: item.subscription_count ?? previous.subscription_count,
+                expiry: item.expiry ?? previous.expiry,
+                atm_strike: item.atm_strike ?? previous.atm_strike,
+                concrete_strike_count: item.concrete_strike_count ?? previous.concrete_strike_count,
                 reason: previous.reason || item.state_reason || item.reason || feedReason,
               });
             }
