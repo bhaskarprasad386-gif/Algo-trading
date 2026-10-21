@@ -765,7 +765,9 @@ def test_live_scanner_contains_config_provider_failure():
         "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
     })
     assert result == ()
-    assert scanner.diagnostics_snapshot()["counters"]["config_provider_errors"] == 1
+    counters = scanner.diagnostics_snapshot()["counters"]
+    assert counters["config_provider_errors"] == 1
+    assert counters["config_provider_errors_by_symbol:NIFTY"] == 1
 
 
 def test_live_scanner_contains_result_callback_failure(monkeypatch):
