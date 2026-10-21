@@ -1046,7 +1046,7 @@ def market_data_runtime_health():
                 continue
             if math.isfinite(age) and age >= 0:
                 valid_ages.append(age)
-        feed_age_seconds = min(valid_ages) if valid_ages else None
+        feed_age_seconds = max(valid_ages) if valid_ages else None
     else:
         feed_age_seconds = None
     unconnected = common_feed.get("unconnected_required_groups") or []
