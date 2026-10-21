@@ -30,6 +30,28 @@ def configure_pairs(provider: Callable[[], dict | None]) -> None:
     _pairs_provider = provider
 
 
+def _synthetic_prices(row: dict) -> dict:
+    """Return synthetic bid/ask only when all required real quotes exist."""
+    def number(field):
+        value = row.get(field)
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            result = float(value)
+            return result if result == result and abs(result) != float("inf") else None
+        except (TypeError, ValueError):
+            return None
+
+    strike = number("strike")
+    call_bid, call_ask = number("call_bid"), number("call_ask")
+    put_bid, put_ask = number("put_bid"), number("put_ask")
+    return {
+        "synthetic_bid": strike + call_bid - put_ask if strike is not None and call_bid is not None and put_ask is not None else None,
+        "synthetic_ask": strike + call_ask - put_bid if strike is not None and call_ask is not None and put_bid is not None else None,
+        "synthetic_formula": "strike + call - put",
+    }
+
+
 def _normalize_expiry(value):
     """Serialize broker expiry values as ISO dates for every live API consumer."""
     text = str(value or "").strip().upper()
@@ -417,6 +439,7 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
         if expiry is not None:
             normalized_expiry = _normalize_expiry(expiry)
             row["expiry"] = normalized_expiry
+        row.update(_synthetic_prices(row))
         rows.append(row)
 
     # Persist sampled real observations, including incomplete pairs, at a bounded rate.
@@ -511,7 +534,11 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
 
 
 @router.get("/pair-history")
-def pair_history(days: int = Query(1, ge=1, le=2), limit: int = Query(1000, ge=1, le=5000)):
+def pair_history(
+    days: int = Query(1, ge=1, le=2),
+    limit: int = Query(1000, ge=1, le=5000),
+    underlying: str | None = Query(None, min_length=1, max_length=32),
+):
     """Return durable sampled live-pair observations, including incomplete pairs."""
     from app.core.database import SessionLocal
     from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
@@ -519,16 +546,15 @@ def pair_history(days: int = Query(1, ge=1, le=2), limit: int = Query(1000, ge=1
     cutoff = datetime.utcnow() - timedelta(days=days)
     db = SessionLocal()
     try:
-        rows = (
-            db.query(LiveSyntheticPairHistory)
-            .filter(LiveSyntheticPairHistory.observed_at >= cutoff)
-            .order_by(LiveSyntheticPairHistory.observed_at.desc())
-            .limit(limit)
-            .all()
+        query = db.query(LiveSyntheticPairHistory).filter(
+            LiveSyntheticPairHistory.observed_at >= cutoff
         )
+        if underlying:
+            query = query.filter(LiveSyntheticPairHistory.underlying == underlying.strip().upper())
+        rows = query.order_by(LiveSyntheticPairHistory.observed_at.desc()).limit(limit).all()
         data = []
         for item in rows:
-            data.append({
+            payload = {
                 "id": item.id,
                 "timestamp_ns": item.timestamp_ns,
                 "observed_at": item.observed_at.isoformat() + "Z",
@@ -550,7 +576,16 @@ def pair_history(days: int = Query(1, ge=1, le=2), limit: int = Query(1000, ge=1
                 "edge_per_lot": item.edge_per_lot,
                 "readiness_scope": "HISTORICAL_OBSERVATION",
                 "opportunity_confirmed": False,
-            })
-        return {"status": "success", "scanner": "synthetic-cash-carry-pair-history", "days": days, "count": len(data), "data": data}
+            }
+            payload.update(_synthetic_prices(payload))
+            data.append(payload)
+        return {
+            "status": "success",
+            "scanner": "synthetic-cash-carry-pair-history",
+            "days": days,
+            "underlying": underlying.strip().upper() if underlying else None,
+            "count": len(data),
+            "data": data,
+        }
     finally:
         db.close()
