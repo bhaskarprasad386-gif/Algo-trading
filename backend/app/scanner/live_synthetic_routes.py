@@ -269,14 +269,17 @@ def _atm_readiness_summary(atm_tracker) -> dict:
         underlying = str(item.get("underlying") or "").strip().upper()
         if not underlying:
             continue
-        if bool(item.get("ready")):
+        is_ready = bool(item.get("ready", item.get("atm_ready", False)))
+        if is_ready:
             ready.append(underlying)
         else:
             not_ready.append({
                 "underlying": underlying,
-                "reason": item.get("reason") or "atm_not_ready",
+                "reason": item.get("reason") or ("underlying_price_unavailable" if not item.get("has_underlying_price", item.get("underlying_price_present", item.get("price_present", False))) else "atm_not_ready"),
                 "concrete_strike_count": item.get("concrete_strike_count", item.get("strike_count", 0)),
-                "underlying_price_present": bool(item.get("underlying_price_present", item.get("price_present", False))),
+                "underlying_price_present": bool(item.get("has_underlying_price", item.get("underlying_price_present", item.get("price_present", False)))),
+                "underlying_price": item.get("last_underlying_price", item.get("underlying_price", item.get("price"))),
+                "atm_strike": item.get("atm_strike"),
                 "source_age_seconds": item.get("source_age_seconds"),
             })
     return {
