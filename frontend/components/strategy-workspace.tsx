@@ -397,10 +397,39 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         rowsRef.current = data;
         setRows(data);
         setRowsStale(false);
-      } else if (slug === "synthetic-arbitrage" && rowsRef.current.length > 0) {
+        if (slug === "synthetic-arbitrage") {
+          // Cache only real backend rows so a reload during a temporary scanner
+          // outage does not erase the last observed opportunities or their times.
+          try {
+            window.localStorage.setItem("algo:synthetic-arbitrage:last-live-opportunities:v1", JSON.stringify({
+              savedAt: Date.now(),
+              rows: data,
+            }));
+          } catch { /* Storage may be unavailable; live rendering still works. */ }
+        }
+      } else if (slug === "synthetic-arbitrage") {
         // Empty snapshots can be transient while the scanner recalculates.
-        // Keep the last observed opportunities visible, explicitly marked stale.
-        setRowsStale(true);
+        // Keep in-memory rows first, then fall back to the last real backend
+        // snapshot after reload. The banner marks these rows as STALE, not live.
+        let cachedRows: Row[] = [];
+        if (rowsRef.current.length === 0) {
+          try {
+            const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-live-opportunities:v1") || "null");
+            if (Array.isArray(cached?.rows)) {
+              cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+            }
+          } catch { /* Ignore invalid/unavailable cache and keep normal empty state. */ }
+        }
+        const retained = rowsRef.current.length > 0 ? rowsRef.current : cachedRows;
+        if (retained.length > 0) {
+          rowsRef.current = retained;
+          setRows(retained);
+          setRowsStale(true);
+        } else {
+          rowsRef.current = [];
+          setRows([]);
+          setRowsStale(false);
+        }
       } else {
         rowsRef.current = [];
         setRows([]);
@@ -409,8 +438,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setError(null);
     } catch (e) {
       if (requestId !== loadRequestRef.current) return;
-      // Preserve the last good rows during a temporary API failure.
-      if (slug === "synthetic-arbitrage" && rowsRef.current.length > 0) setRowsStale(true);
+      // Preserve the last good rows during a temporary API failure, including
+      // after a page reload. Cached rows are never presented as confirmed live.
+      if (slug === "synthetic-arbitrage") {
+        let cachedRows: Row[] = [];
+        if (rowsRef.current.length === 0) {
+          try {
+            const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-live-opportunities:v1") || "null");
+            if (Array.isArray(cached?.rows)) {
+              cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+            }
+          } catch { /* Ignore invalid/unavailable cache. */ }
+        }
+        const retained = rowsRef.current.length > 0 ? rowsRef.current : cachedRows;
+        if (retained.length > 0) {
+          rowsRef.current = retained;
+          setRows(retained);
+          setRowsStale(true);
+        }
+      }
       setError(e instanceof Error ? e.message : "Backend unavailable");
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);
