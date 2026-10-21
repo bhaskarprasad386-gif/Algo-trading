@@ -353,6 +353,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyHealth, setHistoryHealth] = useState<{ last_save_at?: string | null; last_saved_count?: number; last_error?: string | null; storage?: string } | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [copyFallbackText, setCopyFallbackText] = useState("");
   const [loading, setLoading] = useState(true);
@@ -569,7 +573,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
       setHistoryRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
-    } catch {
+      setHistoryHealth(body?.persistence && typeof body.persistence === "object" ? body.persistence : null);
+      setHistoryError(null);
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e.message : "History API unavailable");
       // Keep last good history snapshot during transient backend failures.
     } finally {
       setHistoryLoading(false);
@@ -727,6 +734,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (metric === "Last Scan") return rowsStale && slug === "synthetic-arbitrage" ? "STALE" : lastScan ? "LIVE" : "—";
     return "—";
   };
+
+  const normalizedHistoryFilter = historyFilter.trim().toUpperCase();
+  const filteredHistoryRows = normalizedHistoryFilter
+    ? historyRows.filter((row) => String(row.underlying ?? row.symbol ?? "").toUpperCase().includes(normalizedHistoryFilter))
+    : historyRows;
+  const historyPageSize = 25;
+  const historyPageCount = Math.max(1, Math.ceil(filteredHistoryRows.length / historyPageSize));
+  const safeHistoryPage = Math.min(historyPage, historyPageCount);
+  const visibleHistoryRows = filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
 
   return (
     <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
@@ -1087,13 +1103,23 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
           </div>
         </div>
+        {slug === "synthetic-arbitrage" && <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <label className="flex min-h-10 flex-1 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3">
+            <span className="text-xs theme-muted">Symbol</span>
+            <input value={historyFilter} onChange={(event) => { setHistoryFilter(event.target.value); setHistoryPage(1); }} placeholder="All stocks / indices" className="min-w-0 flex-1 bg-transparent text-sm theme-text outline-none" aria-label="Filter pair history by underlying symbol" />
+            {historyFilter && <button type="button" onClick={() => { setHistoryFilter(""); setHistoryPage(1); }} className="text-xs theme-muted">Clear</button>}
+          </label>
+          <span className="text-xs theme-muted">Showing {filteredHistoryRows.length === 0 ? 0 : (safeHistoryPage - 1) * historyPageSize + 1}–{Math.min(safeHistoryPage * historyPageSize, filteredHistoryRows.length)} of {filteredHistoryRows.length} matches</span>
+        </div>}
+        {historyError && <div role="status" className="mt-3 rounded-lg border theme-border theme-warning-bg p-3 text-xs theme-warning">History refresh failed: {historyError}. Previously loaded rows are retained.</div>}
+        {slug === "synthetic-arbitrage" && historyHealth && <p className="mt-2 text-xs theme-muted">Storage: {historyHealth.storage || "UNKNOWN"} · Last saved: {historyHealth.last_save_at || "not reported"} · Last batch: {historyHealth.last_saved_count ?? 0} rows{historyHealth.last_error ? " · Save error: " + historyHealth.last_error : ""}</p>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Saved observations</p><p className="mt-1 text-lg font-semibold theme-text">{historyRows.length.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live monitor</p><p className={"mt-1 text-lg font-semibold " + (pairMonitorStatus === "LIVE" ? "theme-success" : "theme-muted")}>{pairMonitorStatus}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "synthetic-arbitrage" ? "Saved live pair snapshots (5s sampling)" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
-          {historyRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair snapshots yet. Keep this page open while the live pair monitor runs.</div> : historyRows.map((row, index) => {
+          {historyRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair snapshots yet. Keep this page open while the live pair monitor runs.</div> : visibleHistoryRows.map((row, index) => {
             const cols = c.pairColumns;
             return <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{historyCell(slug, cols[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{cols.filter((column) => column !== cols[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{historyCell(slug, column, row)}</div></div>)}</div></div>;
           })}
@@ -1103,7 +1129,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
               {historyRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled.</td></tr> :
-              historyRows.map((row, index) => {
+              visibleHistoryRows.map((row, index) => {
                 const cols = c.pairColumns;
                 return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
                   {cols.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{historyCell(slug, column, row)}</td>)}
@@ -1112,6 +1138,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             </tbody>
           </table>
         </div>
+        {slug === "synthetic-arbitrage" && historyPageCount > 1 && <div className="mt-4 flex items-center justify-between gap-3">
+          <button type="button" disabled={safeHistoryPage <= 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Previous</button>
+          <span className="text-xs theme-muted">Page {safeHistoryPage} of {historyPageCount} · 25 rows/page</span>
+          <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
+        </div>}
       </Card>
 
       {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
