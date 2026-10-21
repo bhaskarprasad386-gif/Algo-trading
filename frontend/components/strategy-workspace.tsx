@@ -161,7 +161,7 @@ function formatCell(slug: string, column: string, row: Row) {
   }
   if (slug === "synthetic-arbitrage" && column === "Option") {
     const bidAsk = (bid: unknown, ask: unknown) =>
-      bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== ""
+      bid !== undefined && bid !== null && bid !== "" && ask !== undefined && ask !== null && ask !== ""
         ? formatValue(bid) + " / " + formatValue(ask)
         : bid !== undefined && bid !== null && bid !== "" ? formatValue(bid)
         : ask !== undefined && ask !== null && ask !== "" ? "— / " + formatValue(ask) : "—";
