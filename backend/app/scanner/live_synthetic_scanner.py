@@ -636,14 +636,20 @@ class LiveSyntheticScanner:
                 return ()
             self._prune(timestamp_ns)
             self._count("scan_evaluations")
+            # Keep aggregate counters for existing dashboards, while exposing
+            # symbol-scoped totals so a busy index cannot hide stock scan outcomes.
+            self._count(f"scan_evaluations_by_symbol:{symbol}")
+            self._count(f"successful_pairs_by_symbol:{symbol}", len(option_quotes))
             # observe() already holds _lock while evaluating this complete snapshot.
             self._last_successful_calculation_at_ns = time.time_ns()
             self._last_result_count = len(results)
             self._count("successful_pairs", len(option_quotes))
             if results:
                 self._count("opportunities_emitted", len(results))
+                self._count(f"opportunities_emitted_by_symbol:{symbol}", len(results))
             else:
                 self._count("empty_calculations")
+                self._count(f"empty_calculations_by_symbol:{symbol}")
         if results and self.on_result is not None:
             try:
                 self.on_result(results)
