@@ -154,25 +154,29 @@ function formatValue(raw: unknown) {
   return String(raw);
 }
 
-function quoteTimestamp(row: Row) {
-  const raw = value(row, "timestamp_ns", "observed_at", "timestamp");
-  if (raw === undefined || raw === null || raw === "") return "";
-  const n = Number(raw);
-  const date = Number.isFinite(n) && n > 1_000_000_000_000
-    ? new Date(n / 1_000_000)
-    : new Date(String(raw));
-  return Number.isNaN(date.getTime())
-    ? ""
-    : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+function parseTimestamp(raw: unknown): Date | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  // Handle Unix seconds, milliseconds and nanoseconds without treating ms as ns.
+  if (typeof raw === "number" || (typeof raw === "string" && /^\\d+(?:\\.\\d+)?$/.test(raw.trim()))) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    const millis = n >= 1e17 ? n / 1e6 : n >= 1e12 ? n : n >= 1e9 ? n * 1000 : NaN;
+    if (!Number.isFinite(millis)) return null;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(String(raw));
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatTimestamp(raw: unknown) {
-  if (raw === undefined || raw === null || raw === "") return "—";
-  const n = Number(raw);
-  const date = Number.isFinite(n) && n > 1_000_000_000_000
-    ? new Date(n / 1_000_000)
-    : new Date(String(raw));
-  return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+  const date = parseTimestamp(raw);
+  return date ? date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "—";
+}
+
+function quoteTimestamp(row: Row) {
+  const date = parseTimestamp(value(row, "timestamp_ns", "observed_at", "timestamp"));
+  return date ? date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "";
 }
 
 function withQuoteTimestamp(text: string, row: Row) {
@@ -201,14 +205,7 @@ function formatCell(slug: string, column: string, row: Row) {
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
   if (column === "Expiry") return formatExpiry(raw);
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
-  if (slug === "synthetic-arbitrage" && column === "Time") {
-    if (raw === undefined || raw === null || raw === "") return "—";
-    const n = Number(raw);
-    const date = Number.isFinite(n) && n > 1_000_000_000_000
-      ? new Date(n / 1_000_000)
-      : new Date(String(raw));
-    return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
-  }
+  if (slug === "synthetic-arbitrage" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future (K + CE − PE)") return withQuoteTimestamp(syntheticFutureValue(row), row);
   if (slug === "calendar-spread" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
@@ -231,9 +228,9 @@ function pairCell(slug: string, column: string, row: Row) {
       Edge: ["long_edge", "short_edge"], Liquidity: ["liquidity_qty"], State: ["direction", "qualifies"],
     },
     "synthetic-arbitrage": {
-      Time: ["timestamp_ns", "observed_at"], Underlying: ["underlying", "symbol"], Expiry: ["expiry"], Strike: ["strike"],
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying", "symbol"], Expiry: ["expiry"], Strike: ["strike"],
       Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
-      Edge: ["executable_edge"], Direction: ["direction"], State: ["executable_edge"],
+      "Synthetic Future (K + CE − PE)": ["strike"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
       Time: ["timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry"],
@@ -252,27 +249,19 @@ function pairCell(slug: string, column: string, row: Row) {
     if ((bid === undefined || bid === null || bid === "") && (ask === undefined || ask === null || ask === "") && summary !== undefined && summary !== null && summary !== "") return withQuoteTimestamp(formatValue(summary), row);
     return withQuoteTimestamp("Bid " + shownBid + " / Ask " + shownAsk, row);
   }
-  if (column === "Time") {
-    if (raw === undefined || raw === null || raw === "") return "—";
-    const n = Number(raw);
-    const d = Number.isFinite(n) && n > 1_000_000_000_000
-      ? new Date(n / 1_000_000)
-      : new Date(String(raw));
-    return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
-  }
+  if (column === "Time") return formatTimestamp(raw);
   if (column === "Expiry") return formatExpiry(raw);
   if (slug === "synthetic-arbitrage" && column === "Edge") {
-    // Keep backend's executable edge distinct from the parity display formula.
     if (raw === undefined || raw === null || raw === "") return "NOT EVALUATED — executable quotes/config required";
     const direction = String(value(row, "direction") ?? "").toUpperCase();
     const futureBid = value(row, "future_bid"), futureAsk = value(row, "future_ask");
     const syntheticBid = value(row, "synthetic_bid"), syntheticAsk = value(row, "synthetic_ask");
     const comparison = direction.includes("LONG")
-      ? "Future Ask " + formatValue(futureAsk) + " − Synthetic Bid " + formatValue(syntheticBid)
+      ? "Synthetic Bid − Future Ask = " + formatValue(syntheticBid) + " − " + formatValue(futureAsk)
       : direction.includes("SHORT")
-        ? "Synthetic Ask " + formatValue(syntheticAsk) + " − Future Bid " + formatValue(futureBid)
+        ? "Future Bid − Synthetic Ask = " + formatValue(futureBid) + " − " + formatValue(syntheticAsk)
         : "backend executable pricing";
-    return formatValue(raw) + " pts (backend executable edge; " + comparison + "; carry/expiry/fees included by configured evaluator)";
+    return formatValue(raw) + " pts (backend executable edge; " + comparison + "; configured carry, expiry and fees rules apply)";
   }
   if (slug === "synthetic-arbitrage" && column === "Direction") {
     return raw === undefined ? "NOT EVALUATED" : formatValue(raw);
