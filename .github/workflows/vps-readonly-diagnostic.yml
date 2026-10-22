@@ -2,6 +2,10 @@ name: VPS Read-Only Diagnostic
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vps-readonly-diagnostic.yml'
 
 concurrency:
   group: vps-readonly-diagnostic
