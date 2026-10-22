@@ -39,7 +39,7 @@ def test_box_adapter_closes_only_on_later_reverse_edge():
 
 
 def test_synthetic_adapter_preserves_expiry_and_later_exit():
-    adapter = SyntheticCashCarryStrategyAdapter(fees_per_unit=0.5)
+    adapter = SyntheticCashCarryStrategyAdapter(direction="SHORT", fees_per_unit=0.5)
     event = {"option": option(1, 100, 10, 11, 1, 2), "future": future(1, 111, 112)}
     entries = tuple(adapter.entry(event))
     assert len(entries) == 1
