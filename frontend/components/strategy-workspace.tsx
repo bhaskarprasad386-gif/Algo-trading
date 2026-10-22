@@ -1033,7 +1033,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <tbody>
               {loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr> :
               filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">No live opportunity data</td></tr> :
-              filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className={"border-b theme-border last:border-0 " + (slug === "synthetic-arbitrage" ? "border-t-2 theme-border" : "")}>
+              filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className={"border-b theme-border last:border-0 " + (slug === "synthetic-arbitrage" && (index === 0 || String(filteredRows[index - 1]?.underlying ?? "").toUpperCase() !== String(row.underlying ?? "").toUpperCase()) ? "border-t-2 theme-border" : "")}>
                 {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted") + " " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</td>)}
               </tr>)}
             </tbody>
