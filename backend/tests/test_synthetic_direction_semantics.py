@@ -33,16 +33,14 @@ def test_synthetic_direction_uses_future_trade_side_and_raw_bid_ask():
     # Synthetic Bid = 72000 + CE Bid - PE Ask = 73534.20.
     # Synthetic Ask = 72000 + CE Ask - PE Bid = 73547.00.
     long_opp = SyntheticCashCarryBacktester.evaluate(
-        option, future, rate=0.05, time_to_expiry_years=0.5,
+        option, future, rate=0.0, time_to_expiry_years=0.5,
         fees_per_unit=99.0, direction="LONG",
     )
     assert long_opp is None
 
     # SHORT = Future SELL @ bid and Synthetic BUY @ ask => 73560 - 73547 = +13.
-    # Explicit fees/carry are ignored by the live scanner, but the primitive still
-    # supports them for backtesting; verify the raw executable result with zero fees.
     short_raw = SyntheticCashCarryBacktester.evaluate(
-        option, future, rate=0.05, time_to_expiry_years=0.5,
+        option, future, rate=0.0, time_to_expiry_years=0.5,
         fees_per_unit=0.0, direction="SHORT",
     )
     assert short_raw is not None
