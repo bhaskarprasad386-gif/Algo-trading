@@ -308,6 +308,23 @@ function formatCell(slug: string, column: string, row: Row) {
   return formatValue(raw);
 }
 
+function syntheticCellTone(slug: string, column: string, row: Row) {
+  if (slug !== "synthetic-arbitrage") return "";
+  if (column === "LONG Edge" || column === "SHORT Edge") {
+    const edges = syntheticRawEdges(row);
+    if (!edges) return "theme-warning font-semibold";
+    const edge = column === "LONG Edge" ? edges.long : edges.short;
+    return edge > 0 ? "theme-success font-bold" : edge < 0 ? "theme-danger" : "theme-muted";
+  }
+  if (column === "Signal" || column === "Direction") {
+    const direction = syntheticDisplayDirection(row);
+    if (direction === "LONG" || direction === "SHORT") return "inline-flex rounded-md border theme-border theme-success-bg px-2 py-1 font-bold theme-success";
+    if (direction === "NO EDGE") return "inline-flex rounded-md border theme-border theme-surface-2 px-2 py-1 font-semibold theme-muted";
+    return "inline-flex rounded-md border theme-border theme-warning-bg px-2 py-1 font-semibold theme-warning";
+  }
+  return "";
+}
+
 function pairCell(slug: string, column: string, row: Row) {
   const maps: Record<string, Record<string, string[]>> = {
     "calendar-spread": {
@@ -986,7 +1003,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span>
         </div>
         <div className="grid gap-2 p-3 md:hidden">
-          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live opportunity data</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{formatCell(slug, column, row)}</div></div>)}</div></div>)}
+          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live opportunity data</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</div></div>)}</div></div>)}
         </div>
         <div className="hidden overflow-x-auto md:block">
           <table className="min-w-[1100px] w-full text-left text-sm">
@@ -995,7 +1012,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               {loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr> :
               filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">No live opportunity data</td></tr> :
               filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className="border-b theme-border last:border-0">
-                {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted")}>{formatCell(slug, column, row)}</td>)}
+                {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted") + " " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</td>)}
               </tr>)}
             </tbody>
           </table>
