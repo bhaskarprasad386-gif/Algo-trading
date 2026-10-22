@@ -1397,10 +1397,10 @@ def test_live_result_exposes_raw_executable_prices_and_edge_without_carry_or_fee
     # Deliberately non-zero config proves displayed edge ignores carry and fees.
     config = SyntheticScanConfig(rate=0.05, time_to_expiry_years=0.2, fees_per_unit=1.0)
     rows = scan_synthetic_snapshot([option], future, atm_strike=100.0, config=config)
-    long_row = next(row for row in rows if row.direction == "LONG")
+    short_row = next(row for row in rows if row.direction == "SHORT")
 
     # Synthetic Ask = strike + CE Ask - PE Bid = 105 + 11 - 4 = 112.
-    assert long_row.carry_factor == 1.0
-    assert long_row.carry_adjusted_synthetic_buy == 112.0
-    assert long_row.executable_edge == 18.0  # Future Bid 130 - Synthetic Ask 112.
-    assert long_row.fees_per_unit == 0.0
+    assert short_row.carry_factor == 1.0
+    assert short_row.carry_adjusted_synthetic_buy == 112.0
+    assert short_row.executable_edge == 18.0  # Future Bid 130 - Synthetic Ask 112.
+    assert short_row.fees_per_unit == 0.0
