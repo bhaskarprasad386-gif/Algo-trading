@@ -14,3 +14,6 @@ A modular, mobile-first algorithmic trading and cross-exchange arbitrage system 
 
 ## Verification
 Backend CI runs dependency installation, Python compilation, and the pytest suite on pushes to `main` and pull requests. Manual workflow dispatch is also enabled.
+
+## VPS deployment safety
+The VPS deploy workflow defers service restarts during market hours by default. An explicitly authorized push commit whose message contains `[force-restart]` overrides that guard and restarts the service; use it only when a market-hours interruption is intended.
