@@ -462,6 +462,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
+  const [hiddenPairColumns, setHiddenPairColumns] = useState<string[]>([]);
+  const [showPairColumnPicker, setShowPairColumnPicker] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState("");
@@ -822,6 +824,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const signals = rows.filter((row) => isSignal(slug, row)).length;
   const monitorRows = c.pairEndpoint ? pairRows : rows;
+  const visiblePairColumns = c.pairColumns.filter((column) => !hiddenPairColumns.includes(column));
   const filteredPairRows = useMemo(() => {
     const q = search.trim().toUpperCase();
     if (!q) return monitorRows;
@@ -1202,11 +1205,17 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("pairs")} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Copy rows</button>
+            <button type="button" onClick={() => setShowPairColumnPicker((open) => !open)} aria-expanded={showPairColumnPicker} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">{showPairColumnPicker ? "Close columns" : "Hide / Show columns"}</button>
             <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}1.5s refresh</span>
           </div>
         </div>
+        {showPairColumnPicker && <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs theme-muted">Uncheck a column to hide it from the live pair table and mobile cards. Your live data is not changed.</p><button type="button" onClick={() => setHiddenPairColumns([])} className="min-h-8 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Show all columns</button></div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">{c.pairColumns.map((column) => <label key={column} className="flex min-h-9 items-center gap-2 rounded-lg border theme-border px-2 text-xs theme-text"><input type="checkbox" checked={!hiddenPairColumns.includes(column)} onChange={(event) => setHiddenPairColumns((current) => event.target.checked ? current.filter((item) => item !== column) : [...current, column])} className="accent-current" />{column}</label>)}</div>
+          {visiblePairColumns.length === 0 && <p className="mt-3 text-xs theme-warning">All columns are hidden. Select at least one column or tap “Show all columns”.</p>}
+        </div>}
         {slug === "synthetic-arbitrage" && pairMonitorStatus === "STALE" && <div role="status" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm theme-text">STALE SNAPSHOT — backend pair data is temporarily empty or unavailable. Showing the last real rows with their original timestamps; these are not confirmed live opportunities.</div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live pairs</p><p className="mt-1 text-lg font-semibold theme-text">{monitorRows.length.toLocaleString("en-IN")}</p></div>
@@ -1265,9 +1274,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </div>
         <div className="mt-4 hidden overflow-x-auto md:block">
           <table className="min-w-[1100px] w-full text-left text-sm">
-            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{visiblePairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
-              {filteredHistoryRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">{historyRows.length === 0 ? "No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled." : "No history rows match this symbol filter."}</td></tr> :
+              {filteredHistoryRows.length === 0 ? <tr><td colSpan={Math.max(visiblePairColumns.length, 1)} className="px-4 py-10 text-center theme-muted">{historyRows.length === 0 ? "No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled." : "No history rows match this symbol filter."}</td></tr> :
               visibleHistoryRows.map((row, index) => {
                 const cols = c.pairColumns;
                 return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
