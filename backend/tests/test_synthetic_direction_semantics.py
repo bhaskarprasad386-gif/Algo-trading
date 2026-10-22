@@ -36,16 +36,11 @@ def test_synthetic_direction_uses_future_trade_side_and_raw_bid_ask():
         option, future, rate=0.05, time_to_expiry_years=0.5,
         fees_per_unit=99.0, direction="LONG",
     )
-    short_opp = SyntheticCashCarryBacktester.evaluate(
-        option, future, rate=0.05, time_to_expiry_years=0.5,
-        fees_per_unit=99.0, direction="SHORT",
-    )
-
-    # LONG = Future BUY @ Ask + Synthetic SELL @ Bid => 73534.20 - 73583 = -48.80.
     assert long_opp is None
-    # SHORT = Future SELL @ Bid + Synthetic BUY @ Ask => 73560 - 73547 = +13.
-    # Backtester applies fees when explicitly requested, so use zero-fee checks below
-    # for the exact raw executable edge.
+
+    # SHORT = Future SELL @ bid and Synthetic BUY @ ask => 73560 - 73547 = +13.
+    # Explicit fees/carry are ignored by the live scanner, but the primitive still
+    # supports them for backtesting; verify the raw executable result with zero fees.
     short_raw = SyntheticCashCarryBacktester.evaluate(
         option, future, rate=0.05, time_to_expiry_years=0.5,
         fees_per_unit=0.0, direction="SHORT",
@@ -70,7 +65,7 @@ def test_scanner_evaluates_both_directions_and_emits_only_positive_qualified_edg
 
 
 def test_scanner_can_emit_long_when_long_raw_edge_is_positive():
-    option, future = _quotes(future_bid=73580.0, future_ask=73540.0)
+    option, future = _quotes(future_bid=73520.0, future_ask=73530.0)
     rows = scan_synthetic_snapshot(
         [option], future, atm_strike=71000.0,
         config=SyntheticScanConfig(rate=0.05, time_to_expiry_years=0.5),
@@ -78,4 +73,4 @@ def test_scanner_can_emit_long_when_long_raw_edge_is_positive():
 
     assert len(rows) == 1
     assert rows[0].direction == "LONG"
-    assert rows[0].executable_edge == 73534.2 - 73540.0
+    assert rows[0].executable_edge == 4.2
