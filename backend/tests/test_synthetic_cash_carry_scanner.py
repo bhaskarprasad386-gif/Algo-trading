@@ -96,16 +96,18 @@ def test_scanner_rejects_mixed_timestamp_snapshot():
 
 
 
-def test_index_arbitrage_requires_strictly_more_than_ten_points():
+def test_index_arbitrage_requires_strictly_more_than_one_point():
     quote = option(1, 99)
+    # Synthetic ask = 99 + 9 - 6 = 102. An exactly 1-point SHORT edge
+    # must not qualify; a slightly larger raw edge should be visible.
     assert not scan_synthetic_snapshot(
-        (quote,), future(1, bid=112, ask=113), atm_strike=100,
+        (quote,), future(1, bid=103, ask=104), atm_strike=100,
     )
     results = scan_synthetic_snapshot(
-        (quote,), future(1, bid=112.01, ask=113.01), atm_strike=100,
+        (quote,), future(1, bid=103.01, ask=104.01), atm_strike=100,
     )
     assert results
-    assert all(result.executable_edge > 10 for result in results)
+    assert all(result.executable_edge > 1 for result in results)
 
 
 def test_any_configured_top15_stock_can_qualify_above_five_points():
