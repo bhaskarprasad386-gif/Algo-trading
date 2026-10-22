@@ -175,9 +175,18 @@ export function SyntheticTracePanel() {
       setMessage(keyPart(row.underlying) + " exact-contract status checked.");
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Exact live status unavailable";
+      let history: Record<string, unknown>[] = [];
+      try {
+        const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+        const historyResponse = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/history?trace_id=" + encodeURIComponent(row.trace_id), { cache: "no-store" });
+        const historyBody = await historyResponse.json().catch(() => ({}));
+        if (historyResponse.ok && Array.isArray(historyBody?.data)) history = historyBody.data;
+      } catch {
+        // Preserve the quote error if history retrieval is also unavailable.
+      }
       setStatusByTrace((current) => ({
         ...current,
-        [row.trace_id]: { status: "UNAVAILABLE", detail, checked_at: new Date().toISOString() },
+        [row.trace_id]: { status: "UNAVAILABLE", detail, checked_at: new Date().toISOString(), history },
       }));
       setMessage("Live status unavailable: " + detail);
     } finally {
