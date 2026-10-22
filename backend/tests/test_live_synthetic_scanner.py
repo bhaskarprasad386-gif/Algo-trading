@@ -847,17 +847,19 @@ def test_bucket_matching_does_not_merge_unrelated_snapshots_but_keeps_pending_qu
 def test_synthetic_bucket_pruning_does_not_move_backwards_on_delayed_tick():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     scanner._buckets = {
-        ("NIFTY", 10_000_000_000, 20260930): {},
-        ("NIFTY", 11_000_000_000, 20260930): {},
+        ("NIFTY", 8_000_000_000, 20260930): {},
+        ("NIFTY", 9_000_000_000, 20260930): {},
         ("NIFTY", 15_000_000_000, 20260930): {},
     }
 
-    scanner._prune(10_000_000_000)
+    scanner._prune(8_000_000_000)
 
-    assert ("NIFTY", 10_000_000_000, 20260930) not in scanner._buckets
-    assert ("NIFTY", 11_000_000_000, 20260930) not in scanner._buckets
+    # Six-second retention keeps sparse exchange snapshots available, but
+    # the source-timestamp matching tolerance remains independently bounded.
+    assert ("NIFTY", 8_000_000_000, 20260930) not in scanner._buckets
+    assert ("NIFTY", 9_000_000_000, 20260930) in scanner._buckets
     assert ("NIFTY", 15_000_000_000, 20260930) in scanner._buckets
-    assert scanner.diagnostics_snapshot()["counters"]["pruned_buckets"] == 2
+    assert scanner.diagnostics_snapshot()["counters"]["pruned_buckets"] == 1
 
 
 def test_synthetic_bucket_cache_has_hard_capacity_limit():
