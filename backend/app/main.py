@@ -44,6 +44,7 @@ from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
+from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
@@ -187,6 +188,7 @@ if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
 app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
+app.include_router(live_synthetic_trace_router)
 app.include_router(live_box_spread_router)
 app.include_router(intelligence_router)
 if settings.BACKTESTING_ENABLED:
