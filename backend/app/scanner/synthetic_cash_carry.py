@@ -149,10 +149,11 @@ def scan_synthetic_snapshot(
                 direction=direction,
                 liquidity=config.liquidity,
             )
-            # Display thresholds are strategy-specific and strict: index opportunities
-            # must exceed 10 points; a single eligible top-15 stock may qualify above 5.
-            # The configured minimum remains an additional floor, never a bypass.
-            class_minimum = 10.0 if future.instrument_class == "INDEX" else 5.0
+            # Indexes can have valid smaller point edges than the old fixed 10-point
+            # floor. Keep a positive 1-point raw-edge floor for index visibility;
+            # this is not a net-profit guarantee (fees/slippage are not deducted here).
+            # Stocks retain their existing stricter 5-point floor.
+            class_minimum = 1.0 if future.instrument_class == "INDEX" else 5.0
             required_edge = max(class_minimum, config.min_executable_edge)
             if opportunity is None or opportunity.executable_edge <= required_edge:
                 continue
