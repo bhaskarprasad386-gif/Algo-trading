@@ -316,7 +316,7 @@ class LiveSyntheticScanner:
                     and previous_ltp is not None
                     and current_bid is not None
                     and current_ask is not None
-                    and age_ns < 3_000_000_000
+                    and age_ns < self.MAX_PENDING_QUOTE_WAIT_NS
                 ):
                     anchored = dict(current)
                     anchored["source_timestamp_ns"] = previous.get("source_timestamp_ns")
@@ -540,7 +540,7 @@ class LiveSyntheticScanner:
                     if bucket.get("quote_wait_started_ns") is None:
                         bucket["quote_wait_started_ns"] = time.monotonic_ns()
                         bucket_age_ns = 0
-                    if bucket_age_ns < 3_000_000_000:
+                    if bucket_age_ns < self.MAX_PENDING_QUOTE_WAIT_NS:
                         self._count("waiting_for_executable_quote")
                         return ()
                 self._count("no_executable_ce_pe_pair")
@@ -889,7 +889,7 @@ class LiveSyntheticScanner:
         for key, bucket in self._buckets.items():
             if key[0] != symbol or key[2] != expiry:
                 continue
-            if abs(key[1] - timestamp_ns) > 3_000_000_000:
+            if abs(key[1] - timestamp_ns) > self.MAX_PENDING_QUOTE_WAIT_NS:
                 continue
             started_ns = bucket.get("quote_wait_started_ns")
             if started_ns is None:
@@ -898,7 +898,7 @@ class LiveSyntheticScanner:
                 wait_age_ns = now_monotonic_ns - int(started_ns)
             except (TypeError, ValueError, OverflowError):
                 continue
-            if 0 <= wait_age_ns < 3_000_000_000:
+            if 0 <= wait_age_ns < self.MAX_PENDING_QUOTE_WAIT_NS:
                 pending.append(key)
         if pending:
             return min(pending, key=lambda key: abs(key[1] - timestamp_ns))
