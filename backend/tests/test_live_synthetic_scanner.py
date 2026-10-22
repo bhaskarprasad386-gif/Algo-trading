@@ -213,6 +213,7 @@ def test_live_scanner_pairs_real_quotes_within_two_second_exchange_skew():
         "source_timestamp_ns": ts + 1_500_000_000, "symbol": "NIFTY29OCT26FUT",
         "volume": 100, "oi": 1000,
     })
+    assert results, "a real executable pair within the bounded timestamp skew should be evaluated"
     assert scanner.diagnostics_snapshot()["counters"].get("timestamp_mismatch", 0) == 0
     assert all(result.option.timestamp_ns == result.future.timestamp_ns for result in results)
 
