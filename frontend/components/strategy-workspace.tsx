@@ -39,11 +39,11 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Synthetic Arbitrage",
     description: "Dedicated synthetic future/cash-carry scanner with the live option + future universe.",
     universe: "SUPPORTED INDEX + NIFTY TOP 15 LIQUID F&O STOCKS",
-    columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "Edge", "Signal"],
+    columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "Edge", "Direction", "State"],
+    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
     pairEndpoint: "/api/v1/scanner/synthetic-cash-carry/pairs?limit=200",
   },
@@ -269,7 +269,7 @@ function formatCell(slug: string, column: string, row: Row) {
     "synthetic-arbitrage": {
       Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
       Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
-      "Synthetic Future": ["strike"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
+      "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
       Underlying: ["symbol"], Expiry: ["expiry"], "Low Strike": ["low_strike"],
@@ -282,6 +282,12 @@ function formatCell(slug: string, column: string, row: Row) {
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
   if (slug === "synthetic-arbitrage" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future") return withQuoteTimestamp(syntheticFutureValue(row), row);
+  if (slug === "synthetic-arbitrage" && (column === "LONG Edge" || column === "SHORT Edge")) {
+    const edges = syntheticRawEdges(row);
+    if (!edges) return "NOT EVALUATED";
+    const edge = column === "LONG Edge" ? edges.long : edges.short;
+    return (edge > 0 ? "+" : "") + formatValue(edge) + " pts";
+  }
   if (slug === "synthetic-arbitrage" && (column === "Edge" || column === "Executable Edge")) {
     const edge = syntheticDisplayEdge(row, raw);
     const direction = syntheticDisplayDirection(row);
@@ -311,7 +317,7 @@ function pairCell(slug: string, column: string, row: Row) {
     "synthetic-arbitrage": {
       Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying", "symbol"], Expiry: ["expiry"], Strike: ["strike"],
       Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
-      "Synthetic Future": ["strike"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
+      "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
       Time: ["timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry"],
@@ -332,6 +338,12 @@ function pairCell(slug: string, column: string, row: Row) {
   }
   if (column === "Time") return formatTimestamp(raw);
   if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "synthetic-arbitrage" && (column === "LONG Edge" || column === "SHORT Edge")) {
+    const edges = syntheticRawEdges(row);
+    if (!edges) return "NOT EVALUATED";
+    const edge = column === "LONG Edge" ? edges.long : edges.short;
+    return (edge > 0 ? "+" : "") + formatValue(edge) + " pts";
+  }
   if (slug === "synthetic-arbitrage" && column === "Edge") {
     const edge = syntheticDisplayEdge(row, raw);
     const direction = syntheticDisplayDirection(row);
