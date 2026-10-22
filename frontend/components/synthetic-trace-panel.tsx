@@ -148,7 +148,7 @@ export function SyntheticTracePanel() {
     setCheckingTraceIds((current) => [...current, row.trace_id]);
     setMessage("");
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
       const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/live-status", {
         method: "POST",
         cache: "no-store",
