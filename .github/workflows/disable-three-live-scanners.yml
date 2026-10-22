@@ -6,7 +6,6 @@ on:
 permissions:
   contents: read
 
-# Serialize with the existing VPS configuration/restart workflows.
 concurrency:
   group: vps-service-mutation
   cancel-in-progress: false
@@ -43,15 +42,14 @@ jobs:
 
           set_env_false() {
             local key="$1"
-            if grep -q "^\${key}=" "$ENV_FILE"; then
-              sed -i "s/^\${key}=.*/\${key}=false/" "$ENV_FILE"
+            if grep -q "^${key}=" "$ENV_FILE"; then
+              sed -i "s/^${key}=.*/${key}=false/" "$ENV_FILE"
             else
-              printf '\\n%s=false\\n' "$key" >> "$ENV_FILE"
+              printf '\n%s=false\n' "$key" >> "$ENV_FILE"
             fi
           }
 
-          # Only these strategy-specific flags are changed. The shared feed and
-          # Synthetic Arbitrage flag are intentionally left untouched.
+          # Preserve the shared feed and Synthetic Arbitrage configuration.
           set_env_false LIVE_CASH_FUTURE_DATA_ENABLED
           set_env_false LIVE_CALENDAR_SPREAD_DATA_ENABLED
           set_env_false LIVE_BOX_SPREAD_DATA_ENABLED
@@ -61,8 +59,8 @@ jobs:
           systemctl is-active --quiet algo-trading.service
 
           for key in LIVE_CASH_FUTURE_DATA_ENABLED LIVE_CALENDAR_SPREAD_DATA_ENABLED LIVE_BOX_SPREAD_DATA_ENABLED; do
-            grep -qx "\${key}=false" "$ENV_FILE"
-            echo "\${key}=false"
+            grep -qx "${key}=false" "$ENV_FILE"
+            echo "${key}=false"
           done
           echo "LIVE_SYNTHETIC_DATA_ENABLED=$(grep '^LIVE_SYNTHETIC_DATA_ENABLED=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- || echo 'unset')"
           echo "SERVICE=active"
