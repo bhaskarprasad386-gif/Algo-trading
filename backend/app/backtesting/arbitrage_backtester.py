@@ -69,9 +69,6 @@ class BoxSpreadBacktester:
         if low.timestamp_ns!=high.timestamp_ns: raise ValueError("box legs must share timestamp")
         if low.lot_size!=high.lot_size: raise ValueError("box legs must share lot size")
         width=high.strike-low.strike
-        # A box is long the low-strike call and high-strike put, and
-        # short the high-strike call and low-strike put. Use executable
-        # ask prices for buys and bid prices for sells.
         if direction=="LONG":
             debit=(low.call_ask-high.call_bid)+(high.put_ask-low.put_bid)
             edge=width-debit-fees_per_unit
@@ -100,9 +97,12 @@ class SyntheticCashCarryBacktester:
         carry=exp(rate*time_to_expiry_years)
         synthetic_buy=option.strike+(option.call_ask-option.put_bid)*carry
         synthetic_sell=option.strike+(option.call_bid-option.put_ask)*carry
-        edge=(future.bid-synthetic_buy-fees_per_unit) if direction=="LONG" else (synthetic_sell-future.ask-fees_per_unit)
+        # Direction follows the actual futures leg:
+        # LONG = buy future at ask and sell synthetic at bid.
+        # SHORT = sell future at bid and buy synthetic at ask.
+        edge=(synthetic_sell-future.ask-fees_per_unit) if direction=="LONG" else (future.bid-synthetic_buy-fees_per_unit)
         if edge<=0:return None
         pnl=edge*future.lot_size
-        return ArbitrageOpportunity("SYNTHETIC_CASH_CARRY",direction,future.timestamp_ns,future.underlying,future.expiry,None,None,edge,pnl,pnl,future.bid if direction=="LONG" else future.ask)
+        return ArbitrageOpportunity("SYNTHETIC_CASH_CARRY",direction,future.timestamp_ns,future.underlying,future.expiry,None,None,edge,pnl,pnl,future.ask if direction=="LONG" else future.bid)
 
 __all__=["ArbitrageOpportunity","BoxSpreadBacktester","FutureQuote","LiquidityPolicy","OptionQuote","SyntheticCashCarryBacktester"]
