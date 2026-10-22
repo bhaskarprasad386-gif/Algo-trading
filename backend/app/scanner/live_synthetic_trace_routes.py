@@ -1,5 +1,5 @@
 """Explicit, on-demand exact-contract status checks and durable trace history."""
-from datetime import datetime
+from datetime import datetime, timezone
 from math import isfinite
 from typing import Literal
 
@@ -142,7 +142,7 @@ def _save_check(request, payload):
     from app.core.database import SessionLocal
     from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
 
-    checked = datetime.fromisoformat(payload["checked_at"].replace("Z", "+00:00")).replace(tzinfo=None)
+    checked = datetime.fromisoformat(payload["checked_at"].replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
     data = payload
     record = SyntheticTraceStatusCheck(
         trace_id=request.trace_id,
@@ -183,7 +183,7 @@ def _save_failed_check(request: TraceStatusRequest, detail: str):
     try:
         from app.core.database import SessionLocal
         from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         db = SessionLocal()
         try:
             db.add(SyntheticTraceStatusCheck(
@@ -225,7 +225,7 @@ def _history_rows(trace_id: str, limit: int = 20):
         return [{
             "id": row.id,
             "trace_id": row.trace_id,
-            "checked_at": row.checked_at.isoformat(),
+            "checked_at": row.checked_at.replace(tzinfo=timezone.utc).isoformat(),
             "underlying": row.underlying,
             "expiry": row.expiry,
             "strike": row.strike,
@@ -290,8 +290,16 @@ def check_trace_live_status(request: TraceStatusRequest):
             "current_edge": current_edge, "edge_change": current_edge - float(request.entry_edge),
             **pnl, "quote_source": "Angel One FULL quote depth", "broker_orders": "OFF",
         }
-        payload["history_record_id"] = _save_check(request, payload)
-        payload["history"] = _history_rows(request.trace_id)
+        try:
+            payload["history_record_id"] = _save_check(request, payload)
+            payload["history_persistence"] = "SAVED"
+            payload["history"] = _history_rows(request.trace_id)
+        except Exception:
+            # A database outage must not erase a valid live quote response.
+            payload["history_record_id"] = None
+            payload["history_persistence"] = "UNAVAILABLE"
+            payload["history_detail"] = "Live quotes are available, but this check could not be saved to history."
+            payload["history"] = []
         return payload
     except HTTPException:
         raise
