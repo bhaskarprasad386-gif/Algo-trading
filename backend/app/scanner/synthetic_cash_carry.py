@@ -167,10 +167,18 @@ def scan_synthetic_snapshot(
                 else 5.0
             )
             required_edge = max(symbol_minimum, float(config.min_executable_edge))
+            below_required_edge = (
+                opportunity is not None
+                and (
+                    opportunity.executable_edge <= required_edge
+                    if future.instrument_class == "STOCK"
+                    else opportunity.executable_edge < required_edge
+                )
+            )
             if (
                 opportunity is None
                 or opportunity.executable_edge <= 0
-                or opportunity.executable_edge < required_edge
+                or below_required_edge
             ):
                 continue
             # Publish raw executable synthetic prices: no carry and no fees.
