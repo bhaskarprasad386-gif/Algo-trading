@@ -23,4 +23,4 @@ The synthetic ATM tracker allows only the same bounded 2-second future/spot time
 ## Synthetic live opportunity edge filters
 Only fresh, positive raw executable edges are eligible for the live opportunity list. The minimum edge is inclusive: NIFTY 5 points, BANKNIFTY 10, FINNIFTY 5, MIDCPNIFTY 3, BANKEX 10, and SENSEX 10. Configured global minimums may raise, but never lower, these per-index floors. Stock synthetic opportunities retain a 5-point floor. These are raw quote-edge filters, not a guarantee of net profit after fees and slippage.
 
-The index floors are inclusive at equality; stock synthetic rows retain the strict greater-than-5-point rule.
+The index floors are inclusive at equality; stock synthetic rows retain the strict greater-than-5-point rule. The live API route repeats these checks as a final guard, so a stale or unexpected low-edge row cannot bypass scanner qualification.
