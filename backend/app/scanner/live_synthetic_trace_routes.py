@@ -1,28 +1,31 @@
-"""On-demand exact-contract live status checks for user-traced synthetic opportunities.
-
-This endpoint is intentionally request-driven: it makes one bounded REST FULL-quote
-request for the exact future/CE/PE contract trio and never alters scanner subscriptions.
-"""
+"""Explicit, on-demand exact-contract status checks and durable trace history."""
 from datetime import datetime
 from math import isfinite
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1/scanner/synthetic-cash-carry/trace", tags=["Synthetic Trace"])
 
 _ALLOWED_INDEXES = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
 _EXCHANGE_BY_INDEX = {"SENSEX": "BFO", "BANKEX": "BFO"}
-_EXCHANGE_TYPE = {"NFO": 2, "BFO": 4}
 
 
 class TraceStatusRequest(BaseModel):
+    trace_id: str = Field(default="untracked", min_length=1, max_length=128)
     underlying: str = Field(min_length=1, max_length=32)
     expiry: str = Field(min_length=8, max_length=32)
     strike: float = Field(gt=0, le=10_000_000)
     direction: Literal["LONG", "SHORT"]
     entry_edge: float
+    lot_size: int | None = Field(default=None, ge=1, le=10_000_000)
+    entry_future_bid: float | None = None
+    entry_future_ask: float | None = None
+    entry_call_bid: float | None = None
+    entry_call_ask: float | None = None
+    entry_put_bid: float | None = None
+    entry_put_ask: float | None = None
 
 
 def _expiry_date(raw: object):
@@ -76,19 +79,12 @@ def _resolve_contracts(master, symbol: str, expiry_text: str, strike: float):
     ]
     futures = [item for item in rows if str(item.get("instrumenttype", "")).strip().upper() == "FUTIDX"]
     options = [item for item in rows if str(item.get("instrumenttype", "")).strip().upper() == "OPTIDX"]
-    calls = [
-        item for item in options
-        if str(item.get("symbol", "")).strip().upper().endswith("CE")
-        and abs(_master_strike(item.get("strike")) - strike) < 1e-6
-    ]
-    puts = [
-        item for item in options
-        if str(item.get("symbol", "")).strip().upper().endswith("PE")
-        and abs(_master_strike(item.get("strike")) - strike) < 1e-6
-    ]
-    matches = [("future", futures), ("call", calls), ("put", puts)]
+    calls = [item for item in options if str(item.get("symbol", "")).strip().upper().endswith("CE")
+             and abs(_master_strike(item.get("strike")) - strike) < 1e-6]
+    puts = [item for item in options if str(item.get("symbol", "")).strip().upper().endswith("PE")
+            and abs(_master_strike(item.get("strike")) - strike) < 1e-6]
     resolved = {}
-    for role, candidates in matches:
+    for role, candidates in (("future", futures), ("call", calls), ("put", puts)):
         candidates = [item for item in candidates if str(item.get("token", "")).strip() and str(item.get("symbol", "")).strip()]
         if len(candidates) != 1:
             reason = "not found" if not candidates else "ambiguous in instrument master"
@@ -108,12 +104,116 @@ def _quote_rows(response):
     return []
 
 
+def _calculate_close_pnl(request: TraceStatusRequest, future: dict, synthetic_bid: float, synthetic_ask: float):
+    entry = {
+        "future_bid": _positive_price(request.entry_future_bid),
+        "future_ask": _positive_price(request.entry_future_ask),
+        "call_bid": _positive_price(request.entry_call_bid),
+        "call_ask": _positive_price(request.entry_call_ask),
+        "put_bid": _positive_price(request.entry_put_bid),
+        "put_ask": _positive_price(request.entry_put_ask),
+    }
+    if any(value is None for value in entry.values()) or not request.lot_size:
+        return {
+            "pnl_status": "UNAVAILABLE",
+            "pnl_detail": "Entry bid/ask snapshot or lot size was not saved; close P&L cannot be reconstructed reliably.",
+            "pnl_per_unit": None, "pnl_per_lot": None,
+            "entry_synthetic_bid": None, "entry_synthetic_ask": None,
+        }
+    entry_synthetic_bid = request.strike + entry["call_bid"] - entry["put_ask"]
+    entry_synthetic_ask = request.strike + entry["call_ask"] - entry["put_bid"]
+    if request.direction == "LONG":
+        pnl_per_unit = (entry["future_bid"] - future["ask"]) + (synthetic_bid - entry_synthetic_ask)
+    else:
+        pnl_per_unit = (future["bid"] - entry["future_ask"]) + (entry_synthetic_bid - synthetic_ask)
+    return {
+        "pnl_status": "GROSS_ESTIMATE",
+        "pnl_detail": "Executable bid/ask estimate before brokerage, taxes, slippage and other charges.",
+        "pnl_per_unit": pnl_per_unit,
+        "pnl_per_lot": pnl_per_unit * request.lot_size,
+        "entry_synthetic_bid": entry_synthetic_bid,
+        "entry_synthetic_ask": entry_synthetic_ask,
+    }
+
+
+def _save_check(request, payload):
+    from app.core.database import SessionLocal
+    from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
+
+    checked = datetime.fromisoformat(payload["checked_at"].replace("Z", "+00:00")).replace(tzinfo=None)
+    data = payload
+    record = SyntheticTraceStatusCheck(
+        trace_id=request.trace_id,
+        checked_at=checked,
+        underlying=request.underlying.strip().upper(),
+        expiry=str(payload.get("expiry") or request.expiry),
+        strike=request.strike,
+        direction=request.direction,
+        entry_edge=payload.get("entry_edge"),
+        current_edge=payload.get("current_edge"),
+        edge_change=payload.get("edge_change"),
+        future_bid=(payload.get("contracts") or {}).get("future", {}).get("bid"),
+        future_ask=(payload.get("contracts") or {}).get("future", {}).get("ask"),
+        call_bid=(payload.get("contracts") or {}).get("call", {}).get("bid"),
+        call_ask=(payload.get("contracts") or {}).get("call", {}).get("ask"),
+        put_bid=(payload.get("contracts") or {}).get("put", {}).get("bid"),
+        put_ask=(payload.get("contracts") or {}).get("put", {}).get("ask"),
+        synthetic_bid=payload.get("synthetic_bid"),
+        synthetic_ask=payload.get("synthetic_ask"),
+        lot_size=request.lot_size,
+        pnl_per_unit=payload.get("pnl_per_unit"),
+        pnl_per_lot=payload.get("pnl_per_lot"),
+        pnl_status=payload.get("pnl_status", "UNAVAILABLE"),
+        detail=payload.get("detail") or payload.get("pnl_detail"),
+    )
+    db = SessionLocal()
+    try:
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record.id
+    finally:
+        db.close()
+
+
+def _history_rows(trace_id: str, limit: int = 20):
+    from app.core.database import SessionLocal
+    from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
+
+    db = SessionLocal()
+    try:
+        rows = (db.query(SyntheticTraceStatusCheck)
+                .filter(SyntheticTraceStatusCheck.trace_id == trace_id)
+                .order_by(SyntheticTraceStatusCheck.checked_at.desc(), SyntheticTraceStatusCheck.id.desc())
+                .limit(limit).all())
+        return [{
+            "id": row.id,
+            "trace_id": row.trace_id,
+            "checked_at": row.checked_at.isoformat(),
+            "underlying": row.underlying,
+            "expiry": row.expiry,
+            "strike": row.strike,
+            "direction": row.direction,
+            "entry_edge": row.entry_edge,
+            "current_edge": row.current_edge,
+            "edge_change": row.edge_change,
+            "pnl_status": row.pnl_status,
+            "pnl_per_unit": row.pnl_per_unit,
+            "pnl_per_lot": row.pnl_per_lot,
+            "detail": row.detail,
+        } for row in rows]
+    finally:
+        db.close()
+
+
 @router.post("/live-status")
 def check_trace_live_status(request: TraceStatusRequest):
     """Fetch exact traced-contract depth once, only when the user clicks Check."""
     symbol = request.underlying.strip().upper()
     if symbol not in _ALLOWED_INDEXES:
         raise HTTPException(status_code=422, detail="Trace status supports the six configured indices only")
+    if not isfinite(float(request.entry_edge)):
+        raise HTTPException(status_code=422, detail="Entry edge must be finite")
     try:
         from app.market_data.instruments import InstrumentMaster
         from app.market_data.client import MarketDataClient
@@ -121,57 +221,41 @@ def check_trace_live_status(request: TraceStatusRequest):
         master = InstrumentMaster()
         master.download()
         segment, contracts = _resolve_contracts(master, symbol, request.expiry, float(request.strike))
-        client = MarketDataClient()
-        response = client.quote_many(segment, [
+        response = MarketDataClient().quote_many(segment, [
             {"tradingsymbol": str(contracts[role]["symbol"]), "symboltoken": str(contracts[role]["token"])}
             for role in ("future", "call", "put")
         ])
-        quote_by_token = {
-            str(item.get("symbolToken", item.get("symboltoken", ""))).strip(): item
-            for item in _quote_rows(response) if isinstance(item, dict)
-        }
+        quote_by_token = {str(item.get("symbolToken", item.get("symboltoken", ""))).strip(): item
+                          for item in _quote_rows(response) if isinstance(item, dict)}
         legs = {}
         for role, instrument in contracts.items():
             quote = quote_by_token.get(str(instrument["token"]).strip())
             if quote is None:
                 raise LookupError(f"Live quote missing for exact {role} contract {instrument['symbol']}")
-            legs[role] = {
-                "symbol": str(instrument["symbol"]),
-                "bid": _depth_side(quote, "bid"),
-                "ask": _depth_side(quote, "ask"),
-                "ltp": _positive_price(quote.get("ltp")),
-            }
+            legs[role] = {"symbol": str(instrument["symbol"]), "bid": _depth_side(quote, "bid"),
+                          "ask": _depth_side(quote, "ask"), "ltp": _positive_price(quote.get("ltp"))}
         future, call, put = legs["future"], legs["call"], legs["put"]
         if any(legs[role][side] is None for role in legs for side in ("bid", "ask")):
             raise LookupError("One or more exact contracts have no valid bid/ask depth; executable edge is unavailable")
-        strike = float(request.strike)
-        synthetic_bid = strike + call["bid"] - put["ask"]
-        synthetic_ask = strike + call["ask"] - put["bid"]
+        synthetic_bid = float(request.strike) + call["bid"] - put["ask"]
+        synthetic_ask = float(request.strike) + call["ask"] - put["bid"]
         long_edge = future["bid"] - synthetic_ask
         short_edge = synthetic_bid - future["ask"]
         current_edge = long_edge if request.direction == "LONG" else short_edge
-        entry_edge = float(request.entry_edge)
-        if not isfinite(entry_edge):
-            raise ValueError("Entry edge must be finite")
-        return {
-            "status": "LIVE_QUOTES",
-            "underlying": symbol,
-            "expiry": _expiry_date(request.expiry).isoformat(),
-            "strike": strike,
-            "direction": request.direction,
-            "checked_at": datetime.now().astimezone().isoformat(),
-            "exchange": segment,
-            "contracts": legs,
-            "synthetic_bid": synthetic_bid,
-            "synthetic_ask": synthetic_ask,
-            "long_edge": long_edge,
-            "short_edge": short_edge,
-            "entry_edge": entry_edge,
-            "current_edge": current_edge,
-            "edge_change": current_edge - entry_edge,
-            "quote_source": "Angel One FULL quote depth",
-            "broker_orders": "OFF",
+        pnl = _calculate_close_pnl(request, future, synthetic_bid, synthetic_ask)
+        payload = {
+            "status": "LIVE_QUOTES", "trace_id": request.trace_id,
+            "underlying": symbol, "expiry": _expiry_date(request.expiry).isoformat(),
+            "strike": float(request.strike), "direction": request.direction,
+            "checked_at": datetime.now().astimezone().isoformat(), "exchange": segment,
+            "contracts": legs, "synthetic_bid": synthetic_bid, "synthetic_ask": synthetic_ask,
+            "long_edge": long_edge, "short_edge": short_edge, "entry_edge": float(request.entry_edge),
+            "current_edge": current_edge, "edge_change": current_edge - float(request.entry_edge),
+            **pnl, "quote_source": "Angel One FULL quote depth", "broker_orders": "OFF",
         }
+        payload["history_record_id"] = _save_check(request, payload)
+        payload["history"] = _history_rows(request.trace_id)
+        return payload
     except HTTPException:
         raise
     except ValueError as exc:
@@ -180,3 +264,8 @@ def check_trace_live_status(request: TraceStatusRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Exact live quote request failed: " + type(exc).__name__) from exc
+
+
+@router.get("/history")
+def get_trace_status_history(trace_id: str = Query(min_length=1, max_length=128), limit: int = Query(default=20, ge=1, le=100)):
+    return {"trace_id": trace_id, "count": len(_history_rows(trace_id, limit)), "data": _history_rows(trace_id, limit)}
