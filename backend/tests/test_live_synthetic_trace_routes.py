@@ -58,15 +58,15 @@ def test_trace_status_resolves_exact_strike_outside_scanner_range_and_calculates
     assert long["status"] == "LIVE_QUOTES"
     assert long["synthetic_bid"] == 25028
     assert long["synthetic_ask"] == 25032
-    assert long["current_edge"] == 78
+    assert long["current_edge"] == -84
     assert long["entry_edge"] == 12.5
-    assert long["edge_change"] == 65.5
+    assert long["edge_change"] == -96.5
     assert long["broker_orders"] == "OFF"
 
     short = trace_routes.check_trace_live_status(_request("SHORT", 12.5))
-    assert short["current_edge"] == -(-25028 + 25112)  # synthetic bid minus future ask
-    assert short["current_edge"] == -84
-    assert short["edge_change"] == -96.5
+    assert short["current_edge"] == 78  # future bid minus synthetic ask
+    assert short["current_edge"] == 78
+    assert short["edge_change"] == 65.5
 
 
 def test_trace_status_fails_closed_when_exact_option_contract_is_missing(monkeypatch):
@@ -100,7 +100,7 @@ def test_close_pnl_uses_direction_specific_executable_close_prices():
         synthetic_ask=25032,
     )
     assert long["pnl_status"] == "GROSS_ESTIMATE"
-    assert long["pnl_per_unit"] == (25100 - 25112) + (25028 - (25000 + 120 - 90))
+    assert long["pnl_per_unit"] == (25110 - 25102) + ((25000 + 118 - 92) - 25032)
     assert long["pnl_per_lot"] == long["pnl_per_unit"] * 65
 
     short_request = _request("SHORT")
@@ -110,7 +110,7 @@ def test_close_pnl_uses_direction_specific_executable_close_prices():
         synthetic_bid=25028,
         synthetic_ask=25032,
     )
-    assert short["pnl_per_unit"] == (25110 - 25102) + ((25000 + 118 - 92) - 25032)
+    assert short["pnl_per_unit"] == (25100 - 25112) + (25028 - (25000 + 120 - 90))
 
 
 def test_close_pnl_is_unavailable_without_entry_snapshot():
