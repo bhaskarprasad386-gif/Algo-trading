@@ -41,7 +41,7 @@ const configs: Record<string, WorkspaceConfig> = {
     universe: "SUPPORTED INDEX + NIFTY TOP 15 LIQUID F&O STOCKS",
     columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
-    controls: ["ALL", "TOP15", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
+    controls: ["INDEX", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
@@ -908,9 +908,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         {slug === "synthetic-arbitrage" && (
           <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs">
             <p className="font-semibold theme-text">
-              {control === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS — stock-only scan" :
-               control === "ALL" ? "ALL — supported indices + these 15 liquid F&O stocks" :
-               "INDEX-ONLY SCAN — " + control}
+              {control === "INDEX" ? "INDEX-ONLY SCAN — all supported indices" : "INDEX-ONLY SCAN — " + control}
             </p>
             {control === "TOP15" || control === "ALL" ? (
               <>
@@ -918,7 +916,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 <p className="mt-1 theme-muted">These names define the basket only; stocks are not separate dropdown choices.</p>
               </>
             ) : (
-              <p className="mt-1 theme-muted">Only the selected index is scanned. No fallback to stocks or other indices.</p>
+              <p className="mt-1 theme-muted">{control === "INDEX" ? "All supported indices are scanned. Stock futures and stock options are disabled for this scanner." : "Only the selected index is scanned. Stock futures and stock options are disabled for this scanner."}</p>
             )}
             {control === "TOP15" && <p className="mt-1 theme-success">TOP15 scans the configured stock basket automatically. No individual stock selection is required; only stocks with eligible current futures and matching option expiry can be scanned.</p>}
             {(control === "TOP15" || control === "ALL") && universeAvailability && (
