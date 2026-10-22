@@ -54,6 +54,28 @@ def test_live_route_enforces_per_index_edge_thresholds_inclusive():
     assert response["opportunity_count"] == len(thresholds)
 
 
+def test_live_route_rejects_unknown_index_symbols_and_unsupported_classes():
+    unknown_index = _result()
+    unknown_index.option.underlying = "UNKNOWN_INDEX"
+    unknown_index.option.instrument_class = "INDEX"
+    unknown_index.executable_edge = 100.0
+
+    blank_symbol = _result()
+    blank_symbol.option.underlying = " "
+    blank_symbol.option.instrument_class = "INDEX"
+    blank_symbol.executable_edge = 100.0
+
+    unsupported_class = _result()
+    unsupported_class.option.underlying = "NIFTY"
+    unsupported_class.option.instrument_class = "COMMODITY"
+    unsupported_class.executable_edge = 100.0
+
+    live_synthetic_routes.configure(lambda: (unknown_index, blank_symbol, unsupported_class))
+    response = live_synthetic_routes.live(limit=10)
+    assert response["data"] == []
+    assert response["opportunity_count"] == 0
+
+
 def test_live_route_rejects_zero_negative_and_nonfinite_edges():
     results = []
     for edge in (0.0, -1.0, float("inf"), float("nan")):
