@@ -561,6 +561,32 @@ class LiveSyntheticRunner:
         )
 
     @staticmethod
+    def _atm_outside_subscription_coverage(
+        symbol: str,
+        latest_atm: float | None,
+        subscriptions,
+    ) -> bool:
+        """Check whether ATM has left the real option strikes already subscribed.
+
+        An ATM change within this band is safe because the scanner reads the
+        latest ATM dynamically; rebuilding all subscriptions for that change
+        needlessly interrupts every underlying's CE/PE observations.
+        """
+        key = str(symbol or "").strip().upper()
+        if latest_atm is None:
+            return False
+        strikes = [
+            float(item.strike)
+            for item in subscriptions
+            if str(getattr(item, "underlying", "") or "").strip().upper() == key
+            and getattr(item, "option_type", None) in {"CE", "PE"}
+            and getattr(item, "strike", None) is not None
+        ]
+        if not strikes:
+            return True
+        return float(latest_atm) < min(strikes) or float(latest_atm) > max(strikes)
+
+    @staticmethod
     def _close_pipeline(pipeline, timeout: float = 2.0) -> bool:
         """Close real pipelines while tolerating lightweight test/adapter doubles."""
         close = getattr(pipeline, "close", None)
@@ -862,11 +888,13 @@ class LiveSyntheticRunner:
                     symbol = str(payload.get("underlying") or "").upper()
                     current = _initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
-                    # Any tick that sees an ATM different from the subscribed
-                    # universe belongs to a potentially stale contract set. Discard
-                    # it immediately; only restart subscriptions after the new ATM
-                    # has remained stable for the debounce window.
-                    if latest is not None and latest != current:
+                    # A strike change inside the subscribed band does not
+                    # invalidate this recorder. Only pause this symbol's ticks
+                    # and rebuild after ATM exits the actual subscribed range.
+                    outside_coverage = self._atm_outside_subscription_coverage(
+                        symbol, latest, subscriptions
+                    )
+                    if outside_coverage and latest is not None and latest != current:
                         if atm_change_debouncer.is_stable(symbol, current, latest):
                             self._refresh_requested.set()
                             active.stop()
@@ -888,6 +916,11 @@ class LiveSyntheticRunner:
                     while not self._stop_requested.is_set() and not active_recorder.stop_event.is_set():
                         for symbol, initial in initial_atm.items():
                             latest = atm_provider(symbol, time_ns())
+                            if not self._atm_outside_subscription_coverage(
+                                symbol, latest, subscriptions
+                            ):
+                                atm_change_debouncer.is_stable(symbol, initial, latest)
+                                continue
                             if atm_change_debouncer.is_stable(symbol, initial, latest):
                                 if self._recorder is active_recorder:
                                     self._refresh_requested.set()
