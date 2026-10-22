@@ -269,7 +269,7 @@ function formatCell(slug: string, column: string, row: Row) {
     "synthetic-arbitrage": {
       Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
       Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
-      "Synthetic Future": ["strike"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
+      "Synthetic Future": ["strike"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
       Underlying: ["symbol"], Expiry: ["expiry"], "Low Strike": ["low_strike"],
@@ -282,10 +282,11 @@ function formatCell(slug: string, column: string, row: Row) {
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
   if (slug === "synthetic-arbitrage" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future") return withQuoteTimestamp(syntheticFutureValue(row), row);
-  if (slug === "synthetic-arbitrage" && column === "Executable Edge") {
+  if (slug === "synthetic-arbitrage" && (column === "Edge" || column === "Executable Edge")) {
     const edge = syntheticDisplayEdge(row, raw);
     const direction = syntheticDisplayDirection(row);
-    return edge === null ? "NO EDGE" : formatValue(edge) + " pts — " + direction;
+    if (edge === null) return direction === "NOT EVALUATED" ? "NOT EVALUATED" : "NO EDGE";
+    return formatValue(edge) + " pts — " + direction;
   }
   if (slug === "calendar-spread" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
