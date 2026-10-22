@@ -136,7 +136,7 @@ def test_catalog_to_ledger_e2e_synthetic_cash_future(tmp_path):
     future_2 = {**future_1, "timestamp_ns": 2, "bid": 90, "ask": 91}
     catalog.ingest([HistoricalRecord("angel", "ABC-OPT", "1m", 1, option_1), HistoricalRecord("angel", "ABC-OPT", "1m", 2, option_2), HistoricalRecord("angel", "ABC-FUT", "1m", 1, future_1), HistoricalRecord("angel", "ABC-FUT", "1m", 2, future_2)])
     ledger, writer = _writer(tmp_path, "catalog-synthetic", "synthetic-cash-carry")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("synthetic-cash-carry", catalog, (CatalogReplayLeg("option", "angel", "ABC-OPT", "1m"), CatalogReplayLeg("future", "angel", "ABC-FUT", "1m")), payoff_prices=(90, 100, 110))
+    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("synthetic-cash-carry", catalog, (CatalogReplayLeg("option", "angel", "ABC-OPT", "1m"), CatalogReplayLeg("future", "angel", "ABC-FUT", "1m")), parameters={"direction": "SHORT"}, payoff_prices=(90, 100, 110))
     assert result.completed_trades == 1
     assert result.unresolved_trades == 0
     assert result.payoff is not None
