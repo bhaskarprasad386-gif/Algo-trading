@@ -154,11 +154,19 @@ export function SyntheticTracePanel() {
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          trace_id: row.trace_id,
           underlying: row.underlying,
           expiry: row.expiry,
           strike: Number(row.strike),
           direction,
           entry_edge: entryEdge,
+          lot_size: Number(row.lot_size) > 0 ? Number(row.lot_size) : null,
+          entry_future_bid: row.future_bid ?? null,
+          entry_future_ask: row.future_ask ?? null,
+          entry_call_bid: row.call_bid ?? null,
+          entry_call_ask: row.call_ask ?? null,
+          entry_put_bid: row.put_bid ?? null,
+          entry_put_ask: row.put_ask ?? null,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -252,11 +260,11 @@ export function SyntheticTracePanel() {
               <div><div className="theme-subtle">Entry Edge</div><div className="mt-0.5 font-semibold theme-success">{formatNumber(row.executable_edge ?? (keyPart(row.direction) === "LONG" ? row.long_edge : row.short_edge))} pts</div></div>
             </div>
             <div className="mt-3 flex gap-2"><button type="button" onClick={() => void checkLiveStatus(row)} disabled={checkingTraceIds.includes(row.trace_id)} className="min-h-10 flex-1 rounded-lg border theme-border px-3 text-xs font-bold theme-text disabled:opacity-50">{checkingTraceIds.includes(row.trace_id) ? "CHECKING…" : "CHECK LIVE STATUS"}</button><button type="button" onClick={() => removeTrace(row.trace_id)} className="min-h-10 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Remove</button></div>
-            {statusByTrace[row.trace_id] && <div className="mt-3 rounded-lg border theme-border p-3 text-xs"><div className="font-semibold theme-text">{String(statusByTrace[row.trace_id].status ?? "STATUS") .replaceAll("_", " ")}</div>{statusByTrace[row.trace_id].detail ? <p className="mt-1 break-words theme-warning">{String(statusByTrace[row.trace_id].detail)}</p> : <div className="mt-2 grid grid-cols-2 gap-2"><div><div className="theme-subtle">Entry Edge</div><div className="theme-text">{formatNumber(statusByTrace[row.trace_id].entry_edge)} pts</div></div><div><div className="theme-subtle">Current Edge</div><div className="theme-text">{formatNumber(statusByTrace[row.trace_id].current_edge)} pts</div></div><div><div className="theme-subtle">Edge Change</div><div className={Number(statusByTrace[row.trace_id].edge_change) >= 0 ? "theme-success" : "theme-warning"}>{Number(statusByTrace[row.trace_id].edge_change) > 0 ? "+" : ""}{formatNumber(statusByTrace[row.trace_id].edge_change)} pts</div></div><div><div className="theme-subtle">Checked At</div><div className="theme-muted">{formatAddedAt(String(statusByTrace[row.trace_id].checked_at ?? "—"))}</div></div></div>}</div>}
+            {statusByTrace[row.trace_id] && <div className="mt-3 rounded-lg border theme-border p-3 text-xs"><div className="font-semibold theme-text">{String(statusByTrace[row.trace_id].status ?? "STATUS") .replaceAll("_", " ")}</div>{statusByTrace[row.trace_id].detail ? <p className="mt-1 break-words theme-warning">{String(statusByTrace[row.trace_id].detail)}</p> : <div className="mt-2 grid grid-cols-2 gap-2"><div><div className="theme-subtle">Entry Edge</div><div className="theme-text">{formatNumber(statusByTrace[row.trace_id].entry_edge)} pts</div></div><div><div className="theme-subtle">Current Edge</div><div className="theme-text">{formatNumber(statusByTrace[row.trace_id].current_edge)} pts</div></div><div><div className="theme-subtle">Edge Change</div><div className={Number(statusByTrace[row.trace_id].edge_change) >= 0 ? "theme-success" : "theme-warning"}>{Number(statusByTrace[row.trace_id].edge_change) > 0 ? "+" : ""}{formatNumber(statusByTrace[row.trace_id].edge_change)} pts</div></div><div><div className="theme-subtle">Checked At</div><div className="theme-muted">{formatAddedAt(String(statusByTrace[row.trace_id].checked_at ?? "—"))}</div></div><div className="col-span-2"><div className="theme-subtle">Close P&amp;L (1 lot)</div><div className={Number(statusByTrace[row.trace_id].pnl_per_lot) >= 0 ? "theme-success" : "theme-warning"}>{statusByTrace[row.trace_id].pnl_per_lot == null ? String(statusByTrace[row.trace_id].pnl_detail ?? "Unavailable") : "₹" + formatNumber(statusByTrace[row.trace_id].pnl_per_lot)}</div><div className="theme-muted">{String(statusByTrace[row.trace_id].pnl_detail ?? "")}</div></div></div>{Array.isArray(statusByTrace[row.trace_id].history) && statusByTrace[row.trace_id].history.length > 0 && <div className="mt-3 border-t theme-border pt-2"><div className="mb-1 font-semibold theme-text">Check History</div>{(statusByTrace[row.trace_id].history as Record<string, unknown>[]).slice(0, 5).map((item) => <div key={String(item.id)} className="flex justify-between gap-2 py-1 theme-muted"><span>{formatAddedAt(String(item.checked_at ?? "—"))}</span><span>{item.pnl_per_lot == null ? "P&amp;L —" : "₹" + formatNumber(item.pnl_per_lot)}</span></div>)}</div>}</div>}
           </div>)}</div>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{["Index", "Expiry", "Strike", "Direction", "Entry Edge", "Added At", "Current Edge", "Edge Change", "Checked At", "Action"].map((label) => <th key={label} className="px-4 py-3 font-semibold">{label}</th>)}</tr></thead>
+              <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{["Index", "Expiry", "Strike", "Direction", "Entry Edge", "Added At", "Current Edge", "Edge Change", "Close P&L / Lot", "Checked At", "Action"].map((label) => <th key={label} className="px-4 py-3 font-semibold">{label}</th>)}</tr></thead>
               <tbody>{traces.map((row) => <tr key={row.trace_id} className="border-b theme-border last:border-0">
                 <td className="px-4 py-3 font-semibold theme-text">{keyPart(row.underlying) || "INDEX"}</td>
                 <td className="px-4 py-3 theme-muted">{formatExpiry(row.expiry)}</td>
@@ -266,6 +274,7 @@ export function SyntheticTracePanel() {
                 <td className="px-4 py-3 theme-muted">{formatAddedAt(row.traced_at)}</td>
                 <td className="px-4 py-3 theme-muted">{statusByTrace[row.trace_id]?.current_edge == null ? "—" : formatNumber(statusByTrace[row.trace_id].current_edge) + " pts"}</td>
                 <td className={"px-4 py-3 " + (Number(statusByTrace[row.trace_id]?.edge_change) >= 0 ? "theme-success" : "theme-warning")}>{statusByTrace[row.trace_id]?.edge_change == null ? "—" : (Number(statusByTrace[row.trace_id].edge_change) > 0 ? "+" : "") + formatNumber(statusByTrace[row.trace_id].edge_change) + " pts"}</td>
+                <td className={"px-4 py-3 " + (Number(statusByTrace[row.trace_id]?.pnl_per_lot) >= 0 ? "theme-success" : "theme-warning")}>{statusByTrace[row.trace_id]?.pnl_per_lot == null ? "—" : "₹" + formatNumber(statusByTrace[row.trace_id].pnl_per_lot)}</td>
                 <td className="px-4 py-3 theme-muted">{statusByTrace[row.trace_id]?.checked_at ? formatAddedAt(String(statusByTrace[row.trace_id].checked_at)) : statusByTrace[row.trace_id]?.detail ? String(statusByTrace[row.trace_id].detail) : "Not checked"}</td>
                 <td className="px-4 py-3"><div className="flex gap-2"><button type="button" onClick={() => void checkLiveStatus(row)} disabled={checkingTraceIds.includes(row.trace_id)} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-bold theme-text disabled:opacity-50">{checkingTraceIds.includes(row.trace_id) ? "CHECKING…" : "CHECK LIVE STATUS"}</button><button type="button" onClick={() => removeTrace(row.trace_id)} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Remove</button></div></td>
               </tr>)}</tbody>
