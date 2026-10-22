@@ -9,7 +9,7 @@ come from the real underlying feed and concrete option chain.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic, sleep, time_ns
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -127,6 +127,31 @@ class SyntheticLiveTarget:
     instrument_class: str
     atm_strike: float | None = None
     expiry: str | None = None
+
+
+class _AtmChangeDebouncer:
+    """Require an ATM change to remain stable before rebuilding subscriptions."""
+
+    def __init__(self, stable_seconds: float = 1.0, clock: Callable[[], float] = monotonic):
+        if stable_seconds < 0:
+            raise ValueError("stable_seconds must be non-negative")
+        self.stable_seconds = float(stable_seconds)
+        self._clock = clock
+        self._candidates: dict[str, tuple[float, float]] = {}
+        self._lock = Lock()
+
+    def is_stable(self, symbol: str, current: float | None, latest: float | None) -> bool:
+        key = str(symbol or "").strip().upper()
+        now = self._clock()
+        with self._lock:
+            if latest is None or latest == current:
+                self._candidates.pop(key, None)
+                return False
+            candidate = self._candidates.get(key)
+            if candidate is None or candidate[0] != latest:
+                self._candidates[key] = (latest, now)
+                return False
+            return now - candidate[1] >= self.stable_seconds
 
 
 class LiveSyntheticRunner:
@@ -822,6 +847,11 @@ class LiveSyntheticRunner:
                 # A fresh state object per loop iteration prevents a late callback
                 # from closing over the next iteration's recorder/pipeline variables.
                 callback_state = {"recorder": None}
+                # ATM can briefly alternate between adjacent strikes around a
+                # midpoint. Require a changed strike to persist before replacing
+                # the whole option subscription set; this avoids needless
+                # unsubscribe/resubscribe churn on the shared broker feed.
+                atm_change_debouncer = _AtmChangeDebouncer(stable_seconds=1.0)
 
                 def observe(payload, _state=callback_state, _initial_atm=initial_atm, _pipeline=pipeline):
                     # Check the recorder bound to this callback's own session, not
@@ -832,12 +862,16 @@ class LiveSyntheticRunner:
                     symbol = str(payload.get("underlying") or "").upper()
                     current = _initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
-                    # Do not evaluate a tick from the old subscription universe
-                    # against a newly moved ATM; discard it and refresh first.
-                    if latest is not None and (current is None or latest != current):
-                        self._refresh_requested.set()
-                        active.stop()
+                    # Any tick that sees an ATM different from the subscribed
+                    # universe belongs to a potentially stale contract set. Discard
+                    # it immediately; only restart subscriptions after the new ATM
+                    # has remained stable for the debounce window.
+                    if latest is not None and latest != current:
+                        if atm_change_debouncer.is_stable(symbol, current, latest):
+                            self._refresh_requested.set()
+                            active.stop()
                         return
+                    atm_change_debouncer.is_stable(symbol, current, latest)
                     _pipeline.observe(payload)
 
                 active_recorder = LiveSyntheticOptionFutureRecorder(
@@ -854,7 +888,7 @@ class LiveSyntheticRunner:
                     while not self._stop_requested.is_set() and not active_recorder.stop_event.is_set():
                         for symbol, initial in initial_atm.items():
                             latest = atm_provider(symbol, time_ns())
-                            if latest is not None and (initial is None or latest != initial):
+                            if atm_change_debouncer.is_stable(symbol, initial, latest):
                                 if self._recorder is active_recorder:
                                     self._refresh_requested.set()
                                     active_recorder.stop()
