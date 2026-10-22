@@ -1,5 +1,6 @@
 from datetime import datetime
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
@@ -41,14 +42,16 @@ def test_trace_status_resolves_exact_strike_outside_scanner_range_and_calculates
         def download(self):
             return self.instruments
 
+    stamp = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%Y %H:%M:%S")
+
     class FakeClient:
         def quote_many(self, exchange, contracts):
             assert exchange == "NFO"
             assert {item["symboltoken"] for item in contracts} == {"1", "2", "3"}
             return {"status": True, "data": {"fetched": [
-                {"symbolToken": "1", "depth": {"buy": [{"price": 25110}], "sell": [{"price": 25112}]}},
-                {"symbolToken": "2", "depth": {"buy": [{"price": 120}], "sell": [{"price": 122}]}},
-                {"symbolToken": "3", "depth": {"buy": [{"price": 90}], "sell": [{"price": 92}]}},
+                {"symbolToken": "1", "exchFeedTime": stamp, "depth": {"buy": [{"price": 25110}], "sell": [{"price": 25112}]}},
+                {"symbolToken": "2", "exchFeedTime": stamp, "depth": {"buy": [{"price": 120}], "sell": [{"price": 122}]}},
+                {"symbolToken": "3", "exchFeedTime": stamp, "depth": {"buy": [{"price": 90}], "sell": [{"price": 92}]}},
             ]}}
 
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
@@ -121,3 +124,13 @@ def test_close_pnl_is_unavailable_without_entry_snapshot():
     pnl = trace_routes._calculate_close_pnl(request, {"bid": 100, "ask": 101}, 100, 101)
     assert pnl["pnl_status"] == "UNAVAILABLE"
     assert pnl["pnl_per_lot"] is None
+
+def test_trace_quotes_without_exchange_timestamp_fail_closed():
+    with pytest.raises(LookupError, match="no exchange timestamp"):
+        trace_routes._validate_quote_freshness({"ltp": 100}, "future")
+
+
+def test_trace_quotes_older_than_freshness_limit_fail_closed():
+    old = (datetime.now(ZoneInfo("Asia/Kolkata")) - __import__("datetime").timedelta(seconds=30)).strftime("%d-%b-%Y %H:%M:%S")
+    with pytest.raises(LookupError, match="is stale"):
+        trace_routes._validate_quote_freshness({"exchFeedTime": old}, "call")
