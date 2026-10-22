@@ -26,7 +26,6 @@ def test_short_box_uses_high_put_bid_and_low_put_ask():
     high = option(strike=110, cb=2, ca=2, pb=8, pa=9)
     opp = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
     assert opp is not None
-    # credit = low call bid + high put bid - high call ask - low put ask
     assert opp.executable_edge == 5
     assert opp.edge_per_lot == 50
 
@@ -36,7 +35,6 @@ def test_long_box_uses_high_put_ask_and_low_put_bid():
     high = option(strike=110, cb=8, ca=9, pb=2, pa=3)
     opp = BoxSpreadBacktester.evaluate(low, high, direction="LONG")
     assert opp is not None
-    # debit = low call ask + high put ask - high call bid - low put bid
     assert opp.executable_edge == 6
     assert opp.edge_per_lot == 60
 
@@ -74,19 +72,31 @@ def test_box_rejects_mismatched_instrument_class():
         raise AssertionError("expected instrument class mismatch rejection")
 
 
-def test_synthetic_cash_carry_uses_executable_quotes():
+def test_synthetic_cash_carry_evaluates_both_directions_with_actual_future_trade_side():
     opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
     fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10)
-    opp = SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5)
+
+    # Synthetic bid = 100 + 8 - 7 = 101; synthetic ask = 100 + 9 - 6 = 103.
+    # LONG = Future BUY @ ask and Synthetic SELL @ bid => 101 - 105 = -4 (no opportunity).
+    assert SyntheticCashCarryBacktester.evaluate(
+        opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="LONG"
+    ) is None
+
+    # SHORT = Future SELL @ bid and Synthetic BUY @ ask => 104 - 103 = +1.
+    opp = SyntheticCashCarryBacktester.evaluate(
+        opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="SHORT"
+    )
     assert opp is not None
     assert opp.executable_edge == 1
+    assert opp.edge_per_lot == 10
     assert opp.gross_pnl == 10
 
 
 def test_synthetic_cash_carry_no_edge_returns_none():
     opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
     fut = FutureQuote(1, "ABC", 20261231, 102, 103, 10)
-    assert SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5) is None
+    assert SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="LONG") is None
+    assert SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="SHORT") is None
 
 
 def test_synthetic_cash_carry_rejects_invalid_option_quotes():
