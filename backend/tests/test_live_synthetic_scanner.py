@@ -192,6 +192,31 @@ def test_live_synthetic_scanner_rejects_missing_timestamp():
     assert scanner.observe({"underlying": "NIFTY", "instrument_class": "INDEX", "bid": 1, "ask": 2}) == ()
 
 
+def test_live_scanner_pairs_real_quotes_within_two_second_exchange_skew():
+    ts = 35_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "CE",
+        "expiry": "29OCT2026", "strike": 105.0, "bid": 10.0, "ask": 11.0,
+        "lot_size": 1, "source_timestamp_ns": ts, "symbol": "NIFTY29OCT26105CE",
+        "volume": 100, "oi": 1000,
+    })
+    scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "PE",
+        "expiry": "29OCT2026", "strike": 105.0, "bid": 4.0, "ask": 5.0,
+        "lot_size": 1, "source_timestamp_ns": ts + 1_500_000_000, "symbol": "NIFTY29OCT26105PE",
+        "volume": 100, "oi": 1000,
+    })
+    results = scanner.observe({
+        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
+        "expiry": "29OCT2026", "bid": 130.0, "ask": 131.0, "lot_size": 1,
+        "source_timestamp_ns": ts + 1_500_000_000, "symbol": "NIFTY29OCT26FUT",
+        "volume": 100, "oi": 1000,
+    })
+    assert scanner.diagnostics_snapshot()["counters"].get("timestamp_mismatch", 0) == 0
+    assert all(result.option.timestamp_ns == result.future.timestamp_ns for result in results)
+
+
 def test_live_synthetic_scanner_rejects_mismatched_option_expiry():
     ts = 2_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
