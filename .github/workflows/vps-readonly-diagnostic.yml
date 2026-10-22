@@ -40,6 +40,7 @@ jobs:
           set -e
           echo "SSH_PRECHECK_RC=$PRECHECK_RC"
           echo "=== STARTUP_SETTLE_WAIT ==="
+          # Capture a settled, read-only post-restart snapshot; never restart or mutate runtime state here.
           # Let market-data auth, instrument-master loading, and scanner supervisors finish after a VPS restart.
           sleep 35
           echo "=== SSH_DIAGNOSTIC ==="
