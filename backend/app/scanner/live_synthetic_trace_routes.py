@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import json
 from math import isfinite
-from builtins import max
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
