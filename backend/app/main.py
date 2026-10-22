@@ -1039,7 +1039,7 @@ def get_synthetic_universe():
     return {
         "status": "success",
         "selection": _live_synthetic_universe_selection,
-        "options": ["INDEX", "ALL", "TOP15", *sorted(NIFTY50_INDEX_SYMBOLS)],
+        "options": ["INDEX", *sorted(NIFTY50_INDEX_SYMBOLS)],
         "meaning": {
             "INDEX": "All supported index underlyings only; no stock options/futures subscribed",
             "ALL": "All supported index underlyings plus the top 15 liquid F&O stocks",
@@ -1054,7 +1054,7 @@ def get_synthetic_universe():
 def set_synthetic_universe(payload: SyntheticUniverseSelection):
     global _live_synthetic_universe_selection
     selection = str(payload.selection or "").strip().upper()
-    allowed = {"INDEX", "ALL", "TOP15", *NIFTY50_INDEX_SYMBOLS}
+    allowed = {"INDEX", *NIFTY50_INDEX_SYMBOLS}
     if selection not in allowed:
         raise HTTPException(status_code=422, detail={"message": "Unsupported synthetic scanner universe", "allowed": sorted(allowed)})
     if selection == _live_synthetic_universe_selection:
