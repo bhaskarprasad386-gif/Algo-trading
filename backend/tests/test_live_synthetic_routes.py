@@ -438,3 +438,13 @@ def test_synthetic_prices_reject_boolean_and_non_finite_quote_values():
     })
     assert prices["synthetic_bid"] is None
     assert prices["synthetic_ask"] is None
+
+def test_diagnostics_reports_market_closed_before_waiting_for_observations():
+    live_synthetic_routes.configure_diagnostics(lambda: {
+        "running": True,
+        "phase": "WAITING_FOR_MARKET_OPEN",
+        "scanner_diagnostics": {"counters": {}},
+    })
+    response = live_synthetic_routes.diagnostics()
+    assert response["status"] == "WAITING_FOR_MARKET_OPEN"
+    assert response["phase"] == "WAITING_FOR_MARKET_OPEN"
