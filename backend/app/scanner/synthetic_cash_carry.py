@@ -163,9 +163,11 @@ def scan_synthetic_snapshot(
                     option=option,
                     future=future,
                     direction=direction,
-                    executable_edge=opportunity.executable_edge,
-                    edge_per_lot=opportunity.edge_per_lot,
-                    gross_pnl=opportunity.gross_pnl,
+                    # Normalize binary-float noise at the scanner boundary so
+                    # displayed point edges and exact decimal quote arithmetic agree.
+                    executable_edge=round(opportunity.executable_edge, 10),
+                    edge_per_lot=round(opportunity.edge_per_lot, 8),
+                    gross_pnl=round(opportunity.gross_pnl, 8),
                     strike_distance=distance,
                     strike_side=side,
                     carry_adjusted_synthetic_buy=option.strike + (option.call_ask - option.put_bid) * carry_factor,
