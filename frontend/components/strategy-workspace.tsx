@@ -307,7 +307,7 @@ function pairCell(slug: string, column: string, row: Row) {
     const direction = syntheticDisplayDirection(row);
     return edge === null ? "—" : formatValue(edge) + " pts — " + direction;
   }
-  if (slug === "synthetic-arbitrage" && column === "Direction") {
+  if (slug === "synthetic-arbitrage" && (column === "Direction" || column === "Signal")) {
     return syntheticDisplayDirection(row);
   }
   if (column === "State") {
