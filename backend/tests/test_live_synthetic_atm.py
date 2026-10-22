@@ -11,6 +11,22 @@ def test_atm_tracker_uses_nearest_real_chain_strike():
     assert tracker.update("NIFTY", 108.0) == 110.0
 
 
+def test_atm_tracker_allows_underlying_tick_within_scanner_timestamp_skew():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)}
+    )
+    source_timestamp = time_ns()
+    tracker.update("NIFTY", 107.0, source_timestamp)
+
+    # Scanner future quotes can be up to 2s older than the latest spot tick.
+    assert tracker.atm("NIFTY", source_timestamp - 1_500_000_000) == 105.0
+    # Do not permit a spot tick that is more than the shared 2s skew tolerance
+    # into the future relative to the scanner's evaluation timestamp.
+    assert tracker.atm("NIFTY", source_timestamp - 2_100_000_000) is None
+
+
 def test_atm_tracker_rejects_unknown_or_invalid_inputs():
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     assert tracker.update("BANKNIFTY", 100.0) is None
