@@ -144,14 +144,36 @@ function syntheticFutureValue(row: Row) {
   return "Bid " + formatValue(syntheticBid) + " / Ask " + formatValue(syntheticAsk);
 }
 
+function quoteSideNumber(raw: unknown, side: "bid" | "ask"): number | null {
+  const direct = nullableNumber(raw);
+  if (direct !== null) return direct;
+  if (typeof raw !== "string") return null;
+  // Some pair-monitor payloads provide display strings such as
+  // "Bid 73,560 / Ask 73,583 · 15:05:48" instead of numeric fields.
+  const label = side === "bid" ? "Bid" : "Ask";
+  const match = raw.match(new RegExp(label + "\\s+([+-]?[\\d,]+(?:\\.\\d+)?)", "i"));
+  if (match) {
+    const parsed = Number(match[1].replaceAll(",", ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  // Also accept a single formatted price when the field is explicitly a
+  // bid/ask field, while avoiding accidental parsing of timestamps.
+  const trimmed = raw.trim();
+  if (/^[+-]?[\\d,]+(?:\\.\\d+)?$/.test(trimmed)) {
+    const parsed = Number(trimmed.replaceAll(",", ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function syntheticRawEdges(row: Row) {
   const strike = nullableNumber(value(row, "strike"));
-  const futureBid = nullableNumber(value(row, "future_bid"));
-  const futureAsk = nullableNumber(value(row, "future_ask"));
-  const callBid = nullableNumber(value(row, "call_bid"));
-  const callAsk = nullableNumber(value(row, "call_ask"));
-  const putBid = nullableNumber(value(row, "put_bid"));
-  const putAsk = nullableNumber(value(row, "put_ask"));
+  const futureBid = quoteSideNumber(value(row, "future_bid"), "bid");
+  const futureAsk = quoteSideNumber(value(row, "future_ask"), "ask");
+  const callBid = quoteSideNumber(value(row, "call_bid"), "bid");
+  const callAsk = quoteSideNumber(value(row, "call_ask"), "ask");
+  const putBid = quoteSideNumber(value(row, "put_bid"), "bid");
+  const putAsk = quoteSideNumber(value(row, "put_ask"), "ask");
   if ([strike, futureBid, futureAsk, callBid, callAsk, putBid, putAsk].some(v => v === null)) return null;
   const syntheticBid = strike! + callBid! - putAsk!;
   const syntheticAsk = strike! + callAsk! - putBid!;
