@@ -1,5 +1,6 @@
 """Explicit, on-demand exact-contract status checks and durable trace history."""
 from datetime import datetime, timezone
+import json
 from math import isfinite
 from typing import Literal
 
@@ -10,6 +11,13 @@ router = APIRouter(prefix="/api/v1/scanner/synthetic-cash-carry/trace", tags=["S
 
 _ALLOWED_INDEXES = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
 _EXCHANGE_BY_INDEX = {"SENSEX": "BFO", "BANKEX": "BFO"}
+
+
+class TraceOpportunityRequest(BaseModel):
+    trace_id: str = Field(min_length=1, max_length=128)
+    trace_key: str = Field(min_length=1, max_length=512)
+    traced_at: str = Field(min_length=10, max_length=64)
+    snapshot: dict[str, object]
 
 
 class TraceStatusRequest(BaseModel):
@@ -238,6 +246,94 @@ def _history_rows(trace_id: str, limit: int = 20):
             "pnl_per_lot": row.pnl_per_lot,
             "detail": row.detail,
         } for row in rows]
+    finally:
+        db.close()
+
+
+def _trace_snapshot_record(trace_id: str, trace_key: str, traced_at: str, snapshot: dict):
+    from app.core.database import SessionLocal
+    from app.models.synthetic_trace_opportunity import SyntheticTraceOpportunity
+
+    try:
+        encoded = json.dumps(snapshot, separators=(",", ":"), allow_nan=False)
+        traced = datetime.fromisoformat(traced_at.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
+        underlying = str(snapshot.get("underlying") or "").strip().upper()
+        direction = str(snapshot.get("direction") or "").strip().upper()
+        expiry = str(snapshot.get("expiry") or "").strip()
+        strike = float(snapshot.get("strike"))
+        edge = float(snapshot.get("executable_edge", snapshot.get("long_edge" if direction == "LONG" else "short_edge")))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail="Trace snapshot contains invalid identity, time, strike or edge") from exc
+    if len(encoded) > 100_000:
+        raise HTTPException(status_code=413, detail="Trace snapshot exceeds the 100 KB limit")
+    if underlying not in _ALLOWED_INDEXES or direction not in {"LONG", "SHORT"} or not expiry or not isfinite(strike) or strike <= 0 or not isfinite(edge):
+        raise HTTPException(status_code=422, detail="Trace snapshot must identify a supported index, expiry, strike, direction and finite entry edge")
+    if str(snapshot.get("trace_id") or trace_id) != trace_id:
+        raise HTTPException(status_code=422, detail="Trace ID does not match the snapshot")
+    db = SessionLocal()
+    try:
+        row = db.get(SyntheticTraceOpportunity, trace_id)
+        if row is None:
+            row = SyntheticTraceOpportunity(
+                trace_id=trace_id, trace_key=trace_key, traced_at=traced,
+                underlying=underlying, expiry=expiry, strike=strike,
+                direction=direction, entry_edge=edge, snapshot_json=encoded,
+            )
+            db.add(row)
+        else:
+            row.trace_key = trace_key
+            row.traced_at = traced
+            row.underlying = underlying
+            row.expiry = expiry
+            row.strike = strike
+            row.direction = direction
+            row.entry_edge = edge
+            row.snapshot_json = encoded
+        db.commit()
+        return {"trace_id": trace_id, "persisted": True}
+    finally:
+        db.close()
+
+
+@router.post("/opportunities")
+def save_trace_opportunity(request: TraceOpportunityRequest):
+    return _trace_snapshot_record(request.trace_id, request.trace_key, request.traced_at, request.snapshot)
+
+
+@router.get("/opportunities")
+def list_trace_opportunities(limit: int = Query(default=200, ge=1, le=500)):
+    from app.core.database import SessionLocal
+    from app.models.synthetic_trace_opportunity import SyntheticTraceOpportunity
+
+    db = SessionLocal()
+    try:
+        rows = (db.query(SyntheticTraceOpportunity)
+                .order_by(SyntheticTraceOpportunity.traced_at.desc())
+                .limit(limit).all())
+        return {"count": len(rows), "data": [
+            {**json.loads(row.snapshot_json),
+             "trace_id": row.trace_id,
+             "trace_key": row.trace_key,
+             "traced_at": row.traced_at.replace(tzinfo=timezone.utc).isoformat(),
+             "persisted": True}
+            for row in rows
+        ]}
+    finally:
+        db.close()
+
+
+@router.delete("/opportunities/{trace_id}")
+def delete_trace_opportunity(trace_id: str):
+    from app.core.database import SessionLocal
+    from app.models.synthetic_trace_opportunity import SyntheticTraceOpportunity
+
+    db = SessionLocal()
+    try:
+        row = db.get(SyntheticTraceOpportunity, trace_id)
+        if row is not None:
+            db.delete(row)
+            db.commit()
+        return {"trace_id": trace_id, "deleted": True}
     finally:
         db.close()
 
