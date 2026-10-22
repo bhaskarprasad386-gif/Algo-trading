@@ -82,7 +82,7 @@ configure_calendar_spread_scanner(live_calendar_spread_scanner)
 configure_calendar_spread_feed_snapshot(lambda: None if live_calendar_spread_runner is None else live_calendar_spread_runner.snapshot())
 live_synthetic_latest_results: tuple = ()
 live_synthetic_runner: LiveSyntheticRunner | None = None
-_live_synthetic_universe_selection = "ALL"
+_live_synthetic_universe_selection = "INDEX"
 _live_synthetic_universe_restart_requested = threading.Event()
 _live_synthetic_universe_status = {
     "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
