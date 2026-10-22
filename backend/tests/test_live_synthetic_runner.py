@@ -18,6 +18,26 @@ def test_atm_change_debouncer_ignores_strike_jitter_and_accepts_stable_change():
     assert debouncer.is_stable("NIFTY", 100.0, 105.0)
 
 
+def test_atm_move_inside_subscribed_strike_band_does_not_require_rebuild():
+    from app.market_data.live_synthetic_stream import SyntheticSubscription
+
+    subscriptions = [
+        SyntheticSubscription(2, "f1", "ABC29OCT26FUT", "ABC", "STOCK"),
+        SyntheticSubscription(2, "c95", "ABC95CE", "ABC", "STOCK", option_type="CE", strike=95.0),
+        SyntheticSubscription(2, "p95", "ABC95PE", "ABC", "STOCK", option_type="PE", strike=95.0),
+        SyntheticSubscription(2, "c100", "ABC100CE", "ABC", "STOCK", option_type="CE", strike=100.0),
+        SyntheticSubscription(2, "p100", "ABC100PE", "ABC", "STOCK", option_type="PE", strike=100.0),
+        SyntheticSubscription(2, "c105", "ABC105CE", "ABC", "STOCK", option_type="CE", strike=105.0),
+        SyntheticSubscription(2, "p105", "ABC105PE", "ABC", "STOCK", option_type="PE", strike=105.0),
+    ]
+
+    assert not LiveSyntheticRunner._atm_outside_subscription_coverage("ABC", 105.0, subscriptions)
+    assert not LiveSyntheticRunner._atm_outside_subscription_coverage("ABC", 95.0, subscriptions)
+    assert LiveSyntheticRunner._atm_outside_subscription_coverage("ABC", 90.0, subscriptions)
+    assert LiveSyntheticRunner._atm_outside_subscription_coverage("ABC", 110.0, subscriptions)
+    assert not LiveSyntheticRunner._atm_outside_subscription_coverage("ABC", None, subscriptions)
+
+
 def _master():
     master = InstrumentMaster()
     items = [
