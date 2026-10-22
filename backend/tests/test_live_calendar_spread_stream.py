@@ -60,6 +60,19 @@ def test_calendar_live_timestamp_and_expiry_normalization():
 def test_calendar_live_timestamp_normalization_accepts_nanoseconds():
     assert _timestamp_ns({"exchange_timestamp": 1727000000000000000}) == 1727000000000000000
 
+def test_calendar_source_timestamp_accepts_normalizer_aliases():
+    second = 1_727_000_000
+    assert _source_timestamp_ns({"timestamp": second}) == second * 1_000_000_000
+    assert _source_timestamp_ns({"feed_time": second}) == second * 1_000_000_000
+    assert _source_timestamp_ns({"timestamp": second * 1_000}) == second * 1_000_000_000
+    assert _source_timestamp_ns({"timestamp_ns": second * 1_000_000_000}) == second * 1_000_000_000
+
+
+def test_calendar_source_timestamp_rejects_receive_time_or_non_epoch_values():
+    assert _source_timestamp_ns({}) is None
+    assert _source_timestamp_ns({"timestamp": "not-a-timestamp"}) is None
+    assert _source_timestamp_ns({"feed_time": 12345}) is None
+
 
 def test_calendar_live_payload_source_timestamp_is_second_aligned():
     second = 1727000000123456789 // 1_000_000_000 * 1_000_000_000

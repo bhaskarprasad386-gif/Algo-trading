@@ -65,8 +65,13 @@ def _timestamp_ns(message: dict[str, Any]) -> int | None:
 
 def _source_timestamp_ns(message: dict[str, Any]) -> int | None:
     """Read a real provider timestamp; never substitute local receive time."""
+    # Keep this alias list aligned with AngelOneTickNormalizer._timestamp_ns
+    # and CommonWebSocketManager._has_provider_timestamp. Some provider frames
+    # expose source time as timestamp/feed_time rather than exchange_timestamp;
+    # dropping those frames here silently starves otherwise valid NFO/BFO pairs.
     for key in (
-        "exchange_timestamp_ns", "exchange_timestamp", "exchange_timestamp_ms",
+        "exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
+        "exchange_timestamp_ms", "timestamp", "feed_time",
     ):
         value = message.get(key)
         if value is None:
