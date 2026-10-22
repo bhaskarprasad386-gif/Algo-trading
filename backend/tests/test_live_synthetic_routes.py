@@ -147,27 +147,33 @@ def test_live_route_skips_malformed_timestamps_without_failing():
     assert response["data"][0]["underlying"] == "NIFTY"
 
 
-def test_live_route_fairly_distributes_limited_rows_across_underlyings():
-    index_rows, stock_rows = [], []
-    for strike in range(25000, 25005):
-        index_row = _result()
-        index_row.option.underlying = "SENSEX"
-        index_row.option.instrument_class = "INDEX"
-        index_row.option.strike = strike
-        index_row.option.timestamp_ns = time.time_ns()
-        index_rows.append(index_row)
-        stock_row = _result()
-        stock_row.option.underlying = "RELIANCE"
-        stock_row.option.instrument_class = "STOCK"
-        stock_row.option.strike = strike
-        stock_row.option.timestamp_ns = time.time_ns()
-        stock_rows.append(stock_row)
-    live_synthetic_routes.configure(lambda: tuple(index_rows + stock_rows))
-    response = live_synthetic_routes.live(limit=4)
+def test_live_route_fairly_distributes_limited_rows_across_indices():
+    index_rows = []
+    for symbol, base_strike in (("SENSEX", 73000), ("NIFTY", 25000), ("BANKNIFTY", 50000)):
+        for offset in range(3):
+            row = _result()
+            row.option.underlying = symbol
+            row.option.instrument_class = "INDEX"
+            row.option.strike = base_strike + offset
+            row.option.timestamp_ns = time.time_ns() + offset
+            index_rows.append(row)
+    live_synthetic_routes.configure(lambda: tuple(index_rows))
+    response = live_synthetic_routes.live(limit=6)
     symbols = [row["underlying"] for row in response["data"]]
-    assert len(symbols) == 4
-    assert symbols.count("SENSEX") == 2
-    assert symbols.count("RELIANCE") == 2
+    assert len(symbols) == 6
+    assert set(symbols) == {"SENSEX", "NIFTY", "BANKNIFTY"}
+    assert all(symbols.count(symbol) == 2 for symbol in set(symbols))
+
+
+def test_live_route_rejects_stock_opportunities_even_with_large_edge():
+    stock = _result()
+    stock.option.underlying = "RELIANCE"
+    stock.option.instrument_class = "STOCK"
+    stock.executable_edge = 100.0
+    live_synthetic_routes.configure(lambda: (stock,))
+    response = live_synthetic_routes.live(limit=10)
+    assert response["data"] == []
+    assert response["opportunity_count"] == 0
 
 
 def test_live_route_limits_results():
