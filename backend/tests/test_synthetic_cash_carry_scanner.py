@@ -160,11 +160,11 @@ def test_displayed_edge_is_raw_executable_difference_without_carry_or_fees():
     results = scan_synthetic_snapshot(
         (quote,), future_quote, atm_strike=100, config=config,
     )
-    long_result = next(row for row in results if row.direction == "LONG")
+    short_result = next(row for row in results if row.direction == "SHORT")
 
     # Synthetic Ask = strike + CE Ask - PE Bid = 95 + 21 - 1 = 115.
-    # Raw LONG edge = Future Bid - Synthetic Ask = 130 - 115 = 15.
-    assert long_result.executable_edge == 15.0
-    assert long_result.carry_adjusted_synthetic_buy == 115.0
-    assert long_result.carry_factor == 1.0
-    assert long_result.fees_per_unit == 0.0
+    # Raw SHORT edge = Future Bid - Synthetic Ask = 130 - 115 = 15.
+    assert short_result.executable_edge == 15.0
+    assert short_result.carry_adjusted_synthetic_buy == 115.0
+    assert short_result.carry_factor == 1.0
+    assert short_result.fees_per_unit == 0.0
