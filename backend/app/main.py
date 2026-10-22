@@ -1042,8 +1042,6 @@ def get_synthetic_universe():
         "options": ["INDEX", *sorted(NIFTY50_INDEX_SYMBOLS)],
         "meaning": {
             "INDEX": "All supported index underlyings only; no stock options/futures subscribed",
-            "ALL": "All supported index underlyings plus the top 15 liquid F&O stocks",
-            "TOP15": "Top 15 liquid F&O stocks only; no index underlyings",
         },
         "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
         "availability": dict(_live_synthetic_universe_status),
