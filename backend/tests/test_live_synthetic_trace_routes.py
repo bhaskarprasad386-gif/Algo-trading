@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -131,6 +131,6 @@ def test_trace_quotes_without_exchange_timestamp_fail_closed():
 
 
 def test_trace_quotes_older_than_freshness_limit_fail_closed():
-    old = (datetime.now(ZoneInfo("Asia/Kolkata")) - __import__("datetime").timedelta(seconds=30)).strftime("%d-%b-%Y %H:%M:%S")
+    old = (datetime.now(ZoneInfo("Asia/Kolkata")) - timedelta(seconds=30)).strftime("%d-%b-%Y %H:%M:%S")
     with pytest.raises(LookupError, match="is stale"):
         trace_routes._validate_quote_freshness({"exchFeedTime": old}, "call")
