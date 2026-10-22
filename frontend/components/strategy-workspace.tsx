@@ -798,10 +798,27 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [endpoint, isCustom]);
 
   const filteredRows = useMemo(() => {
+    const indexOrder = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+    let scopedRows = rows;
+    if (slug === "synthetic-arbitrage") {
+      // Aggregate INDEX shows each supported index separately; an individual
+      // selection must never display another index's opportunities.
+      scopedRows = rows.filter((row) => {
+        const symbol = String(row.underlying ?? "").trim().toUpperCase();
+        const instrumentClass = String(row.instrument_class ?? "").trim().toUpperCase();
+        if (instrumentClass !== "INDEX" || !indexOrder.includes(symbol)) return false;
+        return control === "INDEX" || symbol === control;
+      }).sort((a, b) => {
+        const ai = indexOrder.indexOf(String(a.underlying ?? "").trim().toUpperCase());
+        const bi = indexOrder.indexOf(String(b.underlying ?? "").trim().toUpperCase());
+        if (ai !== bi) return ai - bi;
+        return Number(b.timestamp_ns ?? 0) - Number(a.timestamp_ns ?? 0);
+      });
+    }
     const q = search.trim().toUpperCase();
-    if (!q) return rows;
-    return rows.filter((row) => Object.values(row).some((v) => String(v ?? "").toUpperCase().includes(q)));
-  }, [rows, search]);
+    if (!q) return scopedRows;
+    return scopedRows.filter((row) => Object.values(row).some((v) => String(v ?? "").toUpperCase().includes(q)));
+  }, [rows, search, slug, control]);
 
   const signals = rows.filter((row) => isSignal(slug, row)).length;
   const monitorRows = c.pairEndpoint ? pairRows : rows;
@@ -1008,7 +1025,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span>
         </div>
         <div className="grid gap-2 p-3 md:hidden">
-          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live opportunity data</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</div></div>)}</div></div>)}
+          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live opportunity data</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</div></div>)}</div></div>)}
         </div>
         <div className="hidden overflow-x-auto md:block">
           <table className="min-w-[1100px] w-full text-left text-sm">
@@ -1016,7 +1033,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <tbody>
               {loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr> :
               filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">No live opportunity data</td></tr> :
-              filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className="border-b theme-border last:border-0">
+              filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className={"border-b theme-border last:border-0 " + (slug === "synthetic-arbitrage" ? "border-t-2 theme-border" : "")}>
                 {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted") + " " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</td>)}
               </tr>)}
             </tbody>
