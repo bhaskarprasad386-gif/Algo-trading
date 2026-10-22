@@ -123,9 +123,11 @@ def _calculate_close_pnl(request: TraceStatusRequest, future: dict, synthetic_bi
     entry_synthetic_bid = request.strike + entry["call_bid"] - entry["put_ask"]
     entry_synthetic_ask = request.strike + entry["call_ask"] - entry["put_bid"]
     if request.direction == "LONG":
-        pnl_per_unit = (entry["future_bid"] - future["ask"]) + (synthetic_bid - entry_synthetic_ask)
-    else:
+        # LONG = buy future at entry ask and sell synthetic at entry bid.
         pnl_per_unit = (future["bid"] - entry["future_ask"]) + (entry_synthetic_bid - synthetic_ask)
+    else:
+        # SHORT = sell future at entry bid and buy synthetic at entry ask.
+        pnl_per_unit = (entry["future_bid"] - future["ask"]) + (synthetic_bid - entry_synthetic_ask)
     return {
         "pnl_status": "GROSS_ESTIMATE",
         "pnl_detail": "Executable bid/ask estimate before brokerage, taxes, slippage and other charges.",
@@ -273,8 +275,9 @@ def check_trace_live_status(request: TraceStatusRequest):
             raise LookupError("One or more exact contracts have no valid bid/ask depth; executable edge is unavailable")
         synthetic_bid = float(request.strike) + call["bid"] - put["ask"]
         synthetic_ask = float(request.strike) + call["ask"] - put["bid"]
-        long_edge = future["bid"] - synthetic_ask
-        short_edge = synthetic_bid - future["ask"]
+        # Keep direction definitions aligned with the scanner's approved executable formulas.
+        long_edge = synthetic_bid - future["ask"]
+        short_edge = future["bid"] - synthetic_ask
         current_edge = long_edge if request.direction == "LONG" else short_edge
         pnl = _calculate_close_pnl(request, future, synthetic_bid, synthetic_ask)
         payload = {
