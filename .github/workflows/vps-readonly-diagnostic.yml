@@ -67,6 +67,15 @@ jobs:
           echo "=== LIVE_HEALTH ==="
           curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/live-health || true
           echo
+          echo "=== SYNTHETIC_DIAGNOSTICS ==="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 12 http://127.0.0.1:8000/api/v1/scanner/synthetic-cash-carry/diagnostics || true
+          echo
+          echo "=== SYNTHETIC_PAIRS ==="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 12 "http://127.0.0.1:8000/api/v1/scanner/synthetic-cash-carry/pairs?limit=50" || true
+          echo
+          echo "=== SYNTHETIC_RUNNER_LOGS ==="
+          journalctl -u algo-trading.service --since "30 minutes ago" --no-pager 2>/dev/null | grep -Ei "synthetic|WAITING_FOR_ATM|monthly_expiry_unresolved|selector_returned_no_contracts|contract_selection_failed|concrete option strikes|underlying feed|subscription" | tail -160 || true
+          echo
           echo "=== COMMON_FEED_HEALTH ==="
           curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/common-feed-health || true
           echo
