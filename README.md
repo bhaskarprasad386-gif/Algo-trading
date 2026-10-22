@@ -17,3 +17,5 @@ Backend CI runs dependency installation, Python compilation, and the pytest suit
 
 ## VPS deployment safety
 The VPS deploy workflow defers service restarts during market hours by default. An explicitly authorized push commit whose message contains `[force-restart]` overrides that guard and restarts the service; use it only when a market-hours interruption is intended.
+
+The synthetic ATM tracker allows only the same bounded 2-second future/spot timestamp skew as the live quote matcher; stale underlying prices remain rejected. The VPS deploy workflow must be explicitly authorized to restart during market hours when deploying runtime fixes.
