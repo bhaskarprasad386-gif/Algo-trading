@@ -4,9 +4,26 @@ from app.core.database import SessionLocal
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 router=APIRouter(prefix="/api/v1/scanner/calendar-spread",tags=["Calendar Spread Scanner"])
 scanner=None
+feed_snapshot_provider=None
 
 def configure(value):
  global scanner; scanner=value
+
+def configure_feed_snapshot(provider):
+ global feed_snapshot_provider; feed_snapshot_provider=provider
+
+@router.get("/feed-diagnostics")
+def feed_diagnostics():
+ """Expose actual collector/feed health by exchange; never synthesize market data."""
+ if feed_snapshot_provider is None:
+  return {"status":"unavailable","reason":"collector_not_configured","data":None}
+ try:
+  snapshot=feed_snapshot_provider()
+ except Exception as exc:
+  return {"status":"error","reason":"collector_snapshot_failed","detail":str(exc)[:240],"data":None}
+ if snapshot is None:
+  return {"status":"starting","reason":"collector_not_started","data":None}
+ return {"status":"success","scanner":"calendar-spread-feed-diagnostics","data":snapshot}
 @router.get("/live")
 def live(limit:int=Query(50,ge=1,le=200), min_gap_points:float|None=Query(None,ge=0), min_gross_profit:float|None=Query(None,ge=0)):
  if scanner is None:return {"status":"disabled","data":[],"opportunity_count":0}
