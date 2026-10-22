@@ -92,10 +92,20 @@ def _qualifies_live_edge(result) -> bool:
 
     symbol = str(getattr(option, "underlying", "") or "").strip().upper()
     instrument_class = str(getattr(option, "instrument_class", "") or "").strip().upper()
+
+    # Fail closed: the live API must never assign a permissive default threshold
+    # to an unknown underlying or an unsupported instrument class.
+    if not symbol:
+        return False
     if instrument_class == "STOCK":
-        # Match the scanner's existing strict stock rule (> 5 points).
+        # The scanner core already restricts stock rows to its configured
+        # top-15 liquid universe. Keep the same strict edge rule at the API.
         return edge > 5.0
-    minimum = _LIVE_INDEX_MIN_EDGE.get(symbol, 1.0)
+    if instrument_class != "INDEX":
+        return False
+    minimum = _LIVE_INDEX_MIN_EDGE.get(symbol)
+    if minimum is None:
+        return False
     # Index thresholds are inclusive: edge equal to the minimum qualifies.
     return edge >= minimum
 
