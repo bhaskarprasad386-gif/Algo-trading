@@ -176,6 +176,40 @@ def _save_check(request, payload):
         db.close()
 
 
+def _save_failed_check(request: TraceStatusRequest, detail: str):
+    """Persist a failed explicit check too; failures must not disappear from the audit trail."""
+    try:
+        from app.core.database import SessionLocal
+        from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
+        now = datetime.now()
+        db = SessionLocal()
+        try:
+            db.add(SyntheticTraceStatusCheck(
+                trace_id=request.trace_id,
+                checked_at=now,
+                underlying=request.underlying.strip().upper(),
+                expiry=str(request.expiry),
+                strike=request.strike,
+                direction=request.direction,
+                entry_edge=request.entry_edge,
+                current_edge=None,
+                edge_change=None,
+                future_bid=None, future_ask=None,
+                call_bid=None, call_ask=None, put_bid=None, put_ask=None,
+                synthetic_bid=None, synthetic_ask=None,
+                lot_size=request.lot_size,
+                pnl_per_unit=None, pnl_per_lot=None,
+                pnl_status="UNAVAILABLE",
+                detail=detail[:2000],
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        # A history-storage outage must not mask the real quote-resolution error.
+        pass
+
+
 def _history_rows(trace_id: str, limit: int = 20):
     from app.core.database import SessionLocal
     from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
@@ -261,11 +295,15 @@ def check_trace_live_status(request: TraceStatusRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except LookupError as exc:
+        _save_failed_check(request, str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Exact live quote request failed: " + type(exc).__name__) from exc
+        detail = "Exact live quote request failed: " + type(exc).__name__
+        _save_failed_check(request, detail)
+        raise HTTPException(status_code=502, detail=detail) from exc
 
 
 @router.get("/history")
 def get_trace_status_history(trace_id: str = Query(min_length=1, max_length=128), limit: int = Query(default=20, ge=1, le=100)):
-    return {"trace_id": trace_id, "count": len(_history_rows(trace_id, limit)), "data": _history_rows(trace_id, limit)}
+    rows = _history_rows(trace_id, limit)
+    return {"trace_id": trace_id, "count": len(rows), "data": rows}
