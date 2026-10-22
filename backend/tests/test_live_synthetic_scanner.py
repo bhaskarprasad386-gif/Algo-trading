@@ -193,23 +193,26 @@ def test_live_synthetic_scanner_rejects_missing_timestamp():
 
 
 def test_live_scanner_pairs_real_quotes_within_two_second_exchange_skew():
-    ts = 35_000_000_000
+    import time
+    from datetime import date, timedelta
+    ts = time.time_ns()
+    expiry = (date.today() + timedelta(days=7)).strftime("%d%b%Y").upper()
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "CE",
-        "expiry": "29OCT2026", "strike": 105.0, "bid": 10.0, "ask": 11.0,
+        "expiry": expiry, "strike": 105.0, "bid": 10.0, "ask": 11.0,
         "lot_size": 1, "source_timestamp_ns": ts, "symbol": "NIFTY29OCT26105CE",
         "volume": 100, "oi": 1000,
     })
     scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "PE",
-        "expiry": "29OCT2026", "strike": 105.0, "bid": 4.0, "ask": 5.0,
+        "expiry": expiry, "strike": 105.0, "bid": 4.0, "ask": 5.0,
         "lot_size": 1, "source_timestamp_ns": ts + 1_500_000_000, "symbol": "NIFTY29OCT26105PE",
         "volume": 100, "oi": 1000,
     })
     results = scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-        "expiry": "29OCT2026", "bid": 130.0, "ask": 131.0, "lot_size": 1,
+        "expiry": expiry, "bid": 130.0, "ask": 131.0, "lot_size": 1,
         "source_timestamp_ns": ts + 1_500_000_000, "symbol": "NIFTY29OCT26FUT",
         "volume": 100, "oi": 1000,
     })
