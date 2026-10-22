@@ -129,6 +129,31 @@ class SyntheticLiveTarget:
     expiry: str | None = None
 
 
+class _AtmChangeDebouncer:
+    """Require an ATM change to remain stable before rebuilding subscriptions."""
+
+    def __init__(self, stable_seconds: float = 1.0, clock: Callable[[], float] = monotonic):
+        if stable_seconds < 0:
+            raise ValueError("stable_seconds must be non-negative")
+        self.stable_seconds = float(stable_seconds)
+        self._clock = clock
+        self._candidates: dict[str, tuple[float, float]] = {}
+        self._lock = Lock()
+
+    def is_stable(self, symbol: str, current: float | None, latest: float | None) -> bool:
+        key = str(symbol or "").strip().upper()
+        now = self._clock()
+        with self._lock:
+            if latest is None or latest == current:
+                self._candidates.pop(key, None)
+                return False
+            candidate = self._candidates.get(key)
+            if candidate is None or candidate[0] != latest:
+                self._candidates[key] = (latest, now)
+                return False
+            return now - candidate[1] >= self.stable_seconds
+
+
 class LiveSyntheticRunner:
     """Run real option+future streaming and scanning for configured targets."""
 
@@ -826,22 +851,7 @@ class LiveSyntheticRunner:
                 # midpoint. Require a changed strike to persist before replacing
                 # the whole option subscription set; this avoids needless
                 # unsubscribe/resubscribe churn on the shared broker feed.
-                atm_change_candidates: dict[str, tuple[float, float]] = {}
-                atm_change_lock = Lock()
-                atm_change_stable_seconds = 1.0
-
-                def atm_change_is_stable(symbol, current, latest):
-                    key = str(symbol or "").strip().upper()
-                    now = monotonic()
-                    with atm_change_lock:
-                        if latest is None or latest == current:
-                            atm_change_candidates.pop(key, None)
-                            return False
-                        candidate = atm_change_candidates.get(key)
-                        if candidate is None or candidate[0] != latest:
-                            atm_change_candidates[key] = (latest, now)
-                            return False
-                        return now - candidate[1] >= atm_change_stable_seconds
+                atm_change_debouncer = _AtmChangeDebouncer(stable_seconds=1.0)
 
                 def observe(payload, _state=callback_state, _initial_atm=initial_atm, _pipeline=pipeline):
                     # Check the recorder bound to this callback's own session, not
@@ -854,7 +864,7 @@ class LiveSyntheticRunner:
                     latest = atm_provider(symbol, time_ns())
                     # Do not evaluate a tick from the old subscription universe
                     # against a newly moved ATM; discard it and refresh first.
-                    if atm_change_is_stable(symbol, current, latest):
+                    if atm_change_debouncer.is_stable(symbol, current, latest):
                         self._refresh_requested.set()
                         active.stop()
                         return
@@ -874,7 +884,7 @@ class LiveSyntheticRunner:
                     while not self._stop_requested.is_set() and not active_recorder.stop_event.is_set():
                         for symbol, initial in initial_atm.items():
                             latest = atm_provider(symbol, time_ns())
-                            if atm_change_is_stable(symbol, initial, latest):
+                            if atm_change_debouncer.is_stable(symbol, initial, latest):
                                 if self._recorder is active_recorder:
                                     self._refresh_requested.set()
                                     active_recorder.stop()
