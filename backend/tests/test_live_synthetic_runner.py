@@ -731,6 +731,7 @@ def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
 
 def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
     from threading import Event
+    from time import sleep
 
     atm = {"value": 100.0}
     runner = LiveSyntheticRunner(
@@ -773,6 +774,10 @@ def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
         def run_forever(self):
             if len(type(self).instances) == 1:
                 atm["value"] = 105.0
+                # ATM changes are intentionally debounced; a second observation
+                # after the stability window should trigger the subscription refresh.
+                self.on_observation({"underlying": "NIFTY"})
+                sleep(1.05)
                 self.on_observation({"underlying": "NIFTY"})
                 assert self.stop_event.is_set()
             else:
