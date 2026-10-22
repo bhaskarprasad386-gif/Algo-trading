@@ -97,10 +97,8 @@ def _qualifies_live_edge(result) -> bool:
     # to an unknown underlying or an unsupported instrument class.
     if not symbol:
         return False
-    if instrument_class == "STOCK":
-        # The scanner core already restricts stock rows to its configured
-        # top-15 liquid universe. Keep the same strict edge rule at the API.
-        return edge > 5.0
+    # This workspace is intentionally index-only. Reject stock rows even if
+    # stale snapshots or a misconfigured runner accidentally emits them.
     if instrument_class != "INDEX":
         return False
     minimum = _LIVE_INDEX_MIN_EDGE.get(symbol)
