@@ -1,7 +1,9 @@
 """Explicit, on-demand exact-contract status checks and durable trace history."""
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import json
 from math import isfinite
+from builtins import max
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -99,6 +101,53 @@ def _resolve_contracts(master, symbol: str, expiry_text: str, strike: float):
             raise LookupError(f"Exact {role} contract {reason} for {symbol} {target_expiry} strike {strike:g}")
         resolved[role] = candidates[0]
     return segment, resolved
+
+
+_TRACE_MAX_QUOTE_AGE_SECONDS = 10.0
+_TRACE_CLOCK_SKEW_SECONDS = 5.0
+
+
+def _quote_timestamp(quote: dict):
+    for field in ("exchFeedTime", "exchTradeTime", "exchange_timestamp", "timestamp"):
+        raw = quote.get(field)
+        if raw is None or str(raw).strip() == "":
+            continue
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            try:
+                stamp = float(raw)
+                if stamp > 10_000_000_000:
+                    stamp /= 1000.0
+                return datetime.fromtimestamp(stamp, tz=ZoneInfo("Asia/Kolkata"))
+            except (ValueError, OverflowError, OSError):
+                continue
+        text = str(raw).strip()
+        try:
+            stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            stamp = None
+            for fmt in ("%d-%b-%Y %H:%M:%S", "%d-%b-%y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
+                try:
+                    stamp = datetime.strptime(text, fmt)
+                    break
+                except ValueError:
+                    continue
+        if stamp is not None:
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+            return stamp.astimezone(ZoneInfo("Asia/Kolkata"))
+    return None
+
+
+def _validate_quote_freshness(quote: dict, role: str):
+    stamp = _quote_timestamp(quote)
+    if stamp is None:
+        raise LookupError(f"Exact {role} quote has no exchange timestamp; refusing to report a possibly stale edge")
+    age = (datetime.now(ZoneInfo("Asia/Kolkata")) - stamp).total_seconds()
+    if age > _TRACE_MAX_QUOTE_AGE_SECONDS:
+        raise LookupError(f"Exact {role} quote is stale ({age:.1f}s old; limit {_TRACE_MAX_QUOTE_AGE_SECONDS:g}s)")
+    if age < -_TRACE_CLOCK_SKEW_SECONDS:
+        raise LookupError(f"Exact {role} quote timestamp is in the future ({-age:.1f}s); refusing the edge")
+    return max(0.0, age)
 
 
 def _quote_rows(response):
@@ -364,8 +413,10 @@ def check_trace_live_status(request: TraceStatusRequest):
             quote = quote_by_token.get(str(instrument["token"]).strip())
             if quote is None:
                 raise LookupError(f"Live quote missing for exact {role} contract {instrument['symbol']}")
+            quote_age = _validate_quote_freshness(quote, role)
             legs[role] = {"symbol": str(instrument["symbol"]), "bid": _depth_side(quote, "bid"),
-                          "ask": _depth_side(quote, "ask"), "ltp": _positive_price(quote.get("ltp"))}
+                          "ask": _depth_side(quote, "ask"), "ltp": _positive_price(quote.get("ltp")),
+                          "quote_age_seconds": round(quote_age, 3)}
         future, call, put = legs["future"], legs["call"], legs["put"]
         if any(legs[role][side] is None for role in legs for side in ("bid", "ask")):
             raise LookupError("One or more exact contracts have no valid bid/ask depth; executable edge is unavailable")
@@ -382,6 +433,7 @@ def check_trace_live_status(request: TraceStatusRequest):
             "strike": float(request.strike), "direction": request.direction,
             "checked_at": datetime.now().astimezone().isoformat(), "exchange": segment,
             "contracts": legs, "synthetic_bid": synthetic_bid, "synthetic_ask": synthetic_ask,
+            "max_quote_age_seconds": max(legs[role]["quote_age_seconds"] for role in legs),
             "long_edge": long_edge, "short_edge": short_edge, "entry_edge": float(request.entry_edge),
             "current_edge": current_edge, "edge_change": current_edge - float(request.entry_edge),
             **pnl, "quote_source": "Angel One FULL quote depth", "broker_orders": "OFF",
