@@ -145,25 +145,22 @@ function syntheticFutureValue(row: Row) {
 }
 
 function quoteSideNumber(raw: unknown, side: "bid" | "ask"): number | null {
-  const direct = nullableNumber(raw);
-  if (direct !== null) return direct;
-  if (typeof raw !== "string") return null;
-  // Some pair-monitor payloads provide display strings such as
-  // "Bid 73,560 / Ask 73,583 · 15:05:48" instead of numeric fields.
-  const label = side === "bid" ? "Bid" : "Ask";
-  const match = raw.match(new RegExp(label + "\\s+([+-]?[\\d,]+(?:\\.\\d+)?)", "i"));
-  if (match) {
-    const parsed = Number(match[1].replaceAll(",", ""));
-    return Number.isFinite(parsed) ? parsed : null;
+  // Check labeled quote strings BEFORE numeric coercion. A combined value
+  // like "Bid 73,560 / Ask 73,583 · 15:05:48" must yield different bid/ask.
+  if (typeof raw === "string") {
+    const label = side === "bid" ? "Bid" : "Ask";
+    const match = raw.match(new RegExp(label + "\\s+([+-]?[\\d,]+(?:\\.\\d+)?)", "i"));
+    if (match) {
+      const parsed = Number(match[1].replaceAll(",", ""));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    const trimmed = raw.trim();
+    if (/^[+-]?[\\d,]+(?:\\.\\d+)?$/.test(trimmed)) {
+      const parsed = Number(trimmed.replaceAll(",", ""));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
   }
-  // Also accept a single formatted price when the field is explicitly a
-  // bid/ask field, while avoiding accidental parsing of timestamps.
-  const trimmed = raw.trim();
-  if (/^[+-]?[\\d,]+(?:\\.\\d+)?$/.test(trimmed)) {
-    const parsed = Number(trimmed.replaceAll(",", ""));
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
+  return nullableNumber(raw);
 }
 
 function syntheticRawEdges(row: Row) {
