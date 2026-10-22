@@ -103,7 +103,7 @@ def test_run_strategy_builds_synthetic_payoff(tmp_path):
     result = service.run_strategy("synthetic-cash-carry",
                                   [{"timestamp_ns": 1, "option": option, "future": future},
                                    {"timestamp_ns": 2, "option": later_option, "future": later_future}],
-                                  payoff_prices=(90, 100, 110))
+                                  parameters={"direction": "SHORT"}, payoff_prices=(90, 100, 110))
     assert result.completed_trades == 1
     assert result.payoff is not None and len(result.payoff.legs) == 3
     assert {leg.kind for leg in result.payoff.legs} == {"CALL", "PUT", "FUTURE"}
