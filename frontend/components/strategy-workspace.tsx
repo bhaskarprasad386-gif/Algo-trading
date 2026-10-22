@@ -36,9 +36,9 @@ function syntheticDirection(row: Row) {
   if (e.long>0 && e.short<=0) return "LONG";
   if (e.short>0 && e.long<=0) return "SHORT";
   if (e.long>0 && e.short>0) return e.long>=e.short ? "LONG" : "SHORT";
-  return backend || "NO EDGE";
+  return "NO EDGE";
 }
-function syntheticEdge(row: Row) { const e=syntheticEdges(row), d=syntheticDirection(row); if (!e) return num(row.executable_edge); return d==="SHORT"?e.short:d==="LONG"?e.long:num(row.executable_edge); }
+function syntheticEdge(row: Row) { const e=syntheticEdges(row), d=syntheticDirection(row); if (!e) return num(row.executable_edge); if (d === "SHORT") return e.short > 0 ? e.short : null; if (d === "LONG") return e.long > 0 ? e.long : null; return null; }
 
 function cell(slug:string,column:string,row:Row) {
   if (slug==="synthetic-arbitrage") {
