@@ -128,12 +128,13 @@ class LiveSyntheticAtmTracker:
         # Treat that sentinel as wall-clock now, not as an epoch timestamp.
         now_ns = timestamp_ns if timestamp_ns > 0 else time_ns()
         age_ns = now_ns - source_ns
-        # The scanner's future/option legs may be timestamped up to 2s
-        # before the latest underlying tick. Match the scanner's quote-skew
-        # tolerance so a slightly newer (but still live) spot tick does not
-        # spuriously turn an otherwise evaluable scan into ATM_MISSING.
-        # Older spot observations are still bounded by max_age_seconds.
-        max_future_skew_ns = 2_000_000_000
+        # NSE spot and NFO derivative exchange timestamps can diverge while
+        # both feeds are still live. Allow a bounded 5s lead for the spot tick
+        # when evaluating a derivative snapshot; stale spot data is still
+        # rejected by this same 5s freshness window in the other direction.
+        # This avoids dropping every scan for a symbol solely because its
+        # latest spot timestamp is newer than the option/future snapshot.
+        max_future_skew_ns = 5_000_000_000
         if age_ns < -max_future_skew_ns or age_ns > int(max_age_seconds * 1_000_000_000):
             return None
         index = bisect_left(strikes, price)
