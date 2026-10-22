@@ -82,7 +82,7 @@ configure_calendar_spread_scanner(live_calendar_spread_scanner)
 configure_calendar_spread_feed_snapshot(lambda: None if live_calendar_spread_runner is None else live_calendar_spread_runner.snapshot())
 live_synthetic_latest_results: tuple = ()
 live_synthetic_runner: LiveSyntheticRunner | None = None
-_live_synthetic_universe_selection = "ALL"
+_live_synthetic_universe_selection = "INDEX"
 _live_synthetic_universe_restart_requested = threading.Event()
 _live_synthetic_universe_status = {
     "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
@@ -594,7 +594,9 @@ async def _live_synthetic_loop() -> None:
             # The selected universe is authoritative: ALL = supported indices + top 15 liquid stocks.
             # An index-only selection must never silently fall back to stocks or other indices.
             selection = _live_synthetic_universe_selection
-            if selection == "ALL":
+            if selection == "INDEX":
+                target_specs = [(symbol, "INDEX") for symbol in index_symbols]
+            elif selection == "ALL":
                 target_specs = (
                     [(symbol, "STOCK") for symbol in stock_symbols]
                     + [(symbol, "INDEX") for symbol in index_symbols]
@@ -1037,8 +1039,9 @@ def get_synthetic_universe():
     return {
         "status": "success",
         "selection": _live_synthetic_universe_selection,
-        "options": ["ALL", "TOP15", *sorted(NIFTY50_INDEX_SYMBOLS)],
+        "options": ["INDEX", "ALL", "TOP15", *sorted(NIFTY50_INDEX_SYMBOLS)],
         "meaning": {
+            "INDEX": "All supported index underlyings only; no stock options/futures subscribed",
             "ALL": "All supported index underlyings plus the top 15 liquid F&O stocks",
             "TOP15": "Top 15 liquid F&O stocks only; no index underlyings",
         },
@@ -1051,7 +1054,7 @@ def get_synthetic_universe():
 def set_synthetic_universe(payload: SyntheticUniverseSelection):
     global _live_synthetic_universe_selection
     selection = str(payload.selection or "").strip().upper()
-    allowed = {"ALL", "TOP15", *NIFTY50_INDEX_SYMBOLS}
+    allowed = {"INDEX", "ALL", "TOP15", *NIFTY50_INDEX_SYMBOLS}
     if selection not in allowed:
         raise HTTPException(status_code=422, detail={"message": "Unsupported synthetic scanner universe", "allowed": sorted(allowed)})
     if selection == _live_synthetic_universe_selection:
