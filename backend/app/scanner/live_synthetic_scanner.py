@@ -864,7 +864,7 @@ class LiveSyntheticScanner:
             },
         }
 
-    TIMESTAMP_TOLERANCE_NS = 1_000_000_000
+    TIMESTAMP_TOLERANCE_NS = 2_000_000_000
 
     def _matching_bucket_key(self, symbol: str, timestamp_ns: int, expiry: int) -> tuple[str, int, int]:
         # Normal ticks may join only a timestamp-compatible snapshot. Extending
