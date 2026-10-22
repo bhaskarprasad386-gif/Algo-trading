@@ -177,7 +177,8 @@ def test_live_synthetic_scanner_rejects_fractional_executable_depth():
 
         scanner.observe(ce)
         scanner.observe(pe)
-        assert scanner.observe(future) == ()        counters = scanner.diagnostics_snapshot()["counters"]
+        assert scanner.observe(future) == ()
+        counters = scanner.diagnostics_snapshot()["counters"]
         assert counters["illiquid_or_incomplete_option_leg"] >= 1
         assert counters.get("scan_evaluations", 0) == 0
 
