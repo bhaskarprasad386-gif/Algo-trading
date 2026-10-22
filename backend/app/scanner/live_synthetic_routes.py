@@ -68,6 +68,38 @@ def _normalize_expiry(value):
     return value
 
 
+_LIVE_INDEX_MIN_EDGE = {
+    "NIFTY": 5.0,
+    "BANKNIFTY": 10.0,
+    "FINNIFTY": 5.0,
+    "MIDCPNIFTY": 3.0,
+    "BANKEX": 10.0,
+    "SENSEX": 10.0,
+}
+
+
+def _qualifies_live_edge(result) -> bool:
+    """Defense-in-depth edge gate for rows exposed as live opportunities."""
+    option = getattr(result, "option", None)
+    if option is None:
+        return False
+    try:
+        edge = float(getattr(result, "executable_edge", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not (edge > 0 and edge < float("inf")):
+        return False
+
+    symbol = str(getattr(option, "underlying", "") or "").strip().upper()
+    instrument_class = str(getattr(option, "instrument_class", "") or "").strip().upper()
+    if instrument_class == "STOCK":
+        # Match the scanner's existing strict stock rule (> 5 points).
+        return edge > 5.0
+    minimum = _LIVE_INDEX_MIN_EDGE.get(symbol, 1.0)
+    # Index thresholds are inclusive: edge equal to the minimum qualifies.
+    return edge >= minimum
+
+
 def _deduplicate_latest_results(results: tuple) -> tuple:
     """Keep one newest result per contract/direction in a single live snapshot."""
     latest = {}
@@ -193,7 +225,7 @@ def live(
             timestamp_ns = int(getattr(getattr(result, "option", None), "timestamp_ns", 0))
         except (AttributeError, TypeError, ValueError, OverflowError):
             continue
-        if timestamp_ns >= cutoff:
+        if timestamp_ns >= cutoff and _qualifies_live_edge(result):
             fresh_results.append(result)
     results = _deduplicate_latest_results(tuple(fresh_results))
     results = _limit_results_fairly(results, limit)
