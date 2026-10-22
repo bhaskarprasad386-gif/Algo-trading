@@ -1,5 +1,21 @@
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
+from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry, _AtmChangeDebouncer
+
+
+def test_atm_change_debouncer_ignores_strike_jitter_and_accepts_stable_change():
+    now = {"value": 10.0}
+    debouncer = _AtmChangeDebouncer(stable_seconds=1.0, clock=lambda: now["value"])
+
+    assert not debouncer.is_stable("NIFTY", 100.0, 105.0)
+    now["value"] += 0.4
+    # Price crosses back to the original ATM: discard the transient candidate.
+    assert not debouncer.is_stable("NIFTY", 100.0, 100.0)
+    now["value"] += 0.1
+    assert not debouncer.is_stable("NIFTY", 100.0, 105.0)
+    now["value"] += 0.8
+    assert not debouncer.is_stable("NIFTY", 100.0, 105.0)
+    now["value"] += 0.21
+    assert debouncer.is_stable("NIFTY", 100.0, 105.0)
 
 
 def _master():
