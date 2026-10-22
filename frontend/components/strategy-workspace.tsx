@@ -288,6 +288,7 @@ function formatCell(slug: string, column: string, row: Row) {
     const edge = column === "LONG Edge" ? edges.long : edges.short;
     return (edge > 0 ? "+" : "") + formatValue(edge) + " pts";
   }
+  if (slug === "synthetic-arbitrage" && column === "Signal") return syntheticDisplayDirection(row);
   if (slug === "synthetic-arbitrage" && (column === "Edge" || column === "Executable Edge")) {
     const edge = syntheticDisplayEdge(row, raw);
     const direction = syntheticDisplayDirection(row);
