@@ -305,8 +305,14 @@ def diagnostics():
     observation_age = age_seconds(last_observation_ns)
     scan_age = age_seconds(last_scan_ns)
     running = bool(snapshot.get("running"))
+    phase = str(snapshot.get("phase") or "").upper()
+    # Outside market hours no fresh quote observations are expected. Surface
+    # the runner phase before deriving observation health so the UI does not
+    # incorrectly report WAITING_FOR_OBSERVATIONS before the session opens.
     if not running:
         status = "STOPPED"
+    elif phase == "WAITING_FOR_MARKET_OPEN":
+        status = "WAITING_FOR_MARKET_OPEN"
     elif observation_age is None:
         status = "WAITING_FOR_OBSERVATIONS"
     elif observation_age > 5:
