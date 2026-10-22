@@ -57,7 +57,7 @@ function cell(slug:string,column:string,row:Row) {
   if(column==="Expiry") return expiry(row.expiry);
   if(column==="Underlying") return fmt(value(row,"underlying","symbol"));
   const map:Record<string,string[]>={"Gap / Edge":["long_edge","short_edge"],Spread:["gap_points"],Signal:["direction"],Direction:["direction"],State:["state","direction"],"Box Edge":["executable_edge"],"Low Strike":["low_strike"],"High Strike":["high_strike"],Liquidity:["liquidity_qty","lot_size"]};
-  return fmt(value(row,...(map[column]??[column.toLowerCase().replaceAll(" ","_")]));
+  return fmt(value(row,...(map[column]??[column.toLowerCase().replaceAll(" ","_")])));
 }
 
 export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
