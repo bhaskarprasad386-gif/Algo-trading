@@ -39,6 +39,9 @@ jobs:
           PRECHECK_RC=$?
           set -e
           echo "SSH_PRECHECK_RC=$PRECHECK_RC"
+          echo "=== STARTUP_SETTLE_WAIT ==="
+          # Let market-data auth, instrument-master loading, and scanner supervisors finish after a VPS restart.
+          sleep 35
           echo "=== SSH_DIAGNOSTIC ==="
           set +e
           ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE_SCRIPT'
