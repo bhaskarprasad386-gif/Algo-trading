@@ -9,7 +9,7 @@ come from the real underlying feed and concrete option chain.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic, sleep, time_ns
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -822,6 +822,26 @@ class LiveSyntheticRunner:
                 # A fresh state object per loop iteration prevents a late callback
                 # from closing over the next iteration's recorder/pipeline variables.
                 callback_state = {"recorder": None}
+                # ATM can briefly alternate between adjacent strikes around a
+                # midpoint. Require a changed strike to persist before replacing
+                # the whole option subscription set; this avoids needless
+                # unsubscribe/resubscribe churn on the shared broker feed.
+                atm_change_candidates: dict[str, tuple[float, float]] = {}
+                atm_change_lock = Lock()
+                atm_change_stable_seconds = 1.0
+
+                def atm_change_is_stable(symbol, current, latest):
+                    key = str(symbol or "").strip().upper()
+                    now = monotonic()
+                    with atm_change_lock:
+                        if latest is None or latest == current:
+                            atm_change_candidates.pop(key, None)
+                            return False
+                        candidate = atm_change_candidates.get(key)
+                        if candidate is None or candidate[0] != latest:
+                            atm_change_candidates[key] = (latest, now)
+                            return False
+                        return now - candidate[1] >= atm_change_stable_seconds
 
                 def observe(payload, _state=callback_state, _initial_atm=initial_atm, _pipeline=pipeline):
                     # Check the recorder bound to this callback's own session, not
@@ -834,7 +854,7 @@ class LiveSyntheticRunner:
                     latest = atm_provider(symbol, time_ns())
                     # Do not evaluate a tick from the old subscription universe
                     # against a newly moved ATM; discard it and refresh first.
-                    if latest is not None and (current is None or latest != current):
+                    if atm_change_is_stable(symbol, current, latest):
                         self._refresh_requested.set()
                         active.stop()
                         return
@@ -854,7 +874,7 @@ class LiveSyntheticRunner:
                     while not self._stop_requested.is_set() and not active_recorder.stop_event.is_set():
                         for symbol, initial in initial_atm.items():
                             latest = atm_provider(symbol, time_ns())
-                            if latest is not None and (initial is None or latest != initial):
+                            if atm_change_is_stable(symbol, initial, latest):
                                 if self._recorder is active_recorder:
                                     self._refresh_requested.set()
                                     active_recorder.stop()
