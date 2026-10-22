@@ -149,13 +149,29 @@ def scan_synthetic_snapshot(
                 direction=direction,
                 liquidity=config.liquidity,
             )
-            # Indexes can have valid smaller point edges than the old fixed 10-point
-            # floor. Keep a positive 1-point raw-edge floor for index visibility;
-            # this is not a net-profit guarantee (fees/slippage are not deducted here).
-            # Stocks retain their existing stricter 5-point floor.
-            class_minimum = 1.0 if future.instrument_class == "INDEX" else 5.0
-            required_edge = max(class_minimum, config.min_executable_edge)
-            if opportunity is None or opportunity.executable_edge <= required_edge:
+            # Per-index raw executable edge thresholds requested for live
+            # opportunities. Equality qualifies; zero/negative edges never do.
+            # These are quote-point thresholds, not a net-profit guarantee:
+            # fees and slippage are not deducted from the displayed raw edge.
+            index_minimums = {
+                "NIFTY": 5.0,
+                "BANKNIFTY": 10.0,
+                "FINNIFTY": 5.0,
+                "MIDCPNIFTY": 3.0,
+                "BANKEX": 10.0,
+                "SENSEX": 10.0,
+            }
+            symbol_minimum = (
+                index_minimums.get(future.underlying.strip().upper(), 1.0)
+                if future.instrument_class == "INDEX"
+                else 5.0
+            )
+            required_edge = max(symbol_minimum, float(config.min_executable_edge))
+            if (
+                opportunity is None
+                or opportunity.executable_edge <= 0
+                or opportunity.executable_edge < required_edge
+            ):
                 continue
             # Publish raw executable synthetic prices: no carry and no fees.
             carry_factor = 1.0
