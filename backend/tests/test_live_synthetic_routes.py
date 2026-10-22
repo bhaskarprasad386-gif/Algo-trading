@@ -22,6 +22,51 @@ def _result():
                            edge_per_lot=325.0, gross_pnl=325.0, strike_distance=1, strike_side="ABOVE")
 
 
+def test_live_route_enforces_per_index_edge_thresholds_inclusive():
+    thresholds = {
+        "NIFTY": 5.0,
+        "BANKNIFTY": 10.0,
+        "FINNIFTY": 5.0,
+        "MIDCPNIFTY": 3.0,
+        "BANKEX": 10.0,
+        "SENSEX": 10.0,
+    }
+    results = []
+    for symbol, threshold in thresholds.items():
+        qualifies = _result()
+        qualifies.option.underlying = symbol
+        qualifies.option.instrument_class = "INDEX"
+        qualifies.option.strike = 25000.0 + len(results)
+        qualifies.executable_edge = threshold
+        results.append(qualifies)
+
+        rejected = _result()
+        rejected.option.underlying = symbol
+        rejected.option.instrument_class = "INDEX"
+        rejected.option.strike = 26000.0 + len(results)
+        rejected.executable_edge = threshold - 0.01
+        results.append(rejected)
+
+    live_synthetic_routes.configure(lambda: tuple(results))
+    response = live_synthetic_routes.live(limit=50)
+    actual = {(row["underlying"], row["executable_edge"]) for row in response["data"]}
+    assert actual == set(thresholds.items())
+    assert response["opportunity_count"] == len(thresholds)
+
+
+def test_live_route_rejects_zero_negative_and_nonfinite_edges():
+    results = []
+    for edge in (0.0, -1.0, float("inf"), float("nan")):
+        row = _result()
+        row.executable_edge = edge
+        row.option.strike += len(results)
+        results.append(row)
+    live_synthetic_routes.configure(lambda: tuple(results))
+    response = live_synthetic_routes.live(limit=10)
+    assert response["data"] == []
+    assert response["opportunity_count"] == 0
+
+
 def test_live_route_serializes_latest_results(monkeypatch):
     result = _result()
     live_synthetic_routes.configure(lambda: (result,))
