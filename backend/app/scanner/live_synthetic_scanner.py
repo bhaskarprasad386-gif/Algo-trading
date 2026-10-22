@@ -24,7 +24,10 @@ class LiveSyntheticScanner:
     """Bounded in-memory assembler for one-second synthetic opportunities."""
 
     MAX_ACTIVE_BUCKETS = 4096
-    MAX_BUCKET_AGE_NS = 3_000_000_000
+    # Retain snapshots long enough for sparse index option ticks to meet, while
+    # pairing still requires source timestamps within TIMESTAMP_TOLERANCE_NS.
+    MAX_BUCKET_AGE_NS = 6_000_000_000
+    MAX_PENDING_QUOTE_WAIT_NS = 3_000_000_000
 
     def __init__(
         self,
@@ -927,7 +930,7 @@ class LiveSyntheticScanner:
                     return False
                 # A pending executable-book quote gets its own bounded three-second
                 # grace period, even if the original bucket was created earlier.
-                return 0 <= wait_age_ns < self.MAX_BUCKET_AGE_NS
+                return 0 <= wait_age_ns < self.MAX_PENDING_QUOTE_WAIT_NS
             age_ns = now_monotonic_ns - first_seen_ns
             return 0 <= age_ns < self.MAX_BUCKET_AGE_NS
 
