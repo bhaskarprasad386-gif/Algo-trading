@@ -19,3 +19,6 @@ Backend CI runs dependency installation, Python compilation, and the pytest suit
 The VPS deploy workflow defers service restarts during market hours by default. An explicitly authorized push commit whose message contains `[force-restart]` overrides that guard and restarts the service; use it only when a market-hours interruption is intended.
 
 The synthetic ATM tracker allows only the same bounded 2-second future/spot timestamp skew as the live quote matcher; stale underlying prices remain rejected. The VPS deploy workflow must be explicitly authorized to restart during market hours when deploying runtime fixes.
+
+## Synthetic live opportunity edge filters
+Only fresh, positive raw executable edges are eligible for the live opportunity list. The minimum edge is inclusive: NIFTY 5 points, BANKNIFTY 10, FINNIFTY 5, MIDCPNIFTY 3, BANKEX 10, and SENSEX 10. Configured global minimums may raise, but never lower, these per-index floors. Stock synthetic opportunities retain a 5-point floor. These are raw quote-edge filters, not a guarantee of net profit after fees and slippage.
