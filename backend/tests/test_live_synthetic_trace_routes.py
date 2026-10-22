@@ -19,10 +19,16 @@ def _request(direction="LONG", entry_edge=12.5):
     return trace_routes.TraceStatusRequest(
         underlying="NIFTY", expiry="2026-10-29", strike=25000,
         direction=direction, entry_edge=entry_edge,
+        trace_id="test-trace-1", lot_size=65,
+        entry_future_bid=25100, entry_future_ask=25102,
+        entry_call_bid=118, entry_call_ask=120,
+        entry_put_bid=90, entry_put_ask=92,
     )
 
 
 def test_trace_status_resolves_exact_strike_outside_scanner_range_and_calculates_direction(monkeypatch):
+    monkeypatch.setattr(trace_routes, "_save_check", lambda _request, _payload: 1)
+    monkeypatch.setattr(trace_routes, "_history_rows", lambda _trace_id: [{"id": 1, "pnl_per_lot": 100}])
     instruments = [
         _instrument("NIFTY29OCT26FUT", "1", "FUTIDX"),
         _instrument("NIFTY29OCT2625000CE", "2", "OPTIDX", strike="2500000"),
@@ -84,3 +90,34 @@ def test_trace_status_rejects_unsupported_underlying_before_market_data(monkeypa
     with pytest.raises(HTTPException) as exc:
         trace_routes.check_trace_live_status(request)
     assert exc.value.status_code == 422
+
+def test_close_pnl_uses_direction_specific_executable_close_prices():
+    long_request = _request("LONG")
+    long = trace_routes._calculate_close_pnl(
+        long_request,
+        {"bid": 25110, "ask": 25112},
+        synthetic_bid=25028,
+        synthetic_ask=25032,
+    )
+    assert long["pnl_status"] == "GROSS_ESTIMATE"
+    assert long["pnl_per_unit"] == (25100 - 25112) + (25028 - (25000 + 120 - 90))
+    assert long["pnl_per_lot"] == long["pnl_per_unit"] * 65
+
+    short_request = _request("SHORT")
+    short = trace_routes._calculate_close_pnl(
+        short_request,
+        {"bid": 25110, "ask": 25112},
+        synthetic_bid=25028,
+        synthetic_ask=25032,
+    )
+    assert short["pnl_per_unit"] == (25110 - 25102) + ((25000 + 118 - 92) - 25032)
+
+
+def test_close_pnl_is_unavailable_without_entry_snapshot():
+    request = trace_routes.TraceStatusRequest(
+        underlying="NIFTY", expiry="2026-10-29", strike=25000,
+        direction="LONG", entry_edge=10, trace_id="missing-entry", lot_size=None,
+    )
+    pnl = trace_routes._calculate_close_pnl(request, {"bid": 100, "ask": 101}, 100, 101)
+    assert pnl["pnl_status"] == "UNAVAILABLE"
+    assert pnl["pnl_per_lot"] is None
