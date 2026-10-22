@@ -862,12 +862,16 @@ class LiveSyntheticRunner:
                     symbol = str(payload.get("underlying") or "").upper()
                     current = _initial_atm.get(symbol)
                     latest = atm_provider(symbol, time_ns())
-                    # Do not evaluate a tick from the old subscription universe
-                    # against a newly moved ATM; discard it and refresh first.
-                    if atm_change_debouncer.is_stable(symbol, current, latest):
-                        self._refresh_requested.set()
-                        active.stop()
+                    # Any tick that sees an ATM different from the subscribed
+                    # universe belongs to a potentially stale contract set. Discard
+                    # it immediately; only restart subscriptions after the new ATM
+                    # has remained stable for the debounce window.
+                    if latest is not None and latest != current:
+                        if atm_change_debouncer.is_stable(symbol, current, latest):
+                            self._refresh_requested.set()
+                            active.stop()
                         return
+                    atm_change_debouncer.is_stable(symbol, current, latest)
                     _pipeline.observe(payload)
 
                 active_recorder = LiveSyntheticOptionFutureRecorder(
