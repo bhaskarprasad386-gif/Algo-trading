@@ -168,12 +168,16 @@ function quoteSideNumber(raw: unknown, side: "bid" | "ask"): number | null {
 
 function syntheticRawEdges(row: Row) {
   const strike = nullableNumber(value(row, "strike"));
-  const futureBid = quoteSideNumber(value(row, "future_bid"), "bid");
-  const futureAsk = quoteSideNumber(value(row, "future_ask"), "ask");
-  const callBid = quoteSideNumber(value(row, "call_bid"), "bid");
-  const callAsk = quoteSideNumber(value(row, "call_ask"), "ask");
-  const putBid = quoteSideNumber(value(row, "put_bid"), "bid");
-  const putAsk = quoteSideNumber(value(row, "put_ask"), "ask");
+  // Prefer individual numeric fields, but tolerate combined quote summaries.
+  const futureSummary = value(row, "future_summary");
+  const callSummary = value(row, "call_summary");
+  const putSummary = value(row, "put_summary");
+  const futureBid = quoteSideNumber(value(row, "future_bid") ?? futureSummary, "bid");
+  const futureAsk = quoteSideNumber(value(row, "future_ask") ?? futureSummary, "ask");
+  const callBid = quoteSideNumber(value(row, "call_bid") ?? callSummary, "bid");
+  const callAsk = quoteSideNumber(value(row, "call_ask") ?? callSummary, "ask");
+  const putBid = quoteSideNumber(value(row, "put_bid") ?? putSummary, "bid");
+  const putAsk = quoteSideNumber(value(row, "put_ask") ?? putSummary, "ask");
   if ([strike, futureBid, futureAsk, callBid, callAsk, putBid, putAsk].some(v => v === null)) return null;
   const syntheticBid = strike! + callBid! - putAsk!;
   const syntheticAsk = strike! + callAsk! - putBid!;
@@ -182,8 +186,14 @@ function syntheticRawEdges(row: Row) {
 
 function syntheticDisplayDirection(row: Row) {
   const edges = syntheticRawEdges(row);
-  const existing = String(value(row, "direction") ?? "").toUpperCase();
-  if (!edges) return existing || "NOT EVALUATED";
+  if (!edges) {
+    // Do not present a stale backend direction as verified against displayed quotes.
+    const backendEdge = nullableNumber(value(row, "executable_edge"));
+    const backendDirection = String(value(row, "direction") ?? "").toUpperCase();
+    return backendEdge !== null && backendEdge > 0 && (backendDirection === "LONG" || backendDirection === "SHORT")
+      ? backendDirection
+      : "NOT EVALUATED";
+  }
   if (edges.long > 0 && edges.short <= 0) return "LONG";
   if (edges.short > 0 && edges.long <= 0) return "SHORT";
   if (edges.long > 0 && edges.short > 0) return edges.long >= edges.short ? "LONG" : "SHORT";
