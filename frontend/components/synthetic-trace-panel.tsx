@@ -10,6 +10,7 @@ type TraceRow = Record<string, unknown> & {
 };
 
 const STORAGE_KEY = "algo:synthetic-arbitrage:trace-opportunities:v1";
+const DELETED_KEY = "algo:synthetic-arbitrage:trace-deleted:v1";
 const LIVE_ENDPOINT = "/api/v1/scanner/synthetic-cash-carry/live?limit=50";
 const INDEX_ORDER = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
 
@@ -71,6 +72,24 @@ function writeStored(rows: TraceRow[]) {
   }
 }
 
+function readDeleted(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(DELETED_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDeleted(ids: string[]) {
+  try {
+    window.localStorage.setItem(DELETED_KEY, JSON.stringify([...new Set(ids)]));
+  } catch {
+    // Deletion still works in memory if browser storage is unavailable.
+  }
+}
+
+
 export function SyntheticTracePanel() {
   const [liveRows, setLiveRows] = useState<Record<string, unknown>[]>([]);
   const [traces, setTraces] = useState<TraceRow[]>([]);
@@ -80,7 +99,35 @@ export function SyntheticTracePanel() {
   const [checkingTraceIds, setCheckingTraceIds] = useState<string[]>([]);
 
   useEffect(() => {
-    setTraces(readStored());
+    const localRows = readStored();
+    const deletedIds = readDeleted();
+    setTraces(localRows.filter((row) => !deletedIds.includes(row.trace_id)));
+    const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+    void (async () => {
+      try {
+        const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", { cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !Array.isArray(body?.data)) throw new Error("Trace restore unavailable");
+        const serverRows = body.data.filter((item: unknown): item is TraceRow => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).trace_id === "string");
+        const serverIds = new Set(serverRows.map((row) => row.trace_id));
+        const localOnly = localRows.filter((row) => !serverIds.has(row.trace_id) && !deletedIds.includes(row.trace_id));
+        const merged = [...serverRows.filter((row) => !deletedIds.includes(row.trace_id)), ...localOnly]
+          .sort((a, b) => new Date(b.traced_at).getTime() - new Date(a.traced_at).getTime());
+        setTraces(merged);
+        writeStored(merged);
+        await Promise.allSettled(localOnly.map((row) => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
+          method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+          body: JSON.stringify({ trace_id: row.trace_id, trace_key: row.trace_key, traced_at: row.traced_at, snapshot: row }),
+        })));
+        const deleteResults = await Promise.all(deletedIds.map(async (id) => {
+          const result = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store" });
+          return result.ok;
+        }));
+        if (deleteResults.every(Boolean)) writeDeleted([]);
+      } catch {
+        // The local copy remains available when the API/database is offline.
+      }
+    })();
   }, []);
 
   const loadLive = useCallback(async () => {
@@ -113,7 +160,7 @@ export function SyntheticTracePanel() {
 
   const tracedKeys = useMemo(() => new Set(traces.map((item) => item.trace_key)), [traces]);
 
-  const addToTrace = (row: Record<string, unknown>) => {
+  const addToTrace = async (row: Record<string, unknown>) => {
     const key = traceKey(row);
     if (!key.replaceAll("|", "")) {
       setMessage("This opportunity has no stable contract identity and cannot be traced yet.");
@@ -133,7 +180,17 @@ export function SyntheticTracePanel() {
     const next = [snapshot, ...traces];
     setTraces(next);
     writeStored(next);
-    setMessage(`${keyPart(row.underlying) || "Opportunity"} added to Trace.`);
+    try {
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
+        method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trace_id: snapshot.trace_id, trace_key: snapshot.trace_key, traced_at: snapshot.traced_at, snapshot }),
+      });
+      if (!response.ok) throw new Error("server rejected snapshot");
+      setMessage(`${keyPart(row.underlying) || "Opportunity"} added to Trace and saved.`);
+    } catch {
+      setMessage(`${keyPart(row.underlying) || "Opportunity"} saved in this browser only; server persistence is unavailable.`);
+    }
   };
 
   const checkLiveStatus = async (row: TraceRow) => {
@@ -194,11 +251,35 @@ export function SyntheticTracePanel() {
     }
   };
 
-  const removeTrace = (traceId: string) => {
+  const removeTrace = async (traceId: string) => {
     const next = traces.filter((item) => item.trace_id !== traceId);
     setTraces(next);
     writeStored(next);
-    setMessage("Trace removed.");
+    try {
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), { method: "DELETE", cache: "no-store" });
+      if (!response.ok) throw new Error("server delete failed");
+      setMessage("Trace removed from saved list.");
+    } catch {
+      writeDeleted([...readDeleted(), traceId]);
+      setMessage("Trace removed on this device; server deletion will retry when the API is available.");
+    }
+  };
+
+  const loadTraceHistory = async (row: TraceRow) => {
+    try {
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/history?trace_id=" + encodeURIComponent(row.trace_id), { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(body?.data)) throw new Error("Saved trace history unavailable");
+      setStatusByTrace((current) => ({
+        ...current,
+        [row.trace_id]: { ...(current[row.trace_id] ?? {}), status: current[row.trace_id]?.status ?? "HISTORY", history: body.data },
+      }));
+      setMessage(body.data.length ? `Loaded ${body.data.length} saved checks.` : "No saved checks for this Trace yet.");
+    } catch {
+      setMessage("Could not load saved Trace history. Check backend/database availability.");
+    }
   };
 
   const clearMessage = () => setMessage("");
