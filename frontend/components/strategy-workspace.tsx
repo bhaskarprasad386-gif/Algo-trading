@@ -763,7 +763,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const rawCalendarRunner = body?.runners?.calendar_spread;
         setCalendarRuntime(
           slug === "calendar-spread" && rawCalendarRunner && typeof rawCalendarRunner === "object"
-            ? rawCalendarRunner as Record<string, unknown>
+            ? {
+                ...(rawCalendarRunner as Record<string, unknown>),
+                scanner_diagnostics:
+                  body?.scanner?.strategy === "calendar-spread" &&
+                  body?.scanner?.diagnostics && typeof body.scanner.diagnostics === "object"
+                    ? body.scanner.diagnostics as Record<string, unknown>
+                    : null,
+              }
             : null,
         );
         const rawRunner = body?.runners?.[slug === "synthetic-arbitrage" ? "synthetic" : slug.replace("-", "_")];
@@ -1297,6 +1304,30 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               return <div key={exchange} className="rounded-lg border theme-border p-3"><div className="flex items-center justify-between gap-2"><span className="text-sm font-semibold theme-text">{exchange}</span><span className={"text-xs font-semibold " + (isOpen === true ? "theme-success" : isOpen === false ? "theme-warning" : "theme-muted")}>{isOpen === true ? "SESSION OPEN" : isOpen === false ? "SESSION CLOSED" : "SESSION UNKNOWN"}</span></div><p className="mt-2 text-xs theme-muted">Ticks received: {String(received?.[exchange] ?? 0)} · emitted: {String(emitted?.[exchange] ?? 0)}</p><p className="mt-1 text-xs theme-muted">Missing source time: {String(sourceDropped?.[exchange] ?? 0)} · out-of-session: {String(sessionDropped?.[exchange] ?? 0)}</p></div>;
             })}
           </div>
+          {calendarRuntime && <div className="mt-3 rounded-lg border theme-border p-3">
+            <p className="text-sm font-semibold theme-text">Why opportunities may be missing</p>
+            <p className="mt-1 text-xs theme-muted">Live scanner rejection counters from the backend; these are diagnostics, not generated opportunities.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {[
+                ["Waiting for far expiry", "waiting_for_second_expiry"],
+                ["Invalid quotes", "invalid_quote"],
+                ["Stale ticks", "stale_tick"],
+                ["Stale pairs", "stale_pair"],
+                ["Timestamp mismatch", "timestamp_mismatch"],
+                ["Insufficient depth", "insufficient_depth"],
+                ["No positive edge", "no_positive_edge"],
+                ["Lot-size mismatch", "lot_size_mismatch"],
+                ["Qualified signals", "qualified"],
+              ].map(([label, key]) => {
+                const diag = (calendarRuntime?.scanner_diagnostics ?? {}) as Record<string, unknown>;
+                return <div key={key} className="rounded-lg border theme-border theme-surface-2 p-2">
+                  <p className="text-xs theme-muted">{label}</p>
+                  <p className="mt-1 text-sm font-semibold theme-text">{diag[key] == null ? "—" : String(diag[key])}</p>
+                </div>;
+              })}
+            </div>
+            {calendarRuntime?.scanner_diagnostics == null && <p className="mt-2 text-xs theme-muted">Scanner rejection counters are not available in this backend response yet.</p>}
+          </div>}
           {!calendarRuntime && <p className="mt-3 rounded-lg border theme-border p-3 text-xs theme-muted">Calendar runner diagnostics are not available yet. Check backend deployment and runner health.</p>}
         </Card>}
         <Card className="theme-border theme-surface p-4"><div className="text-sm font-semibold theme-text">Session Diagnostics</div><p className="mt-2 text-xs leading-5 theme-muted">MCX can remain live after NSE closes. Calendar/commodity output therefore follows the common feed and actual exchange session rather than the NSE-only status.</p></Card>
