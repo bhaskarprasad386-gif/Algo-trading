@@ -536,7 +536,8 @@ def test_pair_monitor_marks_complete_synchronized_triplet_ready():
         "source_timestamp_ns": ts + 200, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
     })
     rows = scanner.pair_monitor_snapshot(limit=10)["data"]
-    row = next(row for row in rows if row["strike"] == 105.0)    assert row["state"] == "READY_TO_EVALUATE"
+    row = next(row for row in rows if row["strike"] == 105.0)
+    assert row["state"] == "READY_TO_EVALUATE"
     assert row["reason"] == "AWAITING_SCANNER_QUALIFICATION"
     assert row["readiness_scope"] == "STRUCTURAL_ONLY"
     assert row["opportunity_confirmed"] is False
