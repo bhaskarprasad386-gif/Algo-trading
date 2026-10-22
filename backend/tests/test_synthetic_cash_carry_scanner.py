@@ -96,18 +96,39 @@ def test_scanner_rejects_mixed_timestamp_snapshot():
 
 
 
-def test_index_arbitrage_requires_strictly_more_than_one_point():
-    quote = option(1, 99)
-    # Synthetic ask = 99 + 9 - 6 = 102. An exactly 1-point SHORT edge
-    # must not qualify; a slightly larger raw edge should be visible.
-    assert not scan_synthetic_snapshot(
-        (quote,), future(1, bid=103, ask=104), atm_strike=100,
-    )
-    results = scan_synthetic_snapshot(
-        (quote,), future(1, bid=103.01, ask=104.01), atm_strike=100,
-    )
-    assert results
-    assert all(result.executable_edge > 1 for result in results)
+def test_named_index_edge_thresholds_include_exact_boundary():
+    thresholds = {
+        "NIFTY": 5.0,
+        "BANKNIFTY": 10.0,
+        "FINNIFTY": 5.0,
+        "MIDCPNIFTY": 3.0,
+        "BANKEX": 10.0,
+        "SENSEX": 10.0,
+    }
+    for symbol, threshold in thresholds.items():
+        opt = OptionQuote(
+            1, symbol, 20261231, 99, 8, 9, 6, 7,
+            lot_size=10, instrument_class="INDEX", volume=100, oi=100,
+        )
+        # Synthetic ask = strike + call ask - put bid = 102.
+        fut = FutureQuote(
+            1, symbol, 20261231, 102 + threshold, 103 + threshold,
+            lot_size=10, instrument_class="INDEX", volume=100, oi=100,
+        )
+        results = scan_synthetic_snapshot((opt,), fut, atm_strike=100)
+        assert results, f"{symbol} should include exact threshold {threshold}"
+        assert any(
+            row.direction == "SHORT" and row.executable_edge == threshold
+            for row in results
+        ), f"{symbol} missing exact-threshold edge {threshold}"
+
+        below = FutureQuote(
+            1, symbol, 20261231, 101.99 + threshold, 102.99 + threshold,
+            lot_size=10, instrument_class="INDEX", volume=100, oi=100,
+        )
+        assert not scan_synthetic_snapshot((opt,), below, atm_strike=100), (
+            f"{symbol} must reject edge below {threshold}"
+        )
 
 
 def test_any_configured_top15_stock_can_qualify_above_five_points():
