@@ -19,6 +19,9 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
+          test -n "$VPS_KEY_B64"
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
           printf '%s' "$VPS_KEY_B64" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           SSH_KNOWN_HOSTS=/tmp/vps_known_hosts
@@ -36,8 +39,20 @@ jobs:
           set +e
           ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE_SCRIPT'
           set -u
+          APP_DIR=/opt/Algo-Trading
+          ENV_FILE="$APP_DIR/backend/.env"
           echo "REMOTE_SHELL_OK"
-          set -u
+          echo "=== STRATEGY_FLAGS (values only; no credentials printed) ==="
+          for key in LIVE_CASH_FUTURE_DATA_ENABLED LIVE_CALENDAR_SPREAD_DATA_ENABLED LIVE_BOX_SPREAD_DATA_ENABLED LIVE_SYNTHETIC_DATA_ENABLED LIVE_MARKET_DATA_PERSISTENCE_ENABLED; do
+            value=$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)
+            if [ -z "$value" ]; then
+              case "$key" in
+                LIVE_SYNTHETIC_DATA_ENABLED) value="unset (code default true)" ;;
+                *) value="unset (check code default)" ;;
+              esac
+            fi
+            echo "$key=$value"
+          done
           echo "=== DNS ==="
           getent hosts apiconnect.angelone.in || true
           echo "=== RESOLVER ==="
@@ -69,3 +84,7 @@ jobs:
           uptime
           free -h
           REMOTE_SCRIPT
+          REMOTE_RC=$?
+          set -e
+          echo "REMOTE_DIAGNOSTIC_RC=$REMOTE_RC"
+          test "$REMOTE_RC" -eq 0
