@@ -63,7 +63,7 @@ def test_scanner_evaluates_both_directions_and_emits_only_positive_qualified_edg
 
 
 def test_scanner_can_emit_long_when_long_raw_edge_is_positive():
-    option, future = _quotes(future_bid=73520.0, future_ask=73530.0)
+    option, future = _quotes(future_bid=73510.0, future_ask=73520.0)
     rows = scan_synthetic_snapshot(
         [option], future, atm_strike=71000.0,
         config=SyntheticScanConfig(rate=0.05, time_to_expiry_years=0.5),
@@ -71,4 +71,4 @@ def test_scanner_can_emit_long_when_long_raw_edge_is_positive():
 
     assert len(rows) == 1
     assert rows[0].direction == "LONG"
-    assert rows[0].executable_edge == 4.2
+    assert rows[0].executable_edge == 14.2
