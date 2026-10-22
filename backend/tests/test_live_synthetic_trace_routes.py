@@ -134,3 +134,43 @@ def test_trace_quotes_older_than_freshness_limit_fail_closed():
     old = (datetime.now(ZoneInfo("Asia/Kolkata")) - timedelta(seconds=30)).strftime("%d-%b-%Y %H:%M:%S")
     with pytest.raises(LookupError, match="is stale"):
         trace_routes._validate_quote_freshness({"exchFeedTime": old}, "call")
+
+def test_trace_snapshot_is_saved_as_a_durable_record(monkeypatch):
+    class FakeSession:
+        record = None
+        def get(self, _model, _key):
+            return self.record
+        def add(self, row):
+            self.record = row
+        def commit(self):
+            return None
+        def close(self):
+            return None
+
+    fake_db = FakeSession()
+    monkeypatch.setattr("app.core.database.SessionLocal", lambda: fake_db)
+    snapshot = {
+        "trace_id": "trace-persist-test", "underlying": "NIFTY",
+        "expiry": "2026-10-29", "strike": 25000, "direction": "LONG",
+        "executable_edge": 8.5, "future_bid": 25100, "future_ask": 25102,
+    }
+    request = trace_routes.TraceOpportunityRequest(
+        trace_id="trace-persist-test", trace_key="NIFTY|2026-10-29|25000|LONG",
+        traced_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(), snapshot=snapshot,
+    )
+    result = trace_routes.save_trace_opportunity(request)
+    assert result == {"trace_id": "trace-persist-test", "persisted": True}
+    assert fake_db.record.underlying == "NIFTY"
+    assert fake_db.record.entry_edge == 8.5
+    assert '"future_bid":25100' in fake_db.record.snapshot_json
+
+
+def test_trace_snapshot_rejects_stock_or_invalid_direction():
+    request = trace_routes.TraceOpportunityRequest(
+        trace_id="bad-trace", trace_key="bad", traced_at=datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
+        snapshot={"trace_id": "bad-trace", "underlying": "RELIANCE", "expiry": "2026-10-29",
+                 "strike": 25000, "direction": "LONG", "executable_edge": 5},
+    )
+    with pytest.raises(HTTPException) as exc:
+        trace_routes.save_trace_opportunity(request)
+    assert exc.value.status_code == 422
