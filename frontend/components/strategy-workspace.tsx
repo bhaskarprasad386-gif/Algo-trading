@@ -463,6 +463,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
   const [hiddenPairColumns, setHiddenPairColumns] = useState<string[]>([]);
+  const [pairColumnPrefsLoaded, setPairColumnPrefsLoaded] = useState(false);
   const [showPairColumnPicker, setShowPairColumnPicker] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -482,6 +483,24 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [feedErrors, setFeedErrors] = useState<{ delivery: number; normalizer: number } | null>(null);
   const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    setPairColumnPrefsLoaded(false);
+    try {
+      const saved = JSON.parse(window.localStorage.getItem("algo:pair-monitor:hidden-columns:v1:" + slug) || "[]");
+      setHiddenPairColumns(Array.isArray(saved) ? saved.filter((column: unknown): column is string => typeof column === "string" && c.pairColumns.includes(column)) : []);
+    } catch {
+      setHiddenPairColumns([]);
+    }
+    setPairColumnPrefsLoaded(true);
+  }, [slug, c.pairColumns]);
+
+  useEffect(() => {
+    if (!pairColumnPrefsLoaded) return;
+    try {
+      window.localStorage.setItem("algo:pair-monitor:hidden-columns:v1:" + slug, JSON.stringify(hiddenPairColumns));
+    } catch { /* Preferences are optional; the column picker still works for this session. */ }
+  }, [hiddenPairColumns, pairColumnPrefsLoaded, slug]);
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") return;
