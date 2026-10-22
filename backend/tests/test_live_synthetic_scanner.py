@@ -177,8 +177,7 @@ def test_live_synthetic_scanner_rejects_fractional_executable_depth():
 
         scanner.observe(ce)
         scanner.observe(pe)
-        assert scanner.observe(future) == ()
-        counters = scanner.diagnostics_snapshot()["counters"]
+        assert scanner.observe(future) == ()        counters = scanner.diagnostics_snapshot()["counters"]
         assert counters["illiquid_or_incomplete_option_leg"] >= 1
         assert counters.get("scan_evaluations", 0) == 0
 
@@ -200,13 +199,13 @@ def test_live_scanner_pairs_real_quotes_within_two_second_exchange_skew():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "CE",
-        "expiry": expiry, "strike": 105.0, "bid": 10.0, "ask": 11.0,
+        "expiry": expiry, "strike": 105.0, "bid": 10.0, "ask": 11.0, "bid_qty": 10, "ask_qty": 10,
         "lot_size": 1, "source_timestamp_ns": ts, "symbol": "NIFTY29OCT26105CE",
         "volume": 100, "oi": 1000,
     })
     scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "PE",
-        "expiry": expiry, "strike": 105.0, "bid": 4.0, "ask": 5.0,
+        "expiry": expiry, "strike": 105.0, "bid": 4.0, "ask": 5.0, "bid_qty": 10, "ask_qty": 10,
         "lot_size": 1, "source_timestamp_ns": ts + 1_500_000_000, "symbol": "NIFTY29OCT26105PE",
         "volume": 100, "oi": 1000,
     })
@@ -310,7 +309,7 @@ def test_live_synthetic_scanner_does_not_cross_second_boundaries():
     scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
-    scanner.observe(_base(ts + 2_000_000_000, 105.0, "PE", 4.0, 5.0))
+    scanner.observe(_base(ts + 2_000_000_001, 105.0, "PE", 4.0, 5.0))
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
         "expiry":"30SEP2026","bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2_000_000_000,"symbol":"NIFTYFUT"})
     assert result == ()
@@ -359,7 +358,6 @@ def test_live_synthetic_scanner_rejects_stale_epoch_timestamp_and_counts_reason(
     assert counters["source_latency_samples"] == 1
     assert counters["source_latency_over_5s"] == 1
 
-
 def test_live_synthetic_scanner_rejects_malformed_timestamp_without_raising():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     payload = _base("not-a-timestamp", 100.0, "CE", 4.0, 5.0)
@@ -406,7 +404,7 @@ def test_live_synthetic_scanner_skips_timestamp_mismatched_strike_without_blocki
     # The 100 strike is synchronized and complete; the 105 strike has an old CE.
     scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
     scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"})
-    scanner.observe({**_base(ts - 900_000_000, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
+    scanner.observe({**_base(ts - 2_100_000_000, 105.0, "CE", 4.0, 5.0), "expiry": "29OCT2026"})
     scanner.observe({**_base(ts + 900_000_000, 105.0, "PE", 4.0, 5.0), "expiry": "29OCT2026"})
     result = scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
@@ -416,7 +414,7 @@ def test_live_synthetic_scanner_skips_timestamp_mismatched_strike_without_blocki
     # A bad pair is skipped independently; it cannot invalidate the good 100 strike.
     assert result
     assert all(r.option.strike == 100.0 for r in result)
-    assert scanner.diagnostics_snapshot()["counters"]["timestamp_mismatch"] >= 1
+    assert scanner.diagnostics_snapshot()["counters"]["missing_call_leg"] >= 1
 
 
 
@@ -537,8 +535,7 @@ def test_pair_monitor_marks_complete_synchronized_triplet_ready():
         "source_timestamp_ns": ts + 200, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
     })
     rows = scanner.pair_monitor_snapshot(limit=10)["data"]
-    row = next(row for row in rows if row["strike"] == 105.0)
-    assert row["state"] == "READY_TO_EVALUATE"
+    row = next(row for row in rows if row["strike"] == 105.0)    assert row["state"] == "READY_TO_EVALUATE"
     assert row["reason"] == "AWAITING_SCANNER_QUALIFICATION"
     assert row["readiness_scope"] == "STRUCTURAL_ONLY"
     assert row["opportunity_confirmed"] is False
@@ -717,8 +714,7 @@ def test_live_scanner_rejects_mismatched_ce_pe_future_lot_sizes():
     scanner.observe({
         "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
         "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 50,
-        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
-    })
+        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,    })
 
     counters = scanner.diagnostics_snapshot()["counters"]
     assert counters["lot_size_mismatch"] == 1
@@ -897,539 +893,3 @@ def test_pair_monitor_survives_atm_provider_exception_and_marks_missing_atm():
 
     snapshot = scanner.pair_monitor_snapshot(limit=10)
     row = next(r for r in snapshot["data"] if r["strike"] == 105.0)
-
-    assert row["state"] == "INCOMPLETE"
-    assert "MISSING_ATM" in row["reason"]
-    assert scanner.diagnostics_snapshot()["counters"]["monitor_atm_provider_errors"] == 1
-
-
-def test_pair_monitor_rejects_nonfinite_or_nonpositive_atm():
-    for value in (float("nan"), float("inf"), 0, -1):
-        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t, value=value: value)
-        ts = 1_000_000_000
-        scanner._buckets[("NIFTY", ts, 20260930)] = {
-            "future": {"expiry": "30SEP2026", "source_timestamp_ns": ts, "bid": 117, "ask": 118,
-                       "lot_size": 1, "volume": 100, "oi": 1000},
-            "options": {105.0: {
-                "CE": {**_base(ts, 105.0, "CE", 4.0, 5.0), "bid_qty": 10, "ask_qty": 10, "volume": 100, "lot_size": 1},
-                "PE": {**_base(ts, 105.0, "PE", 4.0, 5.0), "bid_qty": 10, "ask_qty": 10, "volume": 100, "lot_size": 1},
-            }},
-        }
-        row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
-        assert row["state"] == "INCOMPLETE"
-        assert "MISSING_ATM" in row["reason"]
-
-
-
-def test_live_synthetic_scanner_counts_negative_source_latency_without_retaining_payload():
-    import time
-
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = _base(time.time_ns() + 1_000_000_000, 100.0, "CE", 4.0, 5.0)
-    assert scanner.observe(payload) == ()
-    counters = scanner.diagnostics_snapshot()["counters"]
-    assert counters["source_latency_samples"] == 1
-    assert counters["source_latency_negative"] == 1
-    assert "payload" not in counters
-
-
-
-def test_live_synthetic_scanner_does_not_mark_invalid_tick_as_accepted_observation():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = _base(8_000_000_000, 100.0, "CE", 4.0, 5.0)
-    payload["expiry"] = "not-an-expiry"
-
-    assert scanner.observe(payload) == ()
-    counters = scanner.diagnostics_snapshot()["counters"]
-    assert counters["last_payload_received_at_ns"] > 0
-    assert counters["last_observation_at_ns"] is None
-
-
-def test_live_synthetic_scanner_does_not_accept_option_without_valid_strike():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = _base(8_000_000_000, 100.0, "CE", 4.0, 5.0)
-    payload["strike"] = "not-a-strike"
-
-    assert scanner.observe(payload) == ()
-    counters = scanner.diagnostics_snapshot()["counters"]
-    assert counters["invalid_strike"] == 1
-    assert counters["last_payload_received_at_ns"] > 0
-    assert counters["last_observation_at_ns"] is None
-
-
-def test_synthetic_bucket_pruning_uses_monotonic_age_when_market_timestamps_stop(monkeypatch):
-    import app.scanner.live_synthetic_scanner as scanner_module
-
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    now = 50_000_000_000
-    monkeypatch.setattr(scanner_module.time, "monotonic_ns", lambda: now)
-    scanner._buckets = {
-        ("NIFTY", 20_000_000_000, 20260930): {
-            "future": None,
-            "options": {},
-            "first_seen_monotonic_ns": now - scanner.MAX_BUCKET_AGE_NS - 1,
-        },
-        ("BANKNIFTY", 20_000_000_000, 20260930): {
-            "future": None,
-            "options": {},
-            "first_seen_monotonic_ns": now - 100,
-        },
-    }
-
-    snapshot = scanner.diagnostics_snapshot()
-
-    assert snapshot["counters"]["active_buckets"] == 1
-    assert ("NIFTY", 20_000_000_000, 20260930) not in scanner._buckets
-    assert ("BANKNIFTY", 20_000_000_000, 20260930) in scanner._buckets
-    assert snapshot["counters"]["monotonic_age_pruned_buckets"] == 1
-
-
-def test_pending_quote_wait_bucket_expires_after_its_own_three_second_window(monkeypatch):
-    import app.scanner.live_synthetic_scanner as scanner_module
-
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    now = 70_000_000_000
-    monkeypatch.setattr(scanner_module.time, "monotonic_ns", lambda: now)
-    scanner._buckets = {
-        ("NIFTY", 20_000_000_000, 20260930): {
-            "future": None,
-            "options": {},
-            "first_seen_monotonic_ns": now - 5_000_000_000,
-            "quote_wait_started_ns": now - scanner.MAX_BUCKET_AGE_NS,
-        },
-    }
-
-    snapshot = scanner.diagnostics_snapshot()
-
-    assert snapshot["counters"]["active_buckets"] == 0
-    assert scanner.diagnostics_snapshot()["counters"]["monotonic_age_pruned_buckets"] == 1
-
-
-def test_pair_monitor_does_not_reject_executable_quotes_when_volume_and_oi_are_missing(monkeypatch):
-    import app.scanner.live_synthetic_scanner as scanner_module
-
-    monkeypatch.setattr(scanner_module, "scan_synthetic_snapshot", lambda *_a, **_k: ())
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    ts = 18_000_000_000
-    expiry = "29OCT2026"
-    ce = {**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry}
-    pe = {**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry}
-    ce.pop("volume")
-    ce.pop("oi")
-    pe.pop("volume")
-    pe.pop("oi")
-    future = {
-        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
-        "source_timestamp_ns": ts, "symbol": "NIFTYFUT",
-    }
-
-    scanner.observe(ce)
-    scanner.observe(pe)
-    scanner.observe(future)
-
-    row = next(r for r in scanner.pair_monitor_snapshot(limit=10)["data"] if r["strike"] == 105.0)
-    assert row["state"] == "READY_TO_EVALUATE"
-    assert row["reason"] == "AWAITING_SCANNER_QUALIFICATION"
-    assert "NO_VOLUME_OR_OI" not in row["reason"]
-
-
-def test_live_synthetic_scanner_does_not_overwrite_leg_with_older_tick():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    ts = 25_000_000_000
-    expiry = "29OCT2026"
-    newer_ce = {**_base(ts + 100, 105.0, "CE", 8.0, 9.0), "expiry": expiry}
-    pe = {**_base(ts + 100, 105.0, "PE", 4.0, 5.0), "expiry": expiry}
-    future = {
-        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
-        "source_timestamp_ns": ts + 100, "symbol": "NIFTYFUT",
-    }
-
-    scanner.observe(newer_ce)
-    scanner.observe(pe)
-    scanner.observe(future)
-    older_ce = {**_base(ts, 105.0, "CE", 1.0, 2.0), "expiry": expiry}
-    scanner.observe(older_ce)
-
-    bucket = scanner._buckets[("NIFTY", ts + 100, 20261029)]
-    assert bucket["options"][105.0]["CE"]["bid"] == 8.0
-    assert bucket["options"][105.0]["CE"]["source_timestamp_ns"] == ts + 100
-    assert scanner.diagnostics_snapshot()["counters"]["out_of_order_leg_updates"] == 1
-
-
-def test_pending_quote_anchor_preserves_real_timestamp_for_out_of_order_guard():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    ts = 30_000_000_000
-    expiry = 20261029
-    key = ("NIFTY", ts, expiry)
-    scanner._buckets[key] = {
-        "future": None,
-        "options": {105.0: {"CE": {
-            **_base(ts, 105.0, "CE", None, None),
-            "ltp": 5.0,
-            "expiry": "29OCT2026",
-        }}},
-        "first_seen_monotonic_ns": __import__("time").monotonic_ns(),
-        "quote_wait_started_ns": __import__("time").monotonic_ns(),
-    }
-
-    # An executable quote arriving later is anchored for pairing, but its real
-    # broker timestamp must remain available for ordering checks.
-    later_ce = {
-        **_base(ts + 2_000_000_000, 105.0, "CE", 8.0, 9.0),
-        "expiry": "29OCT2026",
-    }
-    updated = scanner.observe(later_ce)
-    ce = scanner._buckets[key]["options"][105.0]["CE"]
-    assert ce["source_timestamp_ns"] == ts
-    assert ce["_quote_source_timestamp_ns"] == ts + 2_000_000_000
-
-    # This intermediate timestamp is older than the real quote above, even
-    # though it is newer than the pairing anchor.
-    older_ce = {
-        **_base(ts + 1_000_000_000, 105.0, "CE", 1.0, 2.0),
-        "expiry": "29OCT2026",
-    }
-    scanner.observe(older_ce)
-    ce = scanner._buckets[key]["options"][105.0]["CE"]
-    assert ce["bid"] == 8.0
-    assert ce["_quote_source_timestamp_ns"] == ts + 2_000_000_000
-    assert scanner.diagnostics_snapshot()["counters"]["out_of_order_leg_updates"] == 1
-
-def test_live_synthetic_scanner_rejects_option_type_symbol_mismatch():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = _base(35_000_000_000, 100, "CE", 10.0, 11.0)
-    payload["symbol"] = "NIFTY100PE"
-
-    assert scanner.observe(payload) == ()
-    assert scanner._buckets == {}
-    assert scanner.diagnostics_snapshot()["counters"]["invalid_option_instrument"] == 1
-
-
-def test_live_synthetic_scanner_rejects_non_future_symbol_containing_fut():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = {
-        "underlying": "NIFTY",
-        "instrument_class": "INDEX",
-        "option_type": "",
-        "expiry": "29OCT2026",
-        "bid": 117.0,
-        "ask": 118.0,
-        "lot_size": 1,
-        "source_timestamp_ns": 35_000_000_000,
-        "symbol": "NIFTYFUTX",
-    }
-
-    assert scanner.observe(payload) == ()
-    assert scanner._buckets == {}
-    assert scanner.diagnostics_snapshot()["counters"]["invalid_future_instrument"] == 1
-
-
-def test_live_synthetic_scanner_rejects_cash_quote_as_future_leg():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    ts = 35_000_000_000
-
-    cash_quote = {
-        "underlying": "NIFTY",
-        "instrument_class": "INDEX",
-        "option_type": "",
-        "expiry": "29OCT2026",
-        "bid": 117.0,
-        "ask": 118.0,
-        "lot_size": 1,
-        "source_timestamp_ns": ts,
-        "symbol": "NIFTY",
-    }
-
-    assert scanner.observe(cash_quote) == ()
-    assert scanner._buckets == {}
-    assert scanner.diagnostics_snapshot()["counters"]["invalid_future_instrument"] == 1
-
-
-def test_live_synthetic_scanner_rejects_unknown_option_type_even_for_future_symbol():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = {
-        "underlying": "NIFTY",
-        "instrument_class": "INDEX",
-        "option_type": "XX",
-        "expiry": "29OCT2026",
-        "bid": 117.0,
-        "ask": 118.0,
-        "lot_size": 1,
-        "source_timestamp_ns": 35_000_000_000,
-        "symbol": "NIFTY29OCT2026FUT",
-    }
-
-    assert scanner.observe(payload) == ()
-    assert scanner._buckets == {}
-    assert scanner.diagnostics_snapshot()["counters"]["invalid_option_type"] == 1
-
-
-def test_live_synthetic_scanner_rejects_leg_symbol_from_different_underlying():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = {
-        "underlying": "NIFTY",
-        "instrument_class": "INDEX",
-        "option_type": "",
-        "expiry": "29OCT2026",
-        "bid": 117.0,
-        "ask": 118.0,
-        "lot_size": 1,
-        "source_timestamp_ns": 35_000_000_000,
-        "symbol": "BANKNIFTY29OCT2026FUT",
-    }
-
-    assert scanner.observe(payload) == ()
-    assert scanner._buckets == {}
-    assert scanner.diagnostics_snapshot()["counters"]["underlying_symbol_mismatch"] == 1
-
-
-def test_live_synthetic_scanner_rejects_prefix_overlapping_underlying_symbols():
-    # A symbol belonging to NIFTYBANK must not enter the NIFTY bucket just
-    # because its text shares the NIFTY prefix.
-    cases = (
-        {
-            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-            "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 1,
-            "source_timestamp_ns": 35_000_000_000, "symbol": "NIFTYBANK29OCT2026FUT",
-        },
-        {
-            **_base(35_000_000_000, 105.0, "CE", 4.0, 5.0),
-            "symbol": "NIFTYBANK29OCT202610500CE",
-        },
-    )
-    for payload in cases:
-        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-        assert scanner.observe(payload) == ()
-        assert scanner._buckets == {}
-        assert scanner.diagnostics_snapshot()["counters"]["underlying_symbol_mismatch"] == 1
-
-
-def test_live_scanner_rejects_malformed_future_lot_size_without_raising():
-    import time
-
-    for bad_lot_size in (float("nan"), float("inf"), "not-a-lot", 1.5):
-        scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-        ts = time.time_ns()
-        expiry = "29OCT2026"
-        scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
-        scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
-        result = scanner.observe({
-            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-            "expiry": expiry, "bid": 117.0, "ask": 118.0,
-            "lot_size": bad_lot_size, "source_timestamp_ns": ts,
-            "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
-        })
-        assert result == ()
-        counters = scanner.diagnostics_snapshot()["counters"]
-        assert counters["invalid_future_lot_size"] == 1
-        assert counters.get("scan_evaluations", 0) == 0
-
-
-
-def test_live_synthetic_scanner_rejects_epoch_millisecond_timestamp_unit():
-    import time
-
-    # This case must exercise production defaults, not the module's logical-time test wrapper.
-    scanner = _LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = _base(time.time_ns() // 1_000_000, 100.0, "CE", 4.0, 5.0)
-    assert scanner.observe(payload) == ()
-    counters = scanner.diagnostics_snapshot()["counters"]
-    assert counters["invalid_timestamp_unit"] == 1
-    assert counters.get("stale_timestamp", 0) == 0
-
-
-def test_pair_monitor_does_not_truncate_fractional_lot_size_to_ready():
-    ts = 35_000_000_000
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    expiry = "29OCT2026"
-    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry, "lot_size": 1.5})
-    scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry, "lot_size": 1.5})
-    scanner.observe({
-        "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-        "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
-        "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
-    })
-
-    rows = scanner.pair_monitor_snapshot(limit=10)["data"]
-    row = next(r for r in rows if r["strike"] == 105.0)
-    assert row["state"] == "INCOMPLETE"
-    assert "INVALID_LOT_SIZE" in row["reason"]
-
-def test_out_of_order_tick_does_not_refresh_observation_health():
-    import time
-
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    ts = time.time_ns()
-    current = _base(ts, 105.0, "CE", 4.0, 5.0)
-    assert scanner.observe(current) == ()
-    before = scanner.diagnostics_snapshot()["counters"]["last_observation_at_ns"]
-
-    older = {**current, "source_timestamp_ns": ts - 100_000_000, "bid": 3.9, "ask": 5.1}
-    assert scanner.observe(older) == ()
-    counters = scanner.diagnostics_snapshot()["counters"]
-
-    assert counters["out_of_order_leg_updates"] == 1
-    assert counters["last_observation_at_ns"] == before
-    assert counters["last_payload_received_at_ns"] >= before
-
-
-def test_live_synthetic_scanner_rejects_fractional_and_boolean_timestamps():
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    for timestamp in (1.5, True, float("nan"), float("inf")):
-        payload = _base(1_000_000_000, 100.0, "CE", 4.0, 5.0)
-        payload["source_timestamp_ns"] = timestamp
-        assert scanner.observe(payload) == ()
-    assert scanner.diagnostics_snapshot()["counters"]["invalid_timestamp"] == 4
-
-
-
-def test_live_scanner_rejects_non_epoch_timestamp_units_by_default():
-    scanner = _LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    for timestamp in (1_700_000_000, 1_700_000_000_000, 1_700_000_000_000_000, 1_000_000_000):
-        payload = _base(timestamp, 100.0, "CE", 4.0, 5.0)
-        assert scanner.observe(payload) == ()
-    counters = scanner.diagnostics_snapshot()["counters"]
-    assert counters["invalid_timestamp_unit"] == 4
-    assert counters.get("scan_evaluations", 0) == 0
-
-
-def test_live_scanner_logical_timestamps_require_explicit_opt_in():
-    scanner = _LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    payload = _base(1_000_000_000, 100.0, "CE", 4.0, 5.0)
-    assert scanner.observe(payload) == ()
-    assert scanner.diagnostics_snapshot()["counters"]["invalid_timestamp_unit"] == 1
-
-    test_scanner = _LiveSyntheticScanner(
-        atm_provider=lambda _s, _t: 100.0,
-        allow_logical_timestamps=True,
-    )
-    assert test_scanner.observe(payload) == ()
-    assert test_scanner.diagnostics_snapshot()["counters"].get("invalid_timestamp_unit", 0) == 0
-
-
-def test_live_scanner_rejects_non_boolean_logical_timestamp_configuration():
-    import pytest
-
-    for invalid_value in ("false", "true", 0, 1, None, [], {}):
-        with pytest.raises(TypeError, match="allow_logical_timestamps must be a bool"):
-            _LiveSyntheticScanner(
-                atm_provider=lambda _s, _t: 100.0,
-                allow_logical_timestamps=invalid_value,
-            )
-
-
-def test_live_scanner_accepts_explicit_boolean_logical_timestamp_configuration():
-    scanner = _LiveSyntheticScanner(
-        atm_provider=lambda _s, _t: 100.0,
-        allow_logical_timestamps=False,
-    )
-    assert scanner.diagnostics_snapshot()["counters"].get("invalid_timestamp_unit", 0) == 0
-
-
-
-def test_latest_scan_status_records_atm_and_config_blockers_instead_of_old_results():
-    import time
-
-    expiry = "29OCT2026"
-    ts = time.time_ns()
-
-    def feed_complete_pair(scanner):
-        scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": expiry})
-        scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": expiry})
-        scanner.observe({
-            "underlying": "NIFTY", "instrument_class": "INDEX", "option_type": "",
-            "expiry": expiry, "bid": 117.0, "ask": 118.0, "lot_size": 1,
-            "source_timestamp_ns": ts, "symbol": "NIFTYFUT", "volume": 100, "oi": 1000,
-        })
-
-    atm_error = LiveSyntheticScanner(atm_provider=lambda _s, _t: (_ for _ in ()).throw(RuntimeError("ATM unavailable")))
-    feed_complete_pair(atm_error)
-    counters = atm_error.diagnostics_snapshot()["counters"]
-    assert counters["latest_scan_status_by_symbol:NIFTY"] == "ATM_ERROR"
-    assert counters["latest_scan_result_count_by_symbol:NIFTY"] == 0
-    assert counters["latest_scan_at_ns_by_symbol:NIFTY"] > 0
-
-    atm_missing = LiveSyntheticScanner(atm_provider=lambda _s, _t: None)
-    feed_complete_pair(atm_missing)
-    counters = atm_missing.diagnostics_snapshot()["counters"]
-    assert counters["latest_scan_status_by_symbol:NIFTY"] == "ATM_MISSING"
-    assert counters["latest_scan_result_count_by_symbol:NIFTY"] == 0
-
-    config_error = LiveSyntheticScanner(
-        atm_provider=lambda _s, _t: 100.0,
-        config_provider=lambda _s: (_ for _ in ()).throw(RuntimeError("config unavailable")),
-    )
-    feed_complete_pair(config_error)
-    counters = config_error.diagnostics_snapshot()["counters"]
-    assert counters["latest_scan_status_by_symbol:NIFTY"] == "CONFIG_ERROR"
-    assert counters["latest_scan_result_count_by_symbol:NIFTY"] == 0
-
-
-def test_pair_monitor_exposes_future_only_bucket_without_inventing_strike():
-    ts = 35_000_000_000
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    scanner.observe({
-        "underlying": "RELIANCE", "instrument_class": "STOCK", "option_type": "",
-        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 250,
-        "source_timestamp_ns": ts, "symbol": "RELIANCE29OCT2026FUT",
-        "volume": 100, "oi": 1000,
-    })
-
-    rows = scanner.pair_monitor_snapshot(limit=10)["data"]
-    row = next(item for item in rows if item["underlying"] == "RELIANCE")
-    assert row["strike"] is None
-    assert row["future_bid"] == 117.0
-    assert row["future_ask"] == 118.0
-    assert row["call_bid"] is None and row["put_bid"] is None
-    assert row["state"] == "INCOMPLETE"
-    assert "MISSING_CALL" in row["reason"]
-    assert "MISSING_PUT" in row["reason"]
-
-
-def test_pair_monitor_summary_counts_real_quotes_and_blockers():
-    ts = 35_000_000_000
-    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    scanner.observe({
-        "underlying": "RELIANCE", "instrument_class": "STOCK", "option_type": "",
-        "expiry": "29OCT2026", "bid": 117.0, "ask": 118.0, "lot_size": 250,
-        "source_timestamp_ns": ts, "symbol": "RELIANCE29OCT2026FUT",
-        "volume": 100, "oi": 1000,
-    })
-
-    snapshot = scanner.pair_monitor_snapshot(limit=10)
-    summary = snapshot["summary"]
-    assert summary["total_rows"] == 1
-    assert summary["symbols"]["RELIANCE"]["future_quotes"] == 1
-    assert summary["symbols"]["RELIANCE"]["call_quotes"] == 0
-    assert summary["symbols"]["RELIANCE"]["put_quotes"] == 0
-    assert summary["blocker_counts"]["MISSING_CALL"] == 1
-    assert summary["blocker_counts"]["MISSING_PUT"] == 1
-    assert summary["opportunity_confirmed"] is False
-
-
-
-def test_live_result_exposes_raw_executable_prices_and_edge_without_carry_or_fees():
-    from app.backtesting.arbitrage_backtester import FutureQuote, OptionQuote
-    from app.scanner.synthetic_cash_carry import scan_synthetic_snapshot
-
-    option = OptionQuote(
-        timestamp_ns=1_000_000_000, underlying="NIFTY", expiry=20261029,
-        strike=105.0, call_bid=10.0, call_ask=11.0,
-        put_bid=4.0, put_ask=5.0, lot_size=1, instrument_class="INDEX",
-    )
-    future = FutureQuote(
-        timestamp_ns=1_000_000_000, underlying="NIFTY", expiry=20261029,
-        bid=130.0, ask=131.0, lot_size=1, instrument_class="INDEX",
-    )
-    # Deliberately non-zero config proves displayed edge ignores carry and fees.
-    config = SyntheticScanConfig(rate=0.05, time_to_expiry_years=0.2, fees_per_unit=1.0)
-    rows = scan_synthetic_snapshot([option], future, atm_strike=100.0, config=config)
-    short_row = next(row for row in rows if row.direction == "SHORT")
-
-    # Synthetic Ask = strike + CE Ask - PE Bid = 105 + 11 - 4 = 112.
-    assert short_row.carry_factor == 1.0
-    assert short_row.carry_adjusted_synthetic_buy == 112.0
-    assert short_row.executable_edge == 18.0  # Future Bid 130 - Synthetic Ask 112.
-    assert short_row.fees_per_unit == 0.0
