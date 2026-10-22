@@ -1,0 +1,231 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { appConfig } from "@/lib/config";
+
+type TraceRow = Record<string, unknown> & {
+  trace_id: string;
+  traced_at: string;
+  trace_key: string;
+};
+
+const STORAGE_KEY = "algo:synthetic-arbitrage:trace-opportunities:v1";
+const LIVE_ENDPOINT = "/api/v1/scanner/synthetic-cash-carry/live?limit=50";
+const INDEX_ORDER = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+
+function clean(raw: unknown) {
+  return String(raw ?? "").trim();
+}
+
+function keyPart(raw: unknown) {
+  return clean(raw).toUpperCase();
+}
+
+function traceKey(row: Record<string, unknown>) {
+  return [
+    keyPart(row.underlying),
+    keyPart(row.expiry),
+    keyPart(row.strike),
+    keyPart(row.future_symbol ?? row.future_trading_symbol ?? row.future_name ?? row.future_token),
+    keyPart(row.call_symbol ?? row.call_trading_symbol ?? row.call_name ?? row.call_token),
+    keyPart(row.put_symbol ?? row.put_trading_symbol ?? row.put_name ?? row.put_token),
+    keyPart(row.direction),
+  ].join("|");
+}
+
+function formatNumber(raw: unknown) {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n.toLocaleString("en-IN", { maximumFractionDigits: 4 }) : "—";
+}
+
+function formatExpiry(raw: unknown) {
+  const text = clean(raw);
+  if (!text) return "—";
+  if (/^\d{8}(?:\.0+)?$/.test(text)) {
+    const digits = text.split(".")[0];
+    const date = new Date(Date.UTC(Number(digits.slice(0, 4)), Number(digits.slice(4, 6)) - 1, Number(digits.slice(6, 8))));
+    if (!Number.isNaN(date.getTime())) return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+  }
+  return text;
+}
+
+function formatAddedAt(raw: string) {
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+}
+
+function readStored(): TraceRow[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is TraceRow => !!item && typeof item === "object" && typeof item.trace_id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStored(rows: TraceRow[]) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+  } catch {
+    // Keep the in-memory trace list usable if browser storage is unavailable.
+  }
+}
+
+export function SyntheticTracePanel() {
+  const [liveRows, setLiveRows] = useState<Record<string, unknown>[]>([]);
+  const [traces, setTraces] = useState<TraceRow[]>([]);
+  const [liveLoading, setLiveLoading] = useState(true);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setTraces(readStored());
+  }, []);
+
+  const loadLive = useCallback(async () => {
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(base + LIVE_ENDPOINT, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail || "Live scanner unavailable");
+      const rows = Array.isArray(body?.data)
+        ? body.data.filter((item: unknown): item is Record<string, unknown> => !!item && typeof item === "object")
+        : [];
+      setLiveRows(rows.filter((row) => {
+        const instrumentClass = keyPart(row.instrument_class);
+        const underlying = keyPart(row.underlying);
+        return instrumentClass === "INDEX" && INDEX_ORDER.includes(underlying);
+      }));
+    } catch {
+      // The main scanner already owns live-feed error rendering. Trace capture
+      // simply keeps the last successful opportunity list during a transient error.
+    } finally {
+      setLiveLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLive();
+    const timer = window.setInterval(() => void loadLive(), 1500);
+    return () => window.clearInterval(timer);
+  }, [loadLive]);
+
+  const tracedKeys = useMemo(() => new Set(traces.map((item) => item.trace_key)), [traces]);
+
+  const addToTrace = (row: Record<string, unknown>) => {
+    const key = traceKey(row);
+    if (!key.replaceAll("|", "")) {
+      setMessage("This opportunity has no stable contract identity and cannot be traced yet.");
+      return;
+    }
+    if (tracedKeys.has(key)) {
+      setMessage("This exact opportunity is already in Trace.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const snapshot: TraceRow = {
+      ...JSON.parse(JSON.stringify(row)),
+      trace_id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      traced_at: now,
+      trace_key: key,
+    };
+    const next = [snapshot, ...traces];
+    setTraces(next);
+    writeStored(next);
+    setMessage(`${keyPart(row.underlying) || "Opportunity"} added to Trace.`);
+  };
+
+  const removeTrace = (traceId: string) => {
+    const next = traces.filter((item) => item.trace_id !== traceId);
+    setTraces(next);
+    writeStored(next);
+    setMessage("Trace removed.");
+  };
+
+  const clearMessage = () => setMessage("");
+
+  return (
+    <div className="mx-4 mb-5 space-y-4 sm:mx-5">
+      <section className="overflow-hidden rounded-2xl border theme-border theme-surface theme-shadow">
+        <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold theme-text">Trace Capture</h2>
+            <p className="mt-1 text-xs theme-muted">Add the exact current opportunity snapshot. Trace itself does not poll or monitor anything in the background.</p>
+          </div>
+          <span className="text-xs font-semibold theme-muted">{liveRows.length} live opportunities</span>
+        </div>
+        {message && <button type="button" onClick={clearMessage} className="mx-4 mt-3 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-left text-xs theme-text">{message} <span className="theme-muted">(tap to dismiss)</span></button>}
+        <div className="grid gap-2 p-3 md:hidden">
+          {liveLoading ? <div className="rounded-xl border theme-border p-4 text-center text-xs theme-muted">Loading live opportunities…</div> : liveRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-xs theme-muted">No index opportunity available to trace.</div> : liveRows.map((row, index) => {
+            const key = traceKey(row);
+            const direction = keyPart(row.direction) || "—";
+            const edge = row.executable_edge ?? (direction === "LONG" ? row.long_edge : row.short_edge);
+            return <div key={key || String(index)} className="rounded-xl border theme-border theme-surface-2 p-3">
+              <div className="flex items-center justify-between gap-2"><span className="text-sm font-bold theme-accent">{keyPart(row.underlying) || "INDEX"}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                <div><div className="theme-subtle">Expiry</div><div className="mt-0.5 theme-muted">{formatExpiry(row.expiry)}</div></div>
+                <div><div className="theme-subtle">Strike</div><div className="mt-0.5 theme-muted">{formatNumber(row.strike)}</div></div>
+                <div><div className="theme-subtle">Direction</div><div className="mt-0.5 font-semibold theme-text">{direction}</div></div>
+                <div><div className="theme-subtle">Entry Edge</div><div className="mt-0.5 font-semibold theme-success">{formatNumber(edge)} pts</div></div>
+              </div>
+              <button type="button" onClick={() => addToTrace(row)} disabled={tracedKeys.has(key)} className="mt-3 min-h-10 w-full rounded-lg border theme-border px-3 text-xs font-bold theme-text disabled:opacity-50">{tracedKeys.has(key) ? "ADDED TO TRACE" : "ADD TO TRACE"}</button>
+            </div>;
+          })}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
+          <table className="w-full min-w-[850px] text-left text-sm">
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{["Index", "Expiry", "Strike", "Direction", "Entry Edge", "Action"].map((label) => <th key={label} className="px-4 py-3 font-semibold">{label}</th>)}</tr></thead>
+            <tbody>{liveRows.map((row, index) => {
+              const key = traceKey(row);
+              const direction = keyPart(row.direction) || "—";
+              const edge = row.executable_edge ?? (direction === "LONG" ? row.long_edge : row.short_edge);
+              return <tr key={key || String(index)} className="border-b theme-border last:border-0">
+                <td className="px-4 py-3 font-semibold theme-text">{keyPart(row.underlying) || "INDEX"}</td>
+                <td className="px-4 py-3 theme-muted">{formatExpiry(row.expiry)}</td>
+                <td className="px-4 py-3 theme-muted">{formatNumber(row.strike)}</td>
+                <td className="px-4 py-3 font-semibold theme-text">{direction}</td>
+                <td className="px-4 py-3 font-semibold theme-success">{formatNumber(edge)} pts</td>
+                <td className="px-4 py-3"><button type="button" onClick={() => addToTrace(row)} disabled={tracedKeys.has(key)} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-bold theme-text disabled:opacity-50">{tracedKeys.has(key) ? "ADDED TO TRACE" : "ADD TO TRACE"}</button></td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-2xl border theme-border theme-surface theme-shadow">
+        <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold theme-text">Trace Opportunities</h2>
+            <p className="mt-1 text-xs theme-muted">Immutable entry snapshots for Batch 1. Live status checking will be wired in Batch 2.</p>
+          </div>
+          <span className="text-xs font-semibold theme-muted">{traces.length} traced</span>
+        </div>
+        {traces.length === 0 ? <div className="p-4 text-sm theme-muted">No opportunities added to Trace yet.</div> : <>
+          <div className="grid gap-2 p-3 md:hidden">{traces.map((row) => <div key={row.trace_id} className="rounded-xl border theme-border theme-surface-2 p-3">
+            <div className="flex items-center justify-between gap-2"><span className="text-sm font-bold theme-accent">{keyPart(row.underlying) || "INDEX"}</span><span className="text-[10px] theme-muted">{formatAddedAt(row.traced_at)}</span></div>
+            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+              <div><div className="theme-subtle">Expiry</div><div className="mt-0.5 theme-muted">{formatExpiry(row.expiry)}</div></div>
+              <div><div className="theme-subtle">Strike</div><div className="mt-0.5 theme-muted">{formatNumber(row.strike)}</div></div>
+              <div><div className="theme-subtle">Direction</div><div className="mt-0.5 font-semibold theme-text">{keyPart(row.direction) || "—"}</div></div>
+              <div><div className="theme-subtle">Entry Edge</div><div className="mt-0.5 font-semibold theme-success">{formatNumber(row.executable_edge ?? (keyPart(row.direction) === "LONG" ? row.long_edge : row.short_edge))} pts</div></div>
+            </div>
+            <div className="mt-3 flex gap-2"><button type="button" disabled className="min-h-10 flex-1 rounded-lg border theme-border px-3 text-xs font-bold theme-muted">CHECK LIVE STATUS</button><button type="button" onClick={() => removeTrace(row.trace_id)} className="min-h-10 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Remove</button></div>
+          </div>)}</div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{["Index", "Expiry", "Strike", "Direction", "Entry Edge", "Added At", "Action"].map((label) => <th key={label} className="px-4 py-3 font-semibold">{label}</th>)}</tr></thead>
+              <tbody>{traces.map((row) => <tr key={row.trace_id} className="border-b theme-border last:border-0">
+                <td className="px-4 py-3 font-semibold theme-text">{keyPart(row.underlying) || "INDEX"}</td>
+                <td className="px-4 py-3 theme-muted">{formatExpiry(row.expiry)}</td>
+                <td className="px-4 py-3 theme-muted">{formatNumber(row.strike)}</td>
+                <td className="px-4 py-3 font-semibold theme-text">{keyPart(row.direction) || "—"}</td>
+                <td className="px-4 py-3 font-semibold theme-success">{formatNumber(row.executable_edge ?? (keyPart(row.direction) === "LONG" ? row.long_edge : row.short_edge))} pts</td>
+                <td className="px-4 py-3 theme-muted">{formatAddedAt(row.traced_at)}</td>
+                <td className="px-4 py-3"><div className="flex gap-2"><button type="button" disabled className="min-h-9 rounded-lg border theme-border px-3 text-xs font-bold theme-muted">CHECK LIVE STATUS</button><button type="button" onClick={() => removeTrace(row.trace_id)} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Remove</button></div></td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </>}
+      </section>
+    </div>
+  );
+}
