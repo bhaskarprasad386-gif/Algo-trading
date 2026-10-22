@@ -156,6 +156,7 @@ def test_live_route_fairly_distributes_limited_rows_across_indices():
             row.option.instrument_class = "INDEX"
             row.option.strike = base_strike + offset
             row.option.timestamp_ns = time.time_ns() + offset
+            row.executable_edge = {"NIFTY": 5.0, "BANKNIFTY": 10.0, "SENSEX": 10.0}[symbol] + offset
             index_rows.append(row)
     live_synthetic_routes.configure(lambda: tuple(index_rows))
     response = live_synthetic_routes.live(limit=6)
