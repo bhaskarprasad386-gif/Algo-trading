@@ -94,26 +94,30 @@ def test_trace_status_rejects_unsupported_underlying_before_market_data(monkeypa
         trace_routes.check_trace_live_status(request)
     assert exc.value.status_code == 422
 
-def test_close_pnl_uses_direction_specific_executable_close_prices():
-    long_request = _request("LONG")
-    long = trace_routes._calculate_close_pnl(
-        long_request,
-        {"bid": 25110, "ask": 25112},
-        synthetic_bid=25028,
-        synthetic_ask=25032,
-    )
+def test_close_pnl_is_entry_edge_minus_current_edge_for_both_directions():
+    long_request = _request("LONG", entry_edge=25)
+    long = trace_routes._calculate_close_pnl(long_request, current_edge=10)
     assert long["pnl_status"] == "GROSS_ESTIMATE"
-    assert long["pnl_per_unit"] == (25110 - 25102) + ((25000 + 118 - 92) - 25032)
-    assert long["pnl_per_lot"] == long["pnl_per_unit"] * 65
+    assert long["pnl_per_unit"] == 15
+    assert long["pnl_per_lot"] == 15 * 65
+    assert "entry edge" in long["pnl_detail"].lower()
 
-    short_request = _request("SHORT")
-    short = trace_routes._calculate_close_pnl(
-        short_request,
-        {"bid": 25110, "ask": 25112},
-        synthetic_bid=25028,
-        synthetic_ask=25032,
-    )
-    assert short["pnl_per_unit"] == (25100 - 25112) + (25028 - (25000 + 120 - 90))
+    short_request = _request("SHORT", entry_edge=25)
+    short = trace_routes._calculate_close_pnl(short_request, current_edge=10)
+    assert short["pnl_per_unit"] == 15
+    assert short["pnl_per_lot"] == 15 * 65
+
+    # If the edge widens instead of narrowing, the tracked opportunity loses value.
+    widened = trace_routes._calculate_close_pnl(long_request, current_edge=30)
+    assert widened["pnl_per_unit"] == -5
+    assert widened["pnl_per_lot"] == -5 * 65
+
+
+def test_one_banknifty_lot_edge_capture_is_450_rupees():
+    request = _request("LONG", entry_edge=25).model_copy(update={"underlying": "BANKNIFTY", "lot_size": 30})
+    pnl = trace_routes._calculate_close_pnl(request, current_edge=10)
+    assert pnl["pnl_per_unit"] == 15
+    assert pnl["pnl_per_lot"] == 450
 
 
 def test_close_pnl_is_unavailable_without_entry_snapshot():
