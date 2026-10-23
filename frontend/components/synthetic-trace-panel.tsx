@@ -141,8 +141,9 @@ export function SyntheticTracePanel() {
         : [];
       setLiveRows(rows.filter((row) => {
         const instrumentClass = keyPart(row.instrument_class);
-        const underlying = keyPart(row.underlying);
-        return instrumentClass === "INDEX" && INDEX_ORDER.includes(underlying);
+        const underlying = keyPart(row.underlying ?? row.symbol);
+        const isIndex = instrumentClass === "INDEX" && INDEX_ORDER.includes(underlying);
+        return isIndex;
       }));
     } catch {
       // The main scanner already owns live-feed error rendering. Trace capture
