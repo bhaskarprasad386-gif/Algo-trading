@@ -57,8 +57,10 @@ def test_trace_status_resolves_exact_strike_outside_scanner_range_and_calculates
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
 
-    long = trace_routes.check_trace_live_status(_request("LONG", 12.5))
+    # The submitted/browser lot size is intentionally stale; exact future master wins.
+    long = trace_routes.check_trace_live_status(_request("LONG", 12.5).model_copy(update={"lot_size": 30}))
     assert long["status"] == "LIVE_QUOTES"
+    assert long["lot_size"] == 65
     assert long["synthetic_bid"] == 25028
     assert long["synthetic_ask"] == 25032
     assert long["current_edge"] == -84
@@ -125,8 +127,9 @@ def test_close_pnl_is_unavailable_without_entry_snapshot():
         underlying="NIFTY", expiry="2026-10-29", strike=25000,
         direction="LONG", entry_edge=10, trace_id="missing-entry", lot_size=None,
     )
-    pnl = trace_routes._calculate_close_pnl(request, {"bid": 100, "ask": 101}, 100, 101)
+    pnl = trace_routes._calculate_close_pnl(request, current_edge=15)
     assert pnl["pnl_status"] == "UNAVAILABLE"
+    assert "lot size" in pnl["pnl_detail"].lower()
     assert pnl["pnl_per_lot"] is None
 
 def test_trace_quotes_without_exchange_timestamp_fail_closed():
