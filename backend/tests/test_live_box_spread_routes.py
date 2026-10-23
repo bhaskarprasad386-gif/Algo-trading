@@ -8,10 +8,10 @@ def _result(low_ts=None, high_ts=None, symbol="ABC", instrument_class="STOCK"):
     low_ts = now if low_ts is None else low_ts
     high_ts = low_ts if high_ts is None else high_ts
     low = SimpleNamespace(underlying=symbol, instrument_class=instrument_class, expiry=20261231,
-        strike=100, timestamp_ns=low_ts, call_bid=10, call_ask=11, put_bid=1, put_ask=2,
-        lot_size=10, volume=25)
-    high = SimpleNamespace(strike=110, timestamp_ns=high_ts, call_bid=8, call_ask=9,
-        put_bid=2, put_ask=3, volume=20)
+        strike=100, timestamp_ns=low_ts, call_ltp=10.5, call_bid=10, call_ask=11,
+        put_ltp=1.5, put_bid=1, put_ask=2, lot_size=10, volume=25)
+    high = SimpleNamespace(strike=110, timestamp_ns=high_ts, call_ltp=8.5, call_bid=8,
+        call_ask=9, put_ltp=2.5, put_bid=2, put_ask=3, volume=20)
     return SimpleNamespace(low=low, high=high, direction="LONG", executable_edge=6,
         edge_per_lot=60, gross_pnl=60, strike_distance=1)
 
@@ -21,8 +21,10 @@ def test_live_box_route_serializes_bid_ask_snapshot(monkeypatch):
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     payload = routes.live(10)
     row = payload["data"][0]
-    assert row["low_call_bid"] == 10 and row["low_call_ask"] == 11
-    assert row["high_put_bid"] == 2 and row["high_put_ask"] == 3
+    assert row["low_call_ltp"] == 10.5 and row["low_call_bid"] == 10 and row["low_call_ask"] == 11
+    assert row["low_put_ltp"] == 1.5 and row["low_put_bid"] == 1 and row["low_put_ask"] == 2
+    assert row["high_call_ltp"] == 8.5 and row["high_call_bid"] == 8 and row["high_call_ask"] == 9
+    assert row["high_put_ltp"] == 2.5 and row["high_put_bid"] == 2 and row["high_put_ask"] == 3
     assert row["low_call_price"] == 11 and row["low_put_price"] == 2
     assert row["high_call_price"] == 8 and row["high_put_price"] == 2
     assert row["liquidity_qty"] == 20
