@@ -38,7 +38,7 @@ const configs: Record<string, WorkspaceConfig> = {
     slug: "synthetic-arbitrage",
     title: "Synthetic Arbitrage",
     description: "Dedicated index-only synthetic future/cash-carry scanner using live index options and futures.",
-    universe: "SUPPORTED INDICES ONLY",
+    universe: "SUPPORTED INDICES + NIFTY TOP 15 LIQUID F&O STOCKS",
     columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["INDEX", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
@@ -822,17 +822,27 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     const indexOrder = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
     let scopedRows = rows;
     if (slug === "synthetic-arbitrage") {
-      // Aggregate INDEX shows each supported index separately; an individual
-      // selection must never display another index's opportunities.
+      // Synthetic universe is supported indices plus the explicitly approved
+      // Top-15 liquid F&O stock basket. Stock names are basket labels, not
+      // separate dropdown choices; retain the index selector behavior only.
+      const top15 = new Set(["RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY", "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK", "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL"]);
       scopedRows = rows.filter((row) => {
-        const symbol = String(row.underlying ?? "").trim().toUpperCase();
+        const symbol = String(row.underlying ?? row.symbol ?? "").trim().toUpperCase();
         const instrumentClass = String(row.instrument_class ?? "").trim().toUpperCase();
-        if (instrumentClass !== "INDEX" || !indexOrder.includes(symbol)) return false;
-        return control === "INDEX" || symbol === control;
+        const isIndex = instrumentClass === "INDEX" && indexOrder.includes(symbol);
+        const isTop15Stock = top15.has(symbol) && ["STOCK", "EQUITY", "FNO", "F&O", ""].includes(instrumentClass);
+        if (!isIndex && !isTop15Stock) return false;
+        return isTop15Stock || control === "INDEX" || symbol === control;
       }).sort((a, b) => {
-        const ai = indexOrder.indexOf(String(a.underlying ?? "").trim().toUpperCase());
-        const bi = indexOrder.indexOf(String(b.underlying ?? "").trim().toUpperCase());
-        if (ai !== bi) return ai - bi;
+        const symbolA = String(a.underlying ?? a.symbol ?? "").trim().toUpperCase();
+        const symbolB = String(b.underlying ?? b.symbol ?? "").trim().toUpperCase();
+        const ai = indexOrder.indexOf(symbolA);
+        const bi = indexOrder.indexOf(symbolB);
+        if (ai !== bi) {
+          if (ai < 0) return 1;
+          if (bi < 0) return -1;
+          return ai - bi;
+        }
         return Number(b.timestamp_ns ?? 0) - Number(a.timestamp_ns ?? 0);
       });
     }
