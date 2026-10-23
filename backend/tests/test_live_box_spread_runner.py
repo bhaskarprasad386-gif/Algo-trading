@@ -84,3 +84,15 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
     runner._run_session()
     assert captured == ["READY"]
     assert runner._readiness["state"] == "recorder_started"
+
+
+def test_box_atm_does_not_refresh_while_inside_subscribed_strike_coverage():
+    from app.market_data.live_box_spread_runner import _atm_outside_subscribed_range
+
+    coverage = {90.0, 100.0, 110.0}
+    assert _atm_outside_subscribed_range(90.0, coverage) is False
+    assert _atm_outside_subscribed_range(100.0, coverage) is False
+    assert _atm_outside_subscribed_range(110.0, coverage) is False
+    assert _atm_outside_subscribed_range(120.0, coverage) is True
+    assert _atm_outside_subscribed_range(80.0, coverage) is True
+    assert _atm_outside_subscribed_range(None, coverage) is False
