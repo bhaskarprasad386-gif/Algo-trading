@@ -52,7 +52,7 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Box Spread",
     description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
     universe: "INDEX + ELIGIBLE OPTIONS",
-    columns: ["Underlying", "Expiry", "Expiry Type", "Low Strike", "High Strike", "Box Edge", "Liquidity", "LTP Updated", "Freshness", "Direction", "Signal"],
+    columns: ["Underlying", "Expiry", "Expiry Type", "Low Strike", "High Strike", "Low CE Bid/Ask", "Low PE Bid/Ask", "High CE Bid/Ask", "High PE Bid/Ask", "Box Edge", "Liquidity", "LTP Updated", "Freshness", "Direction", "Signal"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
@@ -277,6 +277,20 @@ function formatCell(slug: string, column: string, row: Row) {
       Liquidity: ["liquidity_qty"], Direction: ["direction"], Signal: ["direction"],
     },
   };
+  if (slug === "box-spread") {
+    const quoteFields: Record<string, [string, string]> = {
+      "Low CE Bid/Ask": ["low_call_bid", "low_call_ask"],
+      "Low PE Bid/Ask": ["low_put_bid", "low_put_ask"],
+      "High CE Bid/Ask": ["high_call_bid", "high_call_ask"],
+      "High PE Bid/Ask": ["high_put_bid", "high_put_ask"],
+    };
+    const fields = quoteFields[column];
+    if (fields) {
+      const bid = value(row, fields[0]);
+      const ask = value(row, fields[1]);
+      return "B " + formatValue(bid) + " / A " + formatValue(ask);
+    }
+  }
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
   if (column === "Expiry") return formatExpiry(raw);
   if (slug === "box-spread" && column === "LTP Updated") return formatTimestamp(raw);
