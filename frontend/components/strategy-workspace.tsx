@@ -358,9 +358,11 @@ function pairCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
-      Time: ["last_update_timestamp_ns", "timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], Freshness: ["freshness"],
-      "Low Strike": ["low_strike"], "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
-      "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
+      Time: ["last_update_timestamp_ns", "timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
+      "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
+      "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
+      "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
+      "Box Edge": ["executable_edge"], "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
     },
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
@@ -376,6 +378,15 @@ function pairCell(slug: string, column: string, row: Row) {
   }
   if (column === "Time") return formatTimestamp(raw);
   if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "box-spread" && column === "Quote Time") {
+    return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
+  }
+  if (slug === "box-spread" && ["Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)"].includes(column)) {
+    const prefix = column.startsWith("Low ") ? "low_" : "high_";
+    const option = column.includes("Call") ? "call" : "put";
+    const key = prefix + option;
+    return "LTP " + formatValue(value(row, key + "_ltp")) + " · Bid " + formatValue(value(row, key + "_bid")) + " · Ask " + formatValue(value(row, key + "_ask"));
+  }
   if (slug === "box-spread" && column === "Freshness") {
     const age = nullableNumber(value(row, "quote_age_seconds"));
     return String(raw ?? "UNKNOWN") + (age === null ? "" : " · " + age.toFixed(2) + "s");
