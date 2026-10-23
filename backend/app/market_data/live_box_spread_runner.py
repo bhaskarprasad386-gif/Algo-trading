@@ -17,6 +17,13 @@ from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
+
+def _atm_outside_subscribed_range(atm_strike, subscribed_strikes):
+    """Refresh option subscriptions only after live ATM exits their strike coverage."""
+    if atm_strike is None or not subscribed_strikes:
+        return False
+    return float(atm_strike) < min(subscribed_strikes) or float(atm_strike) > max(subscribed_strikes)
+
 class BoxSpreadLiveTarget:
     def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None):
         self.underlying=underlying.strip().upper(); self.instrument_class=instrument_class.strip().upper(); self.expiry=expiry
@@ -140,13 +147,21 @@ class LiveBoxSpreadRunner:
                     policy=self.policy,
                 )
                 pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results)
-                initial_atm={s:atms[s] for s in ready_symbols}
+                subscribed_strikes = {}
+                for sub in subs:
+                    symbol = str(getattr(sub, "underlying", "") or "").strip().upper()
+                    try:
+                        strike = float(sub.strike)
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+                    if symbol:
+                        subscribed_strikes.setdefault(symbol, set()).add(strike)
                 def observe(payload):
                     pipeline.observe(payload)
                     symbol=str(payload.get("underlying") or "").upper()
-                    previous=initial_atm.get(symbol)
                     current=self.tracker.atm(symbol,time_ns())
-                    if previous is not None and current is not None and current != previous and self.recorder is not None:
+                    coverage = subscribed_strikes.get(symbol, set())
+                    if _atm_outside_subscribed_range(current, coverage) and self.recorder is not None:
                         self.recorder.stop()
                 self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
                 self.recorder.run_forever()
