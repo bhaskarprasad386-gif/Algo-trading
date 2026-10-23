@@ -8,7 +8,6 @@ type Row = Record<string, unknown>;
 type Health = "checking" | "online" | "error";
 
 const INDEXES = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
-const STOCKS = ["RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY", "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK", "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL"];
 const fmt = (v: unknown) => {
   if (v === null || v === undefined || v === "") return "—";
   const n = Number(v);
@@ -39,7 +38,7 @@ export function SyntheticAdvancedOverview() {
       const eligible = (body.data as Row[]).filter((row) => {
         const underlying = key(row.underlying ?? row.symbol);
         const cls = key(row.instrument_class);
-        return INDEXES.includes(underlying) || (STOCKS.includes(underlying) && (!cls || cls === "STOCK" || cls === "EQUITY" || cls === "INDEX"));
+        return INDEXES.includes(underlying) && (!cls || cls === "INDEX");
       });
       setRows(eligible);
       setHealth("online");
@@ -61,7 +60,7 @@ export function SyntheticAdvancedOverview() {
 
   const filtered = useMemo(() => rows.filter((row) => {
     const underlying = key(row.underlying ?? row.symbol);
-    const kind = INDEXES.includes(underlying) ? "INDEX" : "STOCK";
+    const kind = "INDEX";
     const dir = key(row.direction);
     const matchesSearch = !search || [row.underlying, row.symbol, row.expiry, row.strike].some((v) => text(v).toUpperCase().includes(search.toUpperCase()));
     return matchesSearch && (instrument === "ALL" || instrument === kind) && (direction === "ALL" || dir === direction);
@@ -69,7 +68,6 @@ export function SyntheticAdvancedOverview() {
 
   const edgeCount = rows.filter((row) => Number(row.executable_edge ?? row.edge_per_unit) > 0 && ["LONG", "SHORT"].includes(key(row.direction))).length;
   const indexCount = new Set(rows.map((r) => key(r.underlying ?? r.symbol)).filter((s) => INDEXES.includes(s))).size;
-  const stockCount = new Set(rows.map((r) => key(r.underlying ?? r.symbol)).filter((s) => STOCKS.includes(s))).size;
 
   return (
     <section className="mb-6 space-y-4">
@@ -80,7 +78,7 @@ export function SyntheticAdvancedOverview() {
               <Activity className="h-4 w-4" /> Advanced workspace · Synthetic only
             </div>
             <h2 className="text-xl font-bold tracking-tight theme-text sm:text-2xl">Synthetic Arbitrage Control Center</h2>
-            <p className="mt-1 max-w-3xl text-sm theme-muted">Live option/future parity monitor, universe coverage and real API status. Broker orders remain OFF; this panel never places orders.</p>
+            <p className="mt-1 max-w-3xl text-sm theme-muted">Index-only live option/future parity monitor, universe coverage and real API status. Stock instruments are excluded. Broker orders remain OFF; this panel never places orders.</p>
           </div>
           <button type="button" onClick={() => void refresh()} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border theme-surface-2 px-4 py-2 text-sm font-semibold theme-text disabled:opacity-60">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh live data
@@ -99,7 +97,7 @@ export function SyntheticAdvancedOverview() {
           </div>
           <div className="theme-surface p-4">
             <div className="mb-2 flex items-center gap-2 text-xs theme-muted"><ShieldCheck className="h-4 w-4" /> Universe coverage</div>
-            <div className="text-lg font-bold theme-text">{health === "online" ? `${indexCount}/6 indices · ${stockCount}/15 stocks` : "—"}</div>
+            <div className="text-lg font-bold theme-text">{health === "online" ? `${indexCount}/6 supported indices` : "—"}</div>
             <div className="mt-1 text-xs theme-muted">Counts unique underlyings present in live rows</div>
           </div>
           <div className="theme-surface p-4">
@@ -126,7 +124,7 @@ export function SyntheticAdvancedOverview() {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / expiry / strike" className="min-h-11 w-full pl-9 pr-3 text-sm" />
           </label>
           <select value={instrument} onChange={(e) => setInstrument(e.target.value)} className="min-h-11 px-3 text-sm">
-            <option value="ALL">All eligible underlyings</option><option value="INDEX">Indices</option><option value="STOCK">Top 15 stocks</option>
+            <option value="ALL">All supported indices</option><option value="INDEX">Indices only</option>
           </select>
           <select value={direction} onChange={(e) => setDirection(e.target.value)} className="min-h-11 px-3 text-sm">
             <option value="ALL">All directions / states</option><option value="LONG">LONG</option><option value="SHORT">SHORT</option>
