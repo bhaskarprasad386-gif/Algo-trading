@@ -41,7 +41,7 @@ const configs: Record<string, WorkspaceConfig> = {
     universe: "SUPPORTED INDICES + NIFTY TOP 15 LIQUID F&O STOCKS",
     columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
-    controls: ["INDEX", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
+    controls: ["ALL", "INDEX", "TOP15"],
     pairTitle: "Option / Future Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
@@ -832,7 +832,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const isIndex = instrumentClass === "INDEX" && indexOrder.includes(symbol);
         const isTop15Stock = top15.has(symbol) && ["STOCK", "EQUITY", "FNO", "F&O", ""].includes(instrumentClass);
         if (!isIndex && !isTop15Stock) return false;
-        return isTop15Stock || control === "INDEX" || symbol === control;
+        return control === "ALL" || (control === "INDEX" && isIndex) || (control === "TOP15" && isTop15Stock) || (indexOrder.includes(control) && symbol === control);
       }).sort((a, b) => {
         const symbolA = String(a.underlying ?? a.symbol ?? "").trim().toUpperCase();
         const symbolB = String(b.underlying ?? b.symbol ?? "").trim().toUpperCase();
@@ -957,7 +957,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         {slug === "synthetic-arbitrage" && (
           <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs">
             <p className="font-semibold theme-text">
-              {control === "INDEX" ? "INDEX-ONLY SCAN — all supported indices" : "INDEX-ONLY SCAN — " + control}
+              {control === "ALL" ? "SUPPORTED INDICES + TOP 15 STOCK BASKET" : control === "INDEX" ? "SUPPORTED INDICES ONLY" : control === "TOP15" ? "NIFTY TOP 15 LIQUID F&O STOCK BASKET" : "INDEX SCAN — " + control}
             </p>
             {control === "TOP15" || control === "ALL" ? (
               <>
