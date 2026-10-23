@@ -869,9 +869,66 @@ async def _live_box_spread_loop() -> None:
         await asyncio.sleep(retry_delay)
         retry_delay = min(max_retry_delay, retry_delay * 2.0)
 
+def _box_spread_result_key(result) -> tuple:
+    low = getattr(result, "low", None)
+    high = getattr(result, "high", None)
+    if low is None or high is None:
+        return ("", "", "", "", "", "")
+    try:
+        low_strike = format(float(getattr(low, "strike", "")), ".12g")
+        high_strike = format(float(getattr(high, "strike", "")), ".12g")
+    except (TypeError, ValueError, OverflowError):
+        low_strike = str(getattr(low, "strike", "") or "").strip().upper()
+        high_strike = str(getattr(high, "strike", "") or "").strip().upper()
+    return (
+        str(getattr(low, "underlying", "") or "").strip().upper(),
+        str(getattr(low, "instrument_class", "") or "").strip().upper(),
+        str(getattr(low, "expiry", "") or "").strip().upper(),
+        low_strike,
+        high_strike,
+        str(getattr(result, "direction", "") or "").strip().upper(),
+    )
+
+
+def _fresh_live_box_spread_results(results: tuple, max_age_seconds: float = 5.0) -> tuple:
+    now_ns = time_module.time_ns()
+    cutoff_ns = now_ns - int(max_age_seconds * 1_000_000_000)
+    fresh = []
+    for result in results:
+        try:
+            low_ts = int(result.low.timestamp_ns)
+            high_ts = int(result.high.timestamp_ns)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            continue
+        if not (cutoff_ns <= low_ts <= now_ns and cutoff_ns <= high_ts <= now_ns):
+            continue
+        if abs(low_ts - high_ts) > 3_000_000_000:
+            continue
+        fresh.append(result)
+    return tuple(fresh)
+
+
 def _update_live_box_spread_results(results: tuple) -> None:
     global live_box_spread_latest_results
-    live_box_spread_latest_results = tuple(results)
+    # Each scanner callback is scoped to a single quote bucket. Merge fresh
+    # rows across symbols instead of letting one symbol erase every other one.
+    combined = _fresh_live_box_spread_results(
+        tuple(live_box_spread_latest_results) + tuple(results or ())
+    )
+    latest = {}
+    for result in combined:
+        key = _box_spread_result_key(result)
+        try:
+            timestamp_ns = max(int(result.low.timestamp_ns), int(result.high.timestamp_ns))
+            edge = float(getattr(result, "executable_edge", 0) or 0)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            continue
+        previous = latest.get(key)
+        if previous is None or timestamp_ns > previous[0] or (
+            timestamp_ns == previous[0] and edge > previous[1]
+        ):
+            latest[key] = (timestamp_ns, edge, result)
+    live_box_spread_latest_results = tuple(item[2] for item in latest.values())
 
 
 async def _live_calendar_spread_loop() -> None:
