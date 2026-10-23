@@ -90,14 +90,15 @@ class LiveBoxSpreadScanner:
                         # Use the weaker CE/PE leg so one liquid side cannot
                         # mask an illiquid side in the four-leg structure.
                         min(int(float(ce.get("volume") or 0)), int(float(pe.get("volume") or 0))),
-                        min(int(float(ce.get("oi") or 0)), int(float(pe.get("oi") or 0)))
+                        min(int(float(ce.get("oi") or 0)), int(float(pe.get("oi") or 0))),
+                        self._price(ce.get("ltp")), self._price(pe.get("ltp"))
                     ))
                 except (ValueError,TypeError): continue
             timestamps=[int(value.get("source_timestamp_ns") or 0) for value in bucket.values() if isinstance(value,dict)]
             if not timestamps or max(timestamps)-min(timestamps)>self.TIMESTAMP_TOLERANCE_NS:
                 self._prune(ts); return ()
             anchor_ts=max(timestamps)
-            grouped=[OptionQuote(anchor_ts,symbol,q.expiry,q.strike,q.call_bid,q.call_ask,q.put_bid,q.put_ask,q.lot_size,q.instrument_class,q.volume,q.oi) for q in grouped]
+            grouped=[OptionQuote(anchor_ts,symbol,q.expiry,q.strike,q.call_bid,q.call_ask,q.put_bid,q.put_ask,q.lot_size,q.instrument_class,q.volume,q.oi,q.call_ltp,q.put_ltp) for q in grouped]
             atm=self.atm_provider(symbol,anchor_ts)
             if atm is None or not grouped:
                 self._prune(ts); return ()
