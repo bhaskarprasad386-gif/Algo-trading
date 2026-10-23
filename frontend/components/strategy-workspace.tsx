@@ -51,12 +51,12 @@ const configs: Record<string, WorkspaceConfig> = {
     slug: "box-spread",
     title: "Box Spread",
     description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
-    universe: "INDEX + ELIGIBLE OPTIONS",
-    columns: ["Underlying", "Expiry", "Expiry Type", "Low Strike", "High Strike", "Box Edge", "Liquidity", "LTP Updated", "Freshness", "Direction", "Signal"],
+    universe: "SUPPORTED INDEX OPTIONS ONLY",
+    columns: ["Underlying", "Expiry", "Expiry Type", "Quote Time", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Expiry Type", "Low Strike", "High Strike", "Box Edge", "Lot Size", "Freshness", "State"],
+    pairColumns: ["Time", "Underlying", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Lot Size", "Direction", "Freshness"],
     historyEndpoint: "/api/v1/scanner/box-spread/alerts?days=1&limit=100",
   },
   "custom-strategy": {
@@ -272,14 +272,23 @@ function formatCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
-      Underlying: ["symbol"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "LTP Updated": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"], "Low Strike": ["low_strike"],
-      "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
-      Liquidity: ["liquidity_qty"], Direction: ["direction"], Signal: ["direction"],
+      Underlying: ["symbol"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
+      "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
+      "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
+      "Box Edge": ["executable_edge"], "Min Leg Volume": ["liquidity_qty"], Direction: ["direction"], Freshness: ["freshness"],
     },
   };
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
   if (column === "Expiry") return formatExpiry(raw);
-  if (slug === "box-spread" && column === "LTP Updated") return formatTimestamp(raw);
+  if (slug === "box-spread" && column === "Quote Time") {
+    return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
+  }
+  if (slug === "box-spread" && ["Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)"].includes(column)) {
+    const prefix = column.startsWith("Low ") ? "low_" : "high_";
+    const option = column.includes("Call") ? "call" : "put";
+    const key = prefix + option;
+    return "LTP " + formatValue(value(row, key + "_ltp")) + " · Bid " + formatValue(value(row, key + "_bid")) + " · Ask " + formatValue(value(row, key + "_ask"));
+  }
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
   if (slug === "box-spread" && column === "Freshness") {
     const age = nullableNumber(value(row, "quote_age_seconds"));
@@ -349,9 +358,11 @@ function pairCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
-      Time: ["last_update_timestamp_ns", "timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], Freshness: ["freshness"],
-      "Low Strike": ["low_strike"], "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
-      "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
+      Time: ["last_update_timestamp_ns", "timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
+      "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
+      "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
+      "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
+      "Box Edge": ["executable_edge"], "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
     },
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
@@ -367,6 +378,15 @@ function pairCell(slug: string, column: string, row: Row) {
   }
   if (column === "Time") return formatTimestamp(raw);
   if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "box-spread" && column === "Quote Time") {
+    return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
+  }
+  if (slug === "box-spread" && ["Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)"].includes(column)) {
+    const prefix = column.startsWith("Low ") ? "low_" : "high_";
+    const option = column.includes("Call") ? "call" : "put";
+    const key = prefix + option;
+    return "LTP " + formatValue(value(row, key + "_ltp")) + " · Bid " + formatValue(value(row, key + "_bid")) + " · Ask " + formatValue(value(row, key + "_ask"));
+  }
   if (slug === "box-spread" && column === "Freshness") {
     const age = nullableNumber(value(row, "quote_age_seconds"));
     return String(raw ?? "UNKNOWN") + (age === null ? "" : " · " + age.toFixed(2) + "s");
