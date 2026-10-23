@@ -793,17 +793,15 @@ async def _live_box_spread_loop() -> None:
                 name = str(item.get("name", "")).strip().upper()
                 if not name:
                     continue
-                # Match Synthetic Future's authoritative Top-15 stock universe and
-                # accept only listed NSE stock futures; do not admit same-named rows
-                # from another segment into Box Spread targets.
-                if typ == "FUTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
+                # Build the scanner universe from option contracts, not futures.
+                # Futures are not live-subscribed for Box Spread; option-only rows
+                # must remain eligible even when a future row is missing or renamed.
+                if typ == "OPTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
                     stock_symbols.add(name)
-                elif (
-                    typ == "FUTIDX"
-                    and name in OPTION_STRATEGY_INDEX_SYMBOLS
-                    and ((segment == "NFO" and name == "NIFTY") or (segment == "BFO" and name == "SENSEX"))
-                ):
-                    index_symbols.add(name)
+                elif typ == "OPTIDX" and name in OPTION_STRATEGY_INDEX_SYMBOLS:
+                    expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
+                    if segment == expected_segment:
+                        index_symbols.add(name)
             stock_symbols = [
                 symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED
                 if symbol in stock_symbols
