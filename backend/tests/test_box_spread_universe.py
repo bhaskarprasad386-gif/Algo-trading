@@ -72,3 +72,12 @@ def test_box_requires_both_call_and_put_to_be_liquid():
         policy=__import__("app.backtesting.arbitrage_scan_policy", fromlist=["ScanPolicy"]).ScanPolicy(stock_box_distances=(1,)),
     )
     assert not results
+
+
+def test_live_box_spread_supports_all_configured_index_option_underlyings():
+    from app.market_data.nifty50_universe import OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+
+    assert OPTION_STRATEGY_INDEX_SYMBOLS == NIFTY50_INDEX_SYMBOLS
+    assert OPTION_STRATEGY_INDEX_SYMBOLS == {
+        "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"
+    }
