@@ -27,6 +27,11 @@ def test_live_box_route_serializes_bid_ask_snapshot(monkeypatch):
     assert row["high_call_price"] == 8 and row["high_put_price"] == 2
     assert row["liquidity_qty"] == 20
     assert row["timestamp_ns"] == row["high_timestamp_ns"]
+    assert row["last_update_timestamp_ns"] == row["timestamp_ns"]
+    assert row["expiry_date"] == "2026-12-31"
+    assert row["expiry_type"] == "UNKNOWN"
+    assert row["freshness"] == "LIVE"
+    assert row["quote_age_seconds"] >= 0
     assert row["timestamp_skew_ms"] == 0
 
 
