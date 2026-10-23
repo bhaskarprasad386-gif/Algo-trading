@@ -13,7 +13,7 @@ MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
 def _expiry_date(value):
     from datetime import datetime
     text = str(value or "").strip().upper()
-    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+    for fmt in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
         try:
             return datetime.strptime(text, fmt).date().isoformat()
         except ValueError:
