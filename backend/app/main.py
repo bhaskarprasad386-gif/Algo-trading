@@ -657,7 +657,7 @@ async def _live_synthetic_loop() -> None:
             runner = LiveSyntheticRunner(
                 settings.BACKTEST_DATA_DB,
                 targets,
-                allowed_stock_symbols=frozenset(stock_symbols),
+                allowed_stock_symbols=frozenset(),
                 instrument_master=master,
                 auth=AngelOneAuth(),
                 stock_universe_provider=lambda: tuple(stock_symbols),
@@ -843,11 +843,8 @@ async def _live_box_spread_loop() -> None:
                     expiry_types[(symbol, raw_expiry.upper())] = "MONTHLY" if day in monthly_dates else "WEEKLY"
                 return [(day, found[day], "MONTHLY" if day in monthly_dates else "WEEKLY") for day in dates]
 
-            for symbol in stock_symbols:
-                expiries = listed_option_expiries(symbol, "STOCK")
-                if expiries:
-                    day, expiry, _kind = expiries[0]
-                    targets_list.append(BoxSpreadLiveTarget(symbol, "STOCK", expiry=expiry))
+            # Index-only mode: stock option targets are intentionally disabled.
+            # Keep option-master expiry discovery for supported indices only.
             for symbol in sorted(index_symbols):
                 expiries = listed_option_expiries(symbol, "INDEX")
                 if not expiries:
