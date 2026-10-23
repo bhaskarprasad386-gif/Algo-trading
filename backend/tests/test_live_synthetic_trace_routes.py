@@ -8,11 +8,11 @@ from fastapi import HTTPException
 from app.scanner import live_synthetic_trace_routes as trace_routes
 
 
-def _instrument(symbol, token, instrument_type, expiry="29OCT2026", strike="0", segment="NFO"):
+def _instrument(symbol, token, instrument_type, expiry="29OCT2026", strike="0", segment="NFO", name="NIFTY", lotsize="65"):
     return {
-        "name": "NIFTY", "symbol": symbol, "token": token,
+        "name": name, "symbol": symbol, "token": token,
         "instrumenttype": instrument_type, "expiry": expiry,
-        "strike": strike, "exch_seg": segment, "lotsize": "65",
+        "strike": strike, "exch_seg": segment, "lotsize": lotsize,
     }
 
 
@@ -72,6 +72,47 @@ def test_trace_status_resolves_exact_strike_outside_scanner_range_and_calculates
     assert short["current_edge"] == 78  # future bid minus synthetic ask
     assert short["current_edge"] == 78
     assert short["edge_change"] == 65.5
+
+
+def test_banknifty_trace_uses_banknifty_master_lot_size_for_pnl(monkeypatch):
+    monkeypatch.setattr(trace_routes, "_save_check", lambda _request, _payload: 1)
+    monkeypatch.setattr(trace_routes, "_history_rows", lambda _trace_id: [])
+    instruments = [
+        _instrument("BANKNIFTY29OCT26FUT", "11", "FUTIDX", name="BANKNIFTY", lotsize="30"),
+        _instrument("BANKNIFTY29OCT2650000CE", "12", "OPTIDX", strike="5000000", name="BANKNIFTY", lotsize="30"),
+        _instrument("BANKNIFTY29OCT2650000PE", "13", "OPTIDX", strike="5000000", name="BANKNIFTY", lotsize="30"),
+    ]
+
+    class FakeMaster:
+        def __init__(self):
+            self.instruments = instruments
+        def download(self):
+            return self.instruments
+
+    stamp = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%Y %H:%M:%S")
+
+    class FakeClient:
+        def quote_many(self, exchange, contracts):
+            assert exchange == "NFO"
+            assert {item["symboltoken"] for item in contracts} == {"11", "12", "13"}
+            return {"status": True, "data": {"fetched": [
+                {"symbolToken": "11", "exchFeedTime": stamp, "depth": {"buy": [{"price": 49999}], "sell": [{"price": 50000}]}},
+                {"symbolToken": "12", "exchFeedTime": stamp, "depth": {"buy": [{"price": 101}], "sell": [{"price": 102}]}},
+                {"symbolToken": "13", "exchFeedTime": stamp, "depth": {"buy": [{"price": 90}], "sell": [{"price": 91}]}},
+            ]}}
+
+    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
+    monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
+    request = trace_routes.TraceStatusRequest(
+        underlying="BANKNIFTY", expiry="2026-10-29", strike=50000,
+        direction="LONG", entry_edge=25, lot_size=65,
+    )
+
+    result = trace_routes.check_trace_live_status(request)
+    assert result["current_edge"] == 10
+    assert result["lot_size"] == 30
+    assert result["pnl_per_unit"] == 15
+    assert result["pnl_per_lot"] == 450
 
 
 def test_trace_status_fails_closed_when_exact_option_contract_is_missing(monkeypatch):
