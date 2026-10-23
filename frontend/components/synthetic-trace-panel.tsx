@@ -13,6 +13,7 @@ const STORAGE_KEY = "algo:synthetic-arbitrage:trace-opportunities:v1";
 const DELETED_KEY = "algo:synthetic-arbitrage:trace-deleted:v1";
 const LIVE_ENDPOINT = "/api/v1/scanner/synthetic-cash-carry/live?limit=50";
 const INDEX_ORDER = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+const TOP15_STOCKS = ["RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY", "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK", "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL"];
 
 function clean(raw: unknown) {
   return String(raw ?? "").trim();
@@ -141,8 +142,10 @@ export function SyntheticTracePanel() {
         : [];
       setLiveRows(rows.filter((row) => {
         const instrumentClass = keyPart(row.instrument_class);
-        const underlying = keyPart(row.underlying);
-        return instrumentClass === "INDEX" && INDEX_ORDER.includes(underlying);
+        const underlying = keyPart(row.underlying ?? row.symbol);
+        const isIndex = instrumentClass === "INDEX" && INDEX_ORDER.includes(underlying);
+        const isTop15Stock = TOP15_STOCKS.includes(underlying) && ["", "STOCK", "EQUITY", "FNO", "F&O"].includes(instrumentClass);
+        return isIndex || isTop15Stock;
       }));
     } catch {
       // The main scanner already owns live-feed error rendering. Trace capture
