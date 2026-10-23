@@ -68,3 +68,16 @@ def test_live_box_route_rejects_excessive_timestamp_skew(monkeypatch):
     result = _result(low_ts=now, high_ts=now - 4_000_000_000)
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     assert routes.live(10, max_age_seconds=5)["count"] == 0
+
+
+def test_live_box_route_normalizes_expiry_type_keys(monkeypatch):
+    result = _result(symbol="NIFTY", instrument_class="INDEX")
+    result.low.expiry = "27 Oct 2026"
+    result.high.expiry = "27 Oct 2026"
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    monkeypatch.setattr(routes, "_expiry_types", {})
+    routes.set_expiry_types({("NIFTY", "27OCT2026"): "WEEKLY"})
+    row = routes.live(10)["data"][0]
+    assert row["expiry_date"] == "2026-10-27"
+    assert row["expiry_type"] == "WEEKLY"
+    assert row["freshness"] == "LIVE"

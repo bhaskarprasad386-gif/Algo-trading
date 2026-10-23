@@ -283,7 +283,13 @@ function formatCell(slug: string, column: string, row: Row) {
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
   if (slug === "box-spread" && column === "Freshness") {
     const age = nullableNumber(value(row, "quote_age_seconds"));
-    return String(raw ?? "UNKNOWN") + (age === null ? "" : " · " + age.toFixed(2) + "s");
+    const supplied = String(raw ?? "").trim().toUpperCase();
+    // Prefer explicit backend freshness; recover a missing/UNKNOWN label only
+    // from the measured quote age, never from the presence of an opportunity row.
+    const freshness = supplied && supplied !== "UNKNOWN"
+      ? supplied
+      : age === null ? "UNKNOWN" : age <= 5 ? "LIVE" : "STALE";
+    return freshness + (age === null ? "" : " · " + age.toFixed(2) + "s");
   }
   if (slug === "synthetic-arbitrage" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future") return withQuoteTimestamp(syntheticFutureValue(row), row);
