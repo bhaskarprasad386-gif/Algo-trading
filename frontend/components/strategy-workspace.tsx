@@ -52,11 +52,11 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Box Spread",
     description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
     universe: "INDEX + ELIGIBLE OPTIONS",
-    columns: ["Underlying", "Expiry", "Expiry Type", "Low Strike", "High Strike", "Box Edge", "Liquidity", "LTP Updated", "Freshness", "Direction", "Signal"],
+    columns: ["Underlying", "Expiry", "Expiry Type", "Low Strike", "Low CE", "Low PE", "High Strike", "High CE", "High PE", "Box Edge", "Liquidity", "LTP Updated", "Freshness", "Direction", "Signal"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Expiry Type", "Low Strike", "High Strike", "Box Edge", "Lot Size", "Freshness", "State"],
+    pairColumns: ["Time", "Underlying", "Expiry", "Expiry Type", "Low Strike", "Low CE", "Low PE", "High Strike", "High CE", "High PE", "Box Edge", "Lot Size", "Freshness", "State"],
     historyEndpoint: "/api/v1/scanner/box-spread/alerts?days=1&limit=100",
   },
   "custom-strategy": {
@@ -272,13 +272,21 @@ function formatCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
-      Underlying: ["symbol"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "LTP Updated": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"], "Low Strike": ["low_strike"],
-      "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
+      Underlying: ["symbol"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "LTP Updated": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"], "Low Strike": ["low_strike"], "Low CE": ["low_call_bid", "low_call_ask"], "Low PE": ["low_put_bid", "low_put_ask"],
+      "High Strike": ["high_strike"], "High CE": ["high_call_bid", "high_call_ask"], "High PE": ["high_put_bid", "high_put_ask"], "Box Edge": ["executable_edge"],
       Liquidity: ["liquidity_qty"], Direction: ["direction"], Signal: ["direction"],
     },
   };
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
   if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "box-spread" && ["Low CE", "Low PE", "High CE", "High PE"].includes(column)) {
+    const fields: Record<string, [string, string]> = {
+      "Low CE": ["low_call_bid", "low_call_ask"], "Low PE": ["low_put_bid", "low_put_ask"],
+      "High CE": ["high_call_bid", "high_call_ask"], "High PE": ["high_put_bid", "high_put_ask"],
+    };
+    const [bidKey, askKey] = fields[column];
+    return "Bid " + formatValue(row[bidKey]) + " / Ask " + formatValue(row[askKey]);
+  }
   if (slug === "box-spread" && column === "LTP Updated") return formatTimestamp(raw);
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
   if (slug === "box-spread" && column === "Freshness") {
@@ -344,7 +352,7 @@ function pairCell(slug: string, column: string, row: Row) {
     },
     "box-spread": {
       Time: ["last_update_timestamp_ns", "timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], Freshness: ["freshness"],
-      "Low Strike": ["low_strike"], "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
+      "Low Strike": ["low_strike"], "Low CE": ["low_call_bid", "low_call_ask"], "Low PE": ["low_put_bid", "low_put_ask"], "High Strike": ["high_strike"], "High CE": ["high_call_bid", "high_call_ask"], "High PE": ["high_put_bid", "high_put_ask"], "Box Edge": ["executable_edge"],
       "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
     },
   };
@@ -358,6 +366,14 @@ function pairCell(slug: string, column: string, row: Row) {
     const shownAsk = ask !== undefined && ask !== null && ask !== "" ? formatValue(ask) : "—";
     if ((bid === undefined || bid === null || bid === "") && (ask === undefined || ask === null || ask === "") && summary !== undefined && summary !== null && summary !== "") return withQuoteTimestamp(formatValue(summary), row);
     return withQuoteTimestamp("Bid " + shownBid + " / Ask " + shownAsk, row);
+  }
+  if (slug === "box-spread" && ["Low CE", "Low PE", "High CE", "High PE"].includes(column)) {
+    const fields: Record<string, [string, string]> = {
+      "Low CE": ["low_call_bid", "low_call_ask"], "Low PE": ["low_put_bid", "low_put_ask"],
+      "High CE": ["high_call_bid", "high_call_ask"], "High PE": ["high_put_bid", "high_put_ask"],
+    };
+    const [bidKey, askKey] = fields[column];
+    return "Bid " + formatValue(row[bidKey]) + " / Ask " + formatValue(row[askKey]);
   }
   if (column === "Time") return formatTimestamp(raw);
   if (column === "Expiry") return formatExpiry(raw);
