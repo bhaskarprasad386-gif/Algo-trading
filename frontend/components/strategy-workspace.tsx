@@ -280,7 +280,15 @@ function formatCell(slug: string, column: string, row: Row) {
   };
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
   if (column === "Expiry") return formatExpiry(raw);
-  if (slug === "box-spread" && column === "LTP Updated") return formatTimestamp(raw);
+  if (slug === "box-spread" && column === "Quote Time") {
+    return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
+  }
+  if (slug === "box-spread" && ["Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)"].includes(column)) {
+    const prefix = column.startsWith("Low ") ? "low_" : "high_";
+    const option = column.includes("Call") ? "call" : "put";
+    const key = prefix + option;
+    return "LTP " + formatValue(value(row, key + "_ltp")) + " · Bid " + formatValue(value(row, key + "_bid")) + " · Ask " + formatValue(value(row, key + "_ask"));
+  }
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
   if (slug === "box-spread" && column === "Freshness") {
     const age = nullableNumber(value(row, "quote_age_seconds"));
