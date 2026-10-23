@@ -167,7 +167,7 @@ def _calculate_close_pnl(request: TraceStatusRequest, current_edge: float):
     if not request.lot_size:
         return {
             "pnl_status": "UNAVAILABLE",
-            "pnl_detail": "Lot size was not saved; one-lot P&L cannot be calculated.",
+            "pnl_detail": "Exact index lot size is unavailable from the future instrument master; P&L cannot be calculated safely.",
             "pnl_per_unit": None, "pnl_per_lot": None,
             "entry_synthetic_bid": None, "entry_synthetic_ask": None,
         }
@@ -408,6 +408,16 @@ def check_trace_live_status(request: TraceStatusRequest):
         master = InstrumentMaster()
         master.download()
         segment, contracts = _resolve_contracts(master, symbol, request.expiry, float(request.strike))
+        # The exact future instrument-master row is authoritative for lot size.
+        # Never trust a stale or browser-supplied lot size for index P&L.
+        raw_lot_size = contracts["future"].get("lotsize", contracts["future"].get("lot_size"))
+        try:
+            resolved_lot_size = int(float(raw_lot_size))
+        except (TypeError, ValueError, OverflowError):
+            resolved_lot_size = None
+        if resolved_lot_size is not None and resolved_lot_size < 1:
+            resolved_lot_size = None
+        request = request.model_copy(update={"lot_size": resolved_lot_size})
         response = MarketDataClient().quote_many(segment, [
             {"tradingsymbol": str(contracts[role]["symbol"]), "symboltoken": str(contracts[role]["token"])}
             for role in ("future", "call", "put")
@@ -439,6 +449,7 @@ def check_trace_live_status(request: TraceStatusRequest):
             "strike": float(request.strike), "direction": request.direction,
             "checked_at": datetime.now().astimezone().isoformat(), "exchange": segment,
             "contracts": legs, "synthetic_bid": synthetic_bid, "synthetic_ask": synthetic_ask,
+            "lot_size": request.lot_size,
             "max_quote_age_seconds": max(legs[role]["quote_age_seconds"] for role in legs),
             "long_edge": long_edge, "short_edge": short_edge, "entry_edge": float(request.entry_edge),
             "current_edge": current_edge, "edge_change": current_edge - float(request.entry_edge),
