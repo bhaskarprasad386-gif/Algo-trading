@@ -272,9 +272,10 @@ function formatCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
-      Underlying: ["symbol"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "LTP Updated": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"], "Low Strike": ["low_strike"],
-      "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
-      Liquidity: ["liquidity_qty"], Direction: ["direction"], Signal: ["direction"],
+      Underlying: ["symbol"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
+      "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
+      "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
+      "Box Edge": ["executable_edge"], "Min Leg Volume": ["liquidity_qty"], Direction: ["direction"], Freshness: ["freshness"],
     },
   };
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
