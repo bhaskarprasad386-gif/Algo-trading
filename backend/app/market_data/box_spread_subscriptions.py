@@ -35,11 +35,27 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
     exchange_type = 4 if exchange_segment == "BFO" else 2
     rows = [x for x in master.instruments if str(x.get("exch_seg","")).upper()==exchange_segment and str(x.get("name","")).strip().upper()==symbol]
     options = [x for x in rows if str(x.get("instrumenttype","")).upper() in {"OPTSTK","OPTIDX"}]
-    futures = [x for x in rows if str(x.get("instrumenttype","")).upper()==("FUTSTK" if cls=="STOCK" else "FUTIDX")]
     if not options: raise LookupError(f"no option contracts found for {symbol}")
-    if not futures: raise LookupError(f"no future contract found for {symbol}")
-    target = _expiry(expiry) if expiry else min(_expiry(x.get("expiry")) for x in futures)
-    options = [x for x in options if _expiry(x.get("expiry")) == target]
+    if expiry:
+        target = _expiry(expiry)
+    else:
+        option_expiries = []
+        for item in options:
+            try:
+                option_expiries.append(_expiry(item.get("expiry")))
+            except ValueError:
+                continue
+        if not option_expiries:
+            raise LookupError(f"no valid option expiry found for {symbol}")
+        target = min(option_expiries)
+    selected_options = []
+    for item in options:
+        try:
+            if _expiry(item.get("expiry")) == target:
+                selected_options.append(item)
+        except ValueError:
+            continue
+    options = selected_options
     if not options: raise LookupError(f"no options for {symbol} {target}")
     strikes = sorted({_strike(x.get("strike")) for x in options})
     # Keep Box Spread on the exact option window also subscribed by Synthetic:
