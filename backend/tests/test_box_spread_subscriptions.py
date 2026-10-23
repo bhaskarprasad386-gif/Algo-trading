@@ -69,3 +69,24 @@ def test_box_index_subscribes_atm_plus_minus_15_listed_strikes_on_weekly_expiry(
     assert strikes == set(float(x) for x in range(115, 146))
     assert len(selected.subscriptions) == 31 * 2
     assert {item.expiry for item in selected.subscriptions} == {"22OCT2026"}
+
+
+class OptionOnlyMaster:
+    instruments = [
+        item for item in FakeMaster.instruments
+        if str(item.get("instrumenttype", "")).startswith("OPT")
+    ]
+
+
+def test_box_subscription_does_not_require_any_live_future_contract():
+    selected = select_box_contracts(
+        OptionOnlyMaster(),
+        underlying="ABC",
+        instrument_class="STOCK",
+        atm_strike=100.0,
+        expiry="30SEP2026",
+        allowed_stock_symbols=frozenset({"ABC"}),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    assert len(selected.subscriptions) == 4
+    assert {item.instrument_class for item in selected.subscriptions} == {"STOCK"}
