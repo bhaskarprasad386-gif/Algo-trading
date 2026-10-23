@@ -38,10 +38,10 @@ const configs: Record<string, WorkspaceConfig> = {
     slug: "synthetic-arbitrage",
     title: "Synthetic Arbitrage",
     description: "Dedicated index-only synthetic future/cash-carry scanner using live index options and futures.",
-    universe: "SUPPORTED INDICES + NIFTY TOP 15 LIQUID F&O STOCKS",
+    universe: "SUPPORTED INDICES ONLY",
     columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
-    controls: ["ALL", "INDEX", "TOP15"],
+    controls: ["ALL", "INDEX", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
     pairTitle: "Option / Future Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
@@ -444,11 +444,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const [search, setSearch] = useState("");
   const [control, setControl] = useState(c.controls[0]);
-  const [top15StockSymbols, setTop15StockSymbols] = useState<string[]>([
-    "RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY",
-    "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK",
-    "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL",
-  ]);
   const [universeAvailability, setUniverseAvailability] = useState<{
     eligible_future_symbols?: string[]; missing_future_symbols?: string[];
     configured_index_symbols?: string[]; eligible_index_symbols?: string[]; missing_index_underlyings?: string[];
@@ -511,9 +506,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.detail || "Unable to load synthetic universe");
         if (!cancelled && typeof body?.selection === "string") setControl(body.selection);
-        if (!cancelled && Array.isArray(body?.top15_stock_symbols)) {
-          setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
-        }
         if (!cancelled && body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
       })
       .catch((e) => {
@@ -537,9 +529,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Universe update failed");
       setControl(String(body?.selection ?? selection));
-      if (Array.isArray(body?.top15_stock_symbols)) {
-        setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
-      }
       if (body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
       setError(null);
     } catch (e) {
@@ -822,17 +811,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     const indexOrder = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
     let scopedRows = rows;
     if (slug === "synthetic-arbitrage") {
-      // Synthetic universe is supported indices plus the explicitly approved
-      // Top-15 liquid F&O stock basket. Stock names are basket labels, not
-      // separate dropdown choices; retain the index selector behavior only.
-      const top15 = new Set(["RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY", "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK", "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL"]);
+      // Synthetic Arbitrage is strictly index-only.
       scopedRows = rows.filter((row) => {
         const symbol = String(row.underlying ?? row.symbol ?? "").trim().toUpperCase();
         const instrumentClass = String(row.instrument_class ?? "").trim().toUpperCase();
-        const isIndex = instrumentClass === "INDEX" && indexOrder.includes(symbol);
-        const isTop15Stock = top15.has(symbol) && ["STOCK", "EQUITY", "FNO", "F&O", ""].includes(instrumentClass);
-        if (!isIndex && !isTop15Stock) return false;
-        return control === "ALL" || (control === "INDEX" && isIndex) || (control === "TOP15" && isTop15Stock) || (indexOrder.includes(control) && symbol === control);
+        const isIndex = indexOrder.includes(symbol) && (!instrumentClass || instrumentClass === "INDEX");
+        if (!isIndex) return false;
+        return control === "ALL" || control === "INDEX" || (indexOrder.includes(control) && symbol === control);
       }).sort((a, b) => {
         const symbolA = String(a.underlying ?? a.symbol ?? "").trim().toUpperCase();
         const symbolB = String(b.underlying ?? b.symbol ?? "").trim().toUpperCase();
@@ -948,7 +933,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 pl-9 text-sm theme-text" />
           </label>
           <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-sm theme-text">
-            {c.controls.map((x) => <option key={x} value={x}>{slug === "synthetic-arbitrage" && x === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS (15)" : x}</option>)}
+            {c.controls.map((x) => <option key={x} value={x}>{x === "ALL" ? "ALL SUPPORTED INDICES" : x === "INDEX" ? "INDEX UNIVERSE" : x}</option>)}
           </select>
           <button type="button" onClick={refresh} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border">
             <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> Refresh
@@ -956,29 +941,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </div>
         {slug === "synthetic-arbitrage" && (
           <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs">
-            <p className="font-semibold theme-text">
-              {control === "ALL" ? "SUPPORTED INDICES + TOP 15 STOCK BASKET" : control === "INDEX" ? "SUPPORTED INDICES ONLY" : control === "TOP15" ? "NIFTY TOP 15 LIQUID F&O STOCK BASKET" : "INDEX SCAN — " + control}
-            </p>
-            {control === "TOP15" || control === "ALL" ? (
-              <>
-                <p className="mt-2 leading-6 theme-muted">{top15StockSymbols.join(" • ")}</p>
-                <p className="mt-1 theme-muted">These names define the basket only; stocks are not separate dropdown choices.</p>
-              </>
-            ) : (
-              <p className="mt-1 theme-muted">{control === "INDEX" ? "All supported indices are scanned. Stock futures and stock options are disabled for this scanner." : "Only the selected index is scanned. Stock futures and stock options are disabled for this scanner."}</p>
-            )}
-            {control === "TOP15" && <p className="mt-1 theme-success">TOP15 scans the configured stock basket automatically. No individual stock selection is required; only stocks with eligible current futures and matching option expiry can be scanned.</p>}
-            {(control === "TOP15" || control === "ALL") && universeAvailability && (
+            <p className="font-semibold theme-text">{control === "ALL" || control === "INDEX" ? "SUPPORTED INDICES ONLY" : "INDEX SCAN — " + control}</p>
+            <p className="mt-1 theme-muted">{control === "ALL" || control === "INDEX" ? "Scans supported indices only: NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX and BANKEX. Stock futures and stock options are excluded." : "Only " + control + " is scanned. Stock futures and stock options are excluded."}</p>
+            {universeAvailability && (
               <div className="mt-2 space-y-1 border-t theme-border pt-2">
-                <p className="theme-text">Eligible futures ({universeAvailability.eligible_future_symbols?.length ?? 0}/15): {(universeAvailability.eligible_future_symbols ?? []).join(" • ") || "Not yet checked"}</p>
-                <p className="theme-muted">Missing futures ({universeAvailability.missing_future_symbols?.length ?? 0}): {(universeAvailability.missing_future_symbols ?? []).join(" • ") || "None reported"}</p>
-                <p className="theme-text">Scan-ready targets ({universeAvailability.eligible_target_symbols?.filter((symbol) => top15StockSymbols.includes(symbol)).length ?? 0}/15): {(universeAvailability.eligible_target_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "Not yet checked"}</p>
-                <p className="theme-muted">Missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "None reported"}</p>
-                {control === "ALL" && <>
-                  <p className="theme-text">Eligible index futures ({universeAvailability.eligible_index_symbols?.length ?? 0}/{universeAvailability.configured_index_symbols?.length ?? 6}): {(universeAvailability.eligible_index_symbols ?? []).join(" • ") || "Not yet checked"}</p>
-                  <p className="theme-muted">Index symbols skipped (unresolvable token): {(universeAvailability.missing_index_underlyings ?? []).join(" • ") || "None reported"}</p>
-                  <p className="theme-muted">Indices missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => (universeAvailability.configured_index_symbols ?? []).includes(symbol)).join(" • ") || "None reported"}</p>
-                </>}
+                <p className="theme-text">Eligible index futures ({universeAvailability.eligible_index_symbols?.length ?? 0}/{universeAvailability.configured_index_symbols?.length ?? 6}): {(universeAvailability.eligible_index_symbols ?? []).join(" • ") || "Not yet checked"}</p>
+                <p className="theme-muted">Index symbols skipped (unresolvable token): {(universeAvailability.missing_index_underlyings ?? []).join(" • ") || "None reported"}</p>
+                <p className="theme-muted">Indices missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => (universeAvailability.configured_index_symbols ?? []).includes(symbol)).join(" • ") || "None reported"}</p>
                 <p className="theme-muted">Availability is from the last backend universe check, not a guarantee of live quotes.</p>
               </div>
             )}
