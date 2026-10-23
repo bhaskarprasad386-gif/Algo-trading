@@ -47,7 +47,7 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, set_expiry_types as set_live_box_expiry_types
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -806,23 +806,64 @@ async def _live_box_spread_loop() -> None:
                 symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED
                 if symbol in stock_symbols
             ]
-            # Resolve option expiry independently of future expiry; this selects
-            # the nearest genuine option chain available for the Box Spread.
+            # Select option expiries directly from the option master. For indices,
+            # subscribe the nearest available weekly AND monthly expiry (when distinct);
+            # stocks remain on their nearest listed expiry. No futures rows/ticks are used.
             targets_list = []
+            expiry_types = {}
+
+            def listed_option_expiries(symbol, instrument_class):
+                expected_segment = "BFO" if instrument_class == "INDEX" and symbol in BSE_BOX_INDEX_SYMBOLS else "NFO"
+                expected_type = "OPTSTK" if instrument_class == "STOCK" else "OPTIDX"
+                found = {}
+                for contract in master.instruments:
+                    if str(contract.get("exch_seg", "")).strip().upper() != expected_segment:
+                        continue
+                    if str(contract.get("instrumenttype", "")).strip().upper() != expected_type:
+                        continue
+                    if str(contract.get("name", "")).strip().upper() != symbol:
+                        continue
+                    raw_expiry = str(contract.get("expiry", "")).strip()
+                    parsed = None
+                    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+                        try:
+                            parsed = datetime.strptime(raw_expiry.upper(), fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                    if parsed is not None and parsed >= today:
+                        found.setdefault(parsed, raw_expiry)
+                dates = sorted(found)
+                monthly_dates = {
+                    max((day for day in dates if day.year == year and day.month == month), default=None)
+                    for year, month in {(day.year, day.month) for day in dates}
+                }
+                monthly_dates.discard(None)
+                for day, raw_expiry in found.items():
+                    expiry_types[(symbol, raw_expiry.upper())] = "MONTHLY" if day in monthly_dates else "WEEKLY"
+                return [(day, found[day], "MONTHLY" if day in monthly_dates else "WEEKLY") for day in dates]
+
             for symbol in stock_symbols:
-                expiry = select_nearest_option_expiry(
-                    master.instruments, underlying=symbol,
-                    instrument_class="STOCK", today=today,
-                )
-                if expiry:
+                expiries = listed_option_expiries(symbol, "STOCK")
+                if expiries:
+                    day, expiry, _kind = expiries[0]
                     targets_list.append(BoxSpreadLiveTarget(symbol, "STOCK", expiry=expiry))
             for symbol in sorted(index_symbols):
-                expiry = select_nearest_option_expiry(
-                    master.instruments, underlying=symbol,
-                    instrument_class="INDEX", today=today,
-                )
-                if expiry:
+                expiries = listed_option_expiries(symbol, "INDEX")
+                if not expiries:
+                    continue
+                nearest_weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
+                nearest_monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
+                selected = []
+                if nearest_weekly:
+                    selected.append(nearest_weekly)
+                if nearest_monthly and (not nearest_weekly or nearest_monthly[0] != nearest_weekly[0]):
+                    selected.append(nearest_monthly)
+                if not selected:
+                    selected.append(expiries[0])
+                for _day, expiry, _kind in selected:
                     targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=expiry))
+            set_live_box_expiry_types(expiry_types)
             targets = tuple(targets_list)
             if not targets:
                 app_logger.warning(
