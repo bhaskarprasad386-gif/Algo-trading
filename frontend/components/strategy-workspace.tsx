@@ -281,6 +281,10 @@ function formatCell(slug: string, column: string, row: Row) {
   if (column === "Expiry") return formatExpiry(raw);
   if (slug === "box-spread" && column === "LTP Updated") return formatTimestamp(raw);
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
+  if (slug === "box-spread" && column === "Freshness") {
+    const age = nullableNumber(value(row, "quote_age_seconds"));
+    return String(raw ?? "UNKNOWN") + (age === null ? "" : " · " + age.toFixed(2) + "s");
+  }
   if (slug === "synthetic-arbitrage" && column === "Time") return formatTimestamp(raw);
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future") return withQuoteTimestamp(syntheticFutureValue(row), row);
   if (slug === "synthetic-arbitrage" && (column === "LONG Edge" || column === "SHORT Edge")) {
@@ -357,6 +361,10 @@ function pairCell(slug: string, column: string, row: Row) {
   }
   if (column === "Time") return formatTimestamp(raw);
   if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "box-spread" && column === "Freshness") {
+    const age = nullableNumber(value(row, "quote_age_seconds"));
+    return String(raw ?? "UNKNOWN") + (age === null ? "" : " · " + age.toFixed(2) + "s");
+  }
   if (slug === "synthetic-arbitrage" && (column === "LONG Edge" || column === "SHORT Edge")) {
     const edges = syntheticRawEdges(row);
     if (!edges) return "NOT EVALUATED";
