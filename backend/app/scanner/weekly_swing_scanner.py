@@ -177,12 +177,13 @@ def _history_fetch_ranges(cached_rows, end):
     missing history. Larger gaps are re-requested as bounded date ranges; the
     provider returns only actual NSE candles, so holidays do not create fake rows.
     """
-    dates = sorted({
-        date.fromisoformat(str(row[0])[:10])
-        for row in cached_rows
-        if isinstance(row, list) and row
-    })
     start_date = end - timedelta(days=365 * 5)
+    dates = sorted({
+        day for row in cached_rows
+        if isinstance(row, list) and row
+        for day in [date.fromisoformat(str(row[0])[:10])]
+        if start_date <= day <= end
+    })
     if not dates:
         return [(start_date, end)]
     ranges = []
@@ -210,7 +211,11 @@ def _scan_one_symbol(ticker, master, historical, end):
     cached_rows, last_day = _load_cached_rows(ticker)
     # Never let a corrupt clock/future-dated cache candle leak into analysis or
     # suppress the incremental fetch for the current exchange-local date.
-    cached_rows = [row for row in cached_rows if date.fromisoformat(str(row[0])[:10]) <= end]
+    lookback_start = end - timedelta(days=365 * 5)
+    cached_rows = [
+        row for row in cached_rows
+        if lookback_start <= date.fromisoformat(str(row[0])[:10]) <= end
+    ]
     last_day = date.fromisoformat(str(cached_rows[-1][0])[:10]) if cached_rows else None
     # Initial five-year backfill, detectable interior-gap repair, then incremental tail.
     indexed = {str(row[0])[:10]: row for row in cached_rows if isinstance(row, list) and row}
