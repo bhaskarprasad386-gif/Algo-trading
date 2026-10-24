@@ -360,3 +360,19 @@ def test_cached_history_is_reused_without_historical_api_call(monkeypatch, tmp_p
 
     assert result["history_cache"] == "reused"
     assert result["history_last_day"] == day.isoformat()
+
+
+def test_nse_today_uses_exchange_timezone(monkeypatch):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from app.scanner import weekly_swing_scanner as scanner
+
+    # UTC has rolled over but the exchange-local calendar date is still previous day.
+    fixed_utc = datetime(2026, 10, 23, 20, 0, tzinfo=timezone.utc)
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_utc.astimezone(tz) if tz else fixed_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    assert scanner._nse_today().isoformat() == "2026-10-24"
