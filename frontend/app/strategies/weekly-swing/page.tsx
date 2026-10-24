@@ -42,7 +42,7 @@ export default function WeeklySwingScannerPage() {
   async function scanNifty200() {
     setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const startResponse = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/start`, { method: "POST", cache: "no-store" });
       const started = await startResponse.json();
       if (!startResponse.ok) throw new Error(started.detail || `NIFTY 200 scan failed (${startResponse.status})`);
