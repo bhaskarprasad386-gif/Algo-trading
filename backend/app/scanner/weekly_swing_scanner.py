@@ -341,6 +341,13 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
         rows = []
         cursor = start
         while cursor <= end:
+            # Re-check before every provider request: a long backfill must stop
+            # before starting another chunk if NSE market hours begin meanwhile.
+            if _nse_market_is_open_now():
+                raise HTTPException(
+                    status_code=409,
+                    detail="Historical scanner downloads paused because NSE market hours have started; resume after 15:30 IST.",
+                )
             chunk_end = min(cursor + timedelta(days=300), end)
             response = historical.get_candles(
                 exchange=exchange,
