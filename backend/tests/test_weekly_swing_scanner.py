@@ -57,3 +57,15 @@ def test_nifty200_constituent_parser_strips_bom_and_deduplicates(monkeypatch):
     assert len(symbols) == 200
     assert symbols[0] == "SYM1"
     assert symbols[-1] == "SYM200"
+
+
+def test_single_symbol_scan_is_blocked_during_market_hours(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from app.scanner import weekly_swing_scanner as scanner
+
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: True)
+    with pytest.raises(HTTPException) as exc:
+        scanner.scan("WIPRO", "NSE")
+    assert exc.value.status_code == 409
+    assert "off-market only" in exc.value.detail
