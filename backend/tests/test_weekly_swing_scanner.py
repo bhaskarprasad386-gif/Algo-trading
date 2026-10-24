@@ -28,3 +28,11 @@ def test_indicators_return_aligned_series():
     values = indicators(bars)
     assert all(len(values[key]) == len(bars) for key in ("cmf", "obv", "rsi", "mid", "lower", "upper"))
     assert values["lower"][-1] <= values["mid"][-1] <= values["upper"][-1]
+
+
+def test_pivots_skip_rsi_warmup_none_values():
+    from app.scanner.weekly_swing_scanner import pivots
+
+    values = [None, None, 40, 35, 38, 32, 36, 30, 34]
+    assert pivots(values, "low") == [3, 5, 7]
+    assert pivots(values, "high") == [4, 6]
