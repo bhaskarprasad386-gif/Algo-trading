@@ -335,14 +335,19 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     end = date.today()
     start = end - timedelta(days=365 * 5)
     try:
-        # Angel One daily-candle history has a bounded per-request date range.
-        # Fetch sequential chunks and fail closed if any provider request fails.
         historical = HistoricalDataClient(MarketDataClient())
+        # NSE single-symbol scans share the same persistent incremental cache as
+        # the NIFTY 200 scheduler. Repeated runs fetch only dates after the last
+        # cached candle; BSE keeps the independent uncached path to avoid mixing
+        # exchange histories in the NSE symbol cache.
+        if exchange == "NSE":
+            return _scan_one_symbol(ticker, master, historical, end)
+
+        # Preserve the existing BSE path; it is deliberately not stored under
+        # the NSE-only cache key.
         rows = []
         cursor = start
         while cursor <= end:
-            # Re-check before every provider request: a long backfill must stop
-            # before starting another chunk if NSE market hours begin meanwhile.
             if _nse_market_is_open_now():
                 raise HTTPException(
                     status_code=409,
