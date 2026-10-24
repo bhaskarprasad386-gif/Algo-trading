@@ -26,7 +26,7 @@ export default function WeeklySwingScannerPage() {
   const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
 
   async function scan() {
-    setLoading(true); setError(""); setResult(null);
+    setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan?symbol=${encodeURIComponent(symbol.trim().toUpperCase())}&exchange=NSE`, { cache: "no-store" });
