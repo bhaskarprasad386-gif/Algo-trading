@@ -208,6 +208,10 @@ def _scan_one_symbol(ticker, master, historical, end):
         raise ValueError("Instrument/token not found in Angel One master")
 
     cached_rows, last_day = _load_cached_rows(ticker)
+    # Never let a corrupt clock/future-dated cache candle leak into analysis or
+    # suppress the incremental fetch for the current exchange-local date.
+    cached_rows = [row for row in cached_rows if date.fromisoformat(str(row[0])[:10]) <= end]
+    last_day = date.fromisoformat(str(cached_rows[-1][0])[:10]) if cached_rows else None
     # Initial five-year backfill, detectable interior-gap repair, then incremental tail.
     indexed = {str(row[0])[:10]: row for row in cached_rows if isinstance(row, list) and row}
     fetch_ranges = _history_fetch_ranges(cached_rows, end)
