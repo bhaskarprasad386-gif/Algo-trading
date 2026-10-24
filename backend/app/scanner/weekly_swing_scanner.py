@@ -97,7 +97,10 @@ def _fetch_daily_range(token, historical, start, end):
     cursor = start
     while cursor <= end:
         if _nse_market_is_open_now():
-            raise RuntimeError("Market hours started; historical download paused")
+            raise HTTPException(
+                status_code=409,
+                detail="Historical scanner downloads paused because NSE market hours have started; resume after 15:30 IST.",
+            )
         chunk_end = min(cursor + timedelta(days=300), end)
         response = historical.get_candles(
             exchange="NSE", symboltoken=str(token), interval="ONE_DAY",
