@@ -501,3 +501,51 @@ def test_history_fetch_ranges_repairs_missing_leading_five_year_history():
         (start, date(2024, 1, 4)),
         (date(2024, 1, 6), end),
     ]
+
+
+def test_future_dated_cache_rows_are_excluded_and_current_tail_is_fetched(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    from app.scanner import weekly_swing_scanner as scanner
+    from app.market_data import instruments, client, historical
+
+    monkeypatch.setattr(scanner, "_cache_root", lambda: tmp_path)
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: False)
+    monkeypatch.setattr(scanner, "HISTORICAL_REQUEST_PAUSE_SECONDS", 0)
+    end = date(2026, 10, 23)
+    previous = end - timedelta(days=1)
+    future = end + timedelta(days=10)
+    scanner._save_cached_rows("TEST", [
+        [f"{previous.isoformat()} 09:15", "100", "105", "98", "102", "1000"],
+        [f"{future.isoformat()} 09:15", "102", "106", "101", "105", "1200"],
+    ])
+
+    class FakeInstrumentMaster:
+        def get_instrument(self, *args, **kwargs):
+            return {"token": "123"}
+
+    class FakeMarketDataClient:
+        pass
+
+    class FakeHistoricalDataClient:
+        def __init__(self, *args, **kwargs):
+            self.requests = []
+
+        def get_candles(self, **kwargs):
+            self.requests.append(kwargs)
+            return {"status": True, "data": [[f"{end.isoformat()} 09:15", "102", "106", "101", "105", "1200"]]}
+
+    monkeypatch.setattr(instruments, "InstrumentMaster", FakeInstrumentMaster)
+    monkeypatch.setattr(client, "MarketDataClient", FakeMarketDataClient)
+    monkeypatch.setattr(historical, "HistoricalDataClient", FakeHistoricalDataClient)
+    monkeypatch.setattr(scanner, "weekly_bars", lambda rows: [{"week": "2026-10-19"}] * 25)
+    monkeypatch.setattr(scanner, "analyze", lambda ticker, bars: {"status": "success", "matches": []})
+
+    history = FakeHistoricalDataClient()
+    result = scanner._scan_one_symbol("TEST", FakeInstrumentMaster(), history, end)
+
+    assert len(history.requests) == 1
+    assert history.requests[0]["from_date"] == f"{end.isoformat()} 09:15"
+    assert result["history_last_day"] == end.isoformat()
+    rows, last_day = scanner._load_cached_rows("TEST")
+    assert all(date.fromisoformat(row[0][:10]) <= end for row in rows)
+    assert last_day == end
