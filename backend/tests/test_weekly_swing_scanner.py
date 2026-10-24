@@ -292,3 +292,71 @@ def test_analyze_rejects_missing_intervening_swing_high(monkeypatch):
 
     assert result["count"] == 0
     assert result["matches"] == []
+
+
+def test_cached_history_fetches_only_dates_after_latest_cached_candle(monkeypatch, tmp_path):
+    from datetime import date, timedelta
+    from app.scanner import weekly_swing_scanner as scanner
+    from app.market_data import instruments, client, historical
+
+    monkeypatch.setattr(scanner, "_cache_root", lambda: tmp_path)
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: False)
+    monkeypatch.setattr(scanner, "HISTORICAL_REQUEST_PAUSE_SECONDS", 0)
+    end = date(2026, 10, 23)
+    old_day = end - timedelta(days=1)
+    scanner._save_cached_rows("TEST", [[f"{old_day.isoformat()} 09:15", "100", "105", "98", "102", "1000"]])
+
+    class FakeInstrumentMaster:
+        def get_instrument(self, *args, **kwargs):
+            return {"token": "123"}
+
+    class FakeMarketDataClient:
+        pass
+
+    class FakeHistoricalDataClient:
+        def __init__(self, *args, **kwargs):
+            self.requests = []
+
+        def get_candles(self, **kwargs):
+            self.requests.append(kwargs)
+            return {"status": True, "data": [[f"{end.isoformat()} 09:15", "102", "106", "101", "105", "1200"]]}
+
+    monkeypatch.setattr(instruments, "InstrumentMaster", FakeInstrumentMaster)
+    monkeypatch.setattr(client, "MarketDataClient", FakeMarketDataClient)
+    monkeypatch.setattr(historical, "HistoricalDataClient", FakeHistoricalDataClient)
+    monkeypatch.setattr(scanner, "weekly_bars", lambda rows: [{"week": "2026-10-19"}] * 25)
+    monkeypatch.setattr(scanner, "analyze", lambda ticker, bars: {"status": "success", "matches": []})
+
+    history = FakeHistoricalDataClient()
+    result = scanner._scan_one_symbol("TEST", FakeInstrumentMaster(), history, end)
+
+    assert len(history.requests) == 1
+    assert history.requests[0]["from_date"] == f"{end.isoformat()} 09:15"
+    assert result["history_cache"] == "updated"
+    rows, last_day = scanner._load_cached_rows("TEST")
+    assert len(rows) == 2
+    assert last_day == end
+
+
+def test_cached_history_is_reused_without_historical_api_call(monkeypatch, tmp_path):
+    from datetime import date
+    from app.scanner import weekly_swing_scanner as scanner
+
+    monkeypatch.setattr(scanner, "_cache_root", lambda: tmp_path)
+    day = date(2026, 10, 23)
+    scanner._save_cached_rows("TEST", [[f"{day.isoformat()} 09:15", "100", "105", "98", "102", "1000"]])
+
+    class FakeInstrumentMaster:
+        def get_instrument(self, *args, **kwargs):
+            return {"token": "123"}
+
+    class NeverCallHistorical:
+        def get_candles(self, **kwargs):
+            raise AssertionError("Cached history should not trigger a historical fetch")
+
+    monkeypatch.setattr(scanner, "weekly_bars", lambda rows: [{"week": "2026-10-19"}] * 25)
+    monkeypatch.setattr(scanner, "analyze", lambda ticker, bars: {"status": "success", "matches": []})
+    result = scanner._scan_one_symbol("TEST", FakeInstrumentMaster(), NeverCallHistorical(), day)
+
+    assert result["history_cache"] == "reused"
+    assert result["history_last_day"] == day.isoformat()
