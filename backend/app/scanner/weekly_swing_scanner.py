@@ -182,9 +182,15 @@ def _history_fetch_ranges(cached_rows, end):
         for row in cached_rows
         if isinstance(row, list) and row
     })
+    start_date = end - timedelta(days=365 * 5)
     if not dates:
-        return [(end - timedelta(days=365 * 5), end)] if end - timedelta(days=365 * 5) <= end else []
+        return [(start_date, end)]
     ranges = []
+    # A partially populated cache must still cover the full requested five-year
+    # lookback. Fill the leading gap instead of assuming any existing candle means
+    # the initial backfill completed successfully.
+    if dates[0] > start_date:
+        ranges.append((start_date, dates[0] - timedelta(days=1)))
     for previous, following in zip(dates, dates[1:]):
         gap_start, gap_end = previous + timedelta(days=1), following - timedelta(days=1)
         if (gap_end - gap_start).days >= 4:
