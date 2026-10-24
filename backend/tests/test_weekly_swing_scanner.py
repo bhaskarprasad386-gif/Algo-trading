@@ -69,3 +69,40 @@ def test_single_symbol_scan_is_blocked_during_market_hours(monkeypatch):
         scanner.scan("WIPRO", "NSE")
     assert exc.value.status_code == 409
     assert "off-market only" in exc.value.detail
+
+def test_single_symbol_scan_rechecks_market_hours_between_history_chunks(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from app.scanner import weekly_swing_scanner as scanner
+    from app.market_data import instruments, client, historical
+
+    # Initial guard passes, first chunk guard passes, second chunk guard blocks.
+    market_states = iter([False, False, True])
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: next(market_states))
+
+    class FakeInstrumentMaster:
+        def get_instrument(self, *args, **kwargs):
+            return {"token": "123"}
+
+    class FakeMarketDataClient:
+        pass
+
+    class FakeHistoricalDataClient:
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+            FakeHistoricalDataClient.instance = self
+
+        def get_candles(self, **kwargs):
+            self.calls += 1
+            return {"status": True, "data": []}
+
+    monkeypatch.setattr(instruments, "InstrumentMaster", FakeInstrumentMaster)
+    monkeypatch.setattr(client, "MarketDataClient", FakeMarketDataClient)
+    monkeypatch.setattr(historical, "HistoricalDataClient", FakeHistoricalDataClient)
+
+    with pytest.raises(HTTPException) as exc:
+        scanner.scan("WIPRO", "NSE")
+
+    assert exc.value.status_code == 409
+    assert "market hours have started" in exc.value.detail
+    assert FakeHistoricalDataClient.instance.calls == 1
