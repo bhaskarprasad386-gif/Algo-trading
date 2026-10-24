@@ -300,6 +300,19 @@ def indicators(bars):
         result["mid"].append(mid); result["lower"].append(mid-2*sd); result["upper"].append(mid+2*sd)
     return result
 
+def _has_bullish_divergence(values, a, b, c):
+    """True when an indicator makes higher lows at three descending price lows."""
+    sample = [values[x] for x in (a, b, c)]
+    if any(value is None for value in sample):
+        return False
+    try:
+        if not all(isfinite(float(value)) for value in sample):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return float(values[b]) >= float(values[a]) and float(values[c]) > float(values[b])
+
+
 def analyze(symbol,bars):
     if len(bars)<25:return {"status":"insufficient_data","symbol":symbol,"weekly_bars":len(bars),"matches":[]}
     ind=indicators(bars); lows=pivots([b["low"] for b in bars],"low"); highs=pivots([b["high"] for b in bars],"high")
@@ -327,16 +340,7 @@ def analyze(symbol,bars):
         # Do not infer divergence from unrelated indicator swing highs.
         passed=[]
         for n in ("cmf","obv","rsi"):
-            vals=ind[n]
-            sample=[vals[x] for x in (a,b,c)]
-            if any(v is None for v in sample):
-                continue
-            try:
-                if not all(isfinite(float(v)) for v in sample):
-                    continue
-            except (TypeError, ValueError):
-                continue
-            if float(vals[b]) >= float(vals[a]) and float(vals[c]) > float(vals[b]):
+            if _has_bullish_divergence(ind[n], a, b, c):
                 passed.append(n.upper())
         if passed:
             matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"checked_at_week":bars[-1]["week"]})
