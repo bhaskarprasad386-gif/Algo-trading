@@ -179,10 +179,9 @@ def _history_fetch_ranges(cached_rows, end):
     """
     start_date = end - timedelta(days=365 * 5)
     dates = sorted({
-        day for row in cached_rows
-        if isinstance(row, list) and row
-        for day in [date.fromisoformat(str(row[0])[:10])]
-        if start_date <= day <= end
+        date.fromisoformat(str(row[0])[:10])
+        for row in cached_rows
+        if isinstance(row, list) and row and date.fromisoformat(str(row[0])[:10]) <= end
     })
     if not dates:
         return [(start_date, end)]
@@ -190,7 +189,7 @@ def _history_fetch_ranges(cached_rows, end):
     # A partially populated cache must still cover the full requested five-year
     # lookback. Fill the leading gap instead of assuming any existing candle means
     # the initial backfill completed successfully.
-    if dates[0] > start_date:
+    if start_date <= dates[0] and dates[0] > start_date:
         ranges.append((start_date, dates[0] - timedelta(days=1)))
     for previous, following in zip(dates, dates[1:]):
         gap_start, gap_end = previous + timedelta(days=1), following - timedelta(days=1)
@@ -214,7 +213,7 @@ def _scan_one_symbol(ticker, master, historical, end):
     lookback_start = end - timedelta(days=365 * 5)
     cached_rows = [
         row for row in cached_rows
-        if lookback_start <= date.fromisoformat(str(row[0])[:10]) <= end
+        if date.fromisoformat(str(row[0])[:10]) <= end
     ]
     last_day = date.fromisoformat(str(cached_rows[-1][0])[:10]) if cached_rows else None
     # Initial five-year backfill, detectable interior-gap repair, then incremental tail.
