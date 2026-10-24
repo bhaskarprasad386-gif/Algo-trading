@@ -1,5 +1,6 @@
 """Weekly three-swing scanner; real daily bars are aggregated to weekly bars."""
 from datetime import date, datetime, timedelta, time as clock_time
+import asyncio
 from pathlib import Path
 import json
 from zoneinfo import ZoneInfo
@@ -197,6 +198,32 @@ def _run_nifty200_scan():
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["fatal_error"] = str(exc)[:240]
             _SCAN_STATE["finished_at"] = time.time()
+
+
+async def weekly_swing_daily_refresh_loop():
+    """Run one incremental history refresh daily after the NSE cash session."""
+    ist = ZoneInfo("Asia/Kolkata")
+    while True:
+        now = datetime.now(ist)
+        target = now.replace(hour=15, minute=40, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        await asyncio.sleep(max(1.0, (target - now).total_seconds()))
+        if datetime.now(ist).weekday() >= 5:
+            continue
+        with _SCAN_LOCK:
+            if _SCAN_STATE.get("status") == "running":
+                continue
+            _SCAN_STATE.update({
+                "status": "running", "universe": "NIFTY 200", "total": 0, "scanned": 0,
+                "failed": 0, "matches": [], "failures": [], "current_symbol": None,
+                "started_at": time.time(), "finished_at": None,
+                "batch_size": SCAN_BATCH_SIZE, "cache_mode": "persistent_daily_incremental",
+                "trigger": "daily_off_market_schedule",
+            })
+            global _SCAN_THREAD
+            _SCAN_THREAD = threading.Thread(target=_run_nifty200_scan, daemon=True, name="weekly-nifty200-daily")
+            _SCAN_THREAD.start()
 
 
 def weekly_bars(rows):
