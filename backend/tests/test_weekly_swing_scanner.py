@@ -312,6 +312,31 @@ def test_analyze_rejects_missing_intervening_swing_high(monkeypatch):
     assert result["matches"] == []
 
 
+def test_cache_loader_sorts_deduplicates_and_rejects_malformed_rows(monkeypatch, tmp_path):
+    import json
+    from app.scanner import weekly_swing_scanner as scanner
+
+    monkeypatch.setattr(scanner, "_cache_root", lambda: tmp_path)
+    payload = {
+        "schema_version": scanner.CACHE_SCHEMA_VERSION,
+        "symbol": "TEST",
+        "rows": [
+            ["2026-01-07 09:15", "102", "106", "101", "105", "1200"],
+            ["not-a-date", "100", "105", "98", "102", "1000"],
+            ["2026-01-05 09:15", "100", "105", "98", "102", "1000"],
+            ["2026-01-07 09:15", "103", "107", "102", "106", "1300"],
+            ["2026-01-08 09:15", "nan", "107", "102", "106", "1300"],
+        ],
+    }
+    (tmp_path / "TEST.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    rows, last_day = scanner._load_cached_rows("TEST")
+
+    assert [row[0][:10] for row in rows] == ["2026-01-05", "2026-01-07"]
+    assert rows[-1][4] == "106"
+    assert last_day.isoformat() == "2026-01-07"
+
+
 def test_cached_history_fetches_only_dates_after_latest_cached_candle(monkeypatch, tmp_path):
     from datetime import date, timedelta
     from app.scanner import weekly_swing_scanner as scanner
