@@ -376,3 +376,29 @@ def test_nse_today_uses_exchange_timezone(monkeypatch):
 
     monkeypatch.setattr(scanner, "datetime", FixedDateTime)
     assert scanner._nse_today().isoformat() == "2026-10-24"
+
+
+
+def test_history_fetch_ranges_repairs_large_interior_gap_and_tail():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import _history_fetch_ranges
+
+    rows = [
+        ["2026-01-05 09:15", "100", "105", "98", "102", "1000"],
+        ["2026-01-20 09:15", "102", "106", "101", "105", "1200"],
+    ]
+    assert _history_fetch_ranges(rows, date(2026, 1, 23)) == [
+        (date(2026, 1, 6), date(2026, 1, 19)),
+        (date(2026, 1, 21), date(2026, 1, 23)),
+    ]
+
+
+def test_history_fetch_ranges_does_not_redownload_small_closure():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import _history_fetch_ranges
+
+    rows = [
+        ["2026-01-05 09:15", "100", "105", "98", "102", "1000"],
+        ["2026-01-08 09:15", "102", "106", "101", "105", "1200"],
+    ]
+    assert _history_fetch_ranges(rows, date(2026, 1, 8)) == []
