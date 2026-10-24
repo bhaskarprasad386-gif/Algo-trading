@@ -19,7 +19,7 @@ type UniverseStatus = { status: string; total?: number; scanned?: number; failed
 
 const money = (v: number) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 export default function WeeklySwingScannerPage() {
-  const [symbol, setSymbol] = useState("WIPRO");
+  const [symbol, setSymbol] = useState("");
   const [exchange, setExchange] = useState("NSE");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -69,14 +69,14 @@ export default function WeeklySwingScannerPage() {
 
   return <div className="space-y-5">
     <header className="space-y-2">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] theme-accent"><Activity size={15}/> Weekly Pattern Scanner</div>
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] theme-accent"><Activity size={15}/> NIFTY 200 Weekly Pattern Scanner</div>
       <h1 className="text-2xl font-bold sm:text-3xl">Three-Low Swing + Indicator Breakout</h1>
       <p className="max-w-3xl text-sm theme-muted">Weekly candles only. Finds three progressively lower swing lows with shallow breakdown/recovery, Bollinger Band context, and CMF / OBV / RSI confirmation. No orders are placed.</p>
     </header>
     <section className="rounded-2xl border theme-border theme-surface p-4 sm:p-5">
       <div className="grid gap-3 sm:grid-cols-[1fr_140px_auto] sm:items-end">
         <label className="space-y-1 text-xs font-semibold theme-muted">Stock symbol
-          <input value={symbol} onChange={e=>setSymbol(e.target.value.toUpperCase())} placeholder="e.g. WIPRO" className="w-full rounded-xl border theme-border theme-surface-2 px-3 py-3 text-sm theme-text outline-none focus:ring-2 focus:ring-cyan-500"/>
+          <input value={symbol} onChange={e=>setSymbol(e.target.value.toUpperCase())} placeholder="Optional single-stock test" className="w-full rounded-xl border theme-border theme-surface-2 px-3 py-3 text-sm theme-text outline-none focus:ring-2 focus:ring-cyan-500"/>
         </label>
         <label className="space-y-1 text-xs font-semibold theme-muted">Exchange
           <select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full rounded-xl border theme-border theme-surface-2 px-3 py-3 text-sm theme-text"><option value="NSE">NSE</option><option value="BSE">BSE</option></select>
