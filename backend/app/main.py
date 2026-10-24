@@ -41,6 +41,7 @@ from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
+from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
@@ -183,6 +184,7 @@ app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(scanner_router)
+app.include_router(weekly_swing_scanner_router)
 app.include_router(full_fno_router)
 app.include_router(auto_scanner_router)
 app.include_router(alert_router)
