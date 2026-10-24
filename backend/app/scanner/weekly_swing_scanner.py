@@ -99,8 +99,15 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     from app.market_data.client import MarketDataClient
     from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
-    ticker=symbol.strip().upper(); instrument=InstrumentMaster().get_instrument(ticker,exchange)
-    if not instrument or not instrument.get("token"):raise HTTPException(status_code=404,detail=f"Instrument not found: {exchange} {ticker}")
+    ticker=symbol.strip().upper()
+    master = InstrumentMaster()
+    instrument = master.get_instrument(ticker, exchange)
+    # Angel One's cash-equity master commonly stores symbols with the -EQ suffix.
+    # Accept friendly inputs such as WIPRO while still resolving via the real master.
+    if not instrument and not ticker.endswith("-EQ"):
+        instrument = master.get_instrument(f"{ticker}-EQ", exchange)
+    if not instrument or not instrument.get("token"):
+        raise HTTPException(status_code=404, detail=f"Instrument not found: {exchange} {ticker}")
     end = date.today()
     start = end - timedelta(days=365 * 5)
     try:
