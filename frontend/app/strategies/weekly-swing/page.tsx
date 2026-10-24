@@ -20,7 +20,6 @@ type UniverseStatus = { status: string; total?: number; scanned?: number; failed
 const money = (v: number) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 export default function WeeklySwingScannerPage() {
   const [symbol, setSymbol] = useState("");
-  const [exchange, setExchange] = useState("NSE");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
@@ -30,7 +29,7 @@ export default function WeeklySwingScannerPage() {
     setLoading(true); setError(""); setResult(null);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan?symbol=${encodeURIComponent(symbol.trim().toUpperCase())}&exchange=${exchange}`, { cache: "no-store" });
+      const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan?symbol=${encodeURIComponent(symbol.trim().toUpperCase())}&exchange=NSE`, { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail || `Scanner request failed (${response.status})`);
       setResult(body);
@@ -78,9 +77,10 @@ export default function WeeklySwingScannerPage() {
         <label className="space-y-1 text-xs font-semibold theme-muted">Stock symbol
           <input value={symbol} onChange={e=>setSymbol(e.target.value.toUpperCase())} placeholder="Optional single-stock test" className="w-full rounded-xl border theme-border theme-surface-2 px-3 py-3 text-sm theme-text outline-none focus:ring-2 focus:ring-cyan-500"/>
         </label>
-        <label className="space-y-1 text-xs font-semibold theme-muted">Exchange
-          <select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full rounded-xl border theme-border theme-surface-2 px-3 py-3 text-sm theme-text"><option value="NSE">NSE</option><option value="BSE">BSE</option></select>
-        </label>
+        <div className="space-y-1 text-xs font-semibold theme-muted">
+          <span>Exchange</span>
+          <div className="flex min-h-11 items-center rounded-xl border theme-border theme-surface-2 px-3 text-sm theme-text">NSE only</div>
+        </div>
         <div className="flex flex-wrap gap-2"><button onClick={scan} disabled={loading || !symbol.trim()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-cyan-500 px-5 py-3 text-sm font-bold text-slate-950 disabled:opacity-60">{loading?<LoaderCircle size={16} className="animate-spin"/>:<Search size={16}/>} {loading?"Scanning…":"Scan One Stock"}</button><button onClick={scanNifty200} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border px-4 py-3 text-sm font-bold disabled:opacity-60">{loading?<LoaderCircle size={16} className="animate-spin"/>:<Activity size={16}/>} Scan All NIFTY 200</button></div>
       </div>
       <div className="mt-4 grid gap-2 text-xs theme-muted sm:grid-cols-2">
