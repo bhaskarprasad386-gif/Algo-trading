@@ -20,6 +20,16 @@ NIFTY200_CONSTITUENTS_URL = "https://www.niftyindices.com/IndexConstituent/ind_n
 SCAN_BATCH_SIZE = 50
 SCAN_BATCH_INTERVAL_SECONDS = 300
 HISTORICAL_REQUEST_PAUSE_SECONDS = 0.4
+# NSE Capital Market segment holidays for 2026, transcribed from the exchange's
+# published calendar. Keep this explicit and conservative; update each year from
+# the official NSE calendar before enabling that year's automatic schedule.
+NSE_CAPITAL_MARKET_HOLIDAYS = {
+    date(2026, 1, 26), date(2026, 3, 3), date(2026, 3, 26),
+    date(2026, 3, 31), date(2026, 4, 3), date(2026, 4, 14),
+    date(2026, 5, 1), date(2026, 5, 28), date(2026, 6, 26),
+    date(2026, 9, 14), date(2026, 10, 2), date(2026, 10, 20),
+    date(2026, 11, 10), date(2026, 11, 24), date(2026, 12, 25),
+}
 CACHE_SCHEMA_VERSION = 1
 _SCAN_LOCK = threading.Lock()
 _SCAN_STATE = {
@@ -91,10 +101,24 @@ def _nse_today():
     return datetime.now(ZoneInfo("Asia/Kolkata")).date()
 
 
+def _is_nse_trading_day(day):
+    """Return whether a date is a known NSE cash-market trading day.
+
+    Unknown calendar years fail closed for the automatic scheduler until the
+    official holiday list is added; this avoids silently running on holidays.
+    Manual off-market scans remain available on unknown-year weekdays.
+    """
+    if day.weekday() >= 5:
+        return False
+    if day.year == 2026:
+        return day not in NSE_CAPITAL_MARKET_HOLIDAYS
+    return False
+
+
 def _nse_market_is_open_now():
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
-    # Conservative clock gate: weekdays during NSE cash hours are blocked.
-    return now.weekday() < 5 and clock_time(9, 15) <= now.time() < clock_time(15, 30)
+    # Only a known NSE trading day can be treated as a live cash-market session.
+    return _is_nse_trading_day(now.date()) and clock_time(9, 15) <= now.time() < clock_time(15, 30)
 
 
 def _fetch_daily_range(token, historical, start, end, on_chunk=None):
@@ -257,7 +281,7 @@ async def weekly_swing_daily_refresh_loop():
         if target <= now:
             target += timedelta(days=1)
         await asyncio.sleep(max(1.0, (target - now).total_seconds()))
-        if datetime.now(ist).weekday() >= 5:
+        if not _is_nse_trading_day(datetime.now(ist).date()):
             continue
         with _SCAN_LOCK:
             if _SCAN_STATE.get("status") == "running":
