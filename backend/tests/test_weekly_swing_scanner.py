@@ -117,3 +117,41 @@ def test_single_symbol_scan_rejects_non_nse_exchange(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         scanner.scan("WIPRO", "BSE")
     assert exc.value.status_code == 422
+
+
+
+def test_nifty200_scan_pauses_entire_run_when_market_opens(monkeypatch):
+    from fastapi import HTTPException
+    from app.scanner import weekly_swing_scanner as scanner
+    from app.market_data import instruments, client, historical
+
+    calls = []
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: False)
+    monkeypatch.setattr(scanner, "_nifty200_symbols", lambda: ["AAA", "BBB"])
+
+    class FakeInstrumentMaster:
+        def __init__(self):
+            pass
+
+    class FakeMarketDataClient:
+        pass
+
+    class FakeHistoricalDataClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    def fake_scan_one(ticker, *args):
+        calls.append(ticker)
+        raise HTTPException(status_code=409, detail="NSE market hours have started")
+
+    monkeypatch.setattr(instruments, "InstrumentMaster", FakeInstrumentMaster)
+    monkeypatch.setattr(client, "MarketDataClient", FakeMarketDataClient)
+    monkeypatch.setattr(historical, "HistoricalDataClient", FakeHistoricalDataClient)
+    monkeypatch.setattr(scanner, "_scan_one_symbol", fake_scan_one)
+
+    scanner._run_nifty200_scan()
+
+    assert calls == ["AAA"]
+    assert scanner._SCAN_STATE["status"] == "paused"
+    assert scanner._SCAN_STATE["scanned"] == 1
+    assert scanner._SCAN_STATE["fatal_error"] == "NSE market hours have started"
