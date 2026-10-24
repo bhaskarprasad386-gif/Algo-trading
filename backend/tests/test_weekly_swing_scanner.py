@@ -409,6 +409,7 @@ def test_nse_trading_day_excludes_published_2026_holidays_and_weekends():
     from datetime import date
     from app.scanner.weekly_swing_scanner import _is_nse_trading_day
 
+    assert not _is_nse_trading_day(date(2026, 1, 15))  # Maharashtra municipal corporation election
     assert not _is_nse_trading_day(date(2026, 10, 20))  # Dussehra
     assert not _is_nse_trading_day(date(2026, 11, 10))  # Diwali-Balipratipada
     assert not _is_nse_trading_day(date(2026, 10, 24))  # Saturday
