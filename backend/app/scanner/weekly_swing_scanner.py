@@ -323,6 +323,9 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
     ticker=symbol.strip().upper()
+    # Direct Python callers must receive the same exchange validation as HTTP callers.
+    if exchange != "NSE":
+        raise HTTPException(status_code=422, detail="Weekly Swing Scanner supports NSE only")
     # All manual historical downloads, including the single-symbol test, are
     # blocked during NSE cash-market hours to avoid competing with live feed use.
     if _nse_market_is_open_now():
