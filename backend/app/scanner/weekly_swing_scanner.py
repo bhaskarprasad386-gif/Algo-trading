@@ -2,9 +2,108 @@
 from datetime import date, timedelta
 from statistics import mean, pstdev
 from math import isfinite
+import csv
+import io
+import threading
+import time
+import requests
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/api/v1/scanner/weekly-swing", tags=["Weekly Swing Scanner"])
+
+NIFTY200_CONSTITUENTS_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv"
+_SCAN_LOCK = threading.Lock()
+_SCAN_STATE = {
+    "status": "idle", "universe": "NIFTY 200", "total": 200, "scanned": 0,
+    "failed": 0, "matches": [], "failures": [], "started_at": None, "finished_at": None,
+}
+_SCAN_THREAD = None
+
+
+def _nifty200_symbols():
+    """Read the current NIFTY 200 constituents from the official index CSV."""
+    response = requests.get(
+        NIFTY200_CONSTITUENTS_URL,
+        timeout=20,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.niftyindices.com/"},
+    )
+    response.raise_for_status()
+    reader = csv.DictReader(io.StringIO(response.text.lstrip("\\ufeff")))
+    symbols = []
+    for row in reader:
+        symbol = (row.get("Symbol") or row.get("symbol") or "").strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    if len(symbols) < 180:
+        raise ValueError(f"Official NIFTY 200 constituent list incomplete: {len(symbols)} symbols")
+    return symbols
+
+
+def _scan_one_symbol(ticker, master, historical, start, end):
+    instrument = master.get_instrument(ticker, "NSE")
+    if not instrument and not ticker.endswith("-EQ"):
+        instrument = master.get_instrument(f"{ticker}-EQ", "NSE")
+    if not instrument or not instrument.get("token"):
+        raise ValueError("Instrument/token not found in Angel One master")
+    rows = []
+    cursor = start
+    while cursor <= end:
+        chunk_end = min(cursor + timedelta(days=300), end)
+        response = historical.get_candles(
+            exchange="NSE", symboltoken=str(instrument["token"]), interval="ONE_DAY",
+            from_date=f"{cursor} 09:15", to_date=f"{chunk_end} 15:30",
+        )
+        if not isinstance(response, dict) or not response.get("status") or not isinstance(response.get("data"), list):
+            raise ValueError("Historical candle response invalid")
+        rows.extend(response["data"])
+        cursor = chunk_end + timedelta(days=1)
+    result = analyze(ticker, weekly_bars(rows))
+    if result.get("status") == "insufficient_data":
+        raise ValueError("Insufficient weekly history")
+    return result
+
+
+def _run_nifty200_scan():
+    global _SCAN_STATE
+    from app.market_data.client import MarketDataClient
+    from app.market_data.historical import HistoricalDataClient
+    from app.market_data.instruments import InstrumentMaster
+
+    with _SCAN_LOCK:
+        _SCAN_STATE = {
+            "status": "running", "universe": "NIFTY 200", "total": 0, "scanned": 0,
+            "failed": 0, "matches": [], "failures": [], "started_at": time.time(), "finished_at": None,
+        }
+    try:
+        symbols = _nifty200_symbols()
+        master = InstrumentMaster()
+        historical = HistoricalDataClient(MarketDataClient())
+        end = date.today()
+        start = end - timedelta(days=365 * 5)
+        with _SCAN_LOCK:
+            _SCAN_STATE["total"] = len(symbols)
+        for ticker in symbols:
+            try:
+                result = _scan_one_symbol(ticker, master, historical, start, end)
+                if result.get("matches"):
+                    with _SCAN_LOCK:
+                        _SCAN_STATE["matches"].extend(result["matches"])
+            except Exception as exc:
+                with _SCAN_LOCK:
+                    _SCAN_STATE["failed"] += 1
+                    _SCAN_STATE["failures"].append({"symbol": ticker, "reason": str(exc)[:180]})
+            finally:
+                with _SCAN_LOCK:
+                    _SCAN_STATE["scanned"] += 1
+        with _SCAN_LOCK:
+            _SCAN_STATE["status"] = "completed"
+            _SCAN_STATE["finished_at"] = time.time()
+    except Exception as exc:
+        with _SCAN_LOCK:
+            _SCAN_STATE["status"] = "failed"
+            _SCAN_STATE["fatal_error"] = str(exc)[:240]
+            _SCAN_STATE["finished_at"] = time.time()
+
 
 def weekly_bars(rows):
     buckets = {}
@@ -134,3 +233,21 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Historical scanner data unavailable from configured provider") from exc
+
+
+@router.post("/scan-all/start")
+def start_nifty200_scan():
+    """Start a real, background scan across the current official NIFTY 200 universe."""
+    global _SCAN_THREAD
+    with _SCAN_LOCK:
+        if _SCAN_STATE.get("status") == "running":
+            return {**_SCAN_STATE, "message": "NIFTY 200 scan already running"}
+        _SCAN_THREAD = threading.Thread(target=_run_nifty200_scan, daemon=True, name="weekly-nifty200-scan")
+        _SCAN_THREAD.start()
+        return {"status": "starting", "universe": "NIFTY 200", "message": "Background scan started", "orders_placed": False}
+
+
+@router.get("/scan-all/status")
+def nifty200_scan_status():
+    with _SCAN_LOCK:
+        return {**_SCAN_STATE, "orders_placed": False}
