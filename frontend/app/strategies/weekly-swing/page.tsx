@@ -14,7 +14,7 @@ type Match = {
   indicator_values_at_third_low: Record<string, number | null>;
   checked_at_week: string;
 };
-type Result = { status: string; symbol: string; weekly_bars?: number; count?: number; matches?: Match[]; message?: string; data_source?: string; orders_placed?: boolean };
+type Result = { status: string; symbol: string; weekly_bars?: number; count?: number; matches?: Match[]; message?: string; data_source?: string; orders_placed?: boolean };\ntype UniverseStatus = { status: string; total?: number; scanned?: number; failed?: number; matches?: Match[]; failures?: {symbol:string;reason:string}[]; fatal_error?: string };
 
 const money = (v: number) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 export default function WeeklySwingScannerPage() {
@@ -22,7 +22,7 @@ export default function WeeklySwingScannerPage() {
   const [exchange, setExchange] = useState("NSE");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<Result | null>(null);
+  const [result, setResult] = useState<Result | null>(null);\n  const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
 
   async function scan() {
     setLoading(true); setError(""); setResult(null);
@@ -35,6 +35,34 @@ export default function WeeklySwingScannerPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Scanner data unavailable");
     } finally { setLoading(false); }
+  }
+
+  async function scanNifty200() {
+    setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const startResponse = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/start`, { method: "POST", cache: "no-store" });
+      const started = await startResponse.json();
+      if (!startResponse.ok) throw new Error(started.detail || `NIFTY 200 scan failed (${startResponse.status})`);
+      const poll = async (): Promise<void> => {
+        const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
+        const body: UniverseStatus = await response.json();
+        if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
+        setUniverseStatus(body);
+        if (body.status === "completed") {
+          setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
+          setLoading(false);
+          return;
+        }
+        if (body.status === "failed") throw new Error(body.fatal_error || "NIFTY 200 scan failed");
+        await new Promise(resolve => window.setTimeout(resolve, 3000));
+        return poll();
+      };
+      await poll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "NIFTY 200 scan unavailable");
+      setLoading(false);
+    }
   }
 
   return <div className="space-y-5">
@@ -51,14 +79,14 @@ export default function WeeklySwingScannerPage() {
         <label className="space-y-1 text-xs font-semibold theme-muted">Exchange
           <select value={exchange} onChange={e=>setExchange(e.target.value)} className="w-full rounded-xl border theme-border theme-surface-2 px-3 py-3 text-sm theme-text"><option value="NSE">NSE</option><option value="BSE">BSE</option></select>
         </label>
-        <button onClick={scan} disabled={loading || !symbol.trim()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-cyan-500 px-5 py-3 text-sm font-bold text-slate-950 disabled:opacity-60">{loading?<LoaderCircle size={16} className="animate-spin"/>:<Search size={16}/>} {loading?"Scanning…":"Scan Weekly"}</button>
+        <div className="flex flex-wrap gap-2"><button onClick={scan} disabled={loading || !symbol.trim()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-cyan-500 px-5 py-3 text-sm font-bold text-slate-950 disabled:opacity-60">{loading?<LoaderCircle size={16} className="animate-spin"/>:<Search size={16}/>} {loading?"Scanning…":"Scan One Stock"}</button><button onClick={scanNifty200} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border px-4 py-3 text-sm font-bold disabled:opacity-60">{loading?<LoaderCircle size={16} className="animate-spin"/>:<Activity size={16}/>} Scan All NIFTY 200</button></div>
       </div>
       <div className="mt-4 grid gap-2 text-xs theme-muted sm:grid-cols-2">
         <p>• 5 years of provider-sourced daily history aggregated into weekly candles.</p>
         <p>• Adaptive swing turns; no fixed gap between the lows.</p>
       </div>
     </section>
-    {error && <section role="alert" className="flex gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm"><AlertCircle className="shrink-0 text-rose-400" size={19}/><div><strong>Real data request failed</strong><p className="mt-1 break-words">{error}</p><p className="mt-1 theme-muted">No sample or fabricated opportunities are shown. Check backend availability and the connected historical-data session.</p></div></section>}
+    {universeStatus && <section className="rounded-xl border theme-border theme-surface p-4 text-sm"><div className="flex items-center justify-between gap-2"><strong>NIFTY 200 scan progress</strong><span className="theme-muted">{universeStatus.scanned ?? 0} / {universeStatus.total ?? 200}</span></div><div className="mt-3 h-2 overflow-hidden rounded-full theme-surface-2"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{width: `${Math.min(100, 100*(universeStatus.scanned ?? 0)/Math.max(1, universeStatus.total ?? 200))}%`}} /></div><p className="mt-2 theme-muted">Failed/skipped: {universeStatus.failed ?? 0} · Status: {universeStatus.status}</p>{(universeStatus.failures?.length ?? 0) > 0 && <details className="mt-2"><summary className="cursor-pointer">Failed symbols ({universeStatus.failures?.length})</summary><ul className="mt-2 space-y-1">{universeStatus.failures?.slice(0,30).map(f=><li key={f.symbol}>{f.symbol}: {f.reason}</li>)}</ul></details>}</section>}\n    {error && <section role="alert" className="flex gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm"><AlertCircle className="shrink-0 text-rose-400" size={19}/><div><strong>Real data request failed</strong><p className="mt-1 break-words">{error}</p><p className="mt-1 theme-muted">No sample or fabricated opportunities are shown. Check backend availability and the connected historical-data session.</p></div></section>}
     {result && <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border theme-border theme-surface p-4">
         <div><div className="text-xs theme-muted">Scan result</div><div className="mt-1 text-xl font-bold">{result.symbol}</div><div className="mt-1 text-xs theme-muted">{result.weekly_bars ?? 0} weekly bars · {result.data_source ?? "Historical source"}</div></div>
