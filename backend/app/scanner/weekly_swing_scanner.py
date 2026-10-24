@@ -21,20 +21,24 @@ def weekly_bars(rows):
     return [buckets[k] for k in sorted(buckets)]
 
 def pivots(values, kind):
-    out=[]
-    if len(values)<3:return out
-    candidate=0; trend=0
-    for i in range(1,len(values)):
-        if values[i] is None: continue
-        if kind=="low":
-            if values[i]<=values[candidate]: candidate=i
-            elif trend!=1: out.append(candidate); trend=1; candidate=i
-            else: candidate=i
-        else:
-            if values[i]>=values[candidate]: candidate=i
-            elif trend!=-1: out.append(candidate); trend=-1; candidate=i
-            else: candidate=i
-    return list(dict.fromkeys(out))
+    """Return confirmed local swing pivots, ignoring indicator warm-up gaps."""
+    out = []
+    if len(values) < 3:
+        return out
+    for i in range(1, len(values) - 1):
+        left, current, right = values[i - 1], values[i], values[i + 1]
+        if left is None or current is None or right is None:
+            continue
+        try:
+            if not all(isfinite(float(v)) for v in (left, current, right)):
+                continue
+        except (TypeError, ValueError):
+            continue
+        if kind == "low" and current <= left and current < right:
+            out.append(i)
+        elif kind == "high" and current >= left and current > right:
+            out.append(i)
+    return out
 
 def indicators(bars):
     close=[b["close"] for b in bars]; volume=[max(0,b["volume"]) for b in bars]
@@ -91,9 +95,29 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     from app.market_data.instruments import InstrumentMaster
     ticker=symbol.strip().upper(); instrument=InstrumentMaster().get_instrument(ticker,exchange)
     if not instrument or not instrument.get("token"):raise HTTPException(status_code=404,detail=f"Instrument not found: {exchange} {ticker}")
-    end=date.today(); start=end-timedelta(days=365*5)
+    end = date.today()
+    start = end - timedelta(days=365 * 5)
     try:
-        data=HistoricalDataClient(MarketDataClient()).get_candles(exchange=exchange,symboltoken=str(instrument["token"]),interval="ONE_DAY",from_date=f"{start} 09:15",to_date=f"{end} 15:30")
-        return analyze(ticker,weekly_bars(data.get("data",[]) if isinstance(data,dict) else []))
-    except HTTPException: raise
-    except Exception as exc: raise HTTPException(status_code=502,detail="Historical scanner data unavailable from configured provider") from exc
+        # Angel One daily-candle history has a bounded per-request date range.
+        # Fetch sequential chunks and fail closed if any provider request fails.
+        historical = HistoricalDataClient(MarketDataClient())
+        rows = []
+        cursor = start
+        while cursor <= end:
+            chunk_end = min(cursor + timedelta(days=300), end)
+            response = historical.get_candles(
+                exchange=exchange,
+                symboltoken=str(instrument["token"]),
+                interval="ONE_DAY",
+                from_date=f"{cursor} 09:15",
+                to_date=f"{chunk_end} 15:30",
+            )
+            if not isinstance(response, dict) or not response.get("status") or not isinstance(response.get("data"), list):
+                raise ValueError("Historical provider returned no valid candle data")
+            rows.extend(response["data"])
+            cursor = chunk_end + timedelta(days=1)
+        return analyze(ticker, weekly_bars(rows))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Historical scanner data unavailable from configured provider") from exc
