@@ -402,3 +402,21 @@ def test_history_fetch_ranges_does_not_redownload_small_closure():
         ["2026-01-08 09:15", "102", "106", "101", "105", "1200"],
     ]
     assert _history_fetch_ranges(rows, date(2026, 1, 8)) == []
+
+
+
+def test_nse_trading_day_excludes_published_2026_holidays_and_weekends():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import _is_nse_trading_day
+
+    assert not _is_nse_trading_day(date(2026, 10, 20))  # Dussehra
+    assert not _is_nse_trading_day(date(2026, 11, 10))  # Diwali-Balipratipada
+    assert not _is_nse_trading_day(date(2026, 10, 24))  # Saturday
+    assert _is_nse_trading_day(date(2026, 10, 26))  # ordinary Monday
+
+
+def test_nse_trading_day_fails_closed_for_unconfigured_future_year():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import _is_nse_trading_day
+
+    assert not _is_nse_trading_day(date(2027, 1, 4))
