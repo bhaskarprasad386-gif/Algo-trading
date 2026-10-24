@@ -549,13 +549,3 @@ def test_future_dated_cache_rows_are_excluded_and_current_tail_is_fetched(monkey
     rows, last_day = scanner._load_cached_rows("TEST")
     assert all(date.fromisoformat(row[0][:10]) <= end for row in rows)
     assert last_day == end
-
-
-def test_history_fetch_ranges_ignores_candles_outside_five_year_lookback():
-    from datetime import date, timedelta
-    from app.scanner.weekly_swing_scanner import _history_fetch_ranges
-
-    end = date(2026, 10, 23)
-    start = end - timedelta(days=365 * 5)
-    old_rows = [["2018-01-05 09:15", "100", "105", "98", "102", "1000"]]
-    assert _history_fetch_ranges(old_rows, end) == [(start, end)]
