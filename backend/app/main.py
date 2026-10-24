@@ -41,7 +41,7 @@ from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
-from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router
+from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
@@ -108,12 +108,14 @@ configure_live_box_spread(lambda: live_box_spread_latest_results)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
     from app.scanner.backtest_jobs import recover_interrupted_jobs
     recover_interrupted_jobs()
+    if _weekly_swing_refresh_task is None:
+        _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     if _collector_enabled() and _history_collector_task is None:
@@ -132,7 +134,7 @@ async def lifespan(app: FastAPI):
         # Signal blocking worker threads before cancelling their asyncio wrappers.
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -144,6 +146,7 @@ async def lifespan(app: FastAPI):
                 _live_calendar_spread_task,
                 _live_synthetic_task,
                 _live_box_spread_task,
+                _weekly_swing_refresh_task,
             )
             if task is not None
         )
@@ -161,6 +164,7 @@ async def lifespan(app: FastAPI):
         _live_calendar_spread_task = None
         _live_synthetic_task = None
         _live_box_spread_task = None
+        _weekly_swing_refresh_task = None
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
@@ -350,6 +354,7 @@ async def dashboard_websocket(websocket: WebSocket):
             pass
 
 _history_collector_task: asyncio.Task | None = None
+_weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 _live_cash_future_task: asyncio.Task | None = None
 _live_calendar_spread_task: asyncio.Task | None = None
