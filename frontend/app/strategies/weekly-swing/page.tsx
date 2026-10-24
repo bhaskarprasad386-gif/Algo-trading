@@ -14,7 +14,8 @@ type Match = {
   indicator_values_at_third_low: Record<string, number | null>;
   checked_at_week: string;
 };
-type Result = { status: string; symbol: string; weekly_bars?: number; count?: number; matches?: Match[]; message?: string; data_source?: string; orders_placed?: boolean };\ntype UniverseStatus = { status: string; total?: number; scanned?: number; failed?: number; matches?: Match[]; failures?: {symbol:string;reason:string}[]; fatal_error?: string };
+type Result = { status: string; symbol: string; weekly_bars?: number; count?: number; matches?: Match[]; message?: string; data_source?: string; orders_placed?: boolean };
+type UniverseStatus = { status: string; total?: number; scanned?: number; failed?: number; matches?: Match[]; failures?: {symbol:string;reason:string}[]; fatal_error?: string };
 
 const money = (v: number) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 export default function WeeklySwingScannerPage() {
@@ -22,7 +23,8 @@ export default function WeeklySwingScannerPage() {
   const [exchange, setExchange] = useState("NSE");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<Result | null>(null);\n  const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
+  const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
 
   async function scan() {
     setLoading(true); setError(""); setResult(null);
@@ -86,7 +88,8 @@ export default function WeeklySwingScannerPage() {
         <p>• Adaptive swing turns; no fixed gap between the lows.</p>
       </div>
     </section>
-    {universeStatus && <section className="rounded-xl border theme-border theme-surface p-4 text-sm"><div className="flex items-center justify-between gap-2"><strong>NIFTY 200 scan progress</strong><span className="theme-muted">{universeStatus.scanned ?? 0} / {universeStatus.total ?? 200}</span></div><div className="mt-3 h-2 overflow-hidden rounded-full theme-surface-2"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{width: `${Math.min(100, 100*(universeStatus.scanned ?? 0)/Math.max(1, universeStatus.total ?? 200))}%`}} /></div><p className="mt-2 theme-muted">Failed/skipped: {universeStatus.failed ?? 0} · Status: {universeStatus.status}</p>{(universeStatus.failures?.length ?? 0) > 0 && <details className="mt-2"><summary className="cursor-pointer">Failed symbols ({universeStatus.failures?.length})</summary><ul className="mt-2 space-y-1">{universeStatus.failures?.slice(0,30).map(f=><li key={f.symbol}>{f.symbol}: {f.reason}</li>)}</ul></details>}</section>}\n    {error && <section role="alert" className="flex gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm"><AlertCircle className="shrink-0 text-rose-400" size={19}/><div><strong>Real data request failed</strong><p className="mt-1 break-words">{error}</p><p className="mt-1 theme-muted">No sample or fabricated opportunities are shown. Check backend availability and the connected historical-data session.</p></div></section>}
+    {universeStatus && <section className="rounded-xl border theme-border theme-surface p-4 text-sm"><div className="flex items-center justify-between gap-2"><strong>NIFTY 200 scan progress</strong><span className="theme-muted">{universeStatus.scanned ?? 0} / {universeStatus.total ?? 200}</span></div><div className="mt-3 h-2 overflow-hidden rounded-full theme-surface-2"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{width: `${Math.min(100, 100*(universeStatus.scanned ?? 0)/Math.max(1, universeStatus.total ?? 200))}%`}} /></div><p className="mt-2 theme-muted">Failed/skipped: {universeStatus.failed ?? 0} · Status: {universeStatus.status}</p>{(universeStatus.failures?.length ?? 0) > 0 && <details className="mt-2"><summary className="cursor-pointer">Failed symbols ({universeStatus.failures?.length})</summary><ul className="mt-2 space-y-1">{universeStatus.failures?.slice(0,30).map(f=><li key={f.symbol}>{f.symbol}: {f.reason}</li>)}</ul></details>}</section>}
+    {error && <section role="alert" className="flex gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm"><AlertCircle className="shrink-0 text-rose-400" size={19}/><div><strong>Real data request failed</strong><p className="mt-1 break-words">{error}</p><p className="mt-1 theme-muted">No sample or fabricated opportunities are shown. Check backend availability and the connected historical-data session.</p></div></section>}
     {result && <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border theme-border theme-surface p-4">
         <div><div className="text-xs theme-muted">Scan result</div><div className="mt-1 text-xl font-bold">{result.symbol}</div><div className="mt-1 text-xs theme-muted">{result.weekly_bars ?? 0} weekly bars · {result.data_source ?? "Historical source"}</div></div>
