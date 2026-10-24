@@ -28,7 +28,7 @@ def _nifty200_symbols():
         headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.niftyindices.com/"},
     )
     response.raise_for_status()
-    reader = csv.DictReader(io.StringIO(response.text.lstrip("\\ufeff")))
+    reader = csv.DictReader(io.StringIO(response.text.lstrip(chr(65279))))
     symbols = []
     for row in reader:
         symbol = (row.get("Symbol") or row.get("symbol") or "").strip().upper()
