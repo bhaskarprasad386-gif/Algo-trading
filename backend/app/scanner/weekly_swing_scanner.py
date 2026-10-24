@@ -318,7 +318,7 @@ def analyze(symbol,bars):
     return {"status":"success","symbol":symbol,"weekly_bars":len(bars),"count":len(matches),"matches":matches[-5:],"data_source":"Angel One daily candles aggregated to weekly","orders_placed":False}
 
 @router.get("/scan")
-def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NSE",pattern="^(NSE|BSE)$")):
+def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NSE",pattern="^NSE$")):
     from app.market_data.client import MarketDataClient
     from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
@@ -327,10 +327,10 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     # blocked during NSE cash-market hours to avoid competing with live feed use.
     if _nse_market_is_open_now():
         raise HTTPException(status_code=409, detail="Historical scanner downloads are off-market only; try after 15:30 IST.")
+    # Weekly Swing Scanner is intentionally NSE-only.
+    exchange = "NSE"
     master = InstrumentMaster()
     instrument = master.get_instrument(ticker, exchange)
-    # Angel One's cash-equity master commonly stores symbols with the -EQ suffix.
-    # Accept friendly inputs such as WIPRO while still resolving via the real master.
     if not instrument and not ticker.endswith("-EQ"):
         instrument = master.get_instrument(f"{ticker}-EQ", exchange)
     if not instrument or not instrument.get("token"):
@@ -339,36 +339,8 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     start = end - timedelta(days=365 * 5)
     try:
         historical = HistoricalDataClient(MarketDataClient())
-        # NSE single-symbol scans share the same persistent incremental cache as
-        # the NIFTY 200 scheduler. Repeated runs fetch only dates after the last
-        # cached candle; BSE keeps the independent uncached path to avoid mixing
-        # exchange histories in the NSE symbol cache.
-        if exchange == "NSE":
-            return _scan_one_symbol(ticker, master, historical, end)
-
-        # Preserve the existing BSE path; it is deliberately not stored under
-        # the NSE-only cache key.
-        rows = []
-        cursor = start
-        while cursor <= end:
-            if _nse_market_is_open_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail="Historical scanner downloads paused because NSE market hours have started; resume after 15:30 IST.",
-                )
-            chunk_end = min(cursor + timedelta(days=300), end)
-            response = historical.get_candles(
-                exchange=exchange,
-                symboltoken=str(instrument["token"]),
-                interval="ONE_DAY",
-                from_date=f"{cursor} 09:15",
-                to_date=f"{chunk_end} 15:30",
-            )
-            if not isinstance(response, dict) or not response.get("status") or not isinstance(response.get("data"), list):
-                raise ValueError("Historical provider returned no valid candle data")
-            rows.extend(response["data"])
-            cursor = chunk_end + timedelta(days=1)
-        return analyze(ticker, weekly_bars(rows))
+        # Every manual scan uses the NSE-only persistent incremental cache.
+        return _scan_one_symbol(ticker, master, historical, end)
     except HTTPException:
         raise
     except Exception as exc:
