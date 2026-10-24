@@ -197,3 +197,16 @@ def test_nifty200_scan_pauses_entire_run_when_market_opens(monkeypatch):
     assert scanner._SCAN_STATE["status"] == "paused"
     assert scanner._SCAN_STATE["scanned"] == 1
     assert scanner._SCAN_STATE["fatal_error"] == "NSE market hours have started"
+
+def test_bullish_divergence_requires_indicator_higher_lows_at_price_pivots():
+    from app.scanner.weekly_swing_scanner import _has_bullish_divergence
+
+    # Price makes lower lows elsewhere; this predicate checks indicator values
+    # at those exact three price-pivot indices.
+    assert _has_bullish_divergence([-0.4, -0.2, 0.1], 0, 1, 2)
+    assert _has_bullish_divergence([20, 20, 25], 0, 1, 2)
+    assert not _has_bullish_divergence([20, 25, 24], 0, 1, 2)
+    assert not _has_bullish_divergence([20, 18, 24], 0, 1, 2)
+    assert not _has_bullish_divergence([None, 20, 25], 0, 1, 2)
+    assert not _has_bullish_divergence([20, float("nan"), 25], 0, 1, 2)
+
