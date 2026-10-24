@@ -117,8 +117,13 @@ def _is_nse_trading_day(day):
 
 def _nse_market_is_open_now():
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
-    # Only a known NSE trading day can be treated as a live cash-market session.
-    return _is_nse_trading_day(now.date()) and clock_time(9, 15) <= now.time() < clock_time(15, 30)
+    # Preserve the off-market safety gate even when a future year's holiday
+    # calendar has not been configured. Only known 2026 holidays bypass it.
+    if now.weekday() >= 5:
+        return False
+    if now.date().year == 2026 and now.date() in NSE_CAPITAL_MARKET_HOLIDAYS:
+        return False
+    return clock_time(9, 15) <= now.time() < clock_time(15, 30)
 
 
 def _fetch_daily_range(token, historical, start, end, on_chunk=None):
