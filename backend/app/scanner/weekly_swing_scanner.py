@@ -176,6 +176,13 @@ def _run_nifty200_scan():
                     if result.get("matches"):
                         with _SCAN_LOCK:
                             _SCAN_STATE["matches"].extend(result["matches"])
+                except HTTPException as exc:
+                    # A market-hours gate is a scan-wide stop, not a per-symbol failure.
+                    if exc.status_code == 409:
+                        raise
+                    with _SCAN_LOCK:
+                        _SCAN_STATE["failed"] += 1
+                        _SCAN_STATE["failures"].append({"symbol": ticker, "reason": str(exc.detail)[:180]})
                 except Exception as exc:
                     with _SCAN_LOCK:
                         _SCAN_STATE["failed"] += 1
@@ -197,9 +204,9 @@ def _run_nifty200_scan():
             _SCAN_STATE["finished_at"] = time.time()
     except Exception as exc:
         with _SCAN_LOCK:
-            _SCAN_STATE["status"] = "failed"
+            _SCAN_STATE["status"] = "paused" if isinstance(exc, HTTPException) and exc.status_code == 409 else "failed"
             _SCAN_STATE["current_symbol"] = None
-            _SCAN_STATE["fatal_error"] = str(exc)[:240]
+            _SCAN_STATE["fatal_error"] = str(exc.detail if isinstance(exc, HTTPException) else exc)[:240]
             _SCAN_STATE["finished_at"] = time.time()
 
 
