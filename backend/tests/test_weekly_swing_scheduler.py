@@ -99,3 +99,42 @@ def test_daily_scheduler_does_not_start_when_scan_is_already_running(monkeypatch
 
     assert sleep_count == 2
     assert started == []
+
+
+def test_nifty200_batches_start_on_five_minute_slots(monkeypatch):
+    """A 50-symbol batch consumes one five-minute slot before the next starts."""
+    symbols = [f"S{i:03d}" for i in range(100)]
+    monkeypatch.setattr(scanner, "_nifty200_symbols", lambda: symbols)
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: False)
+    monkeypatch.setattr(scanner, "_scan_one_symbol", lambda ticker, master, historical, end: {
+        "status": "success", "matches": []
+    })
+
+    class FakeInstrumentMaster:
+        pass
+
+    class FakeMarketDataClient:
+        pass
+
+    class FakeHistoricalDataClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    from app.market_data import client, historical, instruments
+    monkeypatch.setattr(instruments, "InstrumentMaster", FakeInstrumentMaster)
+    monkeypatch.setattr(client, "MarketDataClient", FakeMarketDataClient)
+    monkeypatch.setattr(historical, "HistoricalDataClient", FakeHistoricalDataClient)
+    monkeypatch.setattr(scanner, "_nse_today", lambda: datetime(2026, 10, 23).date())
+
+    monotonic_values = iter([0.0, 120.0, 300.0])
+    monkeypatch.setattr(scanner.time, "monotonic", lambda: next(monotonic_values))
+    sleeps = []
+    monkeypatch.setattr(scanner.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(scanner, "_SCAN_STATE", {})
+
+    scanner._run_nifty200_scan()
+
+    assert scanner._SCAN_STATE["status"] == "completed"
+    assert scanner._SCAN_STATE["scanned"] == 100
+    assert scanner._SCAN_STATE["batch_number"] == 2
+    assert sleeps == [180.0]
