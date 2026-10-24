@@ -86,6 +86,11 @@ def _save_cached_rows(ticker, rows):
     tmp.replace(path)
 
 
+def _nse_today():
+    """Return the exchange-local date, independent of the server's timezone."""
+    return datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
+
 def _nse_market_is_open_now():
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     # Conservative clock gate: weekdays during NSE cash hours are blocked.
@@ -165,7 +170,7 @@ def _run_nifty200_scan():
         symbols = _nifty200_symbols()
         master = InstrumentMaster()
         historical = HistoricalDataClient(MarketDataClient())
-        end = date.today()
+        end = _nse_today()
         with _SCAN_LOCK:
             _SCAN_STATE["total"] = len(symbols)
             _SCAN_STATE["batches_total"] = (len(symbols) + SCAN_BATCH_SIZE - 1) // SCAN_BATCH_SIZE
@@ -367,7 +372,7 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
         instrument = master.get_instrument(f"{ticker}-EQ", exchange)
     if not instrument or not instrument.get("token"):
         raise HTTPException(status_code=404, detail=f"Instrument not found: {exchange} {ticker}")
-    end = date.today()
+    end = _nse_today()
     start = end - timedelta(days=365 * 5)
     try:
         historical = HistoricalDataClient(MarketDataClient())
