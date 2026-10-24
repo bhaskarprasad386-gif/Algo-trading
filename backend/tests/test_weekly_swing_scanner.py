@@ -486,3 +486,19 @@ def test_market_hours_gate_respects_known_nse_holiday(monkeypatch):
 
     FixedDateTime.current = datetime(2026, 10, 21, 10, 0, tzinfo=ist)
     assert scanner._nse_market_is_open_now() is True
+
+
+def test_history_fetch_ranges_repairs_missing_leading_five_year_history():
+    from datetime import date, timedelta
+    from app.scanner.weekly_swing_scanner import _history_fetch_ranges
+
+    end = date(2026, 10, 23)
+    start = end - timedelta(days=365 * 5)
+    rows = [
+        ["2024-01-05 09:15", "100", "105", "98", "102", "1000"],
+        ["2026-10-22 09:15", "102", "106", "101", "105", "1200"],
+    ]
+    assert _history_fetch_ranges(rows, end) == [
+        (start, date(2024, 1, 4)),
+        (date(2026, 10, 23), end),
+    ]
