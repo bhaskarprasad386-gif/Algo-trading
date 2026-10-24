@@ -340,20 +340,27 @@ def pivots(values, kind):
 def indicators(bars):
     close=[b["close"] for b in bars]; volume=[max(0,b["volume"]) for b in bars]
     result={k:[] for k in ("cmf","obv","rsi","mid","lower","upper")}
-    obv=0.0; gains=[]; losses=[]
+    obv=0.0; gains=[]; losses=[]; avg_gain=None; avg_loss=None
     for i,b in enumerate(bars):
         start=max(0,i-19); denom=sum(volume[start:i+1])
         mfv=sum((((x["close"]-x["low"])-(x["high"]-x["close"]))/(x["high"]-x["low"]) if x["high"]!=x["low"] else 0)*max(0,x["volume"]) for x in bars[start:i+1])
         result["cmf"].append(mfv/denom if denom else 0.0)
-        if i: 
+        if i:
             obv += volume[i] if close[i]>close[i-1] else -volume[i] if close[i]<close[i-1] else 0
-            change=close[i]-close[i-1]; gains.append(max(change,0)); losses.append(max(-change,0))
+            change=close[i]-close[i-1]
+            gains.append(max(change,0)); losses.append(max(-change,0))
         result["obv"].append(obv)
-        if i<14: result["rsi"].append(None)
+        # Standard Wilder RSI: seed with the first 14 close-to-close changes,
+        # then smooth average gains/losses rather than recalculating a rolling mean.
+        if i<14:
+            result["rsi"].append(None)
+        elif i==14:
+            avg_gain=mean(gains[:14]); avg_loss=mean(losses[:14])
+            result["rsi"].append(100.0 if avg_loss==0 else 100.0-100.0/(1.0+avg_gain/avg_loss))
         else:
-            ag=mean(gains[i-14:i]) if len(gains)>=14 else 0
-            al=mean(losses[i-14:i]) if len(losses)>=14 else 0
-            result["rsi"].append(100 if al==0 else 100-100/(1+ag/al))
+            avg_gain=((avg_gain*13)+gains[-1])/14
+            avg_loss=((avg_loss*13)+losses[-1])/14
+            result["rsi"].append(100.0 if avg_loss==0 else 100.0-100.0/(1.0+avg_gain/avg_loss))
         sample=close[start:i+1]; mid=mean(sample); sd=pstdev(sample) if len(sample)>1 else 0
         result["mid"].append(mid); result["lower"].append(mid-2*sd); result["upper"].append(mid+2*sd)
     return result
