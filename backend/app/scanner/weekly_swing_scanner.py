@@ -12,10 +12,12 @@ from fastapi import APIRouter, HTTPException, Query
 router = APIRouter(prefix="/api/v1/scanner/weekly-swing", tags=["Weekly Swing Scanner"])
 
 NIFTY200_CONSTITUENTS_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv"
+# Space historical requests across the full universe scan to reduce rate-limit risk.
+HISTORICAL_REQUEST_PAUSE_SECONDS = 0.4
 _SCAN_LOCK = threading.Lock()
 _SCAN_STATE = {
     "status": "idle", "universe": "NIFTY 200", "total": 200, "scanned": 0,
-    "failed": 0, "matches": [], "failures": [], "started_at": None, "finished_at": None,
+    "failed": 0, "matches": [], "failures": [], "current_symbol": None, "started_at": None, "finished_at": None,
 }
 _SCAN_THREAD = None
 
@@ -51,8 +53,9 @@ def _scan_one_symbol(ticker, master, historical, start, end):
         chunk_end = min(cursor + timedelta(days=300), end)
         response = historical.get_candles(
             exchange="NSE", symboltoken=str(instrument["token"]), interval="ONE_DAY",
-            from_date=f"{cursor} 09:15", to_date=f"{chunk_end} 15:30",
+            from_date=f"${cursor} 09:15", to_date=f"${chunk_end} 15:30",
         )
+        time.sleep(HISTORICAL_REQUEST_PAUSE_SECONDS)
         if not isinstance(response, dict) or not response.get("status") or not isinstance(response.get("data"), list):
             raise ValueError("Historical candle response invalid")
         rows.extend(response["data"])
@@ -72,7 +75,7 @@ def _run_nifty200_scan():
     with _SCAN_LOCK:
         _SCAN_STATE = {
             "status": "running", "universe": "NIFTY 200", "total": 0, "scanned": 0,
-            "failed": 0, "matches": [], "failures": [], "started_at": time.time(), "finished_at": None,
+            "failed": 0, "matches": [], "failures": [], "current_symbol": None, "started_at": time.time(), "finished_at": None,
         }
     try:
         symbols = _nifty200_symbols()
@@ -83,6 +86,8 @@ def _run_nifty200_scan():
         with _SCAN_LOCK:
             _SCAN_STATE["total"] = len(symbols)
         for ticker in symbols:
+            with _SCAN_LOCK:
+                _SCAN_STATE["current_symbol"] = ticker
             try:
                 result = _scan_one_symbol(ticker, master, historical, start, end)
                 if result.get("matches"):
@@ -97,10 +102,12 @@ def _run_nifty200_scan():
                     _SCAN_STATE["scanned"] += 1
         with _SCAN_LOCK:
             _SCAN_STATE["status"] = "completed"
+            _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["finished_at"] = time.time()
     except Exception as exc:
         with _SCAN_LOCK:
             _SCAN_STATE["status"] = "failed"
+            _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["fatal_error"] = str(exc)[:240]
             _SCAN_STATE["finished_at"] = time.time()
 
@@ -242,9 +249,15 @@ def start_nifty200_scan():
     with _SCAN_LOCK:
         if _SCAN_STATE.get("status") == "running":
             return {**_SCAN_STATE, "message": "NIFTY 200 scan already running"}
+        # Mark running before starting the thread to prevent duplicate starts on rapid taps.
+        _SCAN_STATE.update({
+            "status": "running", "universe": "NIFTY 200", "total": 0, "scanned": 0,
+            "failed": 0, "matches": [], "failures": [], "current_symbol": None,
+            "started_at": time.time(), "finished_at": None,
+        })
         _SCAN_THREAD = threading.Thread(target=_run_nifty200_scan, daemon=True, name="weekly-nifty200-scan")
         _SCAN_THREAD.start()
-        return {"status": "starting", "universe": "NIFTY 200", "message": "Background scan started", "orders_placed": False}
+        return {"status": "running", "universe": "NIFTY 200", "message": "Background scan started", "orders_placed": False}
 
 
 @router.get("/scan-all/status")
