@@ -367,7 +367,7 @@ def test_nse_today_uses_exchange_timezone(monkeypatch):
     from zoneinfo import ZoneInfo
     from app.scanner import weekly_swing_scanner as scanner
 
-    # UTC has rolled over but the exchange-local calendar date is still previous day.
+    # UTC is still on Oct 23, while the NSE-local date has advanced to Oct 24.
     fixed_utc = datetime(2026, 10, 23, 20, 0, tzinfo=timezone.utc)
     class FixedDateTime:
         @classmethod
@@ -421,3 +421,25 @@ def test_nse_trading_day_fails_closed_for_unconfigured_future_year():
     from app.scanner.weekly_swing_scanner import _is_nse_trading_day
 
     assert not _is_nse_trading_day(date(2027, 1, 4))
+
+
+
+def test_market_hours_gate_respects_known_nse_holiday(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from app.scanner import weekly_swing_scanner as scanner
+
+    ist = ZoneInfo("Asia/Kolkata")
+
+    class FixedDateTime:
+        current = datetime(2026, 10, 20, 10, 0, tzinfo=ist)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz) if tz else cls.current.replace(tzinfo=None)
+
+    monkeypatch.setattr(scanner, "datetime", FixedDateTime)
+    assert scanner._nse_market_is_open_now() is False
+
+    FixedDateTime.current = datetime(2026, 10, 21, 10, 0, tzinfo=ist)
+    assert scanner._nse_market_is_open_now() is True
