@@ -30,6 +30,24 @@ def test_indicators_return_aligned_series():
     assert values["lower"][-1] <= values["mid"][-1] <= values["upper"][-1]
 
 
+def test_rsi_uses_wilder_smoothing_after_initial_14_changes():
+    from app.scanner.weekly_swing_scanner import indicators
+
+    closes = [100 + i for i in range(15)] + [113]
+    bars = [
+        {"week": f"2026-W{i:02d}", "open": close, "high": close + 1,
+         "low": close - 1, "close": close, "volume": 1000}
+        for i, close in enumerate(closes)
+    ]
+
+    rsi = indicators(bars)["rsi"]
+    assert rsi[:14] == [None] * 14
+    assert rsi[14] == 100.0
+    # Fourteen initial +1 changes seed avg gain=1, avg loss=0.
+    # One -1 change updates Wilder averages to 13/14 and 1/14.
+    assert abs(rsi[15] - (100.0 - 100.0 / (1.0 + 13.0))) < 1e-9
+
+
 def test_pivots_skip_rsi_warmup_none_values():
     from app.scanner.weekly_swing_scanner import pivots
 
