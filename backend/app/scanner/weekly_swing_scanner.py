@@ -1,5 +1,8 @@
 """Weekly three-swing scanner; real daily bars are aggregated to weekly bars."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, time as clock_time
+from pathlib import Path
+import json
+from zoneinfo import ZoneInfo
 from statistics import mean, pstdev
 from math import isfinite
 import csv
@@ -12,8 +15,11 @@ from fastapi import APIRouter, HTTPException, Query
 router = APIRouter(prefix="/api/v1/scanner/weekly-swing", tags=["Weekly Swing Scanner"])
 
 NIFTY200_CONSTITUENTS_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv"
-# Space historical requests across the full universe scan to reduce rate-limit risk.
+# Initial backfill is staged in 50-symbol batches outside NSE cash-market hours.
+SCAN_BATCH_SIZE = 50
+SCAN_BATCH_INTERVAL_SECONDS = 300
 HISTORICAL_REQUEST_PAUSE_SECONDS = 0.4
+CACHE_SCHEMA_VERSION = 1
 _SCAN_LOCK = threading.Lock()
 _SCAN_STATE = {
     "status": "idle", "universe": "NIFTY 200", "total": 200, "scanned": 0,
@@ -41,18 +47,59 @@ def _nifty200_symbols():
     return symbols
 
 
-def _scan_one_symbol(ticker, master, historical, start, end):
-    instrument = master.get_instrument(ticker, "NSE")
-    if not instrument and not ticker.endswith("-EQ"):
-        instrument = master.get_instrument(f"{ticker}-EQ", "NSE")
-    if not instrument or not instrument.get("token"):
-        raise ValueError("Instrument/token not found in Angel One master")
+def _cache_root():
+    """Store downloaded candles beside the configured durable market-data DB."""
+    from app.core.config import settings
+    configured_db = Path(settings.BACKTEST_DATA_DB)
+    base = configured_db if configured_db.is_absolute() else (Path.cwd() / configured_db)
+    return base.with_name(base.name + ".weekly_swing_cache")
+
+
+def _cache_path(ticker):
+    return _cache_root() / (ticker.replace("/", "_") + ".json")
+
+
+def _load_cached_rows(ticker):
+    path = _cache_path(ticker)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != CACHE_SCHEMA_VERSION or payload.get("symbol") != ticker:
+            return [], None
+        rows = payload.get("rows")
+        if not isinstance(rows, list):
+            return [], None
+        valid = [row for row in rows if isinstance(row, list) and len(row) >= 6]
+        last_day = max((date.fromisoformat(str(row[0])[:10]) for row in valid), default=None)
+        return valid, last_day
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return [], None
+
+
+def _save_cached_rows(ticker, rows):
+    path = _cache_path(ticker)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    payload = {"schema_version": CACHE_SCHEMA_VERSION, "symbol": ticker,
+               "saved_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(), "rows": rows}
+    tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _nse_market_is_open_now():
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Conservative clock gate: weekdays during NSE cash hours are blocked.
+    return now.weekday() < 5 and clock_time(9, 15) <= now.time() < clock_time(15, 30)
+
+
+def _fetch_daily_range(token, historical, start, end):
     rows = []
     cursor = start
     while cursor <= end:
+        if _nse_market_is_open_now():
+            raise RuntimeError("Market hours started; historical download paused")
         chunk_end = min(cursor + timedelta(days=300), end)
         response = historical.get_candles(
-            exchange="NSE", symboltoken=str(instrument["token"]), interval="ONE_DAY",
+            exchange="NSE", symboltoken=str(token), interval="ONE_DAY",
             from_date=f"{cursor} 09:15", to_date=f"{chunk_end} 15:30",
         )
         time.sleep(HISTORICAL_REQUEST_PAUSE_SECONDS)
@@ -60,9 +107,31 @@ def _scan_one_symbol(ticker, master, historical, start, end):
             raise ValueError("Historical candle response invalid")
         rows.extend(response["data"])
         cursor = chunk_end + timedelta(days=1)
-    result = analyze(ticker, weekly_bars(rows))
+    return rows
+
+
+def _scan_one_symbol(ticker, master, historical, end):
+    instrument = master.get_instrument(ticker, "NSE")
+    if not instrument and not ticker.endswith("-EQ"):
+        instrument = master.get_instrument(f"{ticker}-EQ", "NSE")
+    if not instrument or not instrument.get("token"):
+        raise ValueError("Instrument/token not found in Angel One master")
+
+    cached_rows, last_day = _load_cached_rows(ticker)
+    # Backfill five years only on first use; later scans fetch only missing dates.
+    start = end - timedelta(days=365 * 5) if last_day is None else last_day + timedelta(days=1)
+    if start <= end:
+        fresh_rows = _fetch_daily_range(instrument["token"], historical, start, end)
+        indexed = {str(row[0])[:10]: row for row in cached_rows if isinstance(row, list) and row}
+        indexed.update({str(row[0])[:10]: row for row in fresh_rows if isinstance(row, list) and row})
+        cached_rows = [indexed[k] for k in sorted(indexed)]
+        _save_cached_rows(ticker, cached_rows)
+
+    result = analyze(ticker, weekly_bars(cached_rows))
     if result.get("status") == "insufficient_data":
         raise ValueError("Insufficient weekly history")
+    result["history_cache"] = "updated" if start <= end else "reused"
+    result["history_last_day"] = str(cached_rows[-1][0])[:10] if cached_rows else None
     return result
 
 
@@ -75,31 +144,49 @@ def _run_nifty200_scan():
     with _SCAN_LOCK:
         _SCAN_STATE = {
             "status": "running", "universe": "NIFTY 200", "total": 0, "scanned": 0,
-            "failed": 0, "matches": [], "failures": [], "current_symbol": None, "started_at": time.time(), "finished_at": None,
+            "failed": 0, "matches": [], "failures": [], "current_symbol": None,
+            "started_at": time.time(), "finished_at": None, "batch_size": SCAN_BATCH_SIZE,
+            "cache_mode": "persistent_daily_incremental",
         }
     try:
         symbols = _nifty200_symbols()
         master = InstrumentMaster()
         historical = HistoricalDataClient(MarketDataClient())
         end = date.today()
-        start = end - timedelta(days=365 * 5)
         with _SCAN_LOCK:
             _SCAN_STATE["total"] = len(symbols)
-        for ticker in symbols:
+            _SCAN_STATE["batches_total"] = (len(symbols) + SCAN_BATCH_SIZE - 1) // SCAN_BATCH_SIZE
+
+        for batch_start in range(0, len(symbols), SCAN_BATCH_SIZE):
+            if _nse_market_is_open_now():
+                raise RuntimeError("NSE market hours: start the historical scan after 15:30 IST")
+            batch = symbols[batch_start:batch_start + SCAN_BATCH_SIZE]
+            batch_started = time.monotonic()
             with _SCAN_LOCK:
-                _SCAN_STATE["current_symbol"] = ticker
-            try:
-                result = _scan_one_symbol(ticker, master, historical, start, end)
-                if result.get("matches"):
+                _SCAN_STATE["batch_number"] = batch_start // SCAN_BATCH_SIZE + 1
+            for ticker in batch:
+                with _SCAN_LOCK:
+                    _SCAN_STATE["current_symbol"] = ticker
+                try:
+                    result = _scan_one_symbol(ticker, master, historical, end)
+                    if result.get("matches"):
+                        with _SCAN_LOCK:
+                            _SCAN_STATE["matches"].extend(result["matches"])
+                except Exception as exc:
                     with _SCAN_LOCK:
-                        _SCAN_STATE["matches"].extend(result["matches"])
-            except Exception as exc:
-                with _SCAN_LOCK:
-                    _SCAN_STATE["failed"] += 1
-                    _SCAN_STATE["failures"].append({"symbol": ticker, "reason": str(exc)[:180]})
-            finally:
-                with _SCAN_LOCK:
-                    _SCAN_STATE["scanned"] += 1
+                        _SCAN_STATE["failed"] += 1
+                        _SCAN_STATE["failures"].append({"symbol": ticker, "reason": str(exc)[:180]})
+                finally:
+                    with _SCAN_LOCK:
+                        _SCAN_STATE["scanned"] += 1
+            # Each 50-symbol batch gets a five-minute slot; the first batch starts now.
+            if batch_start + SCAN_BATCH_SIZE < len(symbols):
+                remaining = SCAN_BATCH_INTERVAL_SECONDS - (time.monotonic() - batch_started)
+                if remaining > 0:
+                    with _SCAN_LOCK:
+                        _SCAN_STATE["waiting_for_next_batch_seconds"] = round(remaining)
+                    time.sleep(remaining)
+
         with _SCAN_LOCK:
             _SCAN_STATE["status"] = "completed"
             _SCAN_STATE["current_symbol"] = None
@@ -244,8 +331,10 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
 
 @router.post("/scan-all/start")
 def start_nifty200_scan():
-    """Start a real, background scan across the current official NIFTY 200 universe."""
+    """Start the cached NIFTY 200 scan outside regular NSE market hours."""
     global _SCAN_THREAD
+    if _nse_market_is_open_now():
+        raise HTTPException(status_code=409, detail="Historical NIFTY 200 scan is off-market only; try after 15:30 IST.")
     with _SCAN_LOCK:
         if _SCAN_STATE.get("status") == "running":
             return {**_SCAN_STATE, "message": "NIFTY 200 scan already running"}
