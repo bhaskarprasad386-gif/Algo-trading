@@ -172,7 +172,7 @@ def _scan_one_symbol(ticker, master, historical, end):
     result = analyze(ticker, weekly_bars(cached_rows))
     if result.get("status") == "insufficient_data":
         raise ValueError("Insufficient weekly history")
-    result["history_cache"] = "updated" if start <= end else "reused"
+    result["history_cache"] = "updated" if fetch_ranges else "reused"
     result["history_last_day"] = str(cached_rows[-1][0])[:10] if cached_rows else None
     return result
 
