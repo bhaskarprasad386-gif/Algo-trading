@@ -68,7 +68,7 @@ def analyze(symbol,bars):
         if not h1 or not h2:continue
         h1,h2=h1[-1],h2[-1]
         # Shallow break: close remains within the broken level's own weekly candle range.
-        if not all(bars[x]["close"]>=bars[p]["low"]-(bars[x]["high"]-bars[x]["low"]) for p,x in ((a,b),(b,c))):continue
+        if not all(bars[x]["close"]>=bars[p]["low"]-0.25*max(bars[p]["high"]-bars[p]["low"],1e-9) for p,x in ((a,b),(b,c))):continue
         if not all(bars[x]["low"]<bars[p]["low"] and bars[x]["close"]>bars[x]["low"] for p,x in ((a,b),(b,c))):continue
         rng=max(bars[c]["high"]-bars[c]["low"],1e-9)
         if abs(bars[c]["low"]-ind["lower"][c])>rng:continue
