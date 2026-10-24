@@ -123,6 +123,30 @@ def _fetch_daily_range(token, historical, start, end, on_chunk=None):
     return rows
 
 
+def _history_fetch_ranges(cached_rows, end):
+    """Return the initial backfill, detectable interior gaps, and the uncached tail.
+
+    Weekends and ordinary one-to-four-day market closures are not treated as
+    missing history. Larger gaps are re-requested as bounded date ranges; the
+    provider returns only actual NSE candles, so holidays do not create fake rows.
+    """
+    dates = sorted({
+        date.fromisoformat(str(row[0])[:10])
+        for row in cached_rows
+        if isinstance(row, list) and row
+    })
+    if not dates:
+        return [(end - timedelta(days=365 * 5), end)] if end - timedelta(days=365 * 5) <= end else []
+    ranges = []
+    for previous, following in zip(dates, dates[1:]):
+        gap_start, gap_end = previous + timedelta(days=1), following - timedelta(days=1)
+        if (gap_end - gap_start).days >= 4:
+            ranges.append((gap_start, gap_end))
+    if dates[-1] < end:
+        ranges.append((dates[-1] + timedelta(days=1), end))
+    return [(start, finish) for start, finish in ranges if start <= finish]
+
+
 def _scan_one_symbol(ticker, master, historical, end):
     instrument = master.get_instrument(ticker, "NSE")
     if not instrument and not ticker.endswith("-EQ"):
@@ -131,18 +155,18 @@ def _scan_one_symbol(ticker, master, historical, end):
         raise ValueError("Instrument/token not found in Angel One master")
 
     cached_rows, last_day = _load_cached_rows(ticker)
-    # Backfill five years only on first use; later scans fetch only missing dates.
-    start = end - timedelta(days=365 * 5) if last_day is None else last_day + timedelta(days=1)
-    if start <= end:
-        indexed = {str(row[0])[:10]: row for row in cached_rows if isinstance(row, list) and row}
-
+    # Initial five-year backfill, detectable interior-gap repair, then incremental tail.
+    indexed = {str(row[0])[:10]: row for row in cached_rows if isinstance(row, list) and row}
+    fetch_ranges = _history_fetch_ranges(cached_rows, end)
+    if fetch_ranges:
         def persist_chunk(chunk_rows):
             # Atomic cache replacement after every successful provider chunk means
             # a later market-hours stop never discards already downloaded history.
             indexed.update({str(row[0])[:10]: row for row in chunk_rows if isinstance(row, list) and row})
             _save_cached_rows(ticker, [indexed[k] for k in sorted(indexed)])
 
-        _fetch_daily_range(instrument["token"], historical, start, end, on_chunk=persist_chunk)
+        for start, finish in fetch_ranges:
+            _fetch_daily_range(instrument["token"], historical, start, finish, on_chunk=persist_chunk)
         cached_rows = [indexed[k] for k in sorted(indexed)]
 
     result = analyze(ticker, weekly_bars(cached_rows))
