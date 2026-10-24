@@ -496,9 +496,8 @@ def test_history_fetch_ranges_repairs_missing_leading_five_year_history():
     start = end - timedelta(days=365 * 5)
     rows = [
         ["2024-01-05 09:15", "100", "105", "98", "102", "1000"],
-        ["2026-10-22 09:15", "102", "106", "101", "105", "1200"],
     ]
     assert _history_fetch_ranges(rows, end) == [
         (start, date(2024, 1, 4)),
-        (date(2026, 10, 23), end),
+        (date(2024, 1, 6), end),
     ]
