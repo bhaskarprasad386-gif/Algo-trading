@@ -53,7 +53,7 @@ def _scan_one_symbol(ticker, master, historical, start, end):
         chunk_end = min(cursor + timedelta(days=300), end)
         response = historical.get_candles(
             exchange="NSE", symboltoken=str(instrument["token"]), interval="ONE_DAY",
-            from_date=f"${cursor} 09:15", to_date=f"${chunk_end} 15:30",
+            from_date=f"{cursor} 09:15", to_date=f"{chunk_end} 15:30",
         )
         time.sleep(HISTORICAL_REQUEST_PAUSE_SECONDS)
         if not isinstance(response, dict) or not response.get("status") or not isinstance(response.get("data"), list):
