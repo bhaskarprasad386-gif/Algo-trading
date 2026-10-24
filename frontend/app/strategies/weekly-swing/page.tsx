@@ -40,7 +40,7 @@ export default function WeeklySwingScannerPage() {
 
   async function refreshNifty200Status() {
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
       const body: UniverseStatus = await response.json();
       if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
