@@ -24,7 +24,7 @@ HISTORICAL_REQUEST_PAUSE_SECONDS = 0.4
 # published calendar. Keep this explicit and conservative; update each year from
 # the official NSE calendar before enabling that year's automatic schedule.
 NSE_CAPITAL_MARKET_HOLIDAYS = {
-    date(2026, 1, 26), date(2026, 3, 3), date(2026, 3, 26),
+    date(2026, 1, 15), date(2026, 1, 26), date(2026, 3, 3), date(2026, 3, 26),
     date(2026, 3, 31), date(2026, 4, 3), date(2026, 4, 14),
     date(2026, 5, 1), date(2026, 5, 28), date(2026, 6, 26),
     date(2026, 9, 14), date(2026, 10, 2), date(2026, 10, 20),
