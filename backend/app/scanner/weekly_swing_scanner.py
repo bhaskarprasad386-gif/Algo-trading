@@ -92,7 +92,8 @@ def _nse_market_is_open_now():
     return now.weekday() < 5 and clock_time(9, 15) <= now.time() < clock_time(15, 30)
 
 
-def _fetch_daily_range(token, historical, start, end):
+def _fetch_daily_range(token, historical, start, end, on_chunk=None):
+    """Fetch history in bounded chunks; persist each successful chunk immediately."""
     rows = []
     cursor = start
     while cursor <= end:
@@ -109,7 +110,10 @@ def _fetch_daily_range(token, historical, start, end):
         time.sleep(HISTORICAL_REQUEST_PAUSE_SECONDS)
         if not isinstance(response, dict) or not response.get("status") or not isinstance(response.get("data"), list):
             raise ValueError("Historical candle response invalid")
-        rows.extend(response["data"])
+        chunk_rows = response["data"]
+        rows.extend(chunk_rows)
+        if on_chunk is not None:
+            on_chunk(chunk_rows)
         cursor = chunk_end + timedelta(days=1)
     return rows
 
@@ -125,11 +129,16 @@ def _scan_one_symbol(ticker, master, historical, end):
     # Backfill five years only on first use; later scans fetch only missing dates.
     start = end - timedelta(days=365 * 5) if last_day is None else last_day + timedelta(days=1)
     if start <= end:
-        fresh_rows = _fetch_daily_range(instrument["token"], historical, start, end)
         indexed = {str(row[0])[:10]: row for row in cached_rows if isinstance(row, list) and row}
-        indexed.update({str(row[0])[:10]: row for row in fresh_rows if isinstance(row, list) and row})
+
+        def persist_chunk(chunk_rows):
+            # Atomic cache replacement after every successful provider chunk means
+            # a later market-hours stop never discards already downloaded history.
+            indexed.update({str(row[0])[:10]: row for row in chunk_rows if isinstance(row, list) and row})
+            _save_cached_rows(ticker, [indexed[k] for k in sorted(indexed)])
+
+        _fetch_daily_range(instrument["token"], historical, start, end, on_chunk=persist_chunk)
         cached_rows = [indexed[k] for k in sorted(indexed)]
-        _save_cached_rows(ticker, cached_rows)
 
     result = analyze(ticker, weekly_bars(cached_rows))
     if result.get("status") == "insufficient_data":

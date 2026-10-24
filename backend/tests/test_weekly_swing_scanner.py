@@ -120,6 +120,48 @@ def test_single_symbol_scan_rejects_non_nse_exchange(monkeypatch):
 
 
 
+def test_history_chunks_are_cached_before_later_market_hours_stop(monkeypatch, tmp_path):
+    import pytest
+    from fastapi import HTTPException
+    from app.scanner import weekly_swing_scanner as scanner
+    from app.market_data import instruments, client, historical
+
+    monkeypatch.setattr(scanner, "_cache_root", lambda: tmp_path)
+    market_states = iter([False, False, True])
+
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: next(market_states))
+
+    class FakeInstrumentMaster:
+        def get_instrument(self, *args, **kwargs):
+            return {"token": "123"}
+
+    class FakeMarketDataClient:
+        pass
+
+    class FakeHistoricalDataClient:
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+
+        def get_candles(self, **kwargs):
+            self.calls += 1
+            return {"status": True, "data": [[f"2021-01-0{self.calls} 09:15", "1", "2", "0", "1", "10"]]}
+
+    monkeypatch.setattr(instruments, "InstrumentMaster", FakeInstrumentMaster)
+    monkeypatch.setattr(client, "MarketDataClient", FakeMarketDataClient)
+    monkeypatch.setattr(historical, "HistoricalDataClient", FakeHistoricalDataClient)
+    monkeypatch.setattr(scanner, "HISTORICAL_REQUEST_PAUSE_SECONDS", 0)
+    monkeypatch.setattr(scanner, "analyze", lambda ticker, bars: {"status": "ok", "matches": []})
+    monkeypatch.setattr(scanner, "weekly_bars", lambda rows: [])
+
+    with pytest.raises(HTTPException) as exc:
+        scanner.scan("WIPRO", "NSE")
+
+    assert exc.value.status_code == 409
+    rows, last_day = scanner._load_cached_rows("WIPRO")
+    assert len(rows) == 1
+    assert last_day.isoformat() == "2021-01-01"
+
+
 def test_nifty200_scan_pauses_entire_run_when_market_opens(monkeypatch):
     from fastapi import HTTPException
     from app.scanner import weekly_swing_scanner as scanner
