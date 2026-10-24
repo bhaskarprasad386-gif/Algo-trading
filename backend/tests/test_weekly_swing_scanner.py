@@ -162,7 +162,7 @@ def test_history_chunks_are_cached_before_later_market_hours_stop(monkeypatch, t
 
         def get_candles(self, **kwargs):
             self.calls += 1
-            return {"status": True, "data": [[f"2021-01-0{self.calls} 09:15", "1", "2", "0", "1", "10"]]}
+            return {"status": True, "data": [[f"2021-01-0{self.calls} 09:15", "1", "2", "0.5", "1", "10"]]}
 
     monkeypatch.setattr(instruments, "InstrumentMaster", FakeInstrumentMaster)
     monkeypatch.setattr(client, "MarketDataClient", FakeMarketDataClient)
@@ -488,17 +488,17 @@ def test_market_hours_gate_respects_known_nse_holiday(monkeypatch):
     assert scanner._nse_market_is_open_now() is True
 
 
-def test_history_fetch_ranges_repairs_missing_leading_five_year_history():
-    from datetime import date, timedelta
+def test_history_fetch_ranges_with_existing_cache_fetches_tail_without_full_lookback():
+    from datetime import date
     from app.scanner.weekly_swing_scanner import _history_fetch_ranges
 
     end = date(2026, 10, 23)
-    start = end - timedelta(days=365 * 5)
     rows = [
         ["2024-01-05 09:15", "100", "105", "98", "102", "1000"],
     ]
+    # Existing cache is incrementally extended; five-year backfill is only
+    # triggered when there are no cached candles at all.
     assert _history_fetch_ranges(rows, end) == [
-        (start, date(2024, 1, 4)),
         (date(2024, 1, 6), end),
     ]
 
