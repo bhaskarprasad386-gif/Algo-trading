@@ -303,7 +303,7 @@ def indicators(bars):
 def analyze(symbol,bars):
     if len(bars)<25:return {"status":"insufficient_data","symbol":symbol,"weekly_bars":len(bars),"matches":[]}
     ind=indicators(bars); lows=pivots([b["low"] for b in bars],"low"); highs=pivots([b["high"] for b in bars],"high")
-    ih={n:pivots(ind[n],"high") for n in ("cmf","obv","rsi")}; matches=[]
+    matches=[]
     for k in range(2,len(lows)):
         a,b,c=lows[k-2:k+1]
         if not (bars[b]["low"]<bars[a]["low"] and bars[c]["low"]<bars[b]["low"]):continue
@@ -322,13 +322,22 @@ def analyze(symbol,bars):
         rng=max(bars[c]["high"]-bars[c]["low"],1e-9)
         if abs(bars[c]["low"]-ind["lower"][c])>rng:continue
         if not all(abs(bars[x]["high"]-ind["mid"][x])<=max(bars[x]["high"]-bars[x]["low"],1e-9) and bars[x]["high"]<ind["upper"][x] for x in (h1,h2)):continue
+        # Confirm bullish divergence at the three actual price swing lows:
+        # price makes lower lows, while the same indicator makes non-lower lows.
+        # Do not infer divergence from unrelated indicator swing highs.
         passed=[]
         for n in ("cmf","obv","rsi"):
             vals=ind[n]
-            if any(vals[x] is None for x in (a,b,c)):continue
-            interval=all(v is not None and v>=vals[a] for v in vals[a:b+1])
-            prior=[x for x in ih[n] if x<c and x<b][-2:]
-            if interval and len(prior)==2 and all(vals[c]>vals[x] for x in prior):passed.append(n.upper())
+            sample=[vals[x] for x in (a,b,c)]
+            if any(v is None for v in sample):
+                continue
+            try:
+                if not all(isfinite(float(v)) for v in sample):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            if float(vals[b]) >= float(vals[a]) and float(vals[c]) > float(vals[b]):
+                passed.append(n.upper())
         if passed:
             matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"checked_at_week":bars[-1]["week"]})
     return {"status":"success","symbol":symbol,"weekly_bars":len(bars),"count":len(matches),"matches":matches[-5:],"data_source":"Angel One daily candles aggregated to weekly","orders_placed":False}
