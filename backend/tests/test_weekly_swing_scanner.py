@@ -106,3 +106,14 @@ def test_single_symbol_scan_rechecks_market_hours_between_history_chunks(monkeyp
     assert exc.value.status_code == 409
     assert "market hours have started" in exc.value.detail
     assert FakeHistoricalDataClient.instance.calls == 1
+
+
+def test_single_symbol_scan_rejects_non_nse_exchange(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from app.scanner import weekly_swing_scanner as scanner
+
+    monkeypatch.setattr(scanner, "_nse_market_is_open_now", lambda: False)
+    with pytest.raises(HTTPException) as exc:
+        scanner.scan("WIPRO", "BSE")
+    assert exc.value.status_code == 422
