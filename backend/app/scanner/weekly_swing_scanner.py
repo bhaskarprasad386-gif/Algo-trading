@@ -320,6 +320,10 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
     ticker=symbol.strip().upper()
+    # All manual historical downloads, including the single-symbol test, are
+    # blocked during NSE cash-market hours to avoid competing with live feed use.
+    if _nse_market_is_open_now():
+        raise HTTPException(status_code=409, detail="Historical scanner downloads are off-market only; try after 15:30 IST.")
     master = InstrumentMaster()
     instrument = master.get_instrument(ticker, exchange)
     # Angel One's cash-equity master commonly stores symbols with the -EQ suffix.
