@@ -79,8 +79,26 @@ def _load_cached_rows(ticker):
         rows = payload.get("rows")
         if not isinstance(rows, list):
             return [], None
-        valid = [row for row in rows if isinstance(row, list) and len(row) >= 6]
-        last_day = max((date.fromisoformat(str(row[0])[:10]) for row in valid), default=None)
+        # Normalize old/partial cache files before analysis: reject malformed dates,
+        # keep one candle per trading day, and sort chronologically. This prevents
+        # stale duplicate rows or a non-ordered JSON file from corrupting weekly OHLC
+        # aggregation and the reported last-candle date.
+        by_day = {}
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 6:
+                continue
+            try:
+                day = date.fromisoformat(str(row[0])[:10])
+                values = [float(value) for value in row[1:6]]
+                if not all(isfinite(value) for value in values):
+                    continue
+                if min(values[:4]) <= 0 or values[4] < 0:
+                    continue
+            except (TypeError, ValueError, IndexError):
+                continue
+            by_day[day.isoformat()] = row
+        valid = [by_day[key] for key in sorted(by_day)]
+        last_day = date.fromisoformat(sorted(by_day)[-1]) if by_day else None
         return valid, last_day
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return [], None
