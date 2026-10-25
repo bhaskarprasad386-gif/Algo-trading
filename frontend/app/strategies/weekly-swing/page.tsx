@@ -32,7 +32,7 @@ export default function WeeklySwingScannerPage() {
     let shouldPoll = true;
     const refresh = async () => {
       try {
-        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
         if (!response.ok) return;
         const body: UniverseStatus = await response.json();
