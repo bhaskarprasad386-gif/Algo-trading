@@ -59,7 +59,7 @@ export default function WeeklySwingScannerPage() {
   async function resumeNifty200Updates() {
     setLoading(true); setError("");
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       let body: UniverseStatus;
       do {
         const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
