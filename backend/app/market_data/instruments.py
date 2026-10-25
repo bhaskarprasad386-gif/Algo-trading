@@ -88,7 +88,6 @@ class InstrumentMaster:
     @classmethod
     def _write_disk_snapshot(cls, rows: List[Dict[str, Any]]) -> None:
         path = cls._disk_cache_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": 1,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -96,6 +95,7 @@ class InstrumentMaster:
         }
         temp_name = None
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8", dir=str(path.parent),
                 prefix=path.name + ".", suffix=".tmp", delete=False
