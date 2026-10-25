@@ -1,6 +1,11 @@
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
 import requests
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +23,10 @@ class InstrumentMaster:
     _cache_lock = Lock()
     _cached_instruments: Optional[List[Dict[str, Any]]] = None
     _cached_snapshot_date: Optional[str] = None
+    _last_download_attempt_at: float = 0.0
+    _last_download_error: Optional[str] = None
+    _retry_after_seconds: float = 60.0
+    _disk_fallback_max_age_seconds: float = 36 * 60 * 60
 
     def __init__(self):
         # Each instance remains a cheap view over the process-wide snapshot.
@@ -38,11 +47,78 @@ class InstrumentMaster:
                 return None
             return cls._cached_instruments
 
-    def download(self, *, force: bool = False) -> List[Dict[str, Any]]:
-        """Download Angel One instrument master at most once per IST day unless forced.
+    @classmethod
+    def _disk_cache_path(cls) -> Path:
+        configured = os.environ.get("INSTRUMENT_MASTER_CACHE_PATH", "").strip()
+        if configured:
+            return Path(configured).expanduser()
+        # Keep the snapshot outside Python package files but within the backend
+        # deployment tree by default. Override with the environment variable when
+        # the service uses a read-only application directory.
+        return Path(__file__).resolve().parents[2] / "data" / "instrument_master_cache.json"
 
-        Daily refresh is intentional because expiry/roll-day contracts can change
-        without a process restart.
+    @classmethod
+    def _read_disk_snapshot(cls):
+        path = cls._disk_cache_path()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            rows = payload.get("instruments") if isinstance(payload, dict) else None
+            fetched_at = payload.get("fetched_at") if isinstance(payload, dict) else None
+            if not isinstance(rows, list) or not rows or not all(isinstance(row, dict) for row in rows):
+                return None
+            fetched = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - fetched.astimezone(timezone.utc)).total_seconds()
+            if age < 0 or age > cls._disk_fallback_max_age_seconds:
+                return None
+            # A minimally useful row must carry symbol, exchange and token fields.
+            usable = [
+                row for row in rows
+                if str(row.get("symbol", "")).strip()
+                and str(row.get("exch_seg", "")).strip()
+                and str(row.get("token", "")).strip()
+            ]
+            if not usable:
+                return None
+            return usable, fetched
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    @classmethod
+    def _write_disk_snapshot(cls, rows: List[Dict[str, Any]]) -> None:
+        path = cls._disk_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": 1,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "instruments": rows,
+        }
+        temp_name = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=str(path.parent),
+                prefix=path.name + ".", suffix=".tmp", delete=False
+            ) as handle:
+                temp_name = handle.name
+                json.dump(payload, handle, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, path)
+        except OSError as exc:
+            app_logger.warning(f"Could not persist instrument-master snapshot: {exc}")
+            if temp_name:
+                try:
+                    os.unlink(temp_name)
+                except OSError:
+                    pass
+
+    def download(self, *, force: bool = False) -> List[Dict[str, Any]]:
+        """Refresh once per IST day; use a validated recent disk snapshot on outage.
+
+        A successful download is atomically persisted. A failed download may use
+        a snapshot no older than 36 hours; it never fabricates instrument rows.
+        Failed attempts are throttled to avoid one long network timeout per symbol.
         """
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
         with self._cache_lock:
@@ -52,11 +128,43 @@ class InstrumentMaster:
                 self.instruments = self._cached_instruments
                 self._loaded = True
                 return self.instruments
+
+            now = time.monotonic()
+            if (
+                not force
+                and self.__class__._last_download_error
+                and now - self.__class__._last_download_attempt_at < self.__class__._retry_after_seconds
+            ):
+                fallback = self.__class__._cached_instruments
+                if fallback:
+                    self.instruments = fallback
+                    self._loaded = True
+                    return self.instruments
+                raise TradingAppException(
+                    "InstrumentMasterDownloadCooldown",
+                    "Instrument-master download recently failed; retry is temporarily throttled.",
+                    502,
+                )
+
+            # Read disk before attempting the network so it is available if the
+            # provider is unreachable. The snapshot is accepted only within TTL.
+            disk_snapshot = self.__class__._read_disk_snapshot()
+            self.__class__._last_download_attempt_at = now
             try:
-                response = requests.get(self.MASTER_URL, timeout=30)
+                response = requests.get(self.MASTER_URL, timeout=(5, 15))
                 response.raise_for_status()
                 data = response.json()
-                if not isinstance(data, list):
+                if (
+                    not isinstance(data, list)
+                    or not data
+                    or not all(isinstance(row, dict) for row in data)
+                    or not any(
+                        str(row.get("symbol", "")).strip()
+                        and str(row.get("exch_seg", "")).strip()
+                        and str(row.get("token", "")).strip()
+                        for row in data
+                    )
+                ):
                     raise TradingAppException(
                         "InvalidInstrumentMaster",
                         "Angel One instrument master format is invalid.",
@@ -64,9 +172,11 @@ class InstrumentMaster:
                     )
                 self.__class__._cached_instruments = data
                 self.__class__._cached_snapshot_date = today
+                self.__class__._last_download_error = None
                 self.instruments = data
                 self._loaded = True
                 self._symbol_exchange_index = None
+                self.__class__._write_disk_snapshot(data)
                 app_logger.info(
                     f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
                 )
@@ -74,7 +184,22 @@ class InstrumentMaster:
             except TradingAppException:
                 raise
             except Exception as e:
+                self.__class__._last_download_error = str(e)
                 app_logger.error(f"Failed to download instrument master: {str(e)}")
+                if disk_snapshot is not None:
+                    rows, fetched_at = disk_snapshot
+                    self.__class__._cached_instruments = rows
+                    # Do not mark the fallback as today's successful refresh:
+                    # after cooldown, the next caller can retry the provider.
+                    self.__class__._cached_snapshot_date = None
+                    self.instruments = rows
+                    self._loaded = True
+                    self._symbol_exchange_index = None
+                    app_logger.warning(
+                        "Using validated instrument-master disk snapshot after provider failure "
+                        f"(fetched_at={fetched_at.isoformat()}, rows={len(rows)})"
+                    )
+                    return self.instruments
                 raise TradingAppException("InstrumentMasterDownloadError", str(e), 502)
 
     def search(
