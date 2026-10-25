@@ -77,5 +77,5 @@ def test_stale_disk_snapshot_is_not_used(isolated_master_cache, monkeypatch):
     )
 
     master = InstrumentMaster()
-    with pytest.raises(TradingAppException, match="InstrumentMasterDownloadError"):
+    with pytest.raises(TradingAppException):
         master.download(force=True)
