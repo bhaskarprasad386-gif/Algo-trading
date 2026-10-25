@@ -6,23 +6,19 @@ import json
 from zoneinfo import ZoneInfo
 from statistics import mean, pstdev
 from math import isfinite
-import csv
-import io
 import threading
 import time
-import requests
 from fastapi import APIRouter, HTTPException, Query
+
+from app.market_data.nifty200_universe import NIFTY200_SYMBOLS
 
 router = APIRouter(prefix="/api/v1/scanner/weekly-swing", tags=["Weekly Swing Scanner"])
 
-NIFTY200_CONSTITUENTS_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv"
-# Initial backfill is staged in 50-symbol batches outside NSE cash-market hours.
+# Static universe avoids a hard dependency on the NiftyIndices CSV being reachable
+# from the VPS. Review this list after future NIFTY 200 rebalances.
 SCAN_BATCH_SIZE = 50
 SCAN_BATCH_INTERVAL_SECONDS = 300
 HISTORICAL_REQUEST_PAUSE_SECONDS = 0.4
-# NSE Capital Market segment holidays for 2026, transcribed from the exchange's
-# published calendar. Keep this explicit and conservative; update each year from
-# the official NSE calendar before enabling that year's automatic schedule.
 NSE_CAPITAL_MARKET_HOLIDAYS = {
     date(2026, 1, 15), date(2026, 1, 26), date(2026, 3, 3), date(2026, 3, 26),
     date(2026, 3, 31), date(2026, 4, 3), date(2026, 4, 14),
@@ -40,22 +36,8 @@ _SCAN_THREAD = None
 
 
 def _nifty200_symbols():
-    """Read the current NIFTY 200 constituents from the official index CSV."""
-    response = requests.get(
-        NIFTY200_CONSTITUENTS_URL,
-        timeout=20,
-        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.niftyindices.com/"},
-    )
-    response.raise_for_status()
-    reader = csv.DictReader(io.StringIO(response.text.lstrip(chr(65279))))
-    symbols = []
-    for row in reader:
-        symbol = (row.get("Symbol") or row.get("symbol") or "").strip().upper()
-        if symbol and symbol not in symbols:
-            symbols.append(symbol)
-    if len(symbols) < 180:
-        raise ValueError(f"Official NIFTY 200 constituent list incomplete: {len(symbols)} symbols")
-    return symbols
+    """Return the static NIFTY 200 snapshot without any network dependency."""
+    return list(NIFTY200_SYMBOLS)
 
 
 def _cache_root():
@@ -79,10 +61,6 @@ def _load_cached_rows(ticker):
         rows = payload.get("rows")
         if not isinstance(rows, list):
             return [], None
-        # Normalize old/partial cache files before analysis: reject malformed dates,
-        # keep one candle per trading day, and sort chronologically. This prevents
-        # stale duplicate rows or a non-ordered JSON file from corrupting weekly OHLC
-        # aggregation and the reported last-candle date.
         by_day = {}
         for row in rows:
             if not isinstance(row, list) or len(row) < 6:
@@ -120,12 +98,7 @@ def _nse_today():
 
 
 def _is_nse_trading_day(day):
-    """Return whether a date is a known NSE cash-market trading day.
-
-    Unknown calendar years fail closed for the automatic scheduler until the
-    official holiday list is added; this avoids silently running on holidays.
-    Manual off-market scans remain available on unknown-year weekdays.
-    """
+    """Return whether a date is a known NSE cash-market trading day."""
     if day.weekday() >= 5:
         return False
     if day.year == 2026:
@@ -135,8 +108,6 @@ def _is_nse_trading_day(day):
 
 def _nse_market_is_open_now():
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
-    # Preserve the off-market safety gate even when a future year's holiday
-    # calendar has not been configured. Only known 2026 holidays bypass it.
     if now.weekday() >= 5:
         return False
     if now.date().year == 2026 and now.date() in NSE_CAPITAL_MARKET_HOLIDAYS:
@@ -171,12 +142,7 @@ def _fetch_daily_range(token, historical, start, end, on_chunk=None):
 
 
 def _history_fetch_ranges(cached_rows, end):
-    """Return the initial backfill, detectable interior gaps, and the uncached tail.
-
-    Weekends and ordinary one-to-four-day market closures are not treated as
-    missing history. Larger gaps are re-requested as bounded date ranges; the
-    provider returns only actual NSE candles, so holidays do not create fake rows.
-    """
+    """Return the initial backfill, detectable interior gaps, and the uncached tail."""
     start_date = end - timedelta(days=365 * 5)
     dates = sorted({
         date.fromisoformat(str(row[0])[:10])
@@ -186,9 +152,6 @@ def _history_fetch_ranges(cached_rows, end):
     if not dates:
         return [(start_date, end)]
     ranges = []
-    # An empty cache triggers the initial five-year backfill above. Once any
-    # cache exists, repair detectable interior gaps and fetch only the uncached
-    # tail; do not redownload the entire lookback for a cache with recent candles.
     for previous, following in zip(dates, dates[1:]):
         gap_start, gap_end = previous + timedelta(days=1), following - timedelta(days=1)
         if (gap_end - gap_start).days >= 4:
@@ -206,21 +169,12 @@ def _scan_one_symbol(ticker, master, historical, end):
         raise ValueError("Instrument/token not found in Angel One master")
 
     cached_rows, last_day = _load_cached_rows(ticker)
-    # Never let a corrupt clock/future-dated cache candle leak into analysis or
-    # suppress the incremental fetch for the current exchange-local date.
-    lookback_start = end - timedelta(days=365 * 5)
-    cached_rows = [
-        row for row in cached_rows
-        if date.fromisoformat(str(row[0])[:10]) <= end
-    ]
+    cached_rows = [row for row in cached_rows if date.fromisoformat(str(row[0])[:10]) <= end]
     last_day = date.fromisoformat(str(cached_rows[-1][0])[:10]) if cached_rows else None
-    # Initial five-year backfill, detectable interior-gap repair, then incremental tail.
     indexed = {str(row[0])[:10]: row for row in cached_rows if isinstance(row, list) and row}
     fetch_ranges = _history_fetch_ranges(cached_rows, end)
     if fetch_ranges:
         def persist_chunk(chunk_rows):
-            # Atomic cache replacement after every successful provider chunk means
-            # a later market-hours stop never discards already downloaded history.
             indexed.update({str(row[0])[:10]: row for row in chunk_rows if isinstance(row, list) and row})
             _save_cached_rows(ticker, [indexed[k] for k in sorted(indexed)])
 
@@ -274,7 +228,6 @@ def _run_nifty200_scan():
                         with _SCAN_LOCK:
                             _SCAN_STATE["matches"].extend(result["matches"])
                 except HTTPException as exc:
-                    # A market-hours gate is a scan-wide stop, not a per-symbol failure.
                     if exc.status_code == 409:
                         raise
                     with _SCAN_LOCK:
@@ -287,7 +240,6 @@ def _run_nifty200_scan():
                 finally:
                     with _SCAN_LOCK:
                         _SCAN_STATE["scanned"] += 1
-            # Each 50-symbol batch gets a five-minute slot; the first batch starts now.
             if batch_start + SCAN_BATCH_SIZE < len(symbols):
                 remaining = SCAN_BATCH_INTERVAL_SECONDS - (time.monotonic() - batch_started)
                 if remaining > 0:
@@ -347,6 +299,7 @@ def weekly_bars(rows):
             b=buckets[key]; b["high"]=max(b["high"],h); b["low"]=min(b["low"],l); b["close"]=c; b["volume"]+=v
     return [buckets[k] for k in sorted(buckets)]
 
+
 def pivots(values, kind):
     """Return confirmed local swing pivots, ignoring indicator warm-up gaps."""
     out = []
@@ -367,6 +320,7 @@ def pivots(values, kind):
             out.append(i)
     return out
 
+
 def indicators(bars):
     close=[b["close"] for b in bars]; volume=[max(0,b["volume"]) for b in bars]
     result={k:[] for k in ("cmf","obv","rsi","mid","lower","upper")}
@@ -380,8 +334,6 @@ def indicators(bars):
             change=close[i]-close[i-1]
             gains.append(max(change,0)); losses.append(max(-change,0))
         result["obv"].append(obv)
-        # Standard Wilder RSI: seed with the first 14 close-to-close changes,
-        # then smooth average gains/losses rather than recalculating a rolling mean.
         if i<14:
             result["rsi"].append(None)
         elif i==14:
@@ -394,6 +346,7 @@ def indicators(bars):
         sample=close[start:i+1]; mid=mean(sample); sd=pstdev(sample) if len(sample)>1 else 0
         result["mid"].append(mid); result["lower"].append(mid-2*sd); result["upper"].append(mid+2*sd)
     return result
+
 
 def _has_bullish_divergence(values, a, b, c):
     """True when an indicator makes higher lows at three descending price lows."""
@@ -418,9 +371,6 @@ def analyze(symbol,bars):
         h1=[x for x in highs if a<x<b]; h2=[x for x in highs if b<x<c]
         if not h1 or not h2:continue
         h1,h2=h1[-1],h2[-1]
-        # Adaptive shallow-break rule: the close may sit slightly below the prior
-        # swing low, but not farther than the current week's own full range. This
-        # avoids a fixed point/percentage threshold across differently priced symbols.
         if not all(
             bars[x]["close"] >= bars[p]["low"] - max(bars[x]["high"] - bars[x]["low"], 1e-9)
             for p, x in ((a, b), (b, c))
@@ -430,9 +380,6 @@ def analyze(symbol,bars):
         rng=max(bars[c]["high"]-bars[c]["low"],1e-9)
         if abs(bars[c]["low"]-ind["lower"][c])>rng:continue
         if not all(abs(bars[x]["high"]-ind["mid"][x])<=max(bars[x]["high"]-bars[x]["low"],1e-9) and bars[x]["high"]<ind["upper"][x] for x in (h1,h2)):continue
-        # Confirm bullish divergence at the three actual price swing lows:
-        # price makes lower lows, while the same indicator makes non-lower lows.
-        # Do not infer divergence from unrelated indicator swing highs.
         passed=[]
         for n in ("cmf","obv","rsi"):
             if _has_bullish_divergence(ind[n], a, b, c):
@@ -441,20 +388,17 @@ def analyze(symbol,bars):
             matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"checked_at_week":bars[-1]["week"]})
     return {"status":"success","symbol":symbol,"weekly_bars":len(bars),"count":len(matches),"matches":matches[-5:],"data_source":"Angel One daily candles aggregated to weekly","orders_placed":False}
 
+
 @router.get("/scan")
 def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NSE",pattern="^NSE$")):
     from app.market_data.client import MarketDataClient
     from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
     ticker=symbol.strip().upper()
-    # Direct Python callers must receive the same exchange validation as HTTP callers.
     if exchange != "NSE":
         raise HTTPException(status_code=422, detail="Weekly Swing Scanner supports NSE only")
-    # All manual historical downloads, including the single-symbol test, are
-    # blocked during NSE cash-market hours to avoid competing with live feed use.
     if _nse_market_is_open_now():
         raise HTTPException(status_code=409, detail="Historical scanner downloads are off-market only; try after 15:30 IST.")
-    # Weekly Swing Scanner is intentionally NSE-only.
     exchange = "NSE"
     master = InstrumentMaster()
     instrument = master.get_instrument(ticker, exchange)
@@ -463,10 +407,8 @@ def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NS
     if not instrument or not instrument.get("token"):
         raise HTTPException(status_code=404, detail=f"Instrument not found: {exchange} {ticker}")
     end = _nse_today()
-    start = end - timedelta(days=365 * 5)
     try:
         historical = HistoricalDataClient(MarketDataClient())
-        # Every manual scan uses the NSE-only persistent incremental cache.
         return _scan_one_symbol(ticker, master, historical, end)
     except HTTPException:
         raise
@@ -483,7 +425,6 @@ def start_nifty200_scan():
     with _SCAN_LOCK:
         if _SCAN_STATE.get("status") == "running":
             return {**_SCAN_STATE, "message": "NIFTY 200 scan already running"}
-        # Mark running before starting the thread to prevent duplicate starts on rapid taps.
         _SCAN_STATE.update({
             "status": "running", "universe": "NIFTY 200", "total": 0, "scanned": 0,
             "failed": 0, "matches": [], "failures": [], "current_symbol": None,
