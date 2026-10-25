@@ -29,13 +29,15 @@ export default function WeeklySwingScannerPage() {
   // keep its status current without requiring the user to press Resume.
   useEffect(() => {
     let active = true;
+    let shouldPoll = true;
     const refresh = async () => {
       try {
-        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
         const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
         if (!response.ok) return;
         const body: UniverseStatus = await response.json();
         if (!active) return;
+        shouldPoll = body.status === "running";
         setUniverseStatus(body);
         if (body.status === "completed") {
           setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
@@ -47,10 +49,10 @@ export default function WeeklySwingScannerPage() {
       }
     };
     void refresh();
-    if (universeStatus?.status !== "running") return () => { active = false; };
-    const timer = window.setInterval(() => { void refresh(); }, 3000);
+    // Poll from server-returned status, not stale React state; never starts a scan.
+    const timer = window.setInterval(() => { if (shouldPoll) void refresh(); }, 3000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [universeStatus?.status]);
+  }, []);
 
   async function scan() {
     setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
