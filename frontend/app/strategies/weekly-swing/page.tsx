@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { appConfig } from "@/lib/config";
 import { Activity, AlertCircle, CheckCircle2, LoaderCircle, Search } from "lucide-react";
 
@@ -24,6 +24,33 @@ export default function WeeklySwingScannerPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
+
+  // Restore a scan already running on the backend after a page reload, then
+  // keep its status current without requiring the user to press Resume.
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
+        if (!response.ok) return;
+        const body: UniverseStatus = await response.json();
+        if (!active) return;
+        setUniverseStatus(body);
+        if (body.status === "completed") {
+          setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
+        } else if (body.status === "failed" || body.status === "paused") {
+          setError(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+        }
+      } catch {
+        // The normal scan/status controls surface actionable errors when used.
+      }
+    };
+    void refresh();
+    if (universeStatus?.status !== "running") return () => { active = false; };
+    const timer = window.setInterval(() => { void refresh(); }, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [universeStatus?.status]);
 
   async function scan() {
     setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
