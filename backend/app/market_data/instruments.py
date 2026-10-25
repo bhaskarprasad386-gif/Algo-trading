@@ -165,11 +165,7 @@ class InstrumentMaster:
                         for row in data
                     )
                 ):
-                    raise TradingAppException(
-                        "InvalidInstrumentMaster",
-                        "Angel One instrument master format is invalid.",
-                        502,
-                    )
+                    raise ValueError("Angel One instrument master format is invalid.")
                 self.__class__._cached_instruments = data
                 self.__class__._cached_snapshot_date = today
                 self.__class__._last_download_error = None
