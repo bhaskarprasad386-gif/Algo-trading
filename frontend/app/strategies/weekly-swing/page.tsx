@@ -56,6 +56,31 @@ export default function WeeklySwingScannerPage() {
     }
   }
 
+  async function resumeNifty200Updates() {
+    setLoading(true); setError("");
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      let body: UniverseStatus;
+      do {
+        const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
+        body = await response.json();
+        if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
+        setUniverseStatus(body);
+        if (body.status === "completed") {
+          setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
+          return;
+        }
+        if (body.status === "failed" || body.status === "paused") throw new Error(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+        if (body.status === "idle") throw new Error("No active NIFTY 200 scan found. Start a scan to begin.");
+        await new Promise(resolve => window.setTimeout(resolve, 3000));
+      } while (body.status === "running");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "NIFTY 200 status unavailable");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function scanNifty200() {
     setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
     try {
@@ -107,7 +132,7 @@ export default function WeeklySwingScannerPage() {
         <p>• Adaptive swing turns; no fixed gap between the lows.</p>
       </div>
     </section>
-    {universeStatus && <section className="rounded-xl border theme-border theme-surface p-4 text-sm"><div className="flex items-center justify-between gap-2"><strong>NIFTY 200 scan progress</strong><div className="flex items-center gap-3"><button type="button" onClick={refreshNifty200Status} className="rounded-lg border theme-border px-3 py-1 text-xs font-semibold">Refresh status</button><span className="theme-muted">{universeStatus.scanned ?? 0} / {universeStatus.total ?? 200}</span></div></div><div className="mt-3 h-2 overflow-hidden rounded-full theme-surface-2"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{width: `${Math.min(100, 100*(universeStatus.scanned ?? 0)/Math.max(1, universeStatus.total ?? 200))}%`}} /></div><p className="mt-2 theme-muted">Failed/skipped: {universeStatus.failed ?? 0} · Matches so far: {universeStatus.matches?.length ?? 0} · Status: {universeStatus.status}</p><div className="mt-2 grid gap-1 text-xs theme-muted sm:grid-cols-2"><p>Batch: {universeStatus.batch_number ?? 0} / {universeStatus.batches_total ?? Math.ceil((universeStatus.total ?? 200) / 50)}</p><p>Current stock: <span className="font-semibold theme-text">{universeStatus.current_symbol || "—"}</span></p>{(universeStatus.waiting_for_next_batch_seconds ?? 0) > 0 && <p>Next batch in about {Math.ceil((universeStatus.waiting_for_next_batch_seconds ?? 0) / 60)} min</p>}{universeStatus.started_at && <p>Elapsed: {Math.max(0, Math.floor(Date.now() / 1000 - universeStatus.started_at)) < 3600 ? `${Math.floor(Math.max(0, Date.now() / 1000 - universeStatus.started_at) / 60)} min` : `${Math.floor(Math.max(0, Date.now() / 1000 - universeStatus.started_at) / 3600)} hr ${Math.floor((Math.max(0, Date.now() / 1000 - universeStatus.started_at) % 3600) / 60)} min`}</p>}{universeStatus.status === "running" && (universeStatus.scanned ?? 0) > 0 && (universeStatus.total ?? 0) > (universeStatus.scanned ?? 0) && <p>Estimated remaining: about {Math.max(1, Math.ceil(((Date.now() / 1000 - (universeStatus.started_at ?? Date.now() / 1000)) / Math.max(1, universeStatus.scanned ?? 0)) * ((universeStatus.total ?? 0) - (universeStatus.scanned ?? 0)) / 60))} min</p>}{universeStatus.fatal_error && <p className="text-rose-400 sm:col-span-2">{universeStatus.fatal_error}</p>}</div>{(universeStatus.failures?.length ?? 0) > 0 && <details className="mt-2"><summary className="cursor-pointer">Failed symbols ({universeStatus.failures?.length})</summary><ul className="mt-2 space-y-1">{universeStatus.failures?.slice(0,30).map(f=><li key={f.symbol}>{f.symbol}: {f.reason}</li>)}</ul></details>}</section>}
+    {universeStatus && <section className="rounded-xl border theme-border theme-surface p-4 text-sm"><div className="flex items-center justify-between gap-2"><strong>NIFTY 200 scan progress</strong><div className="flex items-center gap-3"><button type="button" onClick={refreshNifty200Status} className="rounded-lg border theme-border px-3 py-1 text-xs font-semibold">Refresh status</button>{universeStatus.status === "running" && <button type="button" onClick={resumeNifty200Updates} disabled={loading} className="rounded-lg border theme-border px-3 py-1 text-xs font-semibold disabled:opacity-60">{loading ? "Updating…" : "Resume live updates"}</button>}<span className="theme-muted">{universeStatus.scanned ?? 0} / {universeStatus.total ?? 200}</span></div></div><div className="mt-3 h-2 overflow-hidden rounded-full theme-surface-2"><div className="h-full rounded-full bg-cyan-500 transition-all" style={{width: `${Math.min(100, 100*(universeStatus.scanned ?? 0)/Math.max(1, universeStatus.total ?? 200))}%`}} /></div><p className="mt-2 theme-muted">Failed/skipped: {universeStatus.failed ?? 0} · Matches so far: {universeStatus.matches?.length ?? 0} · Status: {universeStatus.status}</p><div className="mt-2 grid gap-1 text-xs theme-muted sm:grid-cols-2"><p>Batch: {universeStatus.batch_number ?? 0} / {universeStatus.batches_total ?? Math.ceil((universeStatus.total ?? 200) / 50)}</p><p>Current stock: <span className="font-semibold theme-text">{universeStatus.current_symbol || "—"}</span></p>{(universeStatus.waiting_for_next_batch_seconds ?? 0) > 0 && <p>Next batch in about {Math.ceil((universeStatus.waiting_for_next_batch_seconds ?? 0) / 60)} min</p>}{universeStatus.started_at && <p>Elapsed: {Math.max(0, Math.floor(Date.now() / 1000 - universeStatus.started_at)) < 3600 ? `${Math.floor(Math.max(0, Date.now() / 1000 - universeStatus.started_at) / 60)} min` : `${Math.floor(Math.max(0, Date.now() / 1000 - universeStatus.started_at) / 3600)} hr ${Math.floor((Math.max(0, Date.now() / 1000 - universeStatus.started_at) % 3600) / 60)} min`}</p>}{universeStatus.status === "running" && (universeStatus.scanned ?? 0) > 0 && (universeStatus.total ?? 0) > (universeStatus.scanned ?? 0) && <p>Estimated remaining: about {Math.max(1, Math.ceil(((Date.now() / 1000 - (universeStatus.started_at ?? Date.now() / 1000)) / Math.max(1, universeStatus.scanned ?? 0)) * ((universeStatus.total ?? 0) - (universeStatus.scanned ?? 0)) / 60))} min</p>}{universeStatus.fatal_error && <p className="text-rose-400 sm:col-span-2">{universeStatus.fatal_error}</p>}</div>{(universeStatus.failures?.length ?? 0) > 0 && <details className="mt-2"><summary className="cursor-pointer">Failed symbols ({universeStatus.failures?.length})</summary><ul className="mt-2 space-y-1">{universeStatus.failures?.slice(0,30).map(f=><li key={f.symbol}>{f.symbol}: {f.reason}</li>)}</ul></details>}</section>}
     {error && <section role="alert" className="flex gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm"><AlertCircle className="shrink-0 text-rose-400" size={19}/><div><strong>Real data request failed</strong><p className="mt-1 break-words">{error}</p><p className="mt-1 theme-muted">No sample or fabricated opportunities are shown. Check backend availability and the connected historical-data session.</p></div></section>}
     {result && <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border theme-border theme-surface p-4">
