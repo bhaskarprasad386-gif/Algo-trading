@@ -16,6 +16,15 @@ from app.scanner.box_spread import BoxSpreadScanConfig
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+# Only these index opportunities are enabled. Edge must be strictly greater
+# than the per-index threshold (in index points), before appearing or saving.
+INDEX_EDGE_THRESHOLDS = {
+    "NIFTY": 5.0,
+    "MIDCPNIFTY": 5.0,
+    "BANKNIFTY": 10.0,
+    "SENSEX": 10.0,
+    "BANKEX": 10.0,
+}
 
 
 def _atm_outside_subscribed_range(atm_strike, subscribed_strikes):
@@ -143,7 +152,11 @@ class LiveBoxSpreadRunner:
                     continue
                 scanner=LiveBoxSpreadScanner(
                     atm_provider=self.tracker.atm,
-                    config_provider=lambda _s: BoxSpreadScanConfig(allowed_stock_symbols=self.allowed_stock_symbols),
+                    config_provider=lambda symbol: BoxSpreadScanConfig(
+                        # Strictly exceed the configured per-index edge threshold.
+                        min_executable_edge=INDEX_EDGE_THRESHOLDS.get(str(symbol).strip().upper(), 10.0) + 1e-9,
+                        allowed_stock_symbols=self.allowed_stock_symbols,
+                    ),
                     policy=self.policy,
                 )
                 pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results)
