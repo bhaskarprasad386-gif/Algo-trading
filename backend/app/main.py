@@ -33,7 +33,7 @@ from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
-from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
+from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
@@ -805,7 +805,7 @@ async def _live_box_spread_loop() -> None:
                 # must remain eligible even when a future row is missing or renamed.
                 if typ == "OPTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
                     stock_symbols.add(name)
-                elif typ == "OPTIDX" and name in OPTION_STRATEGY_INDEX_SYMBOLS:
+                elif typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS:
                     expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
                     if segment == expected_segment:
                         index_symbols.add(name)
