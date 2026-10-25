@@ -20,6 +20,7 @@ BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 # than the per-index threshold (in index points), before appearing or saving.
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
+    "FINNIFTY": 5.0,
     "MIDCPNIFTY": 5.0,
     "BANKNIFTY": 10.0,
     "SENSEX": 10.0,
