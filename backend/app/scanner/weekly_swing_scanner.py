@@ -361,33 +361,116 @@ def _has_bullish_divergence(values, a, b, c):
     return float(values[b]) >= float(values[a]) and float(values[c]) > float(values[b])
 
 
-def analyze(symbol,bars):
-    if len(bars)<25:return {"status":"insufficient_data","symbol":symbol,"weekly_bars":len(bars),"matches":[]}
-    ind=indicators(bars); lows=pivots([b["low"] for b in bars],"low"); highs=pivots([b["high"] for b in bars],"high")
-    matches=[]
-    for k in range(2,len(lows)):
-        a,b,c=lows[k-2:k+1]
-        if not (bars[b]["low"]<bars[a]["low"] and bars[c]["low"]<bars[b]["low"]):continue
-        h1=[x for x in highs if a<x<b]; h2=[x for x in highs if b<x<c]
-        if not h1 or not h2:continue
-        h1,h2=h1[-1],h2[-1]
-        if not all(
-            bars[x]["close"] >= bars[p]["low"] - max(bars[x]["high"] - bars[x]["low"], 1e-9)
-            for p, x in ((a, b), (b, c))
-        ):
-            continue
-        if not all(bars[x]["low"]<bars[p]["low"] and bars[x]["close"]>bars[x]["low"] for p,x in ((a,b),(b,c))):continue
-        rng=max(bars[c]["high"]-bars[c]["low"],1e-9)
-        if abs(bars[c]["low"]-ind["lower"][c])>rng:continue
-        if not all(abs(bars[x]["high"]-ind["mid"][x])<=max(bars[x]["high"]-bars[x]["low"],1e-9) and bars[x]["high"]<ind["upper"][x] for x in (h1,h2)):continue
-        passed=[]
-        for n in ("cmf","obv","rsi"):
-            if _has_bullish_divergence(ind[n], a, b, c):
-                passed.append(n.upper())
-        if passed:
-            matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"checked_at_week":bars[-1]["week"]})
-    return {"status":"success","symbol":symbol,"weekly_bars":len(bars),"count":len(matches),"matches":matches[-5:],"data_source":"Angel One daily candles aggregated to weekly","orders_placed":False}
+def _rising(series, end, steps=2):
+    """True when a numeric indicator has risen across the latest confirmed steps."""
+    if end - steps < 0:
+        return False
+    values = series[end - steps:end + 1]
+    if any(value is None for value in values):
+        return False
+    try:
+        values = [float(value) for value in values]
+        return all(isfinite(value) for value in values) and all(
+            right > left for left, right in zip(values, values[1:])
+        )
+    except (TypeError, ValueError):
+        return False
 
+
+def analyze(symbol, bars):
+    """Weekly RSI scanner: decline -> decline stops -> tight consolidation -> RSI rises.
+
+    Price-fall and consolidation percentages are descriptive fields, not hard filters.
+    RSI 45 and fixed 60-day requirements are intentionally not used.
+    """
+    if len(bars) < 15:
+        return {"status": "insufficient_data", "symbol": symbol,
+                "weekly_bars": len(bars), "matches": [], "count": 0}
+
+    ind = indicators(bars)
+    last = len(bars) - 1
+    closes = [float(item["close"]) for item in bars]
+    lows = [float(item["low"]) for item in bars]
+    highs = [float(item["high"]) for item in bars]
+
+    # Describe the recent price fall over up to eight completed weekly bars.
+    fall_start = max(0, last - 7)
+    reference_high = max(highs[fall_start:last + 1])
+    price_fall_pct = ((reference_high - closes[last]) / reference_high * 100.0) if reference_high else 0.0
+
+    # Recent three-week base: the decline must be losing momentum and lows should
+    # stop extending down. No arbitrary percentage threshold is used to reject rows.
+    base_start = max(0, last - 2)
+    base_lows = lows[base_start:last + 1]
+    recent_ranges = [
+        max(0.0, (highs[i] - lows[i]) / closes[i] * 100.0)
+        for i in range(base_start, last + 1) if closes[i] > 0
+    ]
+    sideways_range_pct = (
+        (max(highs[base_start:last + 1]) - min(lows[base_start:last + 1]))
+        / closes[last] * 100.0 if closes[last] > 0 else 0.0
+    )
+    tight_sideways = (
+        len(base_lows) >= 3
+        and lows[last] >= min(lows[last - 2:last]) * 0.995
+        and max(recent_ranges, default=0.0) <= 8.0
+    )
+    fall_stopped = len(base_lows) >= 3 and lows[last] >= min(lows[last - 2:last]) * 0.995
+    price_falling = last >= 4 and closes[last - 1] < closes[max(0, last - 5)]
+    rsi_rising = _rising(ind["rsi"], last, 2)
+    obv_rising = _rising(ind["obv"], last, 2)
+
+    # "RSI Before Sideways" means RSI had already turned up before the last
+    # three weekly candles that form the candidate consolidation.
+    rsi_before_sideways = (
+        last >= 5 and _rising(ind["rsi"], last - 3, 2)
+    )
+    price_phase = (
+        "Tight Sideways" if tight_sideways
+        else "Fall Stop" if fall_stopped
+        else "Fall" if price_falling
+        else "Other"
+    )
+    special_timing = "RSI Before Sideways" if rsi_before_sideways else "RSI During/After Sideways"
+    timing = "A" if rsi_before_sideways else "B"
+    signal = "PASS" if price_falling and fall_stopped and tight_sideways and rsi_rising else "WATCH"
+
+    # Only genuine setups are returned; non-matches are not invented as opportunities.
+    matches = []
+    if signal == "PASS":
+        confirmed = ["RSI"] + (["OBV"] if obv_rising else [])
+        matches.append({
+            "symbol": symbol, "status": "setup_detected",
+            "strength": "STRONG" if obv_rising else "QUALIFIED",
+            "indicators_confirmed": confirmed,
+            "lows": [{"week": bars[i]["week"], "low": lows[i], "close": closes[i]}
+                     for i in range(max(0, last - 2), last + 1)],
+            "intervening_highs": [],
+            "third_low_lower_band": ind["lower"][last],
+            "indicator_values_at_third_low": {
+                "RSI": ind["rsi"][last], "OBV": ind["obv"][last]
+            },
+            "checked_at_week": bars[last]["week"],
+            "price": closes[last],
+            "rsi": ind["rsi"][last],
+            "rsi_rising": rsi_rising,
+            "obv_rising": obv_rising,
+            "price_fall_pct": round(price_fall_pct, 2),
+            "price_phase": price_phase,
+            "sideways_range_pct": round(sideways_range_pct, 2),
+            "rsi_before_sideways": rsi_before_sideways,
+            "special_timing": special_timing,
+            "timing": timing,
+            "timeframe": "Weekly",
+            "signal": signal,
+        })
+
+    return {
+        "status": "success", "symbol": symbol, "weekly_bars": len(bars),
+        "count": len(matches), "matches": matches,
+        "data_source": "Angel One daily candles aggregated to weekly",
+        "orders_placed": False,
+    }
 
 @router.get("/scan")
 def scan(symbol:str=Query(...,min_length=1,max_length=40),exchange:str=Query("NSE",pattern="^NSE$")):
