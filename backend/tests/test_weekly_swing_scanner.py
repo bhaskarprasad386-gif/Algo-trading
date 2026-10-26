@@ -70,7 +70,7 @@ def test_nifty200_constituent_parser_strips_bom_and_deduplicates(monkeypatch):
         def raise_for_status(self):
             return None
 
-    monkeypatch.setattr(scanner.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(scanner, "NIFTY200_SYMBOLS", tuple([f"SYM{i}" for i in range(1, 201)] + ["SYM1"]))
     symbols = scanner._nifty200_symbols()
     assert len(symbols) == 200
     assert symbols[0] == "SYM1"
