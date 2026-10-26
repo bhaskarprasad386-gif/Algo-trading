@@ -248,6 +248,12 @@ def _run_nifty200_scan():
                     time.sleep(remaining)
 
         with _SCAN_LOCK:
+            rank_order = {"A🟢": 0, "A🟡": 1, "B🟢": 2, "B🟡": 3}
+            _SCAN_STATE["matches"].sort(
+                key=lambda item: rank_order.get(
+                    f"{item.get('timing', 'B')}{'🟢' if item.get('obv_rising') else '🟡'}", 4
+                )
+            )
             _SCAN_STATE["status"] = "completed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["finished_at"] = time.time()
@@ -383,9 +389,10 @@ def analyze(symbol, bars):
     Price-fall and consolidation percentages are descriptive fields, not hard filters.
     RSI 45 and fixed 60-day requirements are intentionally not used.
     """
-    if len(bars) < 15:
+    if len(bars) < 17:
         return {"status": "insufficient_data", "symbol": symbol,
-                "weekly_bars": len(bars), "matches": [], "count": 0}
+                "weekly_bars": len(bars), "matches": [], "count": 0,
+                "message": "At least 17 weekly candles are needed to evaluate RSI rising over two weekly steps."}
 
     ind = indicators(bars)
     last = len(bars) - 1
@@ -402,18 +409,18 @@ def analyze(symbol, bars):
     # stop extending down. No arbitrary percentage threshold is used to reject rows.
     base_start = max(0, last - 2)
     base_lows = lows[base_start:last + 1]
-    recent_ranges = [
-        max(0.0, (highs[i] - lows[i]) / closes[i] * 100.0)
-        for i in range(base_start, last + 1) if closes[i] > 0
-    ]
+    recent_high = max(highs[base_start:last + 1])
+    recent_low = min(lows[base_start:last + 1])
     sideways_range_pct = (
-        (max(highs[base_start:last + 1]) - min(lows[base_start:last + 1]))
-        / closes[last] * 100.0 if closes[last] > 0 else 0.0
+        (recent_high - recent_low) / closes[last] * 100.0
+        if closes[last] > 0 else 0.0
     )
+    prior_start = max(0, last - 7)
+    prior_range = max(highs[prior_start:last + 1]) - min(lows[prior_start:last + 1])
     tight_sideways = (
         len(base_lows) >= 3
         and lows[last] >= min(lows[last - 2:last]) * 0.995
-        and max(recent_ranges, default=0.0) <= 8.0
+        and (recent_high - recent_low) <= prior_range * 0.60
     )
     fall_stopped = len(base_lows) >= 3 and lows[last] >= min(lows[last - 2:last]) * 0.995
     price_falling = last >= 4 and closes[last - 1] < closes[max(0, last - 5)]
