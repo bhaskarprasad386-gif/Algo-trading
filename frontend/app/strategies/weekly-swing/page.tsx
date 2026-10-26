@@ -13,9 +13,6 @@ type Match = {
   third_low_lower_band: number;
   indicator_values_at_third_low: Record<string, number | null>;
   checked_at_week: string;
-  setup_age_weeks?: number;
-  breakout_level?: number;
-  breakout_close?: number;
 };
 type Result = { status: string; symbol: string; weekly_bars?: number; count?: number; matches?: Match[]; message?: string; data_source?: string; orders_placed?: boolean };
 type UniverseStatus = { status: string; total?: number; scanned?: number; failed?: number; matches?: Match[]; failures?: {symbol:string;reason:string}[]; fatal_error?: string; current_symbol?: string | null; batch_number?: number; batches_total?: number; waiting_for_next_batch_seconds?: number; started_at?: number; finished_at?: number };
@@ -174,7 +171,7 @@ export default function WeeklySwingScannerPage() {
       {result.status === "insufficient_data" && <p className="rounded-xl border theme-border p-4 text-sm theme-muted">{result.message || "Insufficient weekly history."}</p>}
       {(!result.matches || result.matches.length===0) && result.status !== "insufficient_data" && <div className="rounded-xl border theme-border p-5 text-sm"><CheckCircle2 size={18} className="mb-2 text-emerald-400"/><strong>No qualifying setup found in returned history.</strong><p className="mt-1 theme-muted">This is a valid scan result, not a generated opportunity.</p></div>}
       {(result.matches || []).map((m,idx)=><article key={m.lows.map(x=>x.week).join("-")} className="space-y-4 rounded-2xl border theme-border theme-surface p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold">{m.symbol} · Three-Low setup</h2><p className="text-xs theme-muted">Checked through week {m.checked_at_week} · Setup age {m.setup_age_weeks ?? "—"} weeks</p><p className="mt-1 text-xs theme-muted">Breakout close {m.breakout_close == null ? "—" : money(m.breakout_close)} · Resistance {m.breakout_level == null ? "—" : money(m.breakout_level)}</p></div><span className="rounded-full border border-emerald-500/40 px-3 py-1 text-xs font-bold text-emerald-400">{m.strength}</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold">{m.symbol} · Three-Low setup</h2><p className="text-xs theme-muted">Checked through week {m.checked_at_week}</p></div><span className="rounded-full border border-emerald-500/40 px-3 py-1 text-xs font-bold text-emerald-400">{m.strength}</span></div>
         <div className="grid gap-3 sm:grid-cols-3">{m.lows.map((low,i)=><div key={low.week} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="text-xs theme-muted">LOW {i+1} · {low.week}</div><div className="mt-1 text-lg font-bold">{money(low.low)}</div><div className="text-xs theme-muted">Close {money(low.close)}</div></div>)}</div>
         <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border theme-border p-3"><div className="text-xs theme-muted">Indicators confirmed at Low 3</div><div className="mt-2 flex flex-wrap gap-2">{m.indicators_confirmed.map(n=><span key={n} className="rounded-lg bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-400">{n}</span>)}</div></div><div className="rounded-xl border theme-border p-3"><div className="text-xs theme-muted">Lower Bollinger Band at Low 3</div><div className="mt-2 font-semibold">{money(m.third_low_lower_band)}</div><div className="mt-1 text-xs theme-muted">{Object.entries(m.indicator_values_at_third_low).map(([k,v])=>`${k}: ${v==null?"—":Number(v).toFixed(2)}`).join(" · ")}</div></div></div>
         <p className="text-xs theme-muted">Intervening highs: {m.intervening_highs.map(h=>`${h.week} · ${money(h.high)}`).join(" | ")}</p>
