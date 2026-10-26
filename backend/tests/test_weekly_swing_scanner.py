@@ -428,6 +428,35 @@ def test_cached_history_is_reused_without_historical_api_call(monkeypatch, tmp_p
     assert result["history_last_day"] == day.isoformat()
 
 
+def test_scan_state_survives_restart_without_claiming_worker_is_still_running(monkeypatch, tmp_path):
+    from app.scanner import weekly_swing_scanner as scanner
+
+    monkeypatch.setattr(scanner, "_cache_root", lambda: tmp_path)
+    original_state = scanner._SCAN_STATE
+    try:
+        scanner._SCAN_STATE = {
+            "status": "running", "universe": "NIFTY 200", "total": 200,
+            "scanned": 12, "failed": 1, "matches": [{"symbol": "TEST"}],
+            "failures": [], "current_symbol": "ABC", "started_at": 100.0,
+            "finished_at": None,
+        }
+        scanner._persist_scan_state()
+        scanner._SCAN_STATE = {
+            "status": "idle", "universe": "NIFTY 200", "total": 200,
+            "scanned": 0, "failed": 0, "matches": [], "failures": [],
+            "current_symbol": None, "started_at": None, "finished_at": None,
+        }
+
+        scanner._restore_scan_state_if_idle()
+
+        assert scanner._SCAN_STATE["status"] == "failed"
+        assert scanner._SCAN_STATE["scanned"] == 12
+        assert scanner._SCAN_STATE["matches"] == [{"symbol": "TEST"}]
+        assert "Backend restarted" in scanner._SCAN_STATE["fatal_error"]
+    finally:
+        scanner._SCAN_STATE = original_state
+
+
 def test_nse_today_uses_exchange_timezone(monkeypatch):
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
