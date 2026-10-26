@@ -432,6 +432,11 @@ def analyze(symbol, bars):
     rsi_before_sideways = (
         last >= 5 and _rising(ind["rsi"], last - 3, 2)
     )
+    sma20 = mean(closes[max(0, last - 19):last + 1]) if last >= 19 else None
+    sma20_near = (
+        abs(closes[last] - sma20) <= max(highs[last] - lows[last], 1e-9)
+        if sma20 is not None else None
+    )
     price_phase = (
         "Tight Sideways" if tight_sideways
         else "Fall Stop" if fall_stopped
@@ -466,6 +471,8 @@ def analyze(symbol, bars):
             "price_phase": price_phase,
             "sideways_range_pct": round(sideways_range_pct, 2),
             "rsi_before_sideways": rsi_before_sideways,
+            "sma20_near": sma20_near,
+            "sma20": sma20,
             "special_timing": special_timing,
             "timing": timing,
             "timeframe": "Weekly",
