@@ -35,6 +35,7 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS
 from app.market_data.instruments import InstrumentMaster
+from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
@@ -779,7 +780,9 @@ async def _live_box_spread_loop() -> None:
         master = InstrumentMaster()
         runner = None
         try:
-            master.download()
+            # Box Spread uses its own recent instrument-master cache on download failure.
+            # The shared InstrumentMaster behavior for other scanners remains unchanged.
+            download_box_spread_instruments(master)
             today = datetime.now(IST).date()
             stock_symbols, index_symbols = set(), set()
             for item in master.instruments:
@@ -803,16 +806,11 @@ async def _live_box_spread_loop() -> None:
                 # Build the scanner universe from option contracts, not futures.
                 # Futures are not live-subscribed for Box Spread; option-only rows
                 # must remain eligible even when a future row is missing or renamed.
-                if typ == "OPTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
-                    stock_symbols.add(name)
-                elif typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS:
+                # Live Box Spread is intentionally index-only; stock contracts are not subscribed.
+                if typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS:
                     expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
                     if segment == expected_segment:
                         index_symbols.add(name)
-            stock_symbols = [
-                symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED
-                if symbol in stock_symbols
-            ]
             # Select option expiries directly from the option master. For indices,
             # subscribe the nearest available weekly AND monthly expiry (when distinct);
             # stocks remain on their nearest listed expiry. No futures rows/ticks are used.
