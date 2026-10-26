@@ -13,6 +13,9 @@ type Match = {
   third_low_lower_band: number;
   indicator_values_at_third_low: Record<string, number | null>;
   checked_at_week: string;
+  price?: number; rsi?: number | null; rsi_rising?: boolean; obv_rising?: boolean;
+  price_fall_pct?: number; price_phase?: string; sideways_range_pct?: number;
+  rsi_before_sideways?: boolean; special_timing?: string; timing?: string; timeframe?: string; signal?: string;
 };
 type Result = { status: string; symbol: string; weekly_bars?: number; count?: number; matches?: Match[]; message?: string; data_source?: string; orders_placed?: boolean };
 type UniverseStatus = { status: string; total?: number; scanned?: number; failed?: number; matches?: Match[]; failures?: {symbol:string;reason:string}[]; fatal_error?: string; current_symbol?: string | null; batch_number?: number; batches_total?: number; waiting_for_next_batch_seconds?: number; started_at?: number; finished_at?: number };
@@ -141,9 +144,9 @@ export default function WeeklySwingScannerPage() {
 
   return <div className="space-y-5">
     <header className="space-y-2">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] theme-accent"><Activity size={15}/> NIFTY 200 Weekly Pattern Scanner</div>
-      <h1 className="text-2xl font-bold sm:text-3xl">Three-Low Swing + Indicator Breakout</h1>
-      <p className="max-w-3xl text-sm theme-muted">Weekly candles only. Finds three progressively lower swing lows with shallow breakdown/recovery, Bollinger Band context, and CMF / OBV / RSI confirmation. No orders are placed.</p>
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] theme-accent"><Activity size={15}/> Weekly RSI Scanner</div>
+      <h1 className="text-2xl font-bold sm:text-3xl">Fall → Fall Stop → Tight Sideways → RSI Rising</h1>
+      <p className="max-w-3xl text-sm theme-muted">Weekly candles only. Finds a decline that stops, tight sideways price action, and rising RSI; OBV confirms strength. Price-fall and sideways percentages are informational, not filters. No orders are placed.</p>
     </header>
     <section className="rounded-2xl border theme-border theme-surface p-4 sm:p-5">
       <div className="grid gap-3 sm:grid-cols-[1fr_140px_auto] sm:items-end">
@@ -170,12 +173,7 @@ export default function WeeklySwingScannerPage() {
       </div>
       {result.status === "insufficient_data" && <p className="rounded-xl border theme-border p-4 text-sm theme-muted">{result.message || "Insufficient weekly history."}</p>}
       {(!result.matches || result.matches.length===0) && result.status !== "insufficient_data" && <div className="rounded-xl border theme-border p-5 text-sm"><CheckCircle2 size={18} className="mb-2 text-emerald-400"/><strong>No qualifying setup found in returned history.</strong><p className="mt-1 theme-muted">This is a valid scan result, not a generated opportunity.</p></div>}
-      {(result.matches || []).map((m,idx)=><article key={m.lows.map(x=>x.week).join("-")} className="space-y-4 rounded-2xl border theme-border theme-surface p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold">{m.symbol} · Three-Low setup</h2><p className="text-xs theme-muted">Checked through week {m.checked_at_week}</p></div><span className="rounded-full border border-emerald-500/40 px-3 py-1 text-xs font-bold text-emerald-400">{m.strength}</span></div>
-        <div className="grid gap-3 sm:grid-cols-3">{m.lows.map((low,i)=><div key={low.week} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="text-xs theme-muted">LOW {i+1} · {low.week}</div><div className="mt-1 text-lg font-bold">{money(low.low)}</div><div className="text-xs theme-muted">Close {money(low.close)}</div></div>)}</div>
-        <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border theme-border p-3"><div className="text-xs theme-muted">Indicators confirmed at Low 3</div><div className="mt-2 flex flex-wrap gap-2">{m.indicators_confirmed.map(n=><span key={n} className="rounded-lg bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-400">{n}</span>)}</div></div><div className="rounded-xl border theme-border p-3"><div className="text-xs theme-muted">Lower Bollinger Band at Low 3</div><div className="mt-2 font-semibold">{money(m.third_low_lower_band)}</div><div className="mt-1 text-xs theme-muted">{Object.entries(m.indicator_values_at_third_low).map(([k,v])=>`${k}: ${v==null?"—":Number(v).toFixed(2)}`).join(" · ")}</div></div></div>
-        <p className="text-xs theme-muted">Intervening highs: {m.intervening_highs.map(h=>`${h.week} · ${money(h.high)}`).join(" | ")}</p>
-      </article>)}
+      {(result.matches || []).length > 0 && <div className="overflow-x-auto rounded-xl border theme-border"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="theme-surface-2 text-xs theme-muted"><tr>{["Rank","Signal","Stock","Price","RSI","RSI Rising","OBV Rising","Price Fall %","Price Phase","Sideways Range %","Special Timing","Strength","Timeframe"].map(label=><th key={label} className="whitespace-nowrap px-3 py-3">{label}</th>)}</tr></thead><tbody>{(result.matches || []).map((m,idx)=><tr key={m.symbol + m.checked_at_week} className="border-t theme-border"><td className="px-3 py-3 font-bold">{m.timing || (m.rsi_before_sideways ? "A" : "B")}{m.obv_rising ? "🟢" : "🟡"}</td><td className="px-3 py-3 font-semibold">{m.signal || "PASS"}</td><td className="px-3 py-3 font-bold">{m.symbol}</td><td className="px-3 py-3">{m.price == null ? "—" : money(m.price)}</td><td className="px-3 py-3">{m.rsi == null ? "—" : Number(m.rsi).toFixed(2)}</td><td className="px-3 py-3">{m.rsi_rising ? "YES" : "NO"}</td><td className="px-3 py-3">{m.obv_rising ? "YES" : "NO"}</td><td className="px-3 py-3">{m.price_fall_pct == null ? "—" : m.price_fall_pct.toFixed(2) + "%"}</td><td className="px-3 py-3">{m.price_phase || "—"}</td><td className="px-3 py-3">{m.sideways_range_pct == null ? "—" : m.sideways_range_pct.toFixed(2) + "%"}</td><td className="px-3 py-3">{m.special_timing || "—"}</td><td className="px-3 py-3">{m.strength}</td><td className="px-3 py-3">{m.timeframe || "Weekly"}</td></tr>)}</tbody></table></div>}
     </section>}
   </div>;
 }
