@@ -16,6 +16,53 @@ def test_daily_rows_aggregate_into_weekly_bars():
     assert bars[0]["volume"] == 2200
 
 
+def test_incomplete_current_week_is_excluded_from_pivot_confirmation():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import completed_weekly_bars
+
+    rows = [
+        ["2026-10-19 09:15", "100", "105", "98", "103", "1000"],
+        ["2026-10-20 09:15", "103", "108", "101", "106", "1200"],
+        ["2026-10-21 09:15", "106", "110", "104", "108", "900"],
+        ["2026-10-22 09:15", "108", "111", "105", "109", "800"],
+    ]
+    bars = completed_weekly_bars(rows, date(2026, 10, 22))
+    assert bars == []
+
+
+def test_current_week_is_included_after_its_final_trading_session():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import completed_weekly_bars
+
+    rows = [
+        ["2026-10-19 09:15", "100", "105", "98", "103", "1000"],
+        ["2026-10-20 09:15", "103", "108", "101", "106", "1200"],
+        ["2026-10-21 09:15", "106", "110", "104", "108", "900"],
+        ["2026-10-22 09:15", "108", "111", "105", "109", "800"],
+        ["2026-10-23 09:15", "109", "112", "106", "110", "700"],
+    ]
+    bars = completed_weekly_bars(rows, date(2026, 10, 23))
+    assert len(bars) == 1
+    assert bars[0]["week"] == "2026-10-19"
+    assert bars[0]["close"] == 110
+
+
+def test_holiday_shortened_week_completes_on_last_trading_day():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import completed_weekly_bars
+
+    # Friday 2026-10-02 is in the scanner's NSE holiday snapshot.
+    rows = [
+        ["2026-09-28 09:15", "100", "105", "98", "103", "1000"],
+        ["2026-09-29 09:15", "103", "108", "101", "106", "1200"],
+        ["2026-09-30 09:15", "106", "110", "104", "108", "900"],
+        ["2026-10-01 09:15", "108", "111", "105", "109", "800"],
+    ]
+    bars = completed_weekly_bars(rows, date(2026, 10, 1))
+    assert len(bars) == 1
+    assert bars[0]["week"] == "2026-09-28"
+
+
 def test_insufficient_history_never_fabricates_setups():
     bars = [{"week": f"2026-01-{i:02d}", "open": 100, "high": 105, "low": 95, "close": 101, "volume": 1000} for i in range(1, 20)]
     result = analyze("TEST", bars)
