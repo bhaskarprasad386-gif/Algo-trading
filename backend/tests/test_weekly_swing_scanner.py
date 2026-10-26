@@ -30,6 +30,20 @@ def test_incomplete_current_week_is_excluded_from_pivot_confirmation():
     assert bars == []
 
 
+def test_invalid_final_session_candle_does_not_complete_current_week():
+    from datetime import date
+    from app.scanner.weekly_swing_scanner import completed_weekly_bars
+
+    rows = [
+        ["2026-10-19 09:15", "100", "105", "98", "103", "1000"],
+        ["2026-10-20 09:15", "103", "108", "101", "106", "1200"],
+        ["2026-10-21 09:15", "106", "110", "104", "108", "900"],
+        ["2026-10-22 09:15", "108", "111", "105", "109", "800"],
+        ["2026-10-23 09:15", "nan", "112", "106", "110", "700"],
+    ]
+    assert completed_weekly_bars(rows, date(2026, 10, 23)) == []
+
+
 def test_current_week_is_included_after_its_final_trading_session():
     from datetime import date
     from app.scanner.weekly_swing_scanner import completed_weekly_bars
