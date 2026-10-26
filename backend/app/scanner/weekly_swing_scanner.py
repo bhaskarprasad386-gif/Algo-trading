@@ -52,6 +52,45 @@ def _cache_path(ticker):
     return _cache_root() / (ticker.replace("/", "_") + ".json")
 
 
+def _scan_state_path():
+    return _cache_root() / "scan_state.json"
+
+
+def _persist_scan_state():
+    """Atomically retain the latest scan status/results across API restarts."""
+    try:
+        path = _scan_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot = json.loads(json.dumps(_SCAN_STATE))
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(snapshot, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, TypeError, ValueError):
+        # Scan results should remain usable even if optional state persistence fails.
+        pass
+
+
+def _restore_scan_state_if_idle():
+    """Restore saved results; never pretend an interrupted worker is still running."""
+    with _SCAN_LOCK:
+        if _SCAN_STATE.get("status") != "idle":
+            return
+    try:
+        payload = json.loads(_scan_state_path().read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("status") not in {"running", "completed", "failed", "paused"}:
+            return
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return
+    if payload.get("status") == "running":
+        payload["status"] = "failed"
+        payload["fatal_error"] = "Backend restarted during the scan. Saved progress/results were restored; start a new scan to continue."
+        payload["finished_at"] = time.time()
+    with _SCAN_LOCK:
+        if _SCAN_STATE.get("status") == "idle":
+            _SCAN_STATE.update(payload)
+    _persist_scan_state()
+
+
 def _load_cached_rows(ticker):
     path = _cache_path(ticker)
     try:
@@ -205,6 +244,7 @@ def _run_nifty200_scan():
             "started_at": time.time(), "finished_at": None, "batch_size": SCAN_BATCH_SIZE,
             "cache_mode": "persistent_daily_incremental",
         }
+    _persist_scan_state()
     try:
         symbols = _nifty200_symbols()
         master = InstrumentMaster()
@@ -242,6 +282,7 @@ def _run_nifty200_scan():
                 finally:
                     with _SCAN_LOCK:
                         _SCAN_STATE["scanned"] += 1
+                    _persist_scan_state()
             if batch_start + SCAN_BATCH_SIZE < len(symbols):
                 remaining = SCAN_BATCH_INTERVAL_SECONDS - (time.monotonic() - batch_started)
                 if remaining > 0:
@@ -253,12 +294,14 @@ def _run_nifty200_scan():
             _SCAN_STATE["status"] = "completed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["finished_at"] = time.time()
+        _persist_scan_state()
     except Exception as exc:
         with _SCAN_LOCK:
             _SCAN_STATE["status"] = "paused" if isinstance(exc, HTTPException) and exc.status_code == 409 else "failed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["fatal_error"] = str(exc.detail if isinstance(exc, HTTPException) else exc)[:240]
             _SCAN_STATE["finished_at"] = time.time()
+        _persist_scan_state()
 
 
 async def weekly_swing_daily_refresh_loop():
@@ -451,5 +494,6 @@ def start_nifty200_scan():
 
 @router.get("/scan-all/status")
 def nifty200_scan_status():
+    _restore_scan_state_if_idle()
     with _SCAN_LOCK:
         return {**_SCAN_STATE, "orders_placed": False}
