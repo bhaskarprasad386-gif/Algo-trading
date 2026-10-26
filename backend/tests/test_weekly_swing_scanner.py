@@ -449,11 +449,14 @@ def test_nse_trading_day_excludes_published_2026_holidays_and_weekends():
     assert _is_nse_trading_day(date(2026, 10, 26))  # ordinary Monday
 
 
-def test_nse_trading_day_fails_closed_for_unconfigured_future_year():
+def test_nse_trading_day_uses_weekday_fallback_for_future_years():
     from datetime import date
     from app.scanner.weekly_swing_scanner import _is_nse_trading_day
 
-    assert not _is_nse_trading_day(date(2027, 1, 4))
+    # Future-year holidays need a refreshed NSE calendar, but weekdays must not
+    # permanently disable the daily scanner when the year changes.
+    assert _is_nse_trading_day(date(2027, 1, 4))  # Monday
+    assert not _is_nse_trading_day(date(2027, 1, 2))  # Saturday
 
 
 
