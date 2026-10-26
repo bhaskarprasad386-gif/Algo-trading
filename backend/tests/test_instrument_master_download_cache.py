@@ -1,5 +1,5 @@
 import json
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -24,15 +24,15 @@ def test_download_uses_recent_disk_snapshot_when_provider_fails(monkeypatch, tmp
     rows = [{"symbol": "RELIANCE-EQ", "exch_seg": "NSE", "token": "2885"}]
     path = tmp_path / "instrument-master.json"
     path.write_text(
-        json.dumps({"schema_version": 1, "fetched_at": "2026-10-26T03:00:00+00:00", "instruments": rows}),
+        json.dumps({"schema_version": 1, "fetched_at": datetime.now(timezone.utc).isoformat(), "instruments": rows}),
         encoding="utf-8",
     )
     monkeypatch.setenv("INSTRUMENT_MASTER_CACHE_PATH", str(path))
 
-    def fail_request(*args, **kwargs):
-        raise TimeoutError("provider timeout")
-
-    monkeypatch.setattr("app.market_data.instruments.requests.get", fail_request)
+    monkeypatch.setattr(
+        "app.market_data.instruments.requests.get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("provider timeout")),
+    )
     master = InstrumentMaster()
     assert master.download() == rows
     assert master.resolve_cash_token("RELIANCE") == "2885"
@@ -41,8 +41,9 @@ def test_download_uses_recent_disk_snapshot_when_provider_fails(monkeypatch, tmp
 def test_download_rejects_stale_disk_snapshot(monkeypatch, tmp_path):
     rows = [{"symbol": "RELIANCE-EQ", "exch_seg": "NSE", "token": "2885"}]
     path = tmp_path / "instrument-master.json"
+    stale = (datetime.now(timezone.utc) - timedelta(hours=37)).isoformat()
     path.write_text(
-        json.dumps({"schema_version": 1, "fetched_at": "2026-10-23T03:00:00+00:00", "instruments": rows}),
+        json.dumps({"schema_version": 1, "fetched_at": stale, "instruments": rows}),
         encoding="utf-8",
     )
     monkeypatch.setenv("INSTRUMENT_MASTER_CACHE_PATH", str(path))
