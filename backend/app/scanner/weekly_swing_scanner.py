@@ -113,6 +113,7 @@ def _nse_market_is_open_now():
         return False
     if now.date().year == 2026 and now.date() in NSE_CAPITAL_MARKET_HOLIDAYS:
         return False
+    # Unknown future-year holidays are not available in the bundled calendar.
     return clock_time(9, 15) <= now.time() < clock_time(15, 30)
 
 
