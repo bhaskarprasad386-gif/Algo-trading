@@ -314,6 +314,30 @@ def test_analyze_qualifies_only_when_pattern_and_indicator_confirmation_align(mo
     assert result["orders_placed"] is False
 
 
+
+def test_analyze_strength_matches_exact_number_of_confirming_indicators(monkeypatch):
+    import pytest
+    from app.scanner import weekly_swing_scanner as scanner
+
+    bars = _weekly_swing_fixture()
+    expected = [
+        (("CMF",), "QUALIFIED"),
+        (("CMF", "OBV"), "STRONG"),
+        (("CMF", "OBV", "RSI"), "STRONGEST"),
+    ]
+    for enabled, strength in expected:
+        _patch_valid_swing_indicators(monkeypatch, confirm=False)
+        series = scanner.indicators(bars)
+        for name in enabled:
+            key = name.lower()
+            series[key][3], series[key][8], series[key][13] = (10.0, 11.0, 12.0)
+        monkeypatch.setattr(scanner, "indicators", lambda bars, series=series: series)
+
+        result = scanner.analyze("TEST", bars)
+        assert result["count"] == 1
+        assert result["matches"][0]["strength"] == strength
+        assert result["matches"][0]["indicators_confirmed"] == list(enabled)
+
 def test_analyze_rejects_pattern_without_any_indicator_confirmation(monkeypatch):
     from app.scanner import weekly_swing_scanner as scanner
 
