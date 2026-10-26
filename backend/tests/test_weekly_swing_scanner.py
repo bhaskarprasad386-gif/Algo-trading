@@ -316,7 +316,6 @@ def test_analyze_qualifies_only_when_pattern_and_indicator_confirmation_align(mo
 
 
 def test_analyze_strength_matches_exact_number_of_confirming_indicators(monkeypatch):
-    import pytest
     from app.scanner import weekly_swing_scanner as scanner
 
     bars = _weekly_swing_fixture()
