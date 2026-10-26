@@ -369,7 +369,19 @@ def analyze(symbol,bars):
     matches=[]
     for k in range(2,len(lows)):
         a,b,c=lows[k-2:k+1]
+        # Keep stale historical formations out of the current opportunity list.
+        setup_age_weeks = len(bars) - 1 - c
+        if setup_age_weeks > 8:
+            continue
         if not (bars[b]["low"]<bars[a]["low"] and bars[c]["low"]<bars[b]["low"]):continue
+        # This scanner is labelled "Indicator Breakout": require a close above
+        # the highest post-third-low resistance from completed bars.
+        post_low_bars = bars[c + 1:-1]
+        if not post_low_bars:
+            continue
+        breakout_level = max(float(item["high"]) for item in post_low_bars)
+        if float(bars[-1]["close"]) <= breakout_level:
+            continue
         h1=[x for x in highs if a<x<b]; h2=[x for x in highs if b<x<c]
         if not h1 or not h2:continue
         h1,h2=h1[-1],h2[-1]
@@ -387,7 +399,7 @@ def analyze(symbol,bars):
             if _has_bullish_divergence(ind[n], a, b, c):
                 passed.append(n.upper())
         if passed:
-            matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"checked_at_week":bars[-1]["week"]})
+            matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"setup_age_weeks":setup_age_weeks,"breakout_level":breakout_level,"breakout_close":float(bars[-1]["close"]),"checked_at_week":bars[-1]["week"]})
     return {"status":"success","symbol":symbol,"weekly_bars":len(bars),"count":len(matches),"matches":matches[-5:],"data_source":"Angel One daily candles aggregated to weekly","orders_placed":False}
 
 
