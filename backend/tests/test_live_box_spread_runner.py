@@ -5,11 +5,13 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
     import app.market_data.live_box_spread_runner as mod
 
     class Master:
+        _loaded = True
         instruments = [
             {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"30SEP2026"},
             {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"29OCT2026"},
         ]
-        def download(self): pass
+        def download(self):
+            raise AssertionError("already-loaded master must not be downloaded twice")
 
     captured = []
     def select(*args, **kwargs):
@@ -23,7 +25,7 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
     monkeypatch.setattr(mod, "select_box_contracts", select)
     monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"ABC": (100.0, 110.0)})
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", lambda *a, **k: type("F", (), {"run_forever":lambda self: None, "stop":lambda self: None})())
+    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", lambda *a, **k: type("F", (), {"run_forever":lambda self: None, "stop":lambda self: None, "snapshot":lambda self: {"state":"RECONNECTING"}})())
     runner = mod.LiveBoxSpreadRunner(
         object(),
         [mod.BoxSpreadLiveTarget("ABC", "STOCK")],
@@ -53,6 +55,7 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def __init__(self, *args, **kwargs): pass
         def run_forever(self): pass
         def stop(self): pass
+        def snapshot(self): return {"state":"LIVE"}
 
     captured = []
     def select(*args, **kwargs):
