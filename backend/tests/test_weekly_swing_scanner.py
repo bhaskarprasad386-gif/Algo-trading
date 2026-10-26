@@ -230,6 +230,8 @@ def _weekly_swing_fixture():
         bars[idx].update(low=low, close=low + 4.0, high=low + 12.0)
     for idx in (5, 10):
         bars[idx].update(high=105.0, low=95.0, close=100.0)
+    # Latest weekly candle closes above resistance formed after the third low.
+    bars[-1].update(high=114.0, close=112.0)
     return bars
 
 
@@ -265,6 +267,37 @@ def test_analyze_qualifies_only_when_pattern_and_indicator_confirmation_align(mo
     assert match["indicators_confirmed"] == ["CMF", "OBV", "RSI"]
     assert match["third_low_lower_band"] == 69.0
     assert result["orders_placed"] is False
+
+
+def test_analyze_rejects_pattern_without_a_current_breakout(monkeypatch):
+    from app.scanner import weekly_swing_scanner as scanner
+
+    _patch_valid_swing_indicators(monkeypatch, confirm=True)
+    bars = _weekly_swing_fixture()
+    bars[-1]["close"] = 100.0
+    result = scanner.analyze("TEST", bars)
+
+    assert result["count"] == 0
+    assert result["matches"] == []
+
+
+def test_analyze_rejects_stale_three_low_setup(monkeypatch):
+    from app.scanner import weekly_swing_scanner as scanner
+
+    _patch_valid_swing_indicators(monkeypatch, confirm=True)
+    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 13] if kind == "low" else [5, 10])
+    bars = _weekly_swing_fixture()
+    # Move the final bar far enough beyond the third low to exceed the age limit.
+    bars.extend([
+        {"week": f"2027-W{i:02d}", "open": 100.0, "high": 110.0,
+         "low": 90.0, "close": 100.0, "volume": 1000.0}
+        for i in range(30, 40)
+    ])
+    bars[-1].update(high=120.0, close=119.0)
+    result = scanner.analyze("TEST", bars)
+
+    assert result["count"] == 0
+    assert result["matches"] == []
 
 
 def test_analyze_rejects_pattern_without_any_indicator_confirmation(monkeypatch):
@@ -449,11 +482,12 @@ def test_nse_trading_day_excludes_published_2026_holidays_and_weekends():
     assert _is_nse_trading_day(date(2026, 10, 26))  # ordinary Monday
 
 
-def test_nse_trading_day_fails_closed_for_unconfigured_future_year():
+def test_nse_trading_day_allows_weekdays_in_future_year_until_calendar_is_configured():
     from datetime import date
     from app.scanner.weekly_swing_scanner import _is_nse_trading_day
 
-    assert not _is_nse_trading_day(date(2027, 1, 4))
+    assert _is_nse_trading_day(date(2027, 1, 4))
+    assert not _is_nse_trading_day(date(2027, 1, 2))
 
 
 
