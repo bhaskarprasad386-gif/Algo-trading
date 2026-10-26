@@ -223,12 +223,12 @@ def test_bullish_divergence_requires_indicator_higher_lows_at_price_pivots():
 def _weekly_swing_fixture():
     bars = [
         {"week": f"2026-W{i:02d}", "open": 100.0, "high": 110.0, "low": 90.0, "close": 100.0, "volume": 1000.0}
-        for i in range(21)
+        for i in range(30)
     ]
     # Three descending price swing lows with two intervening swing highs.
-    for idx, low in ((3, 80.0), (8, 75.0), (13, 70.0)):
+    for idx, low in ((3, 80.0), (8, 75.0), (22, 70.0)):
         bars[idx].update(low=low, close=low + 4.0, high=low + 12.0)
-    for idx in (5, 10):
+    for idx in (5, 13):
         bars[idx].update(high=105.0, low=95.0, close=100.0)
     # Latest weekly candle closes above resistance formed after the third low.
     bars[-1].update(high=114.0, close=112.0)
@@ -238,18 +238,18 @@ def _weekly_swing_fixture():
 def _patch_valid_swing_indicators(monkeypatch, *, confirm=True):
     from app.scanner import weekly_swing_scanner as scanner
 
-    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 13] if kind == "low" else [5, 10])
-    series = {key: [0.0] * 21 for key in ("cmf", "obv", "rsi", "mid", "lower", "upper")}
-    for idx in range(21):
+    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 22] if kind == "low" else [5, 13])
+    series = {key: [0.0] * 30 for key in ("cmf", "obv", "rsi", "mid", "lower", "upper")}
+    for idx in range(30):
         series["mid"][idx] = 105.0
         series["lower"][idx] = 60.0
         series["upper"][idx] = 130.0
     # The third price low is one point from the lower band and both highs sit
     # at the middle band. Indicator values align with the exact price pivots.
-    series["lower"][13] = 69.0
-    series["cmf"][3], series["cmf"][8], series["cmf"][13] = (0.0, 0.1, 0.2) if confirm else (0.2, 0.1, 0.0)
-    series["obv"][3], series["obv"][8], series["obv"][13] = (10.0, 11.0, 12.0) if confirm else (10.0, 9.0, 8.0)
-    series["rsi"][3], series["rsi"][8], series["rsi"][13] = (30.0, 31.0, 32.0) if confirm else (30.0, 29.0, 28.0)
+    series["lower"][22] = 69.0
+    series["cmf"][3], series["cmf"][8], series["cmf"][22] = (0.0, 0.1, 0.2) if confirm else (0.2, 0.1, 0.0)
+    series["obv"][3], series["obv"][8], series["obv"][22] = (10.0, 11.0, 12.0) if confirm else (10.0, 9.0, 8.0)
+    series["rsi"][3], series["rsi"][8], series["rsi"][22] = (30.0, 31.0, 32.0) if confirm else (30.0, 29.0, 28.0)
     monkeypatch.setattr(scanner, "indicators", lambda bars: series)
 
 
@@ -316,7 +316,7 @@ def test_analyze_rejects_third_low_far_from_lower_bollinger_band(monkeypatch):
 
     _patch_valid_swing_indicators(monkeypatch, confirm=True)
     series = scanner.indicators(_weekly_swing_fixture())
-    series["lower"][13] = 40.0
+    series["lower"][22] = 40.0
     monkeypatch.setattr(scanner, "indicators", lambda bars: series)
     result = scanner.analyze("TEST", _weekly_swing_fixture())
 
