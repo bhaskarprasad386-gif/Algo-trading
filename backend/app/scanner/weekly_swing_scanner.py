@@ -52,6 +52,45 @@ def _cache_path(ticker):
     return _cache_root() / (ticker.replace("/", "_") + ".json")
 
 
+def _scan_state_path():
+    return _cache_root() / "scan_state.json"
+
+
+def _persist_scan_state():
+    """Atomically retain the latest scan status/results across API restarts."""
+    try:
+        path = _scan_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot = json.loads(json.dumps(_SCAN_STATE))
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(snapshot, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, TypeError, ValueError):
+        # Scan results should remain usable even if optional state persistence fails.
+        pass
+
+
+def _restore_scan_state_if_idle():
+    """Restore saved results; never pretend an interrupted worker is still running."""
+    with _SCAN_LOCK:
+        if _SCAN_STATE.get("status") != "idle":
+            return
+    try:
+        payload = json.loads(_scan_state_path().read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("status") not in {"running", "completed", "failed", "paused"}:
+            return
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return
+    if payload.get("status") == "running":
+        payload["status"] = "failed"
+        payload["fatal_error"] = "Backend restarted during the scan. Saved progress/results were restored; start a new scan to continue."
+        payload["finished_at"] = time.time()
+    with _SCAN_LOCK:
+        if _SCAN_STATE.get("status") == "idle":
+            _SCAN_STATE.update(payload)
+    _persist_scan_state()
+
+
 def _load_cached_rows(ticker):
     path = _cache_path(ticker)
     try:
@@ -103,7 +142,8 @@ def _is_nse_trading_day(day):
         return False
     if day.year == 2026:
         return day not in NSE_CAPITAL_MARKET_HOLIDAYS
-    return False
+    # For future years, keep weekday refreshes enabled until that year's official holiday list is configured.
+    return True
 
 
 def _nse_market_is_open_now():
@@ -112,6 +152,7 @@ def _nse_market_is_open_now():
         return False
     if now.date().year == 2026 and now.date() in NSE_CAPITAL_MARKET_HOLIDAYS:
         return False
+    # Unknown future-year holidays are not available in the bundled calendar.
     return clock_time(9, 15) <= now.time() < clock_time(15, 30)
 
 
@@ -203,6 +244,7 @@ def _run_nifty200_scan():
             "started_at": time.time(), "finished_at": None, "batch_size": SCAN_BATCH_SIZE,
             "cache_mode": "persistent_daily_incremental",
         }
+    _persist_scan_state()
     try:
         symbols = _nifty200_symbols()
         master = InstrumentMaster()
@@ -240,6 +282,7 @@ def _run_nifty200_scan():
                 finally:
                     with _SCAN_LOCK:
                         _SCAN_STATE["scanned"] += 1
+                    _persist_scan_state()
             if batch_start + SCAN_BATCH_SIZE < len(symbols):
                 remaining = SCAN_BATCH_INTERVAL_SECONDS - (time.monotonic() - batch_started)
                 if remaining > 0:
@@ -251,12 +294,14 @@ def _run_nifty200_scan():
             _SCAN_STATE["status"] = "completed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["finished_at"] = time.time()
+        _persist_scan_state()
     except Exception as exc:
         with _SCAN_LOCK:
             _SCAN_STATE["status"] = "paused" if isinstance(exc, HTTPException) and exc.status_code == 409 else "failed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["fatal_error"] = str(exc.detail if isinstance(exc, HTTPException) else exc)[:240]
             _SCAN_STATE["finished_at"] = time.time()
+        _persist_scan_state()
 
 
 async def weekly_swing_daily_refresh_loop():
@@ -367,7 +412,19 @@ def analyze(symbol,bars):
     matches=[]
     for k in range(2,len(lows)):
         a,b,c=lows[k-2:k+1]
+        # Keep stale historical formations out of the current opportunity list.
+        setup_age_weeks = len(bars) - 1 - c
+        if setup_age_weeks > 8:
+            continue
         if not (bars[b]["low"]<bars[a]["low"] and bars[c]["low"]<bars[b]["low"]):continue
+        # This scanner is labelled "Indicator Breakout": require a close above
+        # the highest post-third-low resistance from completed bars.
+        post_low_bars = bars[c + 1:-1]
+        if not post_low_bars:
+            continue
+        breakout_level = max(float(item["high"]) for item in post_low_bars)
+        if float(bars[-1]["close"]) <= breakout_level:
+            continue
         h1=[x for x in highs if a<x<b]; h2=[x for x in highs if b<x<c]
         if not h1 or not h2:continue
         h1,h2=h1[-1],h2[-1]
@@ -385,7 +442,7 @@ def analyze(symbol,bars):
             if _has_bullish_divergence(ind[n], a, b, c):
                 passed.append(n.upper())
         if passed:
-            matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"checked_at_week":bars[-1]["week"]})
+            matches.append({"symbol":symbol,"status":"setup_detected","strength":"STRONGEST" if len(passed)==3 else "STRONG" if len(passed)==2 else "QUALIFIED","indicators_confirmed":passed,"lows":[{"week":bars[x]["week"],"low":bars[x]["low"],"close":bars[x]["close"]} for x in (a,b,c)],"intervening_highs":[{"week":bars[x]["week"],"high":bars[x]["high"]} for x in (h1,h2)],"third_low_lower_band":ind["lower"][c],"indicator_values_at_third_low":{n:ind[n.lower()][c] for n in ("CMF","OBV","RSI")},"setup_age_weeks":setup_age_weeks,"breakout_level":breakout_level,"breakout_close":float(bars[-1]["close"]),"checked_at_week":bars[-1]["week"]})
     return {"status":"success","symbol":symbol,"weekly_bars":len(bars),"count":len(matches),"matches":matches[-5:],"data_source":"Angel One daily candles aggregated to weekly","orders_placed":False}
 
 
@@ -437,5 +494,6 @@ def start_nifty200_scan():
 
 @router.get("/scan-all/status")
 def nifty200_scan_status():
+    _restore_scan_state_if_idle()
     with _SCAN_LOCK:
         return {**_SCAN_STATE, "orders_placed": False}

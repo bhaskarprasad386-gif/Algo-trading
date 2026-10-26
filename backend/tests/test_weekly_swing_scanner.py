@@ -226,17 +226,19 @@ def _weekly_swing_fixture():
         for i in range(30)
     ]
     # Three descending price swing lows with two intervening swing highs.
-    for idx, low in ((3, 80.0), (8, 75.0), (13, 70.0)):
+    for idx, low in ((3, 80.0), (8, 75.0), (22, 70.0)):
         bars[idx].update(low=low, close=low + 4.0, high=low + 12.0)
-    for idx in (5, 10):
+    for idx in (5, 13):
         bars[idx].update(high=105.0, low=95.0, close=100.0)
+    # Latest weekly candle closes above resistance formed after the third low.
+    bars[-1].update(high=114.0, close=112.0)
     return bars
 
 
 def _patch_valid_swing_indicators(monkeypatch, *, confirm=True):
     from app.scanner import weekly_swing_scanner as scanner
 
-    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 13] if kind == "low" else [5, 10])
+    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 22] if kind == "low" else [5, 13])
     series = {key: [0.0] * 30 for key in ("cmf", "obv", "rsi", "mid", "lower", "upper")}
     for idx in range(30):
         series["mid"][idx] = 105.0
@@ -244,10 +246,10 @@ def _patch_valid_swing_indicators(monkeypatch, *, confirm=True):
         series["upper"][idx] = 130.0
     # The third price low is one point from the lower band and both highs sit
     # at the middle band. Indicator values align with the exact price pivots.
-    series["lower"][13] = 69.0
-    series["cmf"][3], series["cmf"][8], series["cmf"][13] = (0.0, 0.1, 0.2) if confirm else (0.2, 0.1, 0.0)
-    series["obv"][3], series["obv"][8], series["obv"][13] = (10.0, 11.0, 12.0) if confirm else (10.0, 9.0, 8.0)
-    series["rsi"][3], series["rsi"][8], series["rsi"][13] = (30.0, 31.0, 32.0) if confirm else (30.0, 29.0, 28.0)
+    series["lower"][22] = 69.0
+    series["cmf"][3], series["cmf"][8], series["cmf"][22] = (0.0, 0.1, 0.2) if confirm else (0.2, 0.1, 0.0)
+    series["obv"][3], series["obv"][8], series["obv"][22] = (10.0, 11.0, 12.0) if confirm else (10.0, 9.0, 8.0)
+    series["rsi"][3], series["rsi"][8], series["rsi"][22] = (30.0, 31.0, 32.0) if confirm else (30.0, 29.0, 28.0)
     monkeypatch.setattr(scanner, "indicators", lambda bars: series)
 
 
@@ -267,6 +269,37 @@ def test_analyze_qualifies_only_when_pattern_and_indicator_confirmation_align(mo
     assert result["orders_placed"] is False
 
 
+def test_analyze_rejects_pattern_without_a_current_breakout(monkeypatch):
+    from app.scanner import weekly_swing_scanner as scanner
+
+    _patch_valid_swing_indicators(monkeypatch, confirm=True)
+    bars = _weekly_swing_fixture()
+    bars[-1]["close"] = 100.0
+    result = scanner.analyze("TEST", bars)
+
+    assert result["count"] == 0
+    assert result["matches"] == []
+
+
+def test_analyze_rejects_stale_three_low_setup(monkeypatch):
+    from app.scanner import weekly_swing_scanner as scanner
+
+    _patch_valid_swing_indicators(monkeypatch, confirm=True)
+    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 13] if kind == "low" else [5, 10])
+    bars = _weekly_swing_fixture()
+    # Move the final bar far enough beyond the third low to exceed the age limit.
+    bars.extend([
+        {"week": f"2027-W{i:02d}", "open": 100.0, "high": 110.0,
+         "low": 90.0, "close": 100.0, "volume": 1000.0}
+        for i in range(30, 40)
+    ])
+    bars[-1].update(high=120.0, close=119.0)
+    result = scanner.analyze("TEST", bars)
+
+    assert result["count"] == 0
+    assert result["matches"] == []
+
+
 def test_analyze_rejects_pattern_without_any_indicator_confirmation(monkeypatch):
     from app.scanner import weekly_swing_scanner as scanner
 
@@ -283,7 +316,7 @@ def test_analyze_rejects_third_low_far_from_lower_bollinger_band(monkeypatch):
 
     _patch_valid_swing_indicators(monkeypatch, confirm=True)
     series = scanner.indicators(_weekly_swing_fixture())
-    series["lower"][13] = 40.0
+    series["lower"][22] = 40.0
     monkeypatch.setattr(scanner, "indicators", lambda bars: series)
     result = scanner.analyze("TEST", _weekly_swing_fixture())
 
@@ -395,6 +428,35 @@ def test_cached_history_is_reused_without_historical_api_call(monkeypatch, tmp_p
     assert result["history_last_day"] == day.isoformat()
 
 
+def test_scan_state_survives_restart_without_claiming_worker_is_still_running(monkeypatch, tmp_path):
+    from app.scanner import weekly_swing_scanner as scanner
+
+    monkeypatch.setattr(scanner, "_cache_root", lambda: tmp_path)
+    original_state = scanner._SCAN_STATE
+    try:
+        scanner._SCAN_STATE = {
+            "status": "running", "universe": "NIFTY 200", "total": 200,
+            "scanned": 12, "failed": 1, "matches": [{"symbol": "TEST"}],
+            "failures": [], "current_symbol": "ABC", "started_at": 100.0,
+            "finished_at": None,
+        }
+        scanner._persist_scan_state()
+        scanner._SCAN_STATE = {
+            "status": "idle", "universe": "NIFTY 200", "total": 200,
+            "scanned": 0, "failed": 0, "matches": [], "failures": [],
+            "current_symbol": None, "started_at": None, "finished_at": None,
+        }
+
+        scanner._restore_scan_state_if_idle()
+
+        assert scanner._SCAN_STATE["status"] == "failed"
+        assert scanner._SCAN_STATE["scanned"] == 12
+        assert scanner._SCAN_STATE["matches"] == [{"symbol": "TEST"}]
+        assert "Backend restarted" in scanner._SCAN_STATE["fatal_error"]
+    finally:
+        scanner._SCAN_STATE = original_state
+
+
 def test_nse_today_uses_exchange_timezone(monkeypatch):
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
@@ -449,11 +511,12 @@ def test_nse_trading_day_excludes_published_2026_holidays_and_weekends():
     assert _is_nse_trading_day(date(2026, 10, 26))  # ordinary Monday
 
 
-def test_nse_trading_day_fails_closed_for_unconfigured_future_year():
+def test_nse_trading_day_allows_weekdays_in_future_year_until_calendar_is_configured():
     from datetime import date
     from app.scanner.weekly_swing_scanner import _is_nse_trading_day
 
-    assert not _is_nse_trading_day(date(2027, 1, 4))
+    assert _is_nse_trading_day(date(2027, 1, 4))
+    assert not _is_nse_trading_day(date(2027, 1, 2))
 
 
 
