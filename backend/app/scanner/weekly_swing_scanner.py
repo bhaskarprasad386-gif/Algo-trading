@@ -328,6 +328,13 @@ def completed_weekly_bars(rows, as_of=None):
     for row in rows or []:
         try:
             day = date.fromisoformat(str(row[0])[:10])
+            if len(row) < 6:
+                continue
+            values = [float(value) for value in row[1:6]]
+            if not all(isfinite(value) for value in values):
+                continue
+            if min(values[:4]) <= 0 or values[4] < 0:
+                continue
         except (TypeError, ValueError, IndexError):
             continue
         if day <= as_of and (latest_daily_day is None or day > latest_daily_day):
