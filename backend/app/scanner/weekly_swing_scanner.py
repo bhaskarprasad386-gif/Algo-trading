@@ -98,19 +98,22 @@ def _nse_today():
 
 
 def _is_nse_trading_day(day):
-    """Return whether a date is a known NSE cash-market trading day."""
+    """Use known 2026 holidays; for other years, fall back to weekdays.
+
+    Keep the holiday snapshot updated when NSE publishes each year's calendar.
+    The weekday fallback prevents the daily scanner from being permanently
+    disabled in a new year while making the holiday-calendar limitation explicit.
+    """
     if day.weekday() >= 5:
         return False
-    if day.year == 2026:
-        return day not in NSE_CAPITAL_MARKET_HOLIDAYS
-    return False
+    if day.year == 2026 and day in NSE_CAPITAL_MARKET_HOLIDAYS:
+        return False
+    return True
 
 
 def _nse_market_is_open_now():
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
-    if now.weekday() >= 5:
-        return False
-    if now.date().year == 2026 and now.date() in NSE_CAPITAL_MARKET_HOLIDAYS:
+    if not _is_nse_trading_day(now.date()):
         return False
     return clock_time(9, 15) <= now.time() < clock_time(15, 30)
 
