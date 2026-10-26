@@ -223,7 +223,7 @@ def test_bullish_divergence_requires_indicator_higher_lows_at_price_pivots():
 def _weekly_swing_fixture():
     bars = [
         {"week": f"2026-W{i:02d}", "open": 100.0, "high": 110.0, "low": 90.0, "close": 100.0, "volume": 1000.0}
-        for i in range(30)
+        for i in range(21)
     ]
     # Three descending price swing lows with two intervening swing highs.
     for idx, low in ((3, 80.0), (8, 75.0), (13, 70.0)):
@@ -239,8 +239,8 @@ def _patch_valid_swing_indicators(monkeypatch, *, confirm=True):
     from app.scanner import weekly_swing_scanner as scanner
 
     monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 13] if kind == "low" else [5, 10])
-    series = {key: [0.0] * 30 for key in ("cmf", "obv", "rsi", "mid", "lower", "upper")}
-    for idx in range(30):
+    series = {key: [0.0] * 21 for key in ("cmf", "obv", "rsi", "mid", "lower", "upper")}
+    for idx in range(21):
         series["mid"][idx] = 105.0
         series["lower"][idx] = 60.0
         series["upper"][idx] = 130.0
