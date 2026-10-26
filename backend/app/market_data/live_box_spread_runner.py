@@ -170,12 +170,35 @@ class LiveBoxSpreadRunner:
                         continue
                     if symbol:
                         subscribed_strikes.setdefault(symbol, set()).add(strike)
+                # Log and trigger each refresh only once per recorder session. The
+                # full option consumer is detached when the ATM leaves its subscribed
+                # strike window, so the exact symbol/range is essential to diagnose churn.
+                refresh_requested = Event()
+
                 def observe(payload):
                     pipeline.observe(payload)
-                    symbol=str(payload.get("underlying") or "").upper()
+                    symbol=str(payload.get("underlying") or "").strip().upper()
                     current=self.tracker.atm(symbol,time_ns())
                     coverage = subscribed_strikes.get(symbol, set())
-                    if _atm_outside_subscribed_range(current, coverage) and self.recorder is not None:
+                    if (
+                        _atm_outside_subscribed_range(current, coverage)
+                        and self.recorder is not None
+                        and not refresh_requested.is_set()
+                    ):
+                        refresh_requested.set()
+                        app_logger.warning(
+                            "Box Spread option subscription refresh requested: "
+                            "reason=atm_outside_subscribed_range underlying={} atm_strike={} "
+                            "subscribed_min_strike={} subscribed_max_strike={} "
+                            "subscribed_strike_count={} total_subscription_count={} quote_underlying={}",
+                            symbol,
+                            current,
+                            min(coverage),
+                            max(coverage),
+                            len(coverage),
+                            len(subs),
+                            str(payload.get("underlying") or "").strip().upper(),
+                        )
                         self.recorder.stop()
                 self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
                 self.recorder.run_forever()
