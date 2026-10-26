@@ -6,6 +6,7 @@ from app.algo.auth import AngelOneAuth
 from app.core.database import SessionLocal
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.market_data.instruments import InstrumentMaster
+from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
 from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
@@ -65,7 +66,7 @@ class LiveBoxSpreadRunner:
         self.stop()
 
     def _run_session(self):
-        self.master.download()
+        download_box_spread_instruments(self.master)
         symbols=tuple(dict.fromkeys(t.underlying for t in self.targets))
         from datetime import datetime
         today = datetime.now().date()
