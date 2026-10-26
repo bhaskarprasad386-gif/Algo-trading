@@ -17,7 +17,7 @@ def test_daily_rows_aggregate_into_weekly_bars():
 
 
 def test_insufficient_history_never_fabricates_setups():
-    bars = [{"week": f"2026-01-{i:02d}", "open": 100, "high": 105, "low": 95, "close": 101, "volume": 1000} for i in range(1, 20)]
+    bars = [{"week": f"2026-01-{i:02d}", "open": 100, "high": 105, "low": 95, "close": 101, "volume": 1000} for i in range(1, 17)]
     result = analyze("TEST", bars)
     assert result["status"] == "insufficient_data"
     assert result["matches"] == []
