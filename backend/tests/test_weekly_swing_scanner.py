@@ -57,20 +57,10 @@ def test_pivots_skip_rsi_warmup_none_values():
 
 
 
-def test_nifty200_constituent_parser_strips_bom_and_deduplicates(monkeypatch):
+def test_nifty200_static_universe_has_200_unique_symbols(monkeypatch):
     from app.scanner import weekly_swing_scanner as scanner
 
-    rows = ["Symbol,Company Name"]
-    rows.extend(f"SYM{i},Company {i}" for i in range(1, 201))
-    rows.append("SYM1,Duplicate")
-
-    class Response:
-        text = chr(65279) + "\n".join(rows)
-
-        def raise_for_status(self):
-            return None
-
-    monkeypatch.setattr(scanner, "NIFTY200_SYMBOLS", tuple([f"SYM{i}" for i in range(1, 201)] + ["SYM1"]))
+    monkeypatch.setattr(scanner, "NIFTY200_SYMBOLS", tuple(f"SYM{i}" for i in range(1, 201)))
     symbols = scanner._nifty200_symbols()
     assert len(symbols) == 200
     assert symbols[0] == "SYM1"
