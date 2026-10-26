@@ -318,7 +318,6 @@ def completed_weekly_bars(rows, as_of=None):
         return bars
 
     week_start = as_of - timedelta(days=as_of.weekday())
-    week_end = week_start + timedelta(days=4)
     sessions = [day for offset in range(5)
                 if _is_nse_trading_day(day := week_start + timedelta(days=offset))]
     if not sessions:
