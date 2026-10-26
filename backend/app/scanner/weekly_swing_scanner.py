@@ -103,7 +103,8 @@ def _is_nse_trading_day(day):
         return False
     if day.year == 2026:
         return day not in NSE_CAPITAL_MARKET_HOLIDAYS
-    return False
+    # For future years, keep weekday refreshes enabled until that year's official holiday list is configured.
+    return True
 
 
 def _nse_market_is_open_now():
