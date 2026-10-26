@@ -220,86 +220,57 @@ def test_bullish_divergence_requires_indicator_higher_lows_at_price_pivots():
 
 
 
-def _weekly_swing_fixture():
+def _weekly_rsi_setup_fixture():
     bars = [
-        {"week": f"2026-W{i:02d}", "open": 100.0, "high": 110.0, "low": 90.0, "close": 100.0, "volume": 1000.0}
+        {"week": f"2026-W{i:02d}", "open": 109.0, "high": 112.0,
+         "low": 106.0, "close": 109.0, "volume": 1000.0}
         for i in range(30)
     ]
-    # Three descending price swing lows with two intervening swing highs.
-    for idx, low in ((3, 80.0), (8, 75.0), (13, 70.0)):
-        bars[idx].update(low=low, close=low + 4.0, high=low + 12.0)
-    for idx in (5, 10):
-        bars[idx].update(high=105.0, low=95.0, close=100.0)
+    # A pronounced prior decline, followed by three narrowing weekly candles
+    # and a rising RSI turn. The range percentage is descriptive, not a filter.
+    bars[24].update(open=108.0, high=110.0, low=90.0, close=105.0)
+    bars[25].update(open=105.0, high=106.0, low=100.0, close=101.0)
+    bars[26].update(open=101.0, high=102.0, low=97.0, close=98.5)
+    bars[27].update(open=98.5, high=99.5, low=98.0, close=98.8)
+    bars[28].update(open=98.8, high=99.8, low=98.3, close=99.1)
+    bars[29].update(open=99.1, high=100.1, low=98.7, close=99.4)
     return bars
 
 
-def _patch_valid_swing_indicators(monkeypatch, *, confirm=True):
-    from app.scanner import weekly_swing_scanner as scanner
+def test_weekly_rsi_scanner_finds_fall_stop_sideways_with_rising_rsi():
+    from app.scanner.weekly_swing_scanner import analyze
 
-    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 13] if kind == "low" else [5, 10])
-    series = {key: [0.0] * 30 for key in ("cmf", "obv", "rsi", "mid", "lower", "upper")}
-    for idx in range(30):
-        series["mid"][idx] = 105.0
-        series["lower"][idx] = 60.0
-        series["upper"][idx] = 130.0
-    # The third price low is one point from the lower band and both highs sit
-    # at the middle band. Indicator values align with the exact price pivots.
-    series["lower"][13] = 69.0
-    series["cmf"][3], series["cmf"][8], series["cmf"][13] = (0.0, 0.1, 0.2) if confirm else (0.2, 0.1, 0.0)
-    series["obv"][3], series["obv"][8], series["obv"][13] = (10.0, 11.0, 12.0) if confirm else (10.0, 9.0, 8.0)
-    series["rsi"][3], series["rsi"][8], series["rsi"][13] = (30.0, 31.0, 32.0) if confirm else (30.0, 29.0, 28.0)
-    monkeypatch.setattr(scanner, "indicators", lambda bars: series)
-
-
-def test_analyze_qualifies_only_when_pattern_and_indicator_confirmation_align(monkeypatch):
-    from app.scanner import weekly_swing_scanner as scanner
-
-    _patch_valid_swing_indicators(monkeypatch, confirm=True)
-    result = scanner.analyze("TEST", _weekly_swing_fixture())
+    result = analyze("TEST", _weekly_rsi_setup_fixture())
 
     assert result["status"] == "success"
     assert result["count"] == 1
     match = result["matches"][0]
-    assert [point["low"] for point in match["lows"]] == [80.0, 75.0, 70.0]
-    assert [point["high"] for point in match["intervening_highs"]] == [105.0, 105.0]
-    assert match["indicators_confirmed"] == ["CMF", "OBV", "RSI"]
-    assert match["third_low_lower_band"] == 69.0
+    assert match["signal"] == "PASS"
+    assert match["price_phase"] == "Tight Sideways"
+    assert match["rsi_rising"] is True
+    assert match["price_fall_pct"] > 0
+    assert match["sideways_range_pct"] > 0
+    assert match["timeframe"] == "Weekly"
     assert result["orders_placed"] is False
 
 
-def test_analyze_rejects_pattern_without_any_indicator_confirmation(monkeypatch):
-    from app.scanner import weekly_swing_scanner as scanner
+def test_weekly_rsi_scanner_requires_minimum_rsi_warmup_not_fixed_60_days():
+    from app.scanner.weekly_swing_scanner import analyze
 
-    _patch_valid_swing_indicators(monkeypatch, confirm=False)
-    result = scanner.analyze("TEST", _weekly_swing_fixture())
+    bars = _weekly_rsi_setup_fixture()[:16]
+    result = analyze("TEST", bars)
 
-    assert result["status"] == "success"
-    assert result["count"] == 0
+    assert result["status"] == "insufficient_data"
     assert result["matches"] == []
+    assert "17 weekly candles" in result["message"]
 
 
-def test_analyze_rejects_third_low_far_from_lower_bollinger_band(monkeypatch):
-    from app.scanner import weekly_swing_scanner as scanner
+def test_rising_helper_rejects_missing_and_flat_indicator_values():
+    from app.scanner.weekly_swing_scanner import _rising
 
-    _patch_valid_swing_indicators(monkeypatch, confirm=True)
-    series = scanner.indicators(_weekly_swing_fixture())
-    series["lower"][13] = 40.0
-    monkeypatch.setattr(scanner, "indicators", lambda bars: series)
-    result = scanner.analyze("TEST", _weekly_swing_fixture())
-
-    assert result["count"] == 0
-    assert result["matches"] == []
-
-
-def test_analyze_rejects_missing_intervening_swing_high(monkeypatch):
-    from app.scanner import weekly_swing_scanner as scanner
-
-    _patch_valid_swing_indicators(monkeypatch, confirm=True)
-    monkeypatch.setattr(scanner, "pivots", lambda values, kind: [3, 8, 13] if kind == "low" else [5])
-    result = scanner.analyze("TEST", _weekly_swing_fixture())
-
-    assert result["count"] == 0
-    assert result["matches"] == []
+    assert _rising([1.0, 2.0, 3.0], 2, 2)
+    assert not _rising([1.0, 2.0, 2.0], 2, 2)
+    assert not _rising([None, 2.0, 3.0], 2, 2)
 
 
 def test_cache_loader_sorts_deduplicates_and_rejects_malformed_rows(monkeypatch, tmp_path):
