@@ -185,7 +185,7 @@ def _scan_one_symbol(ticker, master, historical, end):
             _fetch_daily_range(instrument["token"], historical, start, finish, on_chunk=persist_chunk)
         cached_rows = [indexed[k] for k in sorted(indexed)]
 
-    result = analyze(ticker, weekly_bars(cached_rows))
+    result = analyze(ticker, completed_weekly_bars(cached_rows, end))
     if result.get("status") == "insufficient_data":
         raise ValueError("Insufficient weekly history")
     result["history_cache"] = "updated" if fetch_ranges else "reused"
@@ -301,6 +301,48 @@ def weekly_bars(rows):
         else:
             b=buckets[key]; b["high"]=max(b["high"],h); b["low"]=min(b["low"],l); b["close"]=c; b["volume"]+=v
     return [buckets[k] for k in sorted(buckets)]
+
+
+def completed_weekly_bars(rows, as_of=None):
+    """Aggregate daily candles and exclude a still-forming current week.
+
+    A weekly pivot needs a completed right-hand candle to be confirmed. The
+    scanner runs after each daily session, so the current Monday-Friday bucket
+    must not be used as that confirmation until the week's final trading session
+    has actually been downloaded. Holiday weeks use the last scheduled NSE
+    trading day known to this scanner.
+    """
+    as_of = as_of or _nse_today()
+    bars = weekly_bars(rows)
+    if not bars:
+        return bars
+
+    week_start = as_of - timedelta(days=as_of.weekday())
+    week_end = week_start + timedelta(days=4)
+    sessions = [day for offset in range(5)
+                if _is_nse_trading_day(day := week_start + timedelta(days=offset))]
+    if not sessions:
+        return bars
+    last_session = sessions[-1]
+
+    latest_daily_day = None
+    for row in rows or []:
+        try:
+            day = date.fromisoformat(str(row[0])[:10])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if day <= as_of and (latest_daily_day is None or day > latest_daily_day):
+            latest_daily_day = day
+
+    current_week_key = week_start.isoformat()
+    week_is_complete = (
+        as_of >= last_session
+        and latest_daily_day is not None
+        and latest_daily_day >= last_session
+    )
+    if week_is_complete:
+        return bars
+    return [bar for bar in bars if bar.get("week") != current_week_key]
 
 
 def pivots(values, kind):
