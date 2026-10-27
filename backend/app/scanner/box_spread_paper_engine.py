@@ -55,6 +55,49 @@ class BoxSpreadPaperExecution:
     executed_at: datetime
 
 
+
+@dataclass(frozen=True)
+class BoxSpreadPaperFillEvent:
+    idempotency_key: str
+    fill_id: str
+    role: str
+    action: PaperAction
+    quantity: int
+    fill_price: Decimal
+    notional: Decimal
+    filled_at: datetime
+
+
+@dataclass(frozen=True)
+class BoxSpreadPaperLegProgress:
+    role: str
+    action: PaperAction
+    quantity: int
+    filled_quantity: int
+    remaining_quantity: int
+    average_fill_price: Decimal | None
+    status: str
+    retry_count: int
+    cancelled: bool
+
+
+@dataclass(frozen=True)
+class BoxSpreadPaperResidualExposure:
+    role: str
+    action: PaperAction
+    quantity: int
+    signed_quantity: int
+
+
+@dataclass(frozen=True)
+class BoxSpreadPaperFillProgress:
+    idempotency_key: str
+    status: str
+    legs: tuple[BoxSpreadPaperLegProgress, ...]
+    matched_quantity: int
+    residual_exposure: tuple[BoxSpreadPaperResidualExposure, ...]
+
+
 @dataclass(frozen=True)
 class BoxSpreadPaperIntent:
     intent_id: str
@@ -111,6 +154,9 @@ class BoxSpreadPaperEngine:
         self._request_fingerprints: dict[str, tuple[object, ...]] = {}
         self._executions: dict[str, BoxSpreadPaperExecution] = {}
         self._execution_fingerprints: dict[str, tuple[tuple[str, Decimal], ...]] = {}
+        self._leg_progress: dict[str, dict[str, dict[str, object]]] = {}
+        self._fill_events: dict[tuple[str, str], BoxSpreadPaperFillEvent] = {}
+        self._fill_identities: dict[tuple[str, str], tuple[str, int, Decimal]] = {}
         self._lock = asyncio.Lock()
 
     async def create_intent(
@@ -176,6 +222,14 @@ class BoxSpreadPaperEngine:
             )
             self._intents[key] = intent
             self._request_fingerprints[key] = fingerprint
+            self._leg_progress[key] = {
+                leg.role: {
+                    "action": leg.action, "quantity": leg.quantity, "filled_quantity": 0,
+                    "fill_notional": Decimal("0"), "status": "OPEN",
+                    "retry_count": 0, "cancelled": False,
+                }
+                for leg in legs
+            }
             return intent
 
     async def execute_intent(
@@ -265,6 +319,136 @@ class BoxSpreadPaperEngine:
             self._execution_fingerprints[key] = price_fingerprint
             return execution
 
+    async def record_leg_fill(
+        self,
+        *,
+        idempotency_key: str,
+        role: str,
+        fill_id: str,
+        quantity: int,
+        fill_price: object,
+    ) -> "BoxSpreadPaperFillEvent":
+        """Record a paper partial fill idempotently without touching a broker."""
+        key = str(idempotency_key or "").strip()
+        role = str(role or "").strip()
+        event_id = str(fill_id or "").strip()
+        if not key or not event_id:
+            raise BoxSpreadPaperEngineError("intent key and fill_id are required")
+        qty = _positive_integer(quantity, name="fill quantity")
+        try:
+            price = Decimal(str(fill_price))
+        except (InvalidOperation, TypeError, ValueError):
+            raise BoxSpreadPaperEngineError("fill price must be positive") from None
+        if not price.is_finite() or price <= 0:
+            raise BoxSpreadPaperEngineError("fill price must be positive")
+
+        async with self._lock:
+            intent = self._intents.get(key)
+            if intent is None:
+                raise BoxSpreadPaperEngineError("paper intent not found")
+            if key in self._executions:
+                raise BoxSpreadPaperEngineError("intent already has a full execution")
+            leg = next((item for item in intent.legs if item.role == role), None)
+            if leg is None:
+                raise BoxSpreadPaperEngineError("unknown paper leg role")
+            identity = (key, event_id)
+            payload = (role, qty, price)
+            previous = self._fill_identities.get(identity)
+            if previous is not None:
+                if previous != payload:
+                    raise BoxSpreadPaperEngineError("fill_id reused with different fill data")
+                return self._fill_events[identity]
+
+            progress = self._leg_progress[key][role]
+            if progress["cancelled"]:
+                raise BoxSpreadPaperEngineError("cannot fill a cancelled leg")
+            remaining = leg.quantity - progress["filled_quantity"]
+            if qty > remaining:
+                raise BoxSpreadPaperEngineError("fill quantity exceeds leg remaining quantity")
+
+            event = BoxSpreadPaperFillEvent(
+                idempotency_key=key, fill_id=event_id, role=role,
+                action=leg.action, quantity=qty, fill_price=price,
+                notional=price * qty, filled_at=datetime.now(timezone.utc),
+            )
+            progress["filled_quantity"] += qty
+            progress["fill_notional"] += event.notional
+            progress["status"] = "FILLED" if progress["filled_quantity"] == leg.quantity else "PARTIALLY_FILLED"
+            self._fill_identities[identity] = payload
+            self._fill_events[identity] = event
+            return event
+
+    async def retry_leg(self, *, idempotency_key: str, role: str) -> "BoxSpreadPaperLegProgress":
+        """Mark one still-open paper leg for a retry; never submits an order."""
+        key, role = str(idempotency_key or "").strip(), str(role or "").strip()
+        async with self._lock:
+            if key not in self._intents:
+                raise BoxSpreadPaperEngineError("paper intent not found")
+            if key in self._executions:
+                raise BoxSpreadPaperEngineError("intent already has a full execution")
+            progress = self._leg_progress[key].get(role)
+            if progress is None:
+                raise BoxSpreadPaperEngineError("unknown paper leg role")
+            if progress["cancelled"]:
+                raise BoxSpreadPaperEngineError("cannot retry a cancelled leg")
+            if progress["filled_quantity"] >= progress["quantity"]:
+                raise BoxSpreadPaperEngineError("cannot retry a fully filled leg")
+            progress["retry_count"] += 1
+            return self._progress_snapshot(key, role)
+
+    async def cancel_leg(self, *, idempotency_key: str, role: str) -> "BoxSpreadPaperLegProgress":
+        """Cancel the unfilled remainder of one paper leg and preserve its exposure."""
+        key, role = str(idempotency_key or "").strip(), str(role or "").strip()
+        async with self._lock:
+            if key not in self._intents:
+                raise BoxSpreadPaperEngineError("paper intent not found")
+            if key in self._executions:
+                raise BoxSpreadPaperEngineError("intent already has a full execution")
+            progress = self._leg_progress[key].get(role)
+            if progress is None:
+                raise BoxSpreadPaperEngineError("unknown paper leg role")
+            progress["cancelled"] = True
+            progress["status"] = "CANCELLED" if progress["filled_quantity"] == 0 else "CANCELLED_WITH_RESIDUAL"
+            return self._progress_snapshot(key, role)
+
+    def _progress_snapshot(self, key: str, role: str) -> "BoxSpreadPaperLegProgress":
+        item = self._leg_progress[key][role]
+        return BoxSpreadPaperLegProgress(
+            role=role, action=item["action"], quantity=item["quantity"],
+            filled_quantity=item["filled_quantity"],
+            remaining_quantity=item["quantity"] - item["filled_quantity"],
+            average_fill_price=(item["fill_notional"] / item["filled_quantity"] if item["filled_quantity"] else None),
+            status=item["status"], retry_count=item["retry_count"], cancelled=item["cancelled"],
+        )
+
+    async def get_fill_progress(self, idempotency_key: str) -> "BoxSpreadPaperFillProgress | None":
+        key = str(idempotency_key or "").strip()
+        async with self._lock:
+            if key not in self._intents:
+                return None
+            legs = tuple(self._progress_snapshot(key, role) for role in _REQUIRED_LEG_ROLES)
+            matched = min((leg.filled_quantity for leg in legs), default=0)
+            residual = tuple(
+                BoxSpreadPaperResidualExposure(
+                    role=leg.role, action=leg.action,
+                    quantity=leg.filled_quantity - matched,
+                    signed_quantity=(leg.filled_quantity - matched) * (1 if leg.action == "BUY" else -1),
+                )
+                for leg in legs if leg.filled_quantity > matched
+            )
+            all_filled = all(leg.filled_quantity == leg.quantity for leg in legs)
+            any_filled = any(leg.filled_quantity > 0 for leg in legs)
+            any_cancelled = any(leg.cancelled for leg in legs)
+            status = "FILLED" if all_filled else (
+                "CANCELLED_WITH_RESIDUAL" if any_cancelled and any_filled else
+                "CANCELLED" if any_cancelled else
+                "PARTIALLY_FILLED" if any_filled else "OPEN"
+            )
+            return BoxSpreadPaperFillProgress(
+                idempotency_key=key, status=status, legs=legs,
+                matched_quantity=matched, residual_exposure=residual,
+            )
+
     async def get_execution(self, idempotency_key: str) -> BoxSpreadPaperExecution | None:
         async with self._lock:
             return self._executions.get(str(idempotency_key or "").strip())
@@ -284,7 +468,11 @@ __all__ = [
     "BoxSpreadPaperEngine",
     "BoxSpreadPaperEngineError",
     "BoxSpreadPaperExecution",
+    "BoxSpreadPaperFillEvent",
+    "BoxSpreadPaperFillProgress",
     "BoxSpreadPaperIntent",
+    "BoxSpreadPaperLegProgress",
+    "BoxSpreadPaperResidualExposure",
     "BoxSpreadPaperLegFill",
     "BoxSpreadPaperLegIntent",
 ]
