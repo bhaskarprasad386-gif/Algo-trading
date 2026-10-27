@@ -9,6 +9,11 @@ type Opportunity = Record<string, unknown> & {
 };
 type TrackedRow = { key: string; row: Opportunity; lastSeen: number; status: "LIVE" | "STALE" };
 
+const STALE_AFTER_MS = 1500;
+// Keep the last confirmed opportunity visible long enough to inspect it, even if
+// the backend emits it only once. Mark it STALE rather than silently removing it.
+const RETAIN_FOR_MS = 60_000;
+
 function keyOf(row: Opportunity) {
   return [row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].map(String).join("|");
 }
@@ -46,8 +51,8 @@ export default function LiveOpportunityGrid() {
       const now = Date.now();
       for (const [key, tracked] of rowsRef.current) {
         const age = now - tracked.lastSeen;
-        if (age >= 5000) rowsRef.current.delete(key);
-        else if (age >= 1500 && tracked.status !== "STALE") {
+        if (age >= RETAIN_FOR_MS) rowsRef.current.delete(key);
+        else if (age >= STALE_AFTER_MS && tracked.status !== "STALE") {
           rowsRef.current.set(key, { ...tracked, status: "STALE" });
         }
       }
@@ -112,7 +117,7 @@ export default function LiveOpportunityGrid() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold">Live Box Spread Opportunities</h2>
-          <p className="mt-1 text-xs text-slate-400">Event stream · threshold-filtered · rows retained for 5 seconds</p>
+          <p className="mt-1 text-xs text-slate-400">Event stream · threshold-filtered · last opportunity retained for 60 seconds</p>
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className={connection === "LIVE" ? "rounded-full bg-emerald-950 px-3 py-1 font-bold text-emerald-300" : "rounded-full bg-amber-950 px-3 py-1 font-bold text-amber-300"}>{connection}</span>
@@ -130,7 +135,7 @@ export default function LiveOpportunityGrid() {
               {["Status","Time (IST)","Underlying","Expiry","Low / High Strike","Direction","Box Edge","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
             <tbody>{rows.map(({ key, row, lastSeen, status }) => (
-              <tr key={key} className={"border-b border-slate-800 transition-opacity " + (status === "STALE" ? "opacity-40" : "opacity-100")}>
+              <tr key={key} className={"border-b border-slate-800 transition-opacity " + (status === "STALE" ? "opacity-60" : "opacity-100")}>
                 <td className="px-3 py-3"><span className={status === "LIVE" ? "rounded-full bg-emerald-950 px-2 py-1 font-bold text-emerald-300" : "rounded-full bg-amber-950 px-2 py-1 font-bold text-amber-300"}>{status}</span></td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums">{new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}</td>
                 <td className="px-3 py-3 font-bold">{String(row.symbol || "—")}</td>
@@ -145,7 +150,7 @@ export default function LiveOpportunityGrid() {
           </table>
         </div>
       )}
-      <p className="mt-3 text-[11px] text-slate-500">Last WebSocket message: {lastMessageAt ? new Date(lastMessageAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "waiting"} · Rows become STALE after 1.5s and are removed after 5s without updates.</p>
+      <p className="mt-3 text-[11px] text-slate-500">Last WebSocket message: {lastMessageAt ? new Date(lastMessageAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "waiting"} · Rows become STALE after 1.5s and remain visible for 60s without updates.</p>
     </section>
   );
 }
