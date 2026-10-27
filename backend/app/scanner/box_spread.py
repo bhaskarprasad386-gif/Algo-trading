@@ -1,6 +1,6 @@
 """Executable live Box Spread scanner built only from real synchronized option quotes."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import Iterable
 from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, OptionQuote
@@ -71,8 +71,6 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
     if config.min_option_volume < 0 or config.min_option_oi < 0 or config.max_option_spread_pct < 0:
         raise ValueError("invalid box liquidity policy")
     first = quotes[0]
-    if any(q.timestamp_ns != first.timestamp_ns for q in quotes):
-        raise ValueError("box option quotes must share timestamp")
     if any(q.underlying != first.underlying or q.expiry != first.expiry or q.instrument_class != cls for q in quotes):
         raise ValueError("box option quotes must share underlying, expiry and instrument class")
     by_strike = {q.strike: q for q in quotes}
@@ -92,8 +90,25 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
         if low_strike not in liquid or high_strike not in liquid:
             continue
         low, high = by_strike[low_strike], by_strike[high_strike]
+        # Validate the four original executable legs, not synthetic strike
+        # timestamps. Legacy/manual OptionQuote instances fall back to their
+        # timestamp_ns for both legs.
+        leg_timestamps = (
+            low.call_timestamp_ns if low.call_timestamp_ns is not None else low.timestamp_ns,
+            low.put_timestamp_ns if low.put_timestamp_ns is not None else low.timestamp_ns,
+            high.call_timestamp_ns if high.call_timestamp_ns is not None else high.timestamp_ns,
+            high.put_timestamp_ns if high.put_timestamp_ns is not None else high.timestamp_ns,
+        )
+        if max(leg_timestamps) - min(leg_timestamps) > 3_000_000_000:
+            continue
+        # Backtester equality remains a guard for ordinary quotes. For this
+        # scanner only, pass timestamp-aligned copies after the original four
+        # legs have passed the explicit skew check; keep originals in results.
+        anchor_ts = max(leg_timestamps)
+        eval_low = replace(low, timestamp_ns=anchor_ts)
+        eval_high = replace(high, timestamp_ns=anchor_ts)
         for direction in ("LONG", "SHORT"):
-            opp = BoxSpreadBacktester.evaluate(low, high, direction=direction, fees_per_unit=config.fees_per_unit)
+            opp = BoxSpreadBacktester.evaluate(eval_low, eval_high, direction=direction, fees_per_unit=config.fees_per_unit)
             if opp is None or opp.executable_edge < config.min_executable_edge:
                 continue
             results.append(BoxSpreadScanResult(

@@ -83,3 +83,27 @@ def test_live_box_route_normalizes_expiry_type_keys(monkeypatch):
     assert row["expiry_date"] == "2026-10-27"
     assert row["expiry_type"] == "WEEKLY"
     assert row["freshness"] == "LIVE"
+
+
+
+def test_live_box_route_rejects_skew_hidden_inside_strike_timestamps(monkeypatch):
+    now = time.time_ns()
+    result = _result(low_ts=now - 1_000_000_000, high_ts=now - 1_000_000_000)
+    result.low.call_timestamp_ns = now - 4_500_000_000
+    result.low.put_timestamp_ns = now - 1_000_000_000
+    result.high.call_timestamp_ns = now - 1_000_000_000
+    result.high.put_timestamp_ns = now - 1_000_000_000
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    assert routes.live(10, max_age_seconds=5)["count"] == 0
+
+
+def test_live_box_route_reports_actual_four_leg_skew(monkeypatch):
+    now = time.time_ns()
+    result = _result(low_ts=now - 500_000_000, high_ts=now)
+    result.low.call_timestamp_ns = now - 1_000_000_000
+    result.low.put_timestamp_ns = now - 800_000_000
+    result.high.call_timestamp_ns = now - 400_000_000
+    result.high.put_timestamp_ns = now
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    row = routes.live(10, max_age_seconds=5)["data"][0]
+    assert row["timestamp_skew_ms"] == 1000.0

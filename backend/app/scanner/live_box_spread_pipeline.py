@@ -30,7 +30,26 @@ def _snapshot_payload(result, observed_at):
         "observed_at": observed_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
-        "last_update_timestamp_ns": max(int(low.timestamp_ns), int(high.timestamp_ns)),
+        "low_call_timestamp_ns": int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
+        "low_put_timestamp_ns": int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
+        "high_call_timestamp_ns": int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
+        "high_put_timestamp_ns": int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns),
+        "last_update_timestamp_ns": max(
+            int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
+            int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
+            int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
+            int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns),
+        ),
+        "timestamp_skew_ms": round((
+            max(int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
+                int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
+                int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
+                int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns))
+            - min(int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
+                  int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
+                  int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
+                  int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns))
+        ) / 1_000_000, 3),
         "low_call_ltp": getattr(low, "call_ltp", None),
         "low_call_bid": low.call_bid,
         "low_call_ask": low.call_ask,

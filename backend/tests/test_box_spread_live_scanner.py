@@ -150,3 +150,46 @@ def test_box_scanner_does_not_replace_newer_leg_with_out_of_order_quote():
         t + 1_300_000_000, 110, "PE", bid=102, ask=102.1
     ))
     assert any(result.direction == "LONG" for result in results)
+
+
+
+def test_box_pair_rejects_four_leg_timestamp_skew_over_three_seconds():
+    from dataclasses import replace
+
+    low = replace(q(1, 100, 100, 100.1, 99.1, 99.2),
+                  call_timestamp_ns=10_000_000_000,
+                  put_timestamp_ns=10_100_000_000)
+    high = replace(q(1, 110, 98.1, 98.2, 102, 102.1),
+                   call_timestamp_ns=10_200_000_000,
+                   put_timestamp_ns=13_500_000_000)
+    result = scan_box_snapshot(
+        [low, high], atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=5.0,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    assert result == ()
+
+
+def test_box_pair_accepts_four_leg_timestamp_skew_within_three_seconds():
+    from dataclasses import replace
+
+    low = replace(q(1, 100, 100, 100.1, 99.1, 99.2),
+                  call_timestamp_ns=10_000_000_000,
+                  put_timestamp_ns=10_100_000_000)
+    high = replace(q(1, 110, 98.1, 98.2, 102, 102.1),
+                   call_timestamp_ns=11_200_000_000,
+                   put_timestamp_ns=12_000_000_000)
+    result = scan_box_snapshot(
+        [low, high], atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=5.0,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    assert any(item.direction == "LONG" for item in result)
+    assert result[0].low.call_timestamp_ns == 10_000_000_000
+    assert result[0].high.put_timestamp_ns == 12_000_000_000

@@ -8,7 +8,7 @@ ArbitrageKind = Literal["BOX", "SYNTHETIC_CASH_CARRY", "CASH_CARRY"]
 
 @dataclass(frozen=True)
 class OptionQuote:
-    timestamp_ns:int; underlying:str; expiry:int; strike:float; call_bid:float; call_ask:float; put_bid:float; put_ask:float; lot_size:int=1; instrument_class:Literal["STOCK","INDEX"]="STOCK"; volume:int=0; oi:int=0; call_ltp:float|None=None; put_ltp:float|None=None
+    timestamp_ns:int; underlying:str; expiry:int; strike:float; call_bid:float; call_ask:float; put_bid:float; put_ask:float; lot_size:int=1; instrument_class:Literal["STOCK","INDEX"]="STOCK"; volume:int=0; oi:int=0; call_ltp:float|None=None; put_ltp:float|None=None; call_timestamp_ns:int|None=None; put_timestamp_ns:int|None=None
 
 @dataclass(frozen=True)
 class FutureQuote:
