@@ -67,6 +67,7 @@ from app.backtesting.calendar_spread_strategy_routes import router as calendar_s
 from app.backtesting.universal_factory import create_universal_ledger
 from app.backtesting.universal_result_routes import create_universal_result_router
 from app.backtesting.universal_result_service import UniversalResultService
+from app.scanner import box_spread_paper_ledger as _box_spread_paper_ledger_models  # noqa: F401
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
