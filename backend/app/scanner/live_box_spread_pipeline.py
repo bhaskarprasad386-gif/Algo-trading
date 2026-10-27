@@ -1,12 +1,15 @@
 """Live Box Spread scanner -> durable snapshots, alerts and notifications."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.config import settings
-from app.models import LiveBoxSpreadSnapshot
+from app.models import LiveBoxSpreadSnapshot, LiveBoxSpreadSnapshotKey
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.notifications.box_spread_alerts import BoxSpreadAlertService
 
@@ -85,11 +88,9 @@ class LiveBoxSpreadPipeline:
             with self.session_factory() as db:
                 now = datetime.now(timezone.utc)
                 retention_days = max(1, int(getattr(settings, "LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS", 7)))
-                db.query(LiveBoxSpreadSnapshot).filter(
-                    LiveBoxSpreadSnapshot.observed_at < now - timedelta(days=retention_days)
-                ).delete(synchronize_session=False)
-
-                candidate_rows = []
+                cutoff = now - timedelta(days=retention_days)
+                db.query(LiveBoxSpreadSnapshot).filter(LiveBoxSpreadSnapshot.observed_at < cutoff).delete(synchronize_session=False)
+                db.query(LiveBoxSpreadSnapshotKey).filter(LiveBoxSpreadSnapshotKey.created_at < cutoff).delete(synchronize_session=False)
                 batch_keys = set()
                 for result in results:
                     observed_at = datetime.now(timezone.utc)
@@ -98,37 +99,33 @@ class LiveBoxSpreadPipeline:
                     if key in batch_keys:
                         continue
                     batch_keys.add(key)
-                    candidate_rows.append((key, row, observed_at))
-
-                # The same quote event may be processed more than once. Avoid
-                # writing identical history rows while allowing every new quote
-                # timestamp to create a new observation.
-                existing_keys = set()
-                for key, row, _ in candidate_rows:
-                    exists = db.query(LiveBoxSpreadSnapshot.id).filter(
-                        LiveBoxSpreadSnapshot.symbol == str(row["symbol"]),
-                        LiveBoxSpreadSnapshot.expiry == int(row["expiry"]),
-                        LiveBoxSpreadSnapshot.low_strike == float(row["low_strike"]),
-                        LiveBoxSpreadSnapshot.high_strike == float(row["high_strike"]),
-                        LiveBoxSpreadSnapshot.direction == str(row["direction"]),
-                        LiveBoxSpreadSnapshot.timestamp_ns == int(row["last_update_timestamp_ns"]),
-                    ).first()
-                    if exists:
-                        existing_keys.add(key)
-
-                for key, row, observed_at in candidate_rows:
-                    if key in existing_keys:
+                    digest = hashlib.sha256(json.dumps(key, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+                    try:
+                        with db.begin_nested():
+                            db.add(LiveBoxSpreadSnapshotKey(snapshot_key=digest, created_at=observed_at))
+                            db.flush()
+                            exists = db.query(LiveBoxSpreadSnapshot.id).filter(
+                                LiveBoxSpreadSnapshot.symbol == str(row["symbol"]).strip().upper(),
+                                LiveBoxSpreadSnapshot.expiry == int(row["expiry"]),
+                                LiveBoxSpreadSnapshot.low_strike == float(row["low_strike"]),
+                                LiveBoxSpreadSnapshot.high_strike == float(row["high_strike"]),
+                                LiveBoxSpreadSnapshot.direction == str(row["direction"]).strip().upper(),
+                                LiveBoxSpreadSnapshot.timestamp_ns == int(row["last_update_timestamp_ns"]),
+                            ).first()
+                            if not exists:
+                                db.add(LiveBoxSpreadSnapshot(
+                                    observed_at=observed_at,
+                                    timestamp_ns=int(row["last_update_timestamp_ns"]),
+                                    symbol=str(row["symbol"]).strip().upper(),
+                                    expiry=int(row["expiry"]),
+                                    low_strike=float(row["low_strike"]),
+                                    high_strike=float(row["high_strike"]),
+                                    direction=str(row["direction"]).strip().upper(),
+                                    payload_json=json.dumps(row, separators=(",", ":"), allow_nan=False),
+                                ))
+                                db.flush()
+                    except IntegrityError:
                         continue
-                    db.add(LiveBoxSpreadSnapshot(
-                        observed_at=observed_at,
-                        timestamp_ns=int(row["last_update_timestamp_ns"]),
-                        symbol=str(row["symbol"]),
-                        expiry=int(row["expiry"]),
-                        low_strike=float(row["low_strike"]),
-                        high_strike=float(row["high_strike"]),
-                        direction=str(row["direction"]),
-                        payload_json=json.dumps(row, separators=(",", ":"), allow_nan=False),
-                    ))
                 db.commit()
         except Exception:
             logger.exception("Failed to persist Box Spread snapshots")
