@@ -14,6 +14,7 @@ from app.core.database import SessionLocal
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS
+from app.scanner.live_box_spread_routes import live as live_box_spread_opportunities
 from app.scanner.box_spread_contract_resolver import (
     BoxSpreadContractResolutionError, resolve_box_spread_contracts,
 )
@@ -41,7 +42,8 @@ class CreatePaperTrade(BaseModel):
 
 
 class SimulateEntry(BaseModel):
-    reference_prices: dict[str, float]
+    # Accepted for client compatibility, but never trusted as the execution price source.
+    reference_prices: dict[str, float] | None = None
     account_key: str = Field(default="default", min_length=1, max_length=128)
 
 
@@ -84,7 +86,7 @@ def _resolve(payload: CreatePaperTrade):
 
 
 def _error(exc: Exception):
-    if isinstance(exc, (ValueError, BoxSpreadContractResolutionError, BoxSpreadPaperEngineError)):
+    if isinstance(exc, (ValueError, LookupError, BoxSpreadContractResolutionError, BoxSpreadPaperEngineError)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise HTTPException(status_code=503, detail="Instrument master or paper ledger is temporarily unavailable") from exc
 
@@ -168,11 +170,31 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
                 account_key=payload.account_key,
             )
         contracts = _resolve(request)
+        live_snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
+        current_row = next((
+            row for row in live_snapshot.get("data", [])
+            if str(row.get("symbol", "")).strip().upper() == contracts.underlying
+            and str(row.get("instrument_class", "")).strip().upper() == contracts.instrument_class
+            and str(row.get("expiry_date") or row.get("expiry") or "")[:10] == contracts.expiry
+            and abs(float(row.get("low_strike", 0)) - contracts.low_strike) < 0.0001
+            and abs(float(row.get("high_strike", 0)) - contracts.high_strike) < 0.0001
+            and str(row.get("direction", "")).strip().upper() == contracts.direction
+        ), None)
+        if current_row is None:
+            raise HTTPException(status_code=409, detail="No matching fresh live Box Spread opportunity; paper execution was not started")
+        # Never trust prices posted by the browser. Use the current backend scanner
+        # row, which has already passed the five-second four-leg freshness check.
+        reference_prices = {
+            "LOW_CE": current_row["low_call_price"],
+            "HIGH_CE": current_row["high_call_price"],
+            "HIGH_PE": current_row["high_put_price"],
+            "LOW_PE": current_row["low_put_price"],
+        }
         await _engine.create_intent(
             contracts=contracts, lots=request.lots, idempotency_key=request.idempotency_key,
         )
         execution = await _engine.execute_intent(
-            idempotency_key=request.idempotency_key, reference_prices=payload.reference_prices,
+            idempotency_key=request.idempotency_key, reference_prices=reference_prices,
         )
         receipts = []
         for fill in execution.fills:
