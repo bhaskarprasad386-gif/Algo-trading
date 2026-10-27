@@ -1,7 +1,7 @@
 """Production Box Spread live runner using Angel One option ticks."""
 from __future__ import annotations
 from threading import Thread, Event
-from time import time_ns, sleep
+from time import time_ns, sleep, monotonic
 from app.algo.auth import AngelOneAuth
 from app.core.database import SessionLocal
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
@@ -35,9 +35,11 @@ def _atm_outside_subscribed_range(atm_strike, subscribed_strikes):
         return False
     return float(atm_strike) < min(subscribed_strikes) or float(atm_strike) > max(subscribed_strikes)
 
+
 class BoxSpreadLiveTarget:
     def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None):
         self.underlying=underlying.strip().upper(); self.instrument_class=instrument_class.strip().upper(); self.expiry=expiry
+
 
 class LiveBoxSpreadRunner:
     def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None):
@@ -45,6 +47,37 @@ class LiveBoxSpreadRunner:
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None
         self._readiness = {"state": "starting", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
+
+    @staticmethod
+    def _feed_is_down(feed) -> bool:
+        """Return True only when the common manager has active intent but no live socket.
+
+        The common manager owns reconnects, but a failed transport can leave the
+        strategy recorder waiting indefinitely for callbacks. The runner therefore
+        treats a sustained zero-connected-group state as a session failure so the
+        recorder is detached and a fresh session can re-register the exact box
+        subscriptions. A short reconnect window is deliberately tolerated.
+        """
+        if feed is None:
+            return False
+        try:
+            snapshot = feed.snapshot() or {}
+        except Exception:
+            return False
+        if not isinstance(snapshot, dict):
+            return False
+        if int(snapshot.get("active_instruments", 0) or 0) <= 0:
+            return False
+        connected = snapshot.get("connected_groups")
+        pending = snapshot.get("connect_pending_groups")
+        disconnected = snapshot.get("disconnected_groups")
+        if connected is None:
+            return False
+        if connected:
+            return False
+        if pending:
+            return False
+        return bool(disconnected) or int(snapshot.get("socket_groups", 0) or 0) == 0
 
     def run_forever(self):
         retry_delay = 5.0
@@ -179,7 +212,20 @@ class LiveBoxSpreadRunner:
                     if _atm_outside_subscribed_range(current, coverage) and self.recorder is not None:
                         self.recorder.stop()
                 self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
-                self.recorder.run_forever()
+                down_since = None
+                while not self.stop_event.is_set() and self.recorder is not None and not self.recorder.stop_event.is_set():
+                    if self._feed_is_down(self.recorder._feed):
+                        if down_since is None:
+                            down_since = monotonic()
+                        elif monotonic() - down_since >= 15.0:
+                            raise ConnectionError("Box Spread common WebSocket stayed disconnected for 15s")
+                    else:
+                        down_since = None
+                    # The recorder normally owns this loop; run it in the same
+                    # session thread so its cleanup remains deterministic.
+                    self.recorder._flush_completed_buckets()
+                    sleep(self.recorder.poll_seconds)
+                self.recorder.stop()
                 self.recorder=None
         finally:
             # Clean up this session without marking the whole runner stopped.
