@@ -170,9 +170,12 @@ class LiveBoxSpreadPipeline:
                         fresh_rows.append(row)
                     _append_spool(fresh_rows)
                 pending_rows = _read_spool()
-            except Exception:
-                logger.exception("Failed to enqueue/read Box Spread durable local spool")
-                pending_rows = []
+            except Exception as exc:
+                # Never report a successful observation after failing to durably
+                # enqueue it. Keep the scanner caller informed; any existing spool
+                # contents remain untouched and can be replayed on the next pass.
+                logger.exception("CRITICAL: failed to enqueue/read Box Spread durable local spool; qualifying observations may not be persisted")
+                raise RuntimeError("Box Spread opportunity could not be durably queued") from exc
     
             if pending_rows and self.session_factory:
                 for attempt in range(3):

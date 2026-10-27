@@ -106,7 +106,9 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     from app.market_data import live_synthetic_stream as stream
     from time import time_ns
 
-    base_timestamp = (time_ns() // 1_000_000_000 - 3) * 1_000_000_000 + 50_000_000
+    # Keep fixture ticks within the recorder's five-second freshness window,
+    # even when the CI runner is busy before the fake socket connects.
+    base_timestamp = (time_ns() // 1_000_000_000 - 1) * 1_000_000_000 + 50_000_000
 
     collector = LiveSyntheticOptionFutureRecorder(
         str(tmp_path / "synthetic.db"),
