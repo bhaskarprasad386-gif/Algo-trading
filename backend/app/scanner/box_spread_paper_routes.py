@@ -123,6 +123,39 @@ def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict
     raise ValueError("direction must be LONG or SHORT")
 
 
+def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> float:
+    """Use the executable opposite quote side to close an existing paper leg."""
+    entry_prices = _reference_prices_for_direction(row, direction)
+    exit_sides = {
+        "LOW_CE": "low_call_bid" if direction == "LONG" else "low_call_ask",
+        "HIGH_CE": "high_call_ask" if direction == "LONG" else "high_call_bid",
+        "HIGH_PE": "high_put_bid" if direction == "LONG" else "high_put_ask",
+        "LOW_PE": "low_put_ask" if direction == "LONG" else "low_put_bid",
+    }
+    if role not in exit_sides:
+        raise HTTPException(status_code=422, detail="unknown paper leg role")
+    try:
+        price = float(row[exit_sides[role]])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=409, detail="fresh executable exit quote is unavailable") from None
+    if not (price > 0 and price < float("inf")):
+        raise HTTPException(status_code=409, detail="fresh executable exit quote is unavailable")
+    return price
+
+
+def _matching_live_row(contracts) -> dict[str, Any] | None:
+    snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
+    return next((
+        row for row in snapshot.get("data", [])
+        if str(row.get("symbol", "")).strip().upper() == contracts.underlying
+        and str(row.get("instrument_class", "")).strip().upper() == contracts.instrument_class
+        and _canonical_expiry(row.get("expiry_date") or row.get("expiry")) == _canonical_expiry(contracts.expiry)
+        and abs(float(row.get("low_strike", 0)) - contracts.low_strike) < 0.0001
+        and abs(float(row.get("high_strike", 0)) - contracts.high_strike) < 0.0001
+        and str(row.get("direction", "")).strip().upper() == contracts.direction
+    ), None)
+
+
 def _engine_key(*, trade_id: int, account_key: str, idempotency_key: str) -> str:
     """Namespace in-memory engine keys by persistent trade and paper account."""
     account_digest = hashlib.sha256(account_key.encode("utf-8")).hexdigest()[:16]
@@ -294,9 +327,22 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
 @router.post("/trades/{trade_id}/exit")
 def exit_leg(trade_id: int, payload: ExitLeg):
     try:
+        # Never trust browser-entered exit prices. Resolve this persisted trade
+        # and require its matching fresh four-leg scanner row, just like entry.
+        request = _load_trade_request(trade_id, payload.account_key)
+        contracts = _resolve(request)
+        current_row = _matching_live_row(contracts)
+        if current_row is None:
+            raise HTTPException(
+                status_code=409,
+                detail="No matching fresh live Box Spread opportunity; paper exit was not recorded",
+            )
+        executable_price = _exit_reference_price(
+            current_row, contracts.direction, payload.role,
+        )
         receipt = _ledger.record_exit_fill(
             trade_id=trade_id, fill_id=payload.fill_id, role=payload.role,
-            quantity=payload.quantity, fill_price=payload.fill_price,
+            quantity=payload.quantity, fill_price=executable_price,
             account_key=payload.account_key,
         )
         summary = _ledger.get_trade_summary(trade_id, account_key=payload.account_key)
