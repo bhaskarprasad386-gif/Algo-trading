@@ -174,10 +174,11 @@ def test_paper_execution_uses_nonblocking_configured_latency(monkeypatch):
         engine = BoxSpreadPaperEngine()
         await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="latency-check")
         waits = []
+        original_sleep = asyncio.sleep
 
         async def fake_sleep(delay):
             waits.append(delay)
-            await asyncio.sleep(0)
+            await original_sleep(0)
 
         monkeypatch.setattr("app.scanner.box_spread_paper_engine.asyncio.sleep", fake_sleep)
         execution = await engine.execute_intent(
