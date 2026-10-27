@@ -369,8 +369,8 @@ class BoxSpreadPaperLedger:
             action = "SELL" if signed_position > 0 else "BUY"
             charges = self.fee_schedule.calculate(action=action, notional=notional)
             cash_delta = (-notional if action == "BUY" else notional) - charges
-            if cash_delta < 0 and Decimal(account.virtual_balance) + cash_delta < 0:
-                raise ValueError("insufficient virtual balance for exit")
+            # Closing/settlement must remain possible even if the virtual account is
+            # underwater; record the liability instead of stranding exposure.
             entry = BoxSpreadPaperLedgerEntry(
                 account_key=key, trade_id=trade.id, entry_key=entry_key,
                 fill_id=stored_fill_id, role=role, action=action, quantity=qty,
