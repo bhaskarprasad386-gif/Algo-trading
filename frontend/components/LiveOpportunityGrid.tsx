@@ -46,7 +46,7 @@ export default function LiveOpportunityGrid() {
       const now = Date.now();
       for (const [key, tracked] of rowsRef.current) {
         const age = now - tracked.lastSeen;
-        if (age >= 5000) rowsRef.current.delete(key);
+        if (age >= 60000) rowsRef.current.delete(key);
         else if (age >= 1500 && tracked.status !== "STALE") {
           rowsRef.current.set(key, { ...tracked, status: "STALE" });
         }
@@ -112,7 +112,7 @@ export default function LiveOpportunityGrid() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold">Live Box Spread Opportunities</h2>
-          <p className="mt-1 text-xs text-slate-400">Event stream · threshold-filtered · rows retained for 5 seconds</p>
+          <p className="mt-1 text-xs text-slate-400">Event stream · threshold-filtered · rows retained for 60 seconds</p>
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className={connection === "LIVE" ? "rounded-full bg-emerald-950 px-3 py-1 font-bold text-emerald-300" : "rounded-full bg-amber-950 px-3 py-1 font-bold text-amber-300"}>{connection}</span>
@@ -145,7 +145,7 @@ export default function LiveOpportunityGrid() {
           </table>
         </div>
       )}
-      <p className="mt-3 text-[11px] text-slate-500">Last WebSocket message: {lastMessageAt ? new Date(lastMessageAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "waiting"} · Rows become STALE after 1.5s and are removed after 5s without updates.</p>
+      <p className="mt-3 text-[11px] text-slate-500">Last WebSocket message: {lastMessageAt ? new Date(lastMessageAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "waiting"} · Rows become STALE after 1.5s and are removed after 60s without updates.</p>
     </section>
   );
 }
