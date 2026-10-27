@@ -78,12 +78,16 @@ def test_timestamp_mismatch_is_rejected():
     chain = make_chain((1,))
     x = chain[0]
     mismatched = OptionQuote(
-        x.timestamp_ns + 1, x.underlying, x.expiry, x.strike,
+        x.timestamp_ns, x.underlying, x.expiry, x.strike,
         x.call_bid, x.call_ask, x.put_bid, x.put_ask, x.lot_size,
         x.instrument_class, x.volume, x.oi,
+        call_timestamp_ns=x.timestamp_ns + 4_000_000_000,
+        put_timestamp_ns=x.timestamp_ns,
     )
-    try:
-        scan_box_snapshot([mismatched, *chain[1:]], atm_strike=100, instrument_class="INDEX")
-    except ValueError:
-        return
-    raise AssertionError("timestamp mismatch must be rejected")
+    results = scan_box_snapshot(
+        [mismatched, *chain[1:]],
+        atm_strike=100,
+        instrument_class="INDEX",
+        policy=ScanPolicy(index_box_distances=(1,)),
+    )
+    assert not results
