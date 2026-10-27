@@ -125,7 +125,6 @@ def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict
 
 def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> float:
     """Use the executable opposite quote side to close an existing paper leg."""
-    entry_prices = _reference_prices_for_direction(row, direction)
     exit_sides = {
         "LOW_CE": "low_call_bid" if direction == "LONG" else "low_call_ask",
         "HIGH_CE": "high_call_ask" if direction == "LONG" else "high_call_bid",
