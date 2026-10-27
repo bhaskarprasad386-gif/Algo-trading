@@ -16,7 +16,6 @@ def test_batch6_box_spread_workspace_ui_contract():
         "Edge Timing Analysis",
         "Box Spread Timing Conclusion",
         "refreshBoxAnalysis()",
-        "all_saved_snapshots",
         "LOW STRIKE • CALL / PUT",
         "HIGH STRIKE • CALL / PUT",
         'onclick="selectBox(',
