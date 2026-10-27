@@ -83,22 +83,26 @@ class LiveBoxSpreadScanner:
                         or pe_bid is None or pe_ask is None or pe_ask < pe_bid
                     ):
                         continue
+                    ce_ts = int(ce.get("source_timestamp_ns") or 0)
+                    pe_ts = int(pe.get("source_timestamp_ns") or 0)
                     grouped.append(OptionQuote(
-                        ts,symbol,ce_expiry,s,
+                        max(ce_ts, pe_ts),symbol,ce_expiry,s,
                         ce_bid, ce_ask, pe_bid, pe_ask,
                         ce_lot,cls,
                         # Use the weaker CE/PE leg so one liquid side cannot
                         # mask an illiquid side in the four-leg structure.
                         min(int(float(ce.get("volume") or 0)), int(float(pe.get("volume") or 0))),
                         min(int(float(ce.get("oi") or 0)), int(float(pe.get("oi") or 0))),
-                        self._price(ce.get("ltp")), self._price(pe.get("ltp"))
+                        self._price(ce.get("ltp")), self._price(pe.get("ltp")),
+                        ce_ts, pe_ts,
                     ))
                 except (ValueError,TypeError): continue
             timestamps=[int(value.get("source_timestamp_ns") or 0) for value in bucket.values() if isinstance(value,dict)]
-            if not timestamps or max(timestamps)-min(timestamps)>self.TIMESTAMP_TOLERANCE_NS:
+            if not timestamps:
                 self._prune(ts); return ()
+            # Bucket age only controls delayed-leg assembly. Synchronization is
+            # checked later per candidate box using its four original leg times.
             anchor_ts=max(timestamps)
-            grouped=[OptionQuote(anchor_ts,symbol,q.expiry,q.strike,q.call_bid,q.call_ask,q.put_bid,q.put_ask,q.lot_size,q.instrument_class,q.volume,q.oi,q.call_ltp,q.put_ltp) for q in grouped]
             atm=self.atm_provider(symbol,anchor_ts)
             if atm is None or not grouped:
                 self._prune(ts); return ()
