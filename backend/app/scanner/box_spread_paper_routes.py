@@ -149,7 +149,7 @@ def create_trade(payload: CreatePaperTrade):
             "trade_id": trade.id, "status": trade.status,
             "idempotency_key": trade.idempotency_key,
             "contracts": _contract_payload(contracts),
-            "next_step": "Submit four reference prices to the paper execution endpoint; no broker order is sent.",
+            "next_step": "Run paper simulation against fresh backend Box Spread quotes; no broker order is sent.",
         }
     except Exception as exc:
         _error(exc)
