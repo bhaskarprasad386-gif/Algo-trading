@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -86,9 +86,21 @@ def _resolve(payload: CreatePaperTrade):
 
 
 def _error(exc: Exception):
+    if isinstance(exc, HTTPException):
+        raise exc
     if isinstance(exc, (ValueError, LookupError, BoxSpreadContractResolutionError, BoxSpreadPaperEngineError)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise HTTPException(status_code=503, detail="Instrument master or paper ledger is temporarily unavailable") from exc
+
+
+def _canonical_expiry(value: object) -> str:
+    text = str(value or "").strip().upper()
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%d%b%Y", "%d%b%y", "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %b %y"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return text
 
 
 def _contract_payload(contracts) -> list[dict[str, Any]]:
@@ -175,7 +187,7 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
             row for row in live_snapshot.get("data", [])
             if str(row.get("symbol", "")).strip().upper() == contracts.underlying
             and str(row.get("instrument_class", "")).strip().upper() == contracts.instrument_class
-            and str(row.get("expiry_date") or row.get("expiry") or "")[:10] == contracts.expiry
+            and _canonical_expiry(row.get("expiry_date") or row.get("expiry")) == _canonical_expiry(contracts.expiry)
             and abs(float(row.get("low_strike", 0)) - contracts.low_strike) < 0.0001
             and abs(float(row.get("high_strike", 0)) - contracts.high_strike) < 0.0001
             and str(row.get("direction", "")).strip().upper() == contracts.direction
@@ -184,12 +196,22 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
             raise HTTPException(status_code=409, detail="No matching fresh live Box Spread opportunity; paper execution was not started")
         # Never trust prices posted by the browser. Use the current backend scanner
         # row, which has already passed the five-second four-leg freshness check.
-        reference_prices = {
-            "LOW_CE": current_row["low_call_price"],
-            "HIGH_CE": current_row["high_call_price"],
-            "HIGH_PE": current_row["high_put_price"],
-            "LOW_PE": current_row["low_put_price"],
-        }
+        # Map executable bid/ask sides by each paper leg action. Never feed a
+        # sell-side quote into a simulated BUY (or vice versa).
+        if contracts.direction == "LONG":
+            reference_prices = {
+                "LOW_CE": current_row["low_call_ask"],
+                "HIGH_CE": current_row["high_call_bid"],
+                "HIGH_PE": current_row["high_put_ask"],
+                "LOW_PE": current_row["low_put_bid"],
+            }
+        else:
+            reference_prices = {
+                "LOW_CE": current_row["low_call_bid"],
+                "HIGH_CE": current_row["high_call_ask"],
+                "HIGH_PE": current_row["high_put_bid"],
+                "LOW_PE": current_row["low_put_ask"],
+            }
         await _engine.create_intent(
             contracts=contracts, lots=request.lots, idempotency_key=request.idempotency_key,
         )
