@@ -45,6 +45,12 @@ class SimulateEntry(BaseModel):
     account_key: str = Field(default="default", min_length=1, max_length=128)
 
 
+class ExpirySettlement(BaseModel):
+    settlement_date: date
+    settlement_prices: dict[str, float]
+    account_key: str = Field(default="default", min_length=1, max_length=128)
+
+
 class ExitLeg(BaseModel):
     role: str
     quantity: int = Field(ge=1)
@@ -214,6 +220,28 @@ def exit_leg(trade_id: int, payload: ExitLeg):
                 "virtual_balance": str(receipt.virtual_balance),
             },
             "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
+        }
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/trades/{trade_id}/settle-expiry")
+def settle_expiry(trade_id: int, payload: ExpirySettlement):
+    try:
+        result = _ledger.settle_expiry(
+            trade_id=trade_id, settlement_prices=payload.settlement_prices,
+            settlement_date=payload.settlement_date, account_key=payload.account_key,
+        )
+        return {
+            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+            "trade_id": trade_id, "settlement_date": result["settlement_date"],
+            "settled_legs": result["settled_legs"], "status": result["status"],
+            "receipts": [{
+                "role": receipt.role, "action": receipt.action,
+                "quantity": receipt.quantity, "fill_price": str(receipt.fill_price),
+                "charges": str(receipt.charges), "cash_delta": str(receipt.cash_delta),
+                "virtual_balance": str(receipt.virtual_balance),
+            } for receipt in result["receipts"]],
         }
     except Exception as exc:
         _error(exc)
