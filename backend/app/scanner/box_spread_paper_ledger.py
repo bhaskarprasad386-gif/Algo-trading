@@ -447,12 +447,50 @@ class BoxSpreadPaperLedger:
                 BoxSpreadPaperTradeRecord.account_key == key,
                 BoxSpreadPaperTradeRecord.status.notin_(("CLOSED", "CANCELLED")),
             ).order_by(BoxSpreadPaperTradeRecord.created_at, BoxSpreadPaperTradeRecord.id)).all()
-            return [
-                {"trade_id": trade.id, "idempotency_key": trade.idempotency_key,
-                 "underlying": trade.underlying, "expiry": trade.expiry,
-                 "status": trade.status, "quantity": trade.quantity}
-                for trade in trades
-            ]
+            recovered = []
+            for trade in trades:
+                entries = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                    BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+                    BoxSpreadPaperLedgerEntry.account_key == key,
+                ).order_by(BoxSpreadPaperLedgerEntry.id)).all()
+                legs = []
+                for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
+                    role_entries = [entry for entry in entries if entry.role == role]
+                    entry_fills = [
+                        entry for entry in role_entries
+                        if not entry.fill_id.startswith(("EXIT:", "SETTLE:"))
+                    ]
+                    exit_fills = [
+                        entry for entry in role_entries
+                        if entry.fill_id.startswith(("EXIT:", "SETTLE:"))
+                    ]
+                    entry_filled = sum(entry.quantity for entry in entry_fills)
+                    exited = sum(entry.quantity for entry in exit_fills)
+                    legs.append({
+                        "role": role,
+                        "expected_quantity": trade.quantity,
+                        "entry_filled_quantity": entry_filled,
+                        "entry_remaining_quantity": max(0, trade.quantity - entry_filled),
+                        "exited_quantity": exited,
+                        "open_position_quantity": max(0, entry_filled - exited),
+                        "fills": [{
+                            "fill_id": entry.fill_id,
+                            "action": entry.action,
+                            "quantity": entry.quantity,
+                            "fill_price": str(entry.fill_price),
+                            "created_at": entry.created_at.isoformat(),
+                        } for entry in role_entries],
+                    })
+                recovered.append({
+                    "trade_id": trade.id,
+                    "idempotency_key": trade.idempotency_key,
+                    "underlying": trade.underlying,
+                    "expiry": trade.expiry,
+                    "status": trade.status,
+                    "quantity": trade.quantity,
+                    "legs": legs,
+                })
+            return recovered
 
     def get_account_summary(self, account_key: str = "default") -> dict[str, Decimal | int | str]:
         key = self._account_key(account_key)
