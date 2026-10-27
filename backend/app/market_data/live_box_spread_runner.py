@@ -17,8 +17,6 @@ from app.scanner.box_spread import BoxSpreadScanConfig
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
-# Only these index opportunities are enabled. Edge must be strictly greater
-# than the per-index threshold (in index points), before appearing or saving.
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
     "FINNIFTY": 5.0,
@@ -49,21 +47,9 @@ class LiveBoxSpreadRunner:
         self._readiness = {"state": "starting", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
 
     @staticmethod
-    def _feed_is_down(feed) -> bool:
-        """Return True only when the common manager has active intent but no live socket.
-
-        The common manager owns reconnects, but a failed transport can leave the
-        strategy recorder waiting indefinitely for callbacks. The runner therefore
-        treats a sustained zero-connected-group state as a session failure so the
-        recorder is detached and a fresh session can re-register the exact box
-        subscriptions. A short reconnect window is deliberately tolerated.
-        """
-        if feed is None:
-            return False
-        try:
-            snapshot = feed.snapshot() or {}
-        except Exception:
-            return False
+    def _feed_is_down(feed_snapshot) -> bool:
+        """Detect a sustained no-socket state without fighting the manager's reconnect window."""
+        snapshot = feed_snapshot or {}
         if not isinstance(snapshot, dict):
             return False
         if int(snapshot.get("active_instruments", 0) or 0) <= 0:
@@ -71,11 +57,7 @@ class LiveBoxSpreadRunner:
         connected = snapshot.get("connected_groups")
         pending = snapshot.get("connect_pending_groups")
         disconnected = snapshot.get("disconnected_groups")
-        if connected is None:
-            return False
-        if connected:
-            return False
-        if pending:
+        if connected is None or connected or pending:
             return False
         return bool(disconnected) or int(snapshot.get("socket_groups", 0) or 0) == 0
 
@@ -188,7 +170,6 @@ class LiveBoxSpreadRunner:
                 scanner=LiveBoxSpreadScanner(
                     atm_provider=self.tracker.atm,
                     config_provider=lambda symbol: BoxSpreadScanConfig(
-                        # Strictly exceed the configured per-index edge threshold.
                         min_executable_edge=INDEX_EDGE_THRESHOLDS.get(str(symbol).strip().upper(), 10.0) + 1e-9,
                         allowed_stock_symbols=self.allowed_stock_symbols,
                     ),
@@ -212,25 +193,27 @@ class LiveBoxSpreadRunner:
                     if _atm_outside_subscribed_range(current, coverage) and self.recorder is not None:
                         self.recorder.stop()
                 self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
+                recorder = self.recorder
+                recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
+                recorder_thread.start()
                 down_since = None
-                while not self.stop_event.is_set() and self.recorder is not None and not self.recorder.stop_event.is_set():
-                    if self._feed_is_down(self.recorder._feed):
+                while not self.stop_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
+                    feed_snapshot = recorder.snapshot().get("feed")
+                    if self._feed_is_down(feed_snapshot):
                         if down_since is None:
                             down_since = monotonic()
                         elif monotonic() - down_since >= 15.0:
+                            app_logger.warning("Box Spread option feed disconnected for 15s; restarting session")
+                            recorder.stop()
+                            recorder_thread.join(timeout=3.0)
                             raise ConnectionError("Box Spread common WebSocket stayed disconnected for 15s")
                     else:
                         down_since = None
-                    # The recorder normally owns this loop; run it in the same
-                    # session thread so its cleanup remains deterministic.
-                    self.recorder._flush_completed_buckets()
-                    sleep(self.recorder.poll_seconds)
-                self.recorder.stop()
+                    sleep(.5)
+                recorder.stop()
+                recorder_thread.join(timeout=3.0)
                 self.recorder=None
         finally:
-            # Clean up this session without marking the whole runner stopped.
-            # The outer run_forever() supervisor must be able to retry if this
-            # session exits because of a transient exception.
             feed, self.feed = self.feed, None
             recorder, self.recorder = self.recorder, None
             if recorder is not None:
