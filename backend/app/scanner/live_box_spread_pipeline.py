@@ -184,7 +184,8 @@ class LiveBoxSpreadPipeline:
                             now = datetime.now(timezone.utc)
                             retention_days = max(1, int(getattr(settings, "LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS", 7)))
                             cutoff = now - timedelta(days=retention_days)
-                            db.query(LiveBoxSpreadSnapshot).filter(LiveBoxSpreadSnapshot.observed_at < cutoff).delete(synchronize_session=False)
+                            # Keep Box Spread observations indefinitely for full-history timing analysis.
+                            # Only deduplication keys expire; deleting snapshots here silently erased older history.
                             db.query(LiveBoxSpreadSnapshotKey).filter(LiveBoxSpreadSnapshotKey.created_at < cutoff).delete(synchronize_session=False)
                             batch_keys = set()
                             for row in pending_rows:
