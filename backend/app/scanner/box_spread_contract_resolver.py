@@ -153,7 +153,13 @@ def resolve_box_spread_contracts(
         option_type = str(item.option_type or "").strip().upper()
         if option_type not in {"CE", "PE"} or item.strike is None:
             continue
-        item_expiry = _normalise_expiry(item.expiry)
+        # A shared subscription registry can contain stale or partially formed
+        # entries. An unreadable expiry cannot be this exact requested contract;
+        # ignore it here so it cannot break unrelated scanner/paper resolutions.
+        try:
+            item_expiry = _normalise_expiry(item.expiry)
+        except BoxSpreadContractResolutionError:
+            continue
         if item_expiry != expiry_iso:
             continue
         item_strike = _normalise_strike(item.strike, field="subscription strike")
@@ -197,11 +203,6 @@ def resolve_box_spread_contracts(
             raise BoxSpreadContractResolutionError(f"{role} has no exact broker token")
         if not tradingsymbol:
             raise BoxSpreadContractResolutionError(f"{role} has no exact tradingsymbol")
-        if not tradingsymbol.upper().endswith(key[0]):
-            raise BoxSpreadContractResolutionError(
-                f"{role} tradingsymbol does not match option type {key[0]}"
-            )
-
         identity = (exchange_type, token)
         if identity in identities:
             raise BoxSpreadContractResolutionError(
@@ -210,6 +211,10 @@ def resolve_box_spread_contracts(
         if tradingsymbol.upper() in symbols:
             raise BoxSpreadContractResolutionError(
                 f"duplicate tradingsymbol detected at {role}"
+            )
+        if not tradingsymbol.upper().endswith(key[0]):
+            raise BoxSpreadContractResolutionError(
+                f"{role} tradingsymbol does not match option type {key[0]}"
             )
         identities.add(identity)
         symbols.add(tradingsymbol.upper())
