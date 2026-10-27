@@ -495,32 +495,63 @@ class BoxSpreadPaperLedger:
         total_charges = sum((Decimal(row.charges) for row in entries), Decimal("0.00"))
         buy_notional = sum((Decimal(row.notional) for row in entries if row.action == "BUY"), Decimal("0.00"))
         sell_notional = sum((Decimal(row.notional) for row in entries if row.action == "SELL"), Decimal("0.00"))
+        open_lots: dict[str, list[dict[str, object]]] = {}
+        realized_pnl = Decimal("0.00")
+        role_positions: dict[str, int] = {}
+        for row in entries:
+            role_lots = open_lots.setdefault(row.role, [])
+            qty_left = row.quantity
+            row_price = Decimal(row.fill_price)
+            row_charges = Decimal(row.charges)
+            row_fee_per_unit = row_charges / Decimal(row.quantity)
+            direction = 1 if row.action == "BUY" else -1
+            role_positions[row.role] = role_positions.get(row.role, 0) + direction * row.quantity
+
+            # FIFO-match opposite-side fills to open quantities. This also
+            # supports partial exits and repeated close fills after restarts.
+            while qty_left > 0 and role_lots and role_lots[0]["direction"] != direction:
+                lot = role_lots[0]
+                matched = min(qty_left, int(lot["quantity"]))
+                entry_direction = int(lot["direction"])
+                entry_price = Decimal(lot["price"])
+                entry_fee_per_unit = Decimal(lot["fee_per_unit"])
+                realized_pnl += (
+                    (row_price - entry_price) * entry_direction * matched
+                    - (entry_fee_per_unit + row_fee_per_unit) * matched
+                )
+                lot["quantity"] = int(lot["quantity"]) - matched
+                qty_left -= matched
+                if int(lot["quantity"]) == 0:
+                    role_lots.pop(0)
+            if qty_left > 0:
+                role_lots.append({
+                    "quantity": qty_left,
+                    "direction": direction,
+                    "price": row_price,
+                    "fee_per_unit": row_fee_per_unit,
+                })
+
         unrealized_pnl: Decimal | None = None
-        if mark_prices is not None and trade.status != "CLOSED":
-            role_positions_for_marks: dict[str, int] = {}
-            for row in entries:
-                role_positions_for_marks[row.role] = role_positions_for_marks.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
-            required = {role for role, signed_quantity in role_positions_for_marks.items() if signed_quantity != 0}
-            if required - set(mark_prices):
-                raise ValueError("mark_prices must include every filled leg role")
-            market_value = Decimal("0.00")
-            for row in entries:
+        open_roles = {role for role, lots in open_lots.items() if lots}
+        if mark_prices is not None and open_roles:
+            if open_roles - set(mark_prices):
+                raise ValueError("mark_prices must include every open leg role")
+            unrealized_pnl = Decimal("0.00")
+            for role in open_roles:
                 try:
-                    mark = Decimal(str(mark_prices[row.role]))
+                    mark = Decimal(str(mark_prices[role]))
                 except (InvalidOperation, TypeError, ValueError):
-                    raise ValueError(f"{row.role} mark price must be positive") from None
+                    raise ValueError(f"{role} mark price must be positive") from None
                 if not mark.is_finite() or mark <= 0:
-                    raise ValueError(f"{row.role} mark price must be positive")
-                # Aggregate fills by role so multiple partial fills do not multiply the mark.
-            role_positions: dict[str, int] = {}
-            for row in entries:
-                role_positions[row.role] = role_positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
-            market_value = sum(
-                (Decimal(str(mark_prices[role])) * signed_quantity
-                 for role, signed_quantity in role_positions.items() if signed_quantity != 0),
-                Decimal("0.00"),
-            )
-            unrealized_pnl = (net_cash_flow + market_value).quantize(CENT, rounding=ROUND_HALF_UP)
+                    raise ValueError(f"{role} mark price must be positive")
+                for lot in open_lots[role]:
+                    unrealized_pnl += (
+                        (mark - Decimal(lot["price"])) * int(lot["direction"]) * int(lot["quantity"])
+                        - Decimal(lot["fee_per_unit"]) * int(lot["quantity"])
+                    )
+            unrealized_pnl = unrealized_pnl.quantize(CENT, rounding=ROUND_HALF_UP)
+        elif not open_roles:
+            unrealized_pnl = Decimal("0.00")
 
         return {
             "trade_id": trade.id,
@@ -532,8 +563,7 @@ class BoxSpreadPaperLedger:
             "total_charges": total_charges,
             "net_cash_flow": net_cash_flow,
             "unrealized_pnl": unrealized_pnl,
-            # Realized P&L remains unavailable until Phase 6 exit/settlement records exist.
-            "realized_pnl": net_cash_flow.quantize(CENT, rounding=ROUND_HALF_UP) if trade.status == "CLOSED" else None,
+            "realized_pnl": realized_pnl.quantize(CENT, rounding=ROUND_HALF_UP),
             "fee_schedule_version": trade.fee_schedule_version,
         }
 
