@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { appConfig } from "@/lib/config";
 
 type LiveOpportunity = {
@@ -81,7 +82,7 @@ export default function BoxSpreadPaperTrading() {
 
   useEffect(() => { void refresh(); void loadOpportunities(); }, [refresh, loadOpportunities]);
 
-  async function createTrade(event: React.FormEvent) {
+  async function createTrade(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(null); setMessage(null); setLedger(null);
     try {
       const result = await request("/trades", {
