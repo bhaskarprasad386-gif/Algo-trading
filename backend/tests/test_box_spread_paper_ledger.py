@@ -205,3 +205,39 @@ def test_trade_status_changes_only_when_all_four_legs_fully_fill(paper_ledger):
     with paper_ledger._session_factory() as session:
         final_status = session.get(BoxSpreadPaperTradeRecord, trade.id).status
     assert final_status == "FILLED"
+
+
+def test_trade_summary_reports_charges_cash_flow_and_mark_to_market_pnl(paper_ledger):
+    trade = _trade(paper_ledger)
+    fills = [
+        ("LOW_CE", "BUY", "100.00"),
+        ("HIGH_CE", "SELL", "50.00"),
+        ("HIGH_PE", "BUY", "55.00"),
+        ("LOW_PE", "SELL", "95.00"),
+    ]
+    for role, action, price in fills:
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id=f"{role}-entry", role=role,
+            action=action, quantity=25, fill_price=price,
+        )
+    summary = paper_ledger.get_trade_summary(
+        trade.id,
+        mark_prices={"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95},
+    )
+    assert summary["status"] == "FILLED"
+    assert summary["fill_count"] == 4
+    assert summary["total_charges"] > Decimal("0")
+    assert summary["unrealized_pnl"] == -summary["total_charges"]
+    assert summary["realized_pnl"] is None
+
+
+def test_trade_summary_rejects_missing_or_invalid_mark_prices(paper_ledger):
+    trade = _trade(paper_ledger)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="marked", role="LOW_CE", action="BUY",
+        quantity=5, fill_price=100,
+    )
+    with pytest.raises(ValueError, match="include every filled leg"):
+        paper_ledger.get_trade_summary(trade.id, mark_prices={})
+    with pytest.raises(ValueError, match="mark price must be positive"):
+        paper_ledger.get_trade_summary(trade.id, mark_prices={"LOW_CE": 0})
