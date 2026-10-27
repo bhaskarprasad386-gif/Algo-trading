@@ -1,3 +1,6 @@
+import asyncio
+from types import SimpleNamespace
+
 from fastapi import HTTPException
 import pytest
 
@@ -33,3 +36,37 @@ def test_paper_error_handler_preserves_http_status():
     with pytest.raises(HTTPException) as raised:
         routes._error(HTTPException(status_code=409, detail="stale quotes"))
     assert raised.value.status_code == 409
+
+
+def test_simulation_rejects_missing_fresh_backend_opportunity_before_execution(monkeypatch):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="missing-live-row", account_key="isolated-test",
+    )
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": []})
+
+    async def forbidden_execution(**kwargs):
+        pytest.fail("paper engine must not start without a matching fresh backend row")
+
+    monkeypatch.setattr(routes._engine, "create_intent", forbidden_execution)
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(routes.simulate_entry(
+            123,
+            routes.SimulateEntry(
+                account_key="isolated-test",
+                reference_prices={
+                    "LOW_CE": 1, "HIGH_CE": 1, "HIGH_PE": 1, "LOW_PE": 1,
+                },
+            ),
+        ))
+
+    assert raised.value.status_code == 409
+    assert "No matching fresh live Box Spread opportunity" in raised.value.detail
