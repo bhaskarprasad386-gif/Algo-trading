@@ -329,6 +329,71 @@ class BoxSpreadPaperLedger:
                 "fill_count": len(entries),
             }
 
+    def get_trade_summary(
+        self,
+        trade_id: int,
+        *,
+        account_key: str = "default",
+        mark_prices: dict[str, object] | None = None,
+    ) -> dict[str, Decimal | int | str | None]:
+        """Return durable cash/fee totals and optional open-position mark-to-market P&L."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session:
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            entries = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+                BoxSpreadPaperLedgerEntry.account_key == key,
+            )).all()
+
+        net_cash_flow = sum((Decimal(row.cash_delta) for row in entries), Decimal("0.00"))
+        total_charges = sum((Decimal(row.charges) for row in entries), Decimal("0.00"))
+        buy_notional = sum((Decimal(row.notional) for row in entries if row.action == "BUY"), Decimal("0.00"))
+        sell_notional = sum((Decimal(row.notional) for row in entries if row.action == "SELL"), Decimal("0.00"))
+        unrealized_pnl: Decimal | None = None
+        if mark_prices is not None:
+            required = {row.role for row in entries}
+            if required - set(mark_prices):
+                raise ValueError("mark_prices must include every filled leg role")
+            market_value = Decimal("0.00")
+            for row in entries:
+                try:
+                    mark = Decimal(str(mark_prices[row.role]))
+                except (InvalidOperation, TypeError, ValueError):
+                    raise ValueError(f"{row.role} mark price must be positive") from None
+                if not mark.is_finite() or mark <= 0:
+                    raise ValueError(f"{row.role} mark price must be positive")
+                # Aggregate fills by role so multiple partial fills do not multiply the mark.
+            role_positions: dict[str, tuple[str, int]] = {}
+            for row in entries:
+                prior_action, prior_qty = role_positions.get(row.role, (row.action, 0))
+                if prior_action != row.action:
+                    raise ValueError("inconsistent action history for paper leg")
+                role_positions[row.role] = (row.action, prior_qty + row.quantity)
+            market_value = sum(
+                (
+                    Decimal(str(mark_prices[role])) * quantity * (1 if action == "BUY" else -1)
+                    for role, (action, quantity) in role_positions.items()
+                ),
+                Decimal("0.00"),
+            )
+            unrealized_pnl = (net_cash_flow + market_value).quantize(CENT, rounding=ROUND_HALF_UP)
+
+        return {
+            "trade_id": trade.id,
+            "status": trade.status,
+            "quantity": trade.quantity,
+            "fill_count": len(entries),
+            "buy_notional": buy_notional,
+            "sell_notional": sell_notional,
+            "total_charges": total_charges,
+            "net_cash_flow": net_cash_flow,
+            "unrealized_pnl": unrealized_pnl,
+            "realized_pnl": None if trade.status != "CLOSED" else Decimal("0.00"),
+            "fee_schedule_version": trade.fee_schedule_version,
+        }
+
     def list_fills(self, trade_id: int, account_key: str = "default") -> list[BoxSpreadPaperFillReceipt]:
         key = self._account_key(account_key)
         with self._session_factory() as session:
