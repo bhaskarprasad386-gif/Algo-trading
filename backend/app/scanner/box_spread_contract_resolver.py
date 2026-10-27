@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-import math
 from typing import Iterable
 
 from app.market_data.live_synthetic_stream import SyntheticSubscription
@@ -151,13 +150,11 @@ def resolve_box_spread_contracts(
         item_class = str(item.instrument_class or "").strip().upper()
         if item_underlying != symbol or item_class != cls:
             continue
+        option_type = str(item.option_type or "").strip().upper()
+        if option_type not in {"CE", "PE"} or item.strike is None:
+            continue
         item_expiry = _normalise_expiry(item.expiry)
         if item_expiry != expiry_iso:
-            continue
-        option_type = str(item.option_type or "").strip().upper()
-        if option_type not in {"CE", "PE"}:
-            continue
-        if item.strike is None:
             continue
         item_strike = _normalise_strike(item.strike, field="subscription strike")
         key = (option_type, item_strike)
