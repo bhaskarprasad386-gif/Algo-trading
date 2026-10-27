@@ -103,9 +103,20 @@ def test_account_balance_and_ledger_are_isolated_by_account_key(paper_ledger):
     assert beta["fill_count"] == 0
 
 
-def test_prevents_overspending_and_invalid_fill_values(paper_ledger):
+def test_prevents_overspending_and_invalid_fill_values():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperAccount.__table__,
+        BoxSpreadPaperTradeRecord.__table__,
+        BoxSpreadPaperLedgerEntry.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(
-        paper_ledger._session_factory,
+        factory,
         starting_balance=Decimal("100.00"),
         fee_schedule=BoxSpreadPaperFeeSchedule(
             version="test-zero-fees",
@@ -133,6 +144,7 @@ def test_prevents_overspending_and_invalid_fill_values(paper_ledger):
             trade_id=trade.id, fill_id="bad-price", role="LOW_CE",
             action="BUY", quantity=1, fill_price=0,
         )
+    engine.dispose()
 
 
 def test_fee_schedule_is_versioned_and_sell_stt_is_applied():
