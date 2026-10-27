@@ -4,6 +4,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import tempfile
+import time
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +18,52 @@ from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.notifications.box_spread_alerts import BoxSpreadAlertService
 
 logger = logging.getLogger(__name__)
+
+
+def _spool_path():
+    """Persistent local fallback for qualifying opportunities awaiting DB writes."""
+    return Path(os.getenv("LIVE_BOX_SPREAD_SPOOL_PATH", "./box_spread_pending.jsonl"))
+
+
+def _append_spool(rows):
+    """Append and fsync pending snapshots before attempting database persistence."""
+    if not rows:
+        return
+    path = _spool_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _read_spool():
+    path = _spool_path()
+    if not path.exists():
+        return []
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
+
+
+def _clear_spool():
+    """Atomically replace the queue after a successful database commit."""
+    path = _spool_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
 
 
 def _snapshot_payload(result, observed_at):
@@ -101,62 +151,74 @@ class LiveBoxSpreadPipeline:
         if not results or not self.session_factory:
             return results
 
-        # Snapshot history, alert history, and notifications are independent:
-        # a snapshot DB error must not suppress alert processing or the live feed.
-        # Retry transient database failures so brief DB hiccups do not drop
-        # opportunities from Post-Market history. Each retry uses a fresh session.
-        import time
-        for attempt in range(3):
-            try:
-                with self.session_factory() as db:
-                    now = datetime.now(timezone.utc)
-                    retention_days = max(1, int(getattr(settings, "LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS", 7)))
-                    cutoff = now - timedelta(days=retention_days)
-                    db.query(LiveBoxSpreadSnapshot).filter(LiveBoxSpreadSnapshot.observed_at < cutoff).delete(synchronize_session=False)
-                    db.query(LiveBoxSpreadSnapshotKey).filter(LiveBoxSpreadSnapshotKey.created_at < cutoff).delete(synchronize_session=False)
-                    batch_keys = set()
-                    for result in results:
-                        observed_at = datetime.now(timezone.utc)
-                        row = _snapshot_payload(result, observed_at)
-                        key = _snapshot_key(row)
-                        if key in batch_keys:
-                            continue
-                        batch_keys.add(key)
-                        digest = hashlib.sha256(json.dumps(key, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
-                        try:
-                            with db.begin_nested():
-                                db.add(LiveBoxSpreadSnapshotKey(snapshot_key=digest, created_at=observed_at))
-                                db.flush()
-                                exists = db.query(LiveBoxSpreadSnapshot.id).filter(
-                                    LiveBoxSpreadSnapshot.symbol == str(row["symbol"]).strip().upper(),
-                                    LiveBoxSpreadSnapshot.expiry == int(row["expiry"]),
-                                    LiveBoxSpreadSnapshot.low_strike == float(row["low_strike"]),
-                                    LiveBoxSpreadSnapshot.high_strike == float(row["high_strike"]),
-                                    LiveBoxSpreadSnapshot.direction == str(row["direction"]).strip().upper(),
-                                    LiveBoxSpreadSnapshot.timestamp_ns == int(row["last_update_timestamp_ns"]),
-                                ).first()
-                                if not exists:
-                                    db.add(LiveBoxSpreadSnapshot(
-                                        observed_at=observed_at,
-                                        timestamp_ns=int(row["last_update_timestamp_ns"]),
-                                        symbol=str(row["symbol"]).strip().upper(),
-                                        expiry=int(row["expiry"]),
-                                        low_strike=float(row["low_strike"]),
-                                        high_strike=float(row["high_strike"]),
-                                        direction=str(row["direction"]).strip().upper(),
-                                        payload_json=json.dumps(row, separators=(",", ":"), allow_nan=False),
-                                    ))
+        # Write every qualifying observation to a disk-backed spool before DB I/O.
+        # If the DB is down, pending rows survive process restarts and are replayed
+        # on the next observation. A successful commit is the only point that clears it.
+        try:
+            fresh_rows = []
+            for result in results:
+                observed_at = datetime.now(timezone.utc)
+                row = _snapshot_payload(result, observed_at)
+                key = _snapshot_key(row)
+                row["_snapshot_identity"] = list(key)
+                fresh_rows.append(row)
+            _append_spool(fresh_rows)
+            pending_rows = _read_spool()
+        except Exception:
+            logger.exception("Failed to enqueue Box Spread snapshots to durable local spool")
+            pending_rows = []
+
+        if pending_rows:
+            for attempt in range(3):
+                try:
+                    with self.session_factory() as db:
+                        now = datetime.now(timezone.utc)
+                        retention_days = max(1, int(getattr(settings, "LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS", 7)))
+                        cutoff = now - timedelta(days=retention_days)
+                        db.query(LiveBoxSpreadSnapshot).filter(LiveBoxSpreadSnapshot.observed_at < cutoff).delete(synchronize_session=False)
+                        db.query(LiveBoxSpreadSnapshotKey).filter(LiveBoxSpreadSnapshotKey.created_at < cutoff).delete(synchronize_session=False)
+                        batch_keys = set()
+                        for row in pending_rows:
+                            key = tuple(row.get("_snapshot_identity") or _snapshot_key(row))
+                            if key in batch_keys:
+                                continue
+                            batch_keys.add(key)
+                            digest = hashlib.sha256(json.dumps(key, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+                            try:
+                                with db.begin_nested():
+                                    db.add(LiveBoxSpreadSnapshotKey(snapshot_key=digest, created_at=now))
                                     db.flush()
-                        except IntegrityError:
-                            continue
-                    db.commit()
-                break
-            except Exception:
-                if attempt == 2:
-                    logger.exception("Failed to persist Box Spread snapshots after 3 attempts")
-                else:
-                    logger.warning("Box Spread snapshot persistence failed (attempt %s/3); retrying", attempt + 1, exc_info=True)
-                    time.sleep(0.1 * (attempt + 1))
+                                    exists = db.query(LiveBoxSpreadSnapshot.id).filter(
+                                        LiveBoxSpreadSnapshot.symbol == str(row["symbol"]).strip().upper(),
+                                        LiveBoxSpreadSnapshot.expiry == int(row["expiry"]),
+                                        LiveBoxSpreadSnapshot.low_strike == float(row["low_strike"]),
+                                        LiveBoxSpreadSnapshot.high_strike == float(row["high_strike"]),
+                                        LiveBoxSpreadSnapshot.direction == str(row["direction"]).strip().upper(),
+                                        LiveBoxSpreadSnapshot.timestamp_ns == int(row["last_update_timestamp_ns"]),
+                                    ).first()
+                                    if not exists:
+                                        db.add(LiveBoxSpreadSnapshot(
+                                            observed_at=datetime.strptime(row["observed_at"], "%Y-%m-%dT%H:%M:%SZ"),
+                                            timestamp_ns=int(row["last_update_timestamp_ns"]),
+                                            symbol=str(row["symbol"]).strip().upper(),
+                                            expiry=int(row["expiry"]),
+                                            low_strike=float(row["low_strike"]),
+                                            high_strike=float(row["high_strike"]),
+                                            direction=str(row["direction"]).strip().upper(),
+                                            payload_json=json.dumps({k: v for k, v in row.items() if k != "_snapshot_identity"}, separators=(",", ":"), allow_nan=False),
+                                        ))
+                                        db.flush()
+                            except IntegrityError:
+                                continue
+                        db.commit()
+                    _clear_spool()
+                    break
+                except Exception:
+                    if attempt == 2:
+                        logger.exception("Failed to persist Box Spread snapshots after 3 attempts; disk spool retained")
+                    else:
+                        logger.warning("Box Spread snapshot persistence failed (attempt %s/3); retrying; disk spool retained", attempt + 1, exc_info=True)
+                        time.sleep(0.1 * (attempt + 1))
 
         try:
             with self.session_factory() as db:
