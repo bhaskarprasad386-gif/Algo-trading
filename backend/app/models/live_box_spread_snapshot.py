@@ -1,5 +1,5 @@
 """Durable observations of live Box Spread rows, independent of alert delivery."""
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
@@ -13,7 +13,7 @@ class LiveBoxSpreadSnapshot(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     symbol: Mapped[str] = mapped_column(String(128), nullable=False)
     expiry: Mapped[int] = mapped_column(Integer, nullable=False)
