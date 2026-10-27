@@ -117,7 +117,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
           {[
             ["Saved snapshots", data.total_saved_snapshots],
             ["Positive-edge observations", data.positive_edge_observations],
-            ["Best average day", data.best_average_edge_day ? data.best_average_edge_day.key : "Need more samples"],
+            ["Best average day", data.best_average_edge_day ? data.best_average_edge_day.key : "Need 5 dates"],
             ["Best average 30-min window", data.best_average_edge_time ? data.best_average_edge_time.key + " IST" : "Need more samples"],
           ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3">
             <p className="text-xs theme-muted">{label}</p><p className="mt-1 break-words text-base font-semibold theme-text">{typeof value === "number" ? value.toLocaleString("en-IN") : value}</p>
