@@ -25,7 +25,7 @@ def test_short_box_edge_uses_exact_executable_bid_ask_formula():
     result = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
     expected = ((15 + 25) - (10 + 3)) - (120 - 100)
     assert result is not None
-    assert result.executable_edge == expected == 7
+    assert result.executable_edge == expected == 6
 
 
 def test_long_and_short_box_edges_return_none_when_non_positive():
