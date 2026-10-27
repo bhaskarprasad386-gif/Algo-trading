@@ -190,7 +190,7 @@ def edge_timing_analysis():
         conclusion = (
             f"{positive_edge_count} saved positive-edge observations are available. The largest single observed edge was "
             f"{by_max_time['key'] + ' IST' if by_max_time else 'not available'} and "
-            f"{by_max_day['key'] if by_max_day else 'no day'}; there are not yet at least 5 observations in both a day and a 30-minute window "
+            f"{by_max_day['key'] if by_max_day else 'no day'}; there are not yet at least 5 distinct trading dates in both a weekday and a 30-minute window "
             "to call an average timing pattern reliable."
         )
 
