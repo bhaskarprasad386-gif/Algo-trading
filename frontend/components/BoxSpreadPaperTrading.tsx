@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { appConfig } from "@/lib/config";
 
+type LiveOpportunity = {
+  symbol: string; instrument_class: string; expiry: string; low_strike: number;
+  high_strike: number; direction: string; lot_size: number; executable_edge: number;
+  low_call_price: number; high_call_price: number; high_put_price: number; low_put_price: number;
+};
 type PaperTrade = {
   trade_id: number; underlying: string; instrument_class: string; expiry: string;
   low_strike: number; high_strike: number; direction: string; lots: number;
@@ -17,6 +22,7 @@ export default function BoxSpreadPaperTrading() {
   const [account, setAccount] = useState("default");
   const [balance, setBalance] = useState<string | null>(null);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
+  const [opportunities, setOpportunities] = useState<LiveOpportunity[]>([]);
   const [underlying, setUnderlying] = useState("NIFTY");
   const [instrumentClass, setInstrumentClass] = useState("INDEX");
   const [expiry, setExpiry] = useState("");
@@ -57,7 +63,23 @@ export default function BoxSpreadPaperTrading() {
     }
   }, [account, request]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  const loadOpportunities = useCallback(async () => {
+    try {
+      const response = await fetch(appConfig.apiBaseUrl.replace(/\\/$/, "") + "/api/v1/scanner/box-spread/live?limit=30&max_age_seconds=5", {
+        cache: "no-store", signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error("live Box Spread scanner HTTP " + response.status);
+      const body = await response.json();
+      setOpportunities(Array.isArray(body.data) ? body.data.filter((row: LiveOpportunity) =>
+        [row.low_call_price, row.high_call_price, row.high_put_price, row.low_put_price].every(value => Number.isFinite(Number(value)) && Number(value) > 0)
+      ) : []);
+    } catch {
+      // Keep the live scanner's own status independent; never fabricate rows on API failure.
+      setOpportunities([]);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); void loadOpportunities(); }, [refresh, loadOpportunities]);
 
   async function createTrade(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(null); setMessage(null); setLedger(null);
@@ -96,6 +118,42 @@ export default function BoxSpreadPaperTrading() {
     } finally { setBusy(false); }
   }
 
+  async function paperTradeOpportunity(opportunity: LiveOpportunity) {
+    setBusy(true); setError(null); setMessage(null); setLedger(null);
+    try {
+      const create = await request("/trades", {
+        method: "POST",
+        body: JSON.stringify({
+          underlying: opportunity.symbol, instrument_class: opportunity.instrument_class,
+          expiry: opportunity.expiry, low_strike: opportunity.low_strike,
+          high_strike: opportunity.high_strike, direction: opportunity.direction,
+          lots: 1, account_key: account,
+          idempotency_key: "box-paper-" + crypto.randomUUID(),
+        }),
+      });
+      const tradeId = Number(create.trade_id);
+      setSelectedTrade(tradeId);
+      const result = await request("/trades/" + tradeId + "/simulate-entry", {
+        method: "POST",
+        body: JSON.stringify({
+          account_key: account,
+          reference_prices: {
+            LOW_CE: opportunity.low_call_price,
+            HIGH_CE: opportunity.high_call_price,
+            HIGH_PE: opportunity.high_put_price,
+            LOW_PE: opportunity.low_put_price,
+          },
+        }),
+      });
+      setLedger(result);
+      setMessage("Live scanner opportunity paper-traded as #" + tradeId + ". Quotes were taken from the backend row; simulated fills include latency, slippage and charges. No broker order was sent.");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to paper-trade opportunity");
+      await refresh();
+    } finally { setBusy(false); }
+  }
+
   async function loadLedger(tradeId: number) {
     setSelectedTrade(tradeId); setError(null);
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
@@ -122,6 +180,16 @@ export default function BoxSpreadPaperTrading() {
           <input value={account} onChange={e => setAccount(e.target.value)} maxLength={128} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" />
         </label>
         <div className="flex items-end"><button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Refresh ledger</button></div>
+      </div>
+
+      <div className="space-y-2 rounded-xl border theme-border p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold theme-text">Live scanner opportunities</h3><p className="text-xs theme-muted">Backend opportunities only · executable four-leg quotes · rows older than five seconds excluded.</p></div><button type="button" onClick={() => void loadOpportunities()} disabled={busy} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Refresh opportunities</button></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[800px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Underlying","Expiry","Strikes","Direction","Edge","4 leg ref prices","Paper trade"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead><tbody>
+          {opportunities.map((op, index)=><tr key={op.symbol + op.expiry + op.low_strike + op.high_strike + index} className="border-t theme-border">
+            <td className="px-2 py-2 theme-text">{op.symbol}</td><td className="px-2 py-2 theme-text">{op.expiry}</td><td className="px-2 py-2 theme-text">{op.low_strike} / {op.high_strike}</td><td className="px-2 py-2 theme-text">{op.direction}</td><td className="px-2 py-2 theme-text">{Number(op.executable_edge).toFixed(4)}</td><td className="px-2 py-2 theme-muted">LC {op.low_call_price} · HC {op.high_call_price}<br/>HP {op.high_put_price} · LP {op.low_put_price}</td><td className="px-2 py-2"><button type="button" disabled={busy} onClick={() => void paperTradeOpportunity(op)} className="rounded-md bg-cyan-500 px-3 py-2 font-bold text-slate-950 disabled:opacity-50">Paper trade</button></td>
+          </tr>)}
+          {opportunities.length === 0 && <tr><td colSpan={7} className="px-3 py-5 text-center theme-muted">No fresh executable live opportunities returned by the backend. No sample rows are shown.</td></tr>}
+        </tbody></table></div>
       </div>
 
       <form onSubmit={createTrade} className="grid gap-3 rounded-xl border theme-border p-3 sm:grid-cols-4">
