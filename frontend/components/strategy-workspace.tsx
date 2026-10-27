@@ -57,7 +57,7 @@ const configs: Record<string, WorkspaceConfig> = {
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Lot Size", "Direction", "Freshness"],
-    historyEndpoint: "/api/v1/scanner/box-spread/alerts?days=1&limit=100",
+    historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=500",
   },
   "custom-strategy": {
     slug: "custom-strategy",
