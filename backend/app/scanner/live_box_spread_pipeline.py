@@ -33,7 +33,7 @@ def _append_spool(rows):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         for row in rows:
-            handle.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\\n")
+            handle.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
 
