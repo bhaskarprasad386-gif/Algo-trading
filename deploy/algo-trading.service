@@ -10,6 +10,7 @@ Group=root
 WorkingDirectory=/opt/Algo-Trading/backend
 Environment=PYTHONUNBUFFERED=1
 Environment=LIVE_BOX_SPREAD_SPOOL_PATH=/opt/Algo-Trading/data/box_spread_pending.jsonl
+# Keep pending Box Spread opportunities on the persistent application data path.
 ExecStartPre=/usr/bin/mkdir -p /opt/Algo-Trading/data
 EnvironmentFile=-/opt/Algo-Trading/backend/.env
 ExecStart=/opt/Algo-Trading/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
