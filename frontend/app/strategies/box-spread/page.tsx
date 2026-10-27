@@ -88,7 +88,6 @@ function BoxSpreadPaperTrading() {
 export default function BoxSpreadWorkspacePage() {
   return (
     <div className="space-y-4">
-      <BoxSpreadPaperTrading />
       <BoxSpreadEdgeTimingAnalysis />
       <BoxSpreadPaperTrading />
       <StrategyWorkspace slug="box-spread" />
