@@ -102,3 +102,51 @@ def test_simulation_blocks_duplicate_replay_when_durable_fills_exist(monkeypatch
 
     assert raised.value.status_code == 409
     assert "already has durable fills" in raised.value.detail
+
+
+def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="backend-prices-only", account_key="isolated-test",
+    )
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+    monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
+    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "FILLED"})
+
+    async def create_intent(**kwargs):
+        return None
+
+    captured = {}
+
+    async def execute_intent(**kwargs):
+        captured.update(kwargs["reference_prices"])
+        return SimpleNamespace(fills=[], latency_seconds=0.2, slippage_rate=0.0005)
+
+    monkeypatch.setattr(routes._engine, "create_intent", create_intent)
+    monkeypatch.setattr(routes._engine, "execute_intent", execute_intent)
+
+    result = asyncio.run(routes.simulate_entry(
+        123,
+        routes.SimulateEntry(
+            account_key="isolated-test",
+            reference_prices={"LOW_CE": 999999, "HIGH_CE": 999999, "HIGH_PE": 999999, "LOW_PE": 999999},
+        ),
+    ))
+
+    assert captured == {"LOW_CE": 11, "HIGH_CE": 20, "HIGH_PE": 31, "LOW_PE": 40}
+    assert result["broker_orders_enabled"] is False
