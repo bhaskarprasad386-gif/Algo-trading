@@ -148,7 +148,7 @@ class LiveBoxSpreadPipeline:
             except Exception:
                 logger.exception("Box Spread live-result publisher failed")
 
-        if not results or not self.session_factory:
+        if not results:
             return results
 
         # Write every qualifying observation to a disk-backed spool before DB I/O.
@@ -168,7 +168,7 @@ class LiveBoxSpreadPipeline:
             logger.exception("Failed to enqueue Box Spread snapshots to durable local spool")
             pending_rows = []
 
-        if pending_rows:
+        if pending_rows and self.session_factory:
             for attempt in range(3):
                 try:
                     with self.session_factory() as db:
