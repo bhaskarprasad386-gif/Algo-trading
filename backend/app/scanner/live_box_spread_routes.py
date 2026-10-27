@@ -93,6 +93,129 @@ def snapshots(days: int = Query(1, ge=1, le=30), limit: int = Query(500, ge=1, l
         return {"strategy": "box-spread", "days": days, "count": len(data), "data": data}
 
 
+
+@router.get("/analysis")
+def edge_timing_analysis():
+    """Analyze every persisted Box Spread snapshot without sampling or changing scanner state."""
+    from collections import defaultdict
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from math import isfinite
+
+    india = ZoneInfo("Asia/Kolkata")
+    weekdays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    day_groups = defaultdict(list)
+    time_groups = defaultdict(list)
+    weekday_groups = defaultdict(list)
+    valid_edges = []
+    total_rows = 0
+    latest_observed = None
+
+    with SessionLocal() as db:
+        # Deliberately no date filter or row limit: use the complete retained snapshot history.
+        rows = db.query(LiveBoxSpreadSnapshot).order_by(LiveBoxSpreadSnapshot.observed_at.asc(), LiveBoxSpreadSnapshot.id.asc()).yield_per(1000)
+        for row in rows:
+            total_rows += 1
+            observed = row.observed_at
+            if observed is None:
+                continue
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=timezone.utc)
+            else:
+                observed = observed.astimezone(timezone.utc)
+            if latest_observed is None or observed > latest_observed:
+                latest_observed = observed
+            try:
+                payload = json.loads(row.payload_json or "{}")
+                edge = float(payload.get("executable_edge"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isfinite(edge) or edge <= 0:
+                continue
+            local = observed.astimezone(india)
+            day = weekdays[local.weekday()]
+            minute_bucket = (local.hour * 60 + local.minute) // 30 * 30
+            bucket = f"{minute_bucket // 60:02d}:{minute_bucket % 60:02d}"
+            item = {
+                "symbol": str(payload.get("symbol") or row.symbol or ""),
+                "edge": edge,
+                "edge_per_lot": _finite_number(payload.get("edge_per_lot")),
+                "observed_at": local.isoformat(),
+            }
+            valid_edges.append(item)
+            day_groups[day].append(item)
+            time_groups[bucket].append(item)
+            weekday_groups[day].append(item)
+
+    def stats(key, values):
+        edges = [item["edge"] for item in values]
+        return {
+            key: key,
+            "count": len(edges),
+            "max_edge": round(max(edges), 4),
+            "average_edge": round(sum(edges) / len(edges), 4),
+            "median_edge": round(sorted(edges)[len(edges) // 2], 4),
+            "average_edge_per_lot": round(
+                sum(item["edge_per_lot"] for item in values if item["edge_per_lot"] is not None)
+                / max(1, sum(item["edge_per_lot"] is not None for item in values)), 2
+            ),
+        }
+
+    day_stats = [stats(day, values) for day, values in day_groups.items()]
+    time_stats = [stats(bucket, values) for bucket, values in time_groups.items()]
+    day_stats.sort(key=lambda item: weekdays.index(item["key"]))
+    time_stats.sort(key=lambda item: item["key"])
+    by_max_day = max(day_stats, key=lambda item: item["max_edge"], default=None)
+    by_max_time = max(time_stats, key=lambda item: item["max_edge"], default=None)
+    reliable_days = [item for item in day_stats if item["count"] >= 5]
+    reliable_times = [item for item in time_stats if item["count"] >= 5]
+    by_average_day = max(reliable_days, key=lambda item: item["average_edge"], default=None)
+    by_average_time = max(reliable_times, key=lambda item: item["average_edge"], default=None)
+
+    if not valid_edges:
+        conclusion = "No saved positive-edge observations are available yet. Keep collecting complete live snapshots before drawing a timing conclusion."
+    elif by_average_time and by_average_day:
+        conclusion = (
+            f"Across {len(valid_edges)} saved positive-edge observations, the strongest repeatable 30-minute window is "
+            f"{by_average_time['key']} IST (average edge {by_average_time['average_edge']}, n={by_average_time['count']}); "
+            f"{by_average_day['key']} has the highest average day edge ({by_average_day['average_edge']}, n={by_average_day['count']}). "
+            "These are historical observations, not a guarantee of future edge."
+        )
+    else:
+        conclusion = (
+            f"{len(valid_edges)} saved positive-edge observations are available. The largest single observed edge was "
+            f"{by_max_time['key'] + ' IST' if by_max_time else 'not available'} and "
+            f"{by_max_day['key'] if by_max_day else 'no day'}; there are not yet at least 5 observations in both a day and a 30-minute window "
+            "to call an average timing pattern reliable."
+        )
+
+    return {
+        "strategy": "box-spread",
+        "source": "all_saved_snapshots",
+        "timezone": "Asia/Kolkata",
+        "total_saved_snapshots": total_rows,
+        "positive_edge_observations": len(valid_edges),
+        "latest_observed_at": latest_observed.isoformat() if latest_observed else None,
+        "minimum_samples_for_average_conclusion": 5,
+        "best_max_edge_day": by_max_day,
+        "best_max_edge_time": by_max_time,
+        "best_average_edge_day": by_average_day,
+        "best_average_edge_time": by_average_time,
+        "by_day": day_stats,
+        "by_time": time_stats,
+        "conclusion": conclusion,
+    }
+
+
+def _finite_number(value):
+    from math import isfinite
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
 @router.get("/alerts")
 def alerts(days:int=Query(30,ge=1,le=30),limit:int=Query(500,ge=1,le=5000)):
     from datetime import datetime,timedelta
