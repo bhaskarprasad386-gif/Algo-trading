@@ -52,7 +52,7 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Box Spread",
     description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
     universe: "SUPPORTED INDEX OPTIONS ONLY",
-    columns: ["Underlying", "Expiry", "Expiry Type", "Quote Time", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
+    columns: ["Underlying", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
@@ -272,13 +272,19 @@ function formatCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
-      Underlying: ["symbol"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
+      Underlying: ["symbol"], "Expiry / Quote Time": ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
       "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
       "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
       "Box Edge": ["executable_edge"], "Min Leg Volume": ["liquidity_qty"], Direction: ["direction"], Freshness: ["freshness"],
     },
   };
   const raw = value(row, ...(keys[slug]?.[column] ?? []));
+  if (slug === "box-spread" && column === "Expiry / Quote Time") {
+    const expiry = formatExpiry(raw);
+    const lowTime = formatTimestamp(value(row, "timestamp_ns"));
+    const highTime = formatTimestamp(value(row, "high_timestamp_ns"));
+    return expiry + " · L " + lowTime + " / H " + highTime;
+  }
   if (column === "Expiry") return formatExpiry(raw);
   if (slug === "box-spread" && column === "Quote Time") {
     return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
@@ -477,6 +483,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
     slug === "box-spread" ? "/api/v1/scanner/box-spread/live?limit=50&max_age_seconds=5" : null;
 
+  const [currentLiveTime, setCurrentLiveTime] = useState("");
   const [search, setSearch] = useState("");
   const [control, setControl] = useState(c.controls[0]);
   const [top15StockSymbols, setTop15StockSymbols] = useState<string[]>([
@@ -518,6 +525,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [feedErrors, setFeedErrors] = useState<{ delivery: number; normalizer: number } | null>(null);
   const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
+    updateClock();
+    const timer = window.setInterval(updateClock, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     setPairColumnPrefsLoaded(false);
@@ -1079,7 +1093,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       <Card className="overflow-hidden theme-border theme-surface">
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
-          <span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span>
+          <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span></div>
         </div>
         <div className="grid gap-2 p-3 md:hidden">
           {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live opportunity data</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</div></div>)}</div></div>)}
