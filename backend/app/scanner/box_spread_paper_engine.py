@@ -16,6 +16,9 @@ from app.scanner.box_spread_contract_resolver import ResolvedBoxSpreadContracts
 
 
 PaperAction = Literal["BUY", "SELL"]
+PAPER_EXECUTION_LATENCY_SECONDS = 0.2
+ADVERSE_SLIPPAGE_RATE = Decimal("0.0005")
+_REQUIRED_LEG_ROLES = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
 
 
 class BoxSpreadPaperEngineError(ValueError):
@@ -30,6 +33,26 @@ class BoxSpreadPaperLegIntent:
     symbol: str
     action: PaperAction
     quantity: int
+
+
+@dataclass(frozen=True)
+class BoxSpreadPaperLegFill:
+    role: str
+    action: PaperAction
+    quantity: int
+    reference_price: Decimal
+    slippage: Decimal
+    fill_price: Decimal
+    notional: Decimal
+
+
+@dataclass(frozen=True)
+class BoxSpreadPaperExecution:
+    idempotency_key: str
+    fills: tuple[BoxSpreadPaperLegFill, ...]
+    latency_seconds: float
+    slippage_rate: Decimal
+    executed_at: datetime
 
 
 @dataclass(frozen=True)
@@ -80,9 +103,14 @@ class BoxSpreadPaperEngine:
     Phase 6 restart recovery are implemented.
     """
 
+    execution_latency_seconds = PAPER_EXECUTION_LATENCY_SECONDS
+    adverse_slippage_rate = ADVERSE_SLIPPAGE_RATE
+
     def __init__(self) -> None:
         self._intents: dict[str, BoxSpreadPaperIntent] = {}
         self._request_fingerprints: dict[str, tuple[object, ...]] = {}
+        self._executions: dict[str, BoxSpreadPaperExecution] = {}
+        self._execution_fingerprints: dict[str, tuple[tuple[str, Decimal], ...]] = {}
         self._lock = asyncio.Lock()
 
     async def create_intent(
@@ -150,6 +178,97 @@ class BoxSpreadPaperEngine:
             self._request_fingerprints[key] = fingerprint
             return intent
 
+    async def execute_intent(
+        self,
+        *,
+        idempotency_key: str,
+        reference_prices: dict[str, object],
+    ) -> BoxSpreadPaperExecution:
+        """Simulate a full four-leg fill with async latency and adverse slippage.
+
+        This is a paper-only price simulation. It has no broker/order-client
+        dependency and must be called by an async worker, never a feed callback.
+        Prices are supplied as the observed reference price for each leg.
+        """
+        key = str(idempotency_key or "").strip()
+        if not key:
+            raise BoxSpreadPaperEngineError("idempotency_key is required")
+
+        async with self._lock:
+            intent = self._intents.get(key)
+            if intent is None:
+                raise BoxSpreadPaperEngineError("paper intent not found")
+            existing = self._executions.get(key)
+
+        supplied_roles = set(reference_prices)
+        if supplied_roles != set(_REQUIRED_LEG_ROLES):
+            raise BoxSpreadPaperEngineError(
+                "reference_prices must contain exactly the four required leg roles"
+            )
+        prices: dict[str, Decimal] = {}
+        for role in _REQUIRED_LEG_ROLES:
+            try:
+                price = Decimal(str(reference_prices[role]))
+            except (InvalidOperation, TypeError, ValueError):
+                raise BoxSpreadPaperEngineError(f"{role} reference price must be positive") from None
+            if not price.is_finite() or price <= 0:
+                raise BoxSpreadPaperEngineError(f"{role} reference price must be positive")
+            prices[role] = price
+        price_fingerprint = tuple((role, prices[role]) for role in _REQUIRED_LEG_ROLES)
+
+        if existing is not None:
+            if self._execution_fingerprints[key] != price_fingerprint:
+                raise BoxSpreadPaperEngineError(
+                    "paper intent already executed with different reference prices"
+                )
+            return existing
+
+        # Async wait intentionally yields control; it never blocks the event loop.
+        await asyncio.sleep(self.execution_latency_seconds)
+
+        async with self._lock:
+            existing = self._executions.get(key)
+            if existing is not None:
+                if self._execution_fingerprints[key] != price_fingerprint:
+                    raise BoxSpreadPaperEngineError(
+                        "paper intent already executed with different reference prices"
+                    )
+                return existing
+
+            fills: list[BoxSpreadPaperLegFill] = []
+            for leg in intent.legs:
+                reference = prices[leg.role]
+                if leg.action == "BUY":
+                    fill_price = reference * (Decimal("1") + self.adverse_slippage_rate)
+                else:
+                    fill_price = reference * (Decimal("1") - self.adverse_slippage_rate)
+                slippage = abs(fill_price - reference)
+                fills.append(
+                    BoxSpreadPaperLegFill(
+                        role=leg.role,
+                        action=leg.action,
+                        quantity=leg.quantity,
+                        reference_price=reference,
+                        slippage=slippage,
+                        fill_price=fill_price,
+                        notional=fill_price * leg.quantity,
+                    )
+                )
+            execution = BoxSpreadPaperExecution(
+                idempotency_key=key,
+                fills=tuple(fills),
+                latency_seconds=self.execution_latency_seconds,
+                slippage_rate=self.adverse_slippage_rate,
+                executed_at=datetime.now(timezone.utc),
+            )
+            self._executions[key] = execution
+            self._execution_fingerprints[key] = price_fingerprint
+            return execution
+
+    async def get_execution(self, idempotency_key: str) -> BoxSpreadPaperExecution | None:
+        async with self._lock:
+            return self._executions.get(str(idempotency_key or "").strip())
+
     async def get_intent(self, idempotency_key: str) -> BoxSpreadPaperIntent | None:
         async with self._lock:
             return self._intents.get(str(idempotency_key or "").strip())
@@ -160,8 +279,12 @@ class BoxSpreadPaperEngine:
 
 
 __all__ = [
+    "ADVERSE_SLIPPAGE_RATE",
+    "PAPER_EXECUTION_LATENCY_SECONDS",
     "BoxSpreadPaperEngine",
     "BoxSpreadPaperEngineError",
+    "BoxSpreadPaperExecution",
     "BoxSpreadPaperIntent",
+    "BoxSpreadPaperLegFill",
     "BoxSpreadPaperLegIntent",
 ]
