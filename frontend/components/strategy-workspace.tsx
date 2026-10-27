@@ -364,7 +364,7 @@ function pairCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
-      Time: ["last_update_timestamp_ns", "timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
+      Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
       "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
       "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
       "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
@@ -451,7 +451,7 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
 }
 
 function historyCell(slug: string, column: string, row: Row) {
-  if (slug === "synthetic-arbitrage" && column === "Time") {
+  if ((slug === "synthetic-arbitrage" || slug === "box-spread") && column === "Time") {
     const observed = row.observed_at;
     if (observed !== undefined && observed !== null && observed !== "") {
       const date = new Date(String(observed));
