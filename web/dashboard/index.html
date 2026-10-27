@@ -1088,7 +1088,7 @@ function selectBox(i){const rows=boxFiltered();boxSelected=rows[i]||null;if(!box
 function boxSetRank(m){boxRankMode=m;[['edge','boxEdgeChip'],['lot','boxLotChip'],['distance','boxDistChip']].forEach(a=>document.getElementById(a[1]).classList.toggle('active',a[0]===m));document.getElementById('boxRank').value=m;renderBox()}
 async function refreshBoxSpread(){try{const r=await fetch(base()+'/api/v1/scanner/box-spread/live?limit=200',{cache:'no-store'});if(!r.ok)throw new Error('Box API '+r.status);const p=await r.json();boxData=p.data||[];renderBox();document.getElementById('boxUpdated').textContent='LIVE '+stamp()}catch(e){document.getElementById('boxRows').innerHTML='<tr><td colspan="13">LIVE BOX ERROR • '+e.message+'</td></tr>';document.getElementById('boxUpdated').textContent='SOURCE ERROR'}}
 
-function boxAnalysisText(item, suffix=''){if(!item)return 'Not enough saved observations';return item.key+' • avg '+boxFmt(item.average_edge)+' • max '+boxFmt(item.max_edge)+' • n='+item.count+suffix}
+function boxAnalysisText(item, suffix=''){if(!item)return 'Not enough saved observations';return item.key+suffix+' • avg '+boxFmt(item.average_edge)+' • max '+boxFmt(item.max_edge)+' • n='+item.count}
 async function refreshBoxAnalysis(){
  const liveIds=['Live','Alerts'];
  try{
