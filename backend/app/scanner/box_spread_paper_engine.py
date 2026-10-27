@@ -348,6 +348,8 @@ class BoxSpreadPaperEngine:
                 raise BoxSpreadPaperEngineError("paper intent not found")
             if key in self._executions:
                 raise BoxSpreadPaperEngineError("intent already has a full execution")
+            if any(fill_key == key for fill_key, _ in self._fill_events):
+                raise BoxSpreadPaperEngineError("intent already has partial fill records")
             leg = next((item for item in intent.legs if item.role == role), None)
             if leg is None:
                 raise BoxSpreadPaperEngineError("unknown paper leg role")
@@ -407,6 +409,8 @@ class BoxSpreadPaperEngine:
             progress = self._leg_progress[key].get(role)
             if progress is None:
                 raise BoxSpreadPaperEngineError("unknown paper leg role")
+            if progress["filled_quantity"] >= progress["quantity"]:
+                raise BoxSpreadPaperEngineError("cannot cancel a fully filled leg")
             progress["cancelled"] = True
             progress["status"] = "CANCELLED" if progress["filled_quantity"] == 0 else "CANCELLED_WITH_RESIDUAL"
             return self._progress_snapshot(key, role)
