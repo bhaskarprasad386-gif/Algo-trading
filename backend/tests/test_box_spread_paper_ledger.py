@@ -333,7 +333,7 @@ def test_expiry_settlement_is_idempotent_and_restart_recoverable(paper_ledger):
     assert restored.list_open_trades() == []
 
 
-def test_open_trade_recovery_preserves_partial_state(paper_ledger):
+def test_open_trade_recovery_preserves_per_leg_partial_state_and_fill_details(paper_ledger):
     trade = _trade(paper_ledger)
     paper_ledger.record_fill(
         trade_id=trade.id, fill_id="recovery-partial", role="LOW_CE",
@@ -341,8 +341,17 @@ def test_open_trade_recovery_preserves_partial_state(paper_ledger):
     )
     recovered = BoxSpreadPaperLedger(paper_ledger._session_factory).list_open_trades()
     assert len(recovered) == 1
-    assert recovered[0]["trade_id"] == trade.id
-    assert recovered[0]["status"] == "PARTIALLY_FILLED"
+    row = recovered[0]
+    assert row["trade_id"] == trade.id
+    assert row["status"] == "PARTIALLY_FILLED"
+    legs = {leg["role"]: leg for leg in row["legs"]}
+    assert legs["LOW_CE"]["entry_filled_quantity"] == 7
+    assert legs["LOW_CE"]["entry_remaining_quantity"] == 18
+    assert legs["LOW_CE"]["open_position_quantity"] == 7
+    assert legs["LOW_CE"]["fills"][0]["fill_id"] == "recovery-partial"
+    assert legs["HIGH_CE"]["entry_filled_quantity"] == 0
+    assert legs["HIGH_CE"]["entry_remaining_quantity"] == 25
+    assert legs["HIGH_CE"]["fills"] == []
 
 
 def test_exit_is_never_blocked_by_low_virtual_balance():
