@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -21,11 +21,11 @@ def test_edge_timing_analysis_uses_complete_saved_history_and_ist(monkeypatch):
     monkeypatch.setattr(routes, "SessionLocal", Session)
 
     with Session() as db:
-        # 04:00 UTC = 09:30 IST on Monday. Five samples qualify for average analysis.
+        # 04:00 UTC = 09:30 IST on Monday. Five different Mondays qualify for average analysis.
         for index, edge in enumerate((2.0, 3.0, 4.0, 5.0, 20.0)):
             db.add(
                 LiveBoxSpreadSnapshot(
-                    observed_at=datetime(2026, 10, 26, 4, index, tzinfo=timezone.utc),
+                    observed_at=datetime(2026, 10, 26, 4, index, tzinfo=timezone.utc) - timedelta(days=7 * index),
                     timestamp_ns=index + 1,
                     symbol="NIFTY",
                     expiry=20261103,
@@ -37,9 +37,9 @@ def test_edge_timing_analysis_uses_complete_saved_history_and_ist(monkeypatch):
                     ),
                 )
             )
-        # Two observations in a second 30-minute bucket must be counted, but not
-        # treated as a reliable average window until it has at least five samples.
-        for index, edge in enumerate((6.0, 8.0)):
+        # Seven observations in one Tuesday session must not count as seven independent
+        # trading dates for a reliable average window.
+        for index, edge in enumerate((6.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0)):
             db.add(
                 LiveBoxSpreadSnapshot(
                     observed_at=datetime(2026, 10, 27, 4, 30 + index, tzinfo=timezone.utc),
@@ -74,12 +74,18 @@ def test_edge_timing_analysis_uses_complete_saved_history_and_ist(monkeypatch):
 
     assert result["source"] == "all_saved_snapshots"
     assert result["timezone"] == "Asia/Kolkata"
-    assert result["total_saved_snapshots"] == 8
-    assert result["positive_edge_observations"] == 7
+    assert result["total_saved_snapshots"] == 13
+    assert result["positive_edge_observations"] == 12
     assert result["best_max_edge_time"]["key"] == "09:30"
     assert result["best_max_edge_time"]["max_edge"] == 20.0
     assert result["best_average_edge_time"]["key"] == "09:30"
     assert result["best_average_edge_time"]["count"] == 5
+    assert result["best_average_edge_time"]["distinct_dates"] == 5
     assert result["best_average_edge_day"]["key"] == "Monday"
     assert result["best_average_edge_day"]["count"] == 5
+    assert result["best_average_edge_day"]["distinct_dates"] == 5
+    tuesday_window = next(row for row in result["by_time"] if row["key"] == "10:00")
+    assert tuesday_window["count"] == 7
+    assert tuesday_window["distinct_dates"] == 1
+    assert result["best_average_edge_time"]["key"] != "10:00"
     assert "historical observations" in result["conclusion"]

@@ -8,6 +8,7 @@ import { appConfig } from "@/lib/config";
 type TimingGroup = {
   key: string;
   count: number;
+  distinct_dates: number;
   max_edge: number;
   average_edge: number;
   average_edge_per_lot: number | null;
@@ -75,13 +76,14 @@ export default function BoxSpreadEdgeTimingAnalysis() {
         <div className="overflow-x-auto rounded-lg border theme-border">
           <table className="w-full min-w-[360px] text-left text-xs">
             <thead className="theme-surface-2 theme-muted"><tr>
-              <th className="px-3 py-2">{label}</th><th className="px-3 py-2">Samples</th><th className="px-3 py-2">Max edge</th><th className="px-3 py-2">Avg edge</th>
+              <th className="px-3 py-2">{label}</th><th className="px-3 py-2">Samples</th><th className="px-3 py-2">Days</th><th className="px-3 py-2">Max edge</th><th className="px-3 py-2">Avg edge</th>
             </tr></thead>
             <tbody>{rows.map((row) => <tr key={row.key} className="border-t theme-border">
               <td className="px-3 py-2 font-medium theme-text">{row.key}{label === "30-min IST" ? " IST" : ""}</td>
               <td className="px-3 py-2 theme-muted">{row.count.toLocaleString("en-IN")}</td>
+              <td className="px-3 py-2 theme-muted">{row.distinct_dates.toLocaleString("en-IN")}</td>
               <td className="px-3 py-2 theme-muted">{fmt(row.max_edge)}</td>
-              <td className="px-3 py-2 theme-muted">{row.count >= 5 ? fmt(row.average_edge) : "Need 5+"}</td>
+              <td className="px-3 py-2 theme-muted">{row.distinct_dates >= (data?.minimum_distinct_dates_for_average_conclusion ?? 5) ? fmt(row.average_edge) : "Need 5 days"}</td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -115,7 +117,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
           {[
             ["Saved snapshots", data.total_saved_snapshots],
             ["Positive-edge observations", data.positive_edge_observations],
-            ["Best average day", data.best_average_edge_day ? data.best_average_edge_day.key : "Need more samples"],
+            ["Best average day", data.best_average_edge_day ? data.best_average_edge_day.key : "Need 5 dates"],
             ["Best average 30-min window", data.best_average_edge_time ? data.best_average_edge_time.key + " IST" : "Need more samples"],
           ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3">
             <p className="text-xs theme-muted">{label}</p><p className="mt-1 break-words text-base font-semibold theme-text">{typeof value === "number" ? value.toLocaleString("en-IN") : value}</p>
@@ -124,7 +126,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
         <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3">
           <p className="text-xs font-semibold uppercase tracking-wide theme-muted">Historical conclusion</p>
           <p className="mt-2 text-sm leading-6 theme-text">{data.conclusion}</p>
-          <p className="mt-2 text-[11px] theme-muted">Source: {data.source} · Timezone: {data.timezone} · Average patterns require at least {data.minimum_samples_for_average_conclusion} observations per bucket. Historical edge is not a guarantee of future returns.</p>
+          <p className="mt-2 text-[11px] theme-muted">Source: {data.source} · Timezone: {data.timezone} · Average patterns require at least {data.minimum_distinct_dates_for_average_conclusion} distinct trading dates per bucket. Historical edge is not a guarantee of future returns.</p>
           <p className="mt-1 text-[11px] theme-muted">Latest saved observation: {data.latest_observed_at ? new Date(data.latest_observed_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) + " IST" : "None"}{updatedAt ? " · Checked " + new Date(updatedAt).toLocaleTimeString("en-IN") : ""}</p>
         </div>
         <div className="mt-4 grid gap-4 xl:grid-cols-2">

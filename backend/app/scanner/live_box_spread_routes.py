@@ -106,7 +106,7 @@ def edge_timing_analysis():
     weekdays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
     def empty_group():
-        return {"count": 0, "sum_edge": 0.0, "max_edge": 0.0, "sum_edge_per_lot": 0.0, "edge_per_lot_count": 0}
+        return {"count": 0, "sum_edge": 0.0, "max_edge": 0.0, "sum_edge_per_lot": 0.0, "edge_per_lot_count": 0, "dates": set()}
 
     day_groups = defaultdict(empty_group)
     time_groups = defaultdict(empty_group)
@@ -148,6 +148,7 @@ def edge_timing_analysis():
                 group["count"] += 1
                 group["sum_edge"] += edge
                 group["max_edge"] = max(group["max_edge"], edge)
+                group["dates"].add(local.date().isoformat())
                 if edge_per_lot is not None:
                     group["sum_edge_per_lot"] += edge_per_lot
                     group["edge_per_lot_count"] += 1
@@ -157,6 +158,7 @@ def edge_timing_analysis():
         return {
             "key": key,
             "count": group["count"],
+            "distinct_dates": len(group["dates"]),
             "max_edge": round(group["max_edge"], 4),
             "average_edge": round(group["sum_edge"] / group["count"], 4),
             "average_edge_per_lot": round(
@@ -170,8 +172,8 @@ def edge_timing_analysis():
     time_stats.sort(key=lambda item: item["key"])
     by_max_day = max(day_stats, key=lambda item: item["max_edge"], default=None)
     by_max_time = max(time_stats, key=lambda item: item["max_edge"], default=None)
-    reliable_days = [item for item in day_stats if item["count"] >= 5]
-    reliable_times = [item for item in time_stats if item["count"] >= 5]
+    reliable_days = [item for item in day_stats if item["distinct_dates"] >= 5]
+    reliable_times = [item for item in time_stats if item["distinct_dates"] >= 5]
     by_average_day = max(reliable_days, key=lambda item: item["average_edge"], default=None)
     by_average_time = max(reliable_times, key=lambda item: item["average_edge"], default=None)
 
@@ -200,6 +202,7 @@ def edge_timing_analysis():
         "positive_edge_observations": positive_edge_count,
         "latest_observed_at": latest_observed.isoformat() if latest_observed else None,
         "minimum_samples_for_average_conclusion": 5,
+        "minimum_distinct_dates_for_average_conclusion": 5,
         "best_max_edge_day": by_max_day,
         "best_max_edge_time": by_max_time,
         "best_average_edge_day": by_average_day,
