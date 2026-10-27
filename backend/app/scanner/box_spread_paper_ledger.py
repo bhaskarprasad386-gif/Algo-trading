@@ -269,6 +269,8 @@ class BoxSpreadPaperLedger:
                 return receipt
             if trade.status in {"CLOSED", "CANCELLED"}:
                 raise ValueError("cannot add a fill to a closed or cancelled trade")
+            if trade.status == "EXITING":
+                raise ValueError("cannot add entry fills while exits are in progress")
             expected_actions = (
                 {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
                 if trade.direction == "LONG"
@@ -495,7 +497,10 @@ class BoxSpreadPaperLedger:
         sell_notional = sum((Decimal(row.notional) for row in entries if row.action == "SELL"), Decimal("0.00"))
         unrealized_pnl: Decimal | None = None
         if mark_prices is not None:
-            required = {row.role for row in entries}
+            role_positions_for_marks: dict[str, int] = {}
+            for row in entries:
+                role_positions_for_marks[row.role] = role_positions_for_marks.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
+            required = {role for role, signed_quantity in role_positions_for_marks.items() if signed_quantity != 0}
             if required - set(mark_prices):
                 raise ValueError("mark_prices must include every filled leg role")
             market_value = Decimal("0.00")
