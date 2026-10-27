@@ -145,7 +145,7 @@ def test_disk_spool_survives_database_outage_and_replays_when_database_returns(t
         first.observe({})
         spool = tmp_path / "pending.jsonl"
         assert spool.exists()
-        assert spool.read_text(encoding="utf-8").count("\\n") == 1
+        assert spool.read_text(encoding="utf-8").count("\n") == 1
 
         recovered = LiveBoxSpreadPipeline(
             scanner=RepeatingScanner(make_result(1_793_084_709_000_000_000)),
