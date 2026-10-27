@@ -142,6 +142,10 @@ export default function BoxSpreadPaperTrading() {
   async function settleSelectedExpiry(event: FormEvent) {
     event.preventDefault();
     if (selectedTrade == null) return;
+    if (!settlementDate || roles.some(role => settlementPrices[role].trim() === "")) {
+      setError("Enter the settlement date and an explicit official settlement price for every leg role. Use 0 only when the official settlement value is zero.");
+      return;
+    }
     setBusy(true); setError(null); setMessage(null);
     try {
       const settlement_prices = Object.fromEntries(roles.map(role => [role, Number(settlementPrices[role])]));
