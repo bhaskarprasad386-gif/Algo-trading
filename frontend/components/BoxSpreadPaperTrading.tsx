@@ -63,7 +63,7 @@ export default function BoxSpreadPaperTrading() {
 
   const loadOpportunities = useCallback(async () => {
     try {
-      const response = await fetch(appConfig.apiBaseUrl.replace(/\\/$/, "") + "/api/v1/scanner/box-spread/live?limit=30&max_age_seconds=5", {
+      const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread/live?limit=30&max_age_seconds=5", {
         cache: "no-store", signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) throw new Error("live Box Spread scanner HTTP " + response.status);
