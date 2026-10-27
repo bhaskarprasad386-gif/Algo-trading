@@ -14,7 +14,7 @@ def test_long_box_edge_uses_exact_executable_bid_ask_formula():
     low = quote(100, call_bid=10, call_ask=12, put_bid=8, put_ask=9)
     high = quote(120, call_bid=3, call_ask=4, put_bid=18, put_ask=18)
     result = BoxSpreadBacktester.evaluate(low, high, direction="LONG")
-    expected = (120 - 100) - ((12 + 20) - (8 + 3))
+    expected = (120 - 100) - ((12 + 18) - (8 + 3))
     assert result is not None
     assert result.executable_edge == expected == 1
 
@@ -23,7 +23,7 @@ def test_short_box_edge_uses_exact_executable_bid_ask_formula():
     low = quote(100, call_bid=15, call_ask=16, put_bid=10, put_ask=11)
     high = quote(120, call_bid=2, call_ask=3, put_bid=25, put_ask=26)
     result = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
-    expected = ((15 + 25) - (10 + 3)) - (120 - 100)
+    expected = ((15 + 25) - (10 + 2)) - (120 - 100)
     assert result is not None
     assert result.executable_edge == expected == 6
 
