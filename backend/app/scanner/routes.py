@@ -342,8 +342,3 @@ def full_fno_job_purge_alias(job_id: str, db: Session = Depends(get_db)):
     return {"status": "success", "job_id": job_id, "job_status": job.status, "deleted_chunks": deleted}
 
 
-
-# Keep the dedicated Box Spread paper API mounted under the existing scanner namespace.
-# It is isolated from the live Box Spread scanner router and never places broker orders.
-from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
-router.include_router(box_spread_paper_router)
