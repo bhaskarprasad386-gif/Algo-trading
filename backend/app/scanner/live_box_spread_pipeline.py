@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.config import settings
 from app.models import LiveBoxSpreadSnapshot
@@ -63,13 +63,13 @@ class LiveBoxSpreadPipeline:
         if results and self.session_factory:
             try:
                 with self.session_factory() as db:
-                    now = datetime.utcnow()
+                    now = datetime.now(timezone.utc)
                     retention_days = max(1, int(getattr(settings, "LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS", 7)))
                     db.query(LiveBoxSpreadSnapshot).filter(
                         LiveBoxSpreadSnapshot.observed_at < now - timedelta(days=retention_days)
                     ).delete(synchronize_session=False)
                     for result in results:
-                        observed_at = datetime.utcnow()
+                        observed_at = datetime.now(timezone.utc)
                         row = _snapshot_payload(result, observed_at)
                         db.add(LiveBoxSpreadSnapshot(
                             observed_at=observed_at,
