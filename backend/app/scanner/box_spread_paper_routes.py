@@ -23,7 +23,7 @@ from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperLedger, BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry,
 )
 
-router = APIRouter(prefix="/box-spread-paper", tags=["box-spread-paper"])
+router = APIRouter(prefix="/api/v1/scanner/box-spread-paper", tags=["box-spread-paper"])
 _engine = BoxSpreadPaperEngine()
 _master = InstrumentMaster()
 _ledger = BoxSpreadPaperLedger(SessionLocal)
