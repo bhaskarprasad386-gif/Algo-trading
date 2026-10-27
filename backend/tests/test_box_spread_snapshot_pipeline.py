@@ -86,3 +86,36 @@ def test_pipeline_deduplicates_same_quote_timestamp_but_keeps_new_observations()
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_pipeline_retries_snapshot_persistence_after_transient_database_failure():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    calls = {"count": 0}
+
+    def flaky_session_factory():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("temporary database outage")
+        return Session()
+
+    try:
+        pipeline = LiveBoxSpreadPipeline(
+            scanner=RepeatingScanner(make_result(1_793_084_708_000_000_000)),
+            session_factory=flaky_session_factory,
+            alerts=NoopAlerts(),
+        )
+        pipeline.observe({})
+
+        with Session() as db:
+            count = db.query(func.count(LiveBoxSpreadSnapshot.id)).scalar()
+            assert count == 1
+        assert calls["count"] >= 3  # failed snapshot attempt, successful retry, alert session
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
