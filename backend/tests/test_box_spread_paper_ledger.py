@@ -306,11 +306,11 @@ def test_expiry_settlement_requires_expiry_and_explicit_prices(paper_ledger):
         paper_ledger.settle_expiry(
             trade_id=trade.id, settlement_prices={}, settlement_date="2026-10-29",
         )
-    # Zero-valued intrinsic settlement is invalid as a trade price; no last-LTP fallback.
-    with pytest.raises(ValueError, match="positive"):
-        paper_ledger.settle_expiry(
-            trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
-        )
+    # A worthless option can have zero official intrinsic settlement; it is not a stale-LTP fallback.
+    settled = paper_ledger.settle_expiry(
+        trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+    )
+    assert settled["status"] == "CLOSED"
 
 
 def test_expiry_settlement_is_idempotent_and_restart_recoverable(paper_ledger):
