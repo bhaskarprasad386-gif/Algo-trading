@@ -150,3 +150,19 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
 
     assert captured == {"LOW_CE": 11, "HIGH_CE": 20, "HIGH_PE": 31, "LOW_PE": 40}
     assert result["broker_orders_enabled"] is False
+
+
+def test_engine_idempotency_key_isolated_by_account_and_trade():
+    base = routes._engine_key(
+        trade_id=123, account_key="alpha", idempotency_key="same-key",
+    )
+    other_account = routes._engine_key(
+        trade_id=123, account_key="beta", idempotency_key="same-key",
+    )
+    other_trade = routes._engine_key(
+        trade_id=124, account_key="alpha", idempotency_key="same-key",
+    )
+
+    assert base != other_account
+    assert base != other_trade
+    assert len(base) <= 200
