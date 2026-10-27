@@ -1,7 +1,4 @@
-import { StrategyWorkspace } from "@/components/strategy-workspace";
-import BoxSpreadEdgeTimingAnalysis from "@/components/BoxSpreadEdgeTimingAnalysis";
-
-"use client";
+"use client";\n\nimport { StrategyWorkspace } from "@/components/strategy-workspace";\nimport BoxSpreadEdgeTimingAnalysis from "@/components/BoxSpreadEdgeTimingAnalysis";
 
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, ShieldCheck, Play, Plus } from "lucide-react";
