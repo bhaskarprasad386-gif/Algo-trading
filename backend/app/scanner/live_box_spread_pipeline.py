@@ -148,24 +148,22 @@ class LiveBoxSpreadPipeline:
             except Exception:
                 logger.exception("Box Spread live-result publisher failed")
 
-        if not results:
-            return results
-
-        # Write every qualifying observation to a disk-backed spool before DB I/O.
-        # If the DB is down, pending rows survive process restarts and are replayed
-        # on the next observation. A successful commit is the only point that clears it.
+        # Always inspect/replay the durable queue, even when this observation
+        # produces no new opportunities. Otherwise transient DB failures can leave
+        # snapshots stranded until another qualifying opportunity appears.
         try:
-            fresh_rows = []
-            for result in results:
-                observed_at = datetime.now(timezone.utc)
-                row = _snapshot_payload(result, observed_at)
-                key = _snapshot_key(row)
-                row["_snapshot_identity"] = list(key)
-                fresh_rows.append(row)
-            _append_spool(fresh_rows)
+            if results:
+                fresh_rows = []
+                for result in results:
+                    observed_at = datetime.now(timezone.utc)
+                    row = _snapshot_payload(result, observed_at)
+                    key = _snapshot_key(row)
+                    row["_snapshot_identity"] = list(key)
+                    fresh_rows.append(row)
+                _append_spool(fresh_rows)
             pending_rows = _read_spool()
         except Exception:
-            logger.exception("Failed to enqueue Box Spread snapshots to durable local spool")
+            logger.exception("Failed to enqueue/read Box Spread durable local spool")
             pending_rows = []
 
         if pending_rows and self.session_factory:
