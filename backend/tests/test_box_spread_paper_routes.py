@@ -152,6 +152,26 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     assert result["broker_orders_enabled"] is False
 
 
+def test_recovery_endpoint_is_read_only(monkeypatch):
+    open_trades = [
+        {"trade_id": 321, "idempotency_key": "durable-key", "underlying": "NIFTY",
+         "expiry": "2026-10-29", "status": "PARTIALLY_FILLED", "quantity": 50},
+    ]
+    monkeypatch.setattr(
+        routes._ledger, "list_open_trades",
+        lambda account_key="default": open_trades,
+    )
+
+    result = routes.recovery(account_key="recovery-test")
+
+    assert result["mode"] == "PAPER_ONLY"
+    assert result["broker_orders_enabled"] is False
+    assert result["recovery_mode"] == "READ_ONLY"
+    assert result["automatic_replay"] is False
+    assert result["count"] == 1
+    assert result["data"] == open_trades
+
+
 def test_engine_idempotency_key_isolated_by_account_and_trade():
     base = routes._engine_key(
         trade_id=123, account_key="alpha", idempotency_key="same-key",
