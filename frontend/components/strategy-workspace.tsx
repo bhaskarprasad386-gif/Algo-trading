@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowLeft, Bell, Filter, RefreshCw, Search, ShieldCheck, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import LiveOpportunityGrid from "@/components/LiveOpportunityGrid";
 
 export type WorkspaceConfig = {
   slug: string;
@@ -975,6 +976,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       </div>
 
       <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />
+
+      {slug === "box-spread" && <LiveOpportunityGrid />}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
