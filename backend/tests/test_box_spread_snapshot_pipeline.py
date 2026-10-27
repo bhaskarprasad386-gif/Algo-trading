@@ -54,7 +54,8 @@ class NoopAlerts:
         pass
 
 
-def test_pipeline_deduplicates_same_quote_timestamp_but_keeps_new_observations():
+def test_pipeline_deduplicates_same_quote_timestamp_but_keeps_new_observations(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -88,7 +89,8 @@ def test_pipeline_deduplicates_same_quote_timestamp_but_keeps_new_observations()
         engine.dispose()
 
 
-def test_pipeline_retries_snapshot_persistence_after_transient_database_failure():
+def test_pipeline_retries_snapshot_persistence_after_transient_database_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -116,6 +118,45 @@ def test_pipeline_retries_snapshot_persistence_after_transient_database_failure(
             count = db.query(func.count(LiveBoxSpreadSnapshot.id)).scalar()
             assert count == 1
         assert calls["count"] >= 3  # failed snapshot attempt, successful retry, alert session
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_disk_spool_survives_database_outage_and_replays_when_database_returns(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def unavailable_database():
+        raise RuntimeError("database unavailable")
+
+    try:
+        first = LiveBoxSpreadPipeline(
+            scanner=RepeatingScanner(make_result(1_793_084_708_000_000_000)),
+            session_factory=unavailable_database,
+            alerts=NoopAlerts(),
+        )
+        first.observe({})
+        spool = tmp_path / "pending.jsonl"
+        assert spool.exists()
+        assert spool.read_text(encoding="utf-8").count("\n") == 1
+
+        recovered = LiveBoxSpreadPipeline(
+            scanner=RepeatingScanner(make_result(1_793_084_709_000_000_000)),
+            session_factory=Session,
+            alerts=NoopAlerts(),
+        )
+        recovered.observe({})
+
+        with Session() as db:
+            assert db.query(func.count(LiveBoxSpreadSnapshot.id)).scalar() == 2
+        assert spool.read_text(encoding="utf-8") == ""
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
