@@ -166,3 +166,40 @@ def test_paper_execution_requires_existing_intent():
             idempotency_key="missing",
             reference_prices={"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95},
         ))
+
+
+
+def test_paper_execution_uses_nonblocking_configured_latency(monkeypatch):
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="latency-check")
+        waits = []
+
+        async def fake_sleep(delay):
+            waits.append(delay)
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr("app.scanner.box_spread_paper_engine.asyncio.sleep", fake_sleep)
+        execution = await engine.execute_intent(
+            idempotency_key="latency-check",
+            reference_prices={"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95},
+        )
+        assert waits == [0.2]
+        assert execution.latency_seconds == 0.2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("bad_price", ["not-a-price", "", None])
+def test_paper_execution_rejects_unparseable_reference_prices(bad_price):
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="malformed-price")
+        with pytest.raises(BoxSpreadPaperEngineError, match="reference price must be positive"):
+            await engine.execute_intent(
+                idempotency_key="malformed-price",
+                reference_prices={
+                    "LOW_CE": bad_price, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95,
+                },
+            )
+    asyncio.run(scenario())
