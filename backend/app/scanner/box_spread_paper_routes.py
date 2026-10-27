@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -122,6 +123,12 @@ def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict
     raise ValueError("direction must be LONG or SHORT")
 
 
+def _engine_key(*, trade_id: int, account_key: str, idempotency_key: str) -> str:
+    """Namespace in-memory engine keys by persistent trade and paper account."""
+    account_digest = hashlib.sha256(account_key.encode("utf-8")).hexdigest()[:16]
+    return f"paper:{trade_id}:{account_digest}:{idempotency_key}"
+
+
 def _contract_payload(contracts) -> list[dict[str, Any]]:
     return [{
         "role": leg.role, "exchange_type": leg.exchange_type, "token": leg.token,
@@ -237,11 +244,15 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
         # Map executable bid/ask sides by each paper leg action. Never feed a
         # sell-side quote into a simulated BUY (or vice versa).
         reference_prices = _reference_prices_for_direction(current_row, contracts.direction)
+        engine_key = _engine_key(
+            trade_id=trade_id, account_key=payload.account_key,
+            idempotency_key=request.idempotency_key,
+        )
         await _engine.create_intent(
-            contracts=contracts, lots=request.lots, idempotency_key=request.idempotency_key,
+            contracts=contracts, lots=request.lots, idempotency_key=engine_key,
         )
         execution = await _engine.execute_intent(
-            idempotency_key=request.idempotency_key, reference_prices=reference_prices,
+            idempotency_key=engine_key, reference_prices=reference_prices,
         )
         receipts = []
         for fill in execution.fills:
