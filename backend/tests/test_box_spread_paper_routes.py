@@ -166,3 +166,10 @@ def test_engine_idempotency_key_isolated_by_account_and_trade():
     assert base != other_account
     assert base != other_trade
     assert len(base) <= 200
+    long_key = routes._engine_key(
+        trade_id=123, account_key="alpha", idempotency_key="x" * 200,
+    )
+    assert len(long_key) <= 200
+    assert long_key != routes._engine_key(
+        trade_id=123, account_key="alpha", idempotency_key="y" * 200,
+    )
