@@ -36,7 +36,7 @@ class CreatePaperTrade(BaseModel):
     high_strike: float = Field(gt=0)
     direction: str
     lots: int = Field(ge=1, le=100)
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=100)
     account_key: str = Field(default="default", min_length=1, max_length=128)
 
 
