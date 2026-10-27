@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+
+import pytest
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine, func
@@ -10,7 +12,7 @@ from app.models import LiveBoxSpreadSnapshot
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
 
 
-def make_result(timestamp_ns):
+def make_result(timestamp_ns, low_strike=22600, high_strike=23300, direction="LONG"):
     def quote(strike):
         return SimpleNamespace(
             underlying="NIFTY",
@@ -28,9 +30,9 @@ def make_result(timestamp_ns):
         )
 
     return SimpleNamespace(
-        low=quote(22600),
-        high=quote(23300),
-        direction="LONG",
+        low=quote(low_strike),
+        high=quote(high_strike),
+        direction=direction,
         executable_edge=5.2,
         edge_per_lot=338.0,
         gross_pnl=338.0,
@@ -53,6 +55,71 @@ class NoopAlerts:
     def notify_users(self, db, results):
         pass
 
+
+
+class MultipleResultsScanner:
+    def __init__(self, results):
+        self.results = results
+
+    def observe(self, payload):
+        return self.results
+
+
+def test_pipeline_persists_every_opportunity_returned_by_one_scan(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    base_timestamp = 1_793_084_708_000_000_000
+    opportunities = [
+        make_result(base_timestamp, 22600, 23300, "LONG"),
+        make_result(base_timestamp + 1_000_000, 22700, 23200, "SHORT"),
+        make_result(base_timestamp + 2_000_000, 22800, 23100, "LONG"),
+    ]
+
+    try:
+        pipeline = LiveBoxSpreadPipeline(
+            scanner=MultipleResultsScanner(opportunities),
+            session_factory=Session,
+            alerts=NoopAlerts(),
+        )
+        returned = pipeline.observe({})
+
+        with Session() as db:
+            rows = db.query(LiveBoxSpreadSnapshot).order_by(LiveBoxSpreadSnapshot.low_strike).all()
+            assert len(returned) == len(opportunities)
+            assert len(rows) == len(opportunities)
+            assert {(row.low_strike, row.high_strike, row.direction) for row in rows} == {
+                (22600, 23300, "LONG"),
+                (22700, 23200, "SHORT"),
+                (22800, 23100, "LONG"),
+            }
+        assert (tmp_path / "pending.jsonl").read_text(encoding="utf-8") == ""
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_pipeline_surfaces_durable_spool_enqueue_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    from app.scanner import live_box_spread_pipeline as pipeline_module
+
+    def fail_enqueue(rows):
+        raise OSError("disk is unavailable")
+
+    monkeypatch.setattr(pipeline_module, "_append_spool", fail_enqueue)
+    pipeline = LiveBoxSpreadPipeline(
+        scanner=RepeatingScanner(make_result(1_793_084_708_000_000_000)),
+        session_factory=None,
+        alerts=NoopAlerts(),
+    )
+
+    with pytest.raises(RuntimeError, match="could not be durably queued"):
+        pipeline.observe({})
 
 def test_pipeline_deduplicates_same_quote_timestamp_but_keeps_new_observations(tmp_path, monkeypatch):
     monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
