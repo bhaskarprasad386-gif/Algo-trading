@@ -253,6 +253,8 @@ class BoxSpreadPaperEngine:
             if intent is None:
                 raise BoxSpreadPaperEngineError("paper intent not found")
             existing = self._executions.get(key)
+            if existing is None and any(fill_key == key for fill_key, _ in self._fill_events):
+                raise BoxSpreadPaperEngineError("intent already has partial fill records")
 
         supplied_roles = set(reference_prices)
         if supplied_roles != set(_REQUIRED_LEG_ROLES):
@@ -348,8 +350,6 @@ class BoxSpreadPaperEngine:
                 raise BoxSpreadPaperEngineError("paper intent not found")
             if key in self._executions:
                 raise BoxSpreadPaperEngineError("intent already has a full execution")
-            if any(fill_key == key for fill_key, _ in self._fill_events):
-                raise BoxSpreadPaperEngineError("intent already has partial fill records")
             leg = next((item for item in intent.legs if item.role == role), None)
             if leg is None:
                 raise BoxSpreadPaperEngineError("unknown paper leg role")
