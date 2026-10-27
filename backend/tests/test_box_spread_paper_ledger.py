@@ -343,3 +343,29 @@ def test_open_trade_recovery_preserves_partial_state(paper_ledger):
     assert len(recovered) == 1
     assert recovered[0]["trade_id"] == trade.id
     assert recovered[0]["status"] == "PARTIALLY_FILLED"
+
+
+def test_exit_is_never_blocked_by_low_virtual_balance():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperAccount.__table__,
+        BoxSpreadPaperTradeRecord.__table__,
+        BoxSpreadPaperLedgerEntry.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    ledger = BoxSpreadPaperLedger(factory, starting_balance=100)
+    trade = _trade(ledger)
+    ledger.record_fill(
+        trade_id=trade.id, fill_id="short-entry", role="HIGH_CE", action="SELL",
+        quantity=25, fill_price=1,
+    )
+    receipt = ledger.record_exit_fill(
+        trade_id=trade.id, fill_id="expensive-close", role="HIGH_CE",
+        quantity=25, fill_price=10000,
+    )
+    assert receipt.virtual_balance < Decimal("0")
+    engine.dispose()
