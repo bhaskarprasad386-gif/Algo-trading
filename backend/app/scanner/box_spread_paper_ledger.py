@@ -6,7 +6,7 @@ and does not write to generic trading accounts or live scanner history.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Callable
 
@@ -276,14 +276,13 @@ class BoxSpreadPaperLedger:
             )
             if action != expected_actions[role]:
                 raise ValueError("fill action does not match the paper trade direction")
-            already_filled = session.scalar(select(func.coalesce(func.sum(
-                BoxSpreadPaperLedgerEntry.quantity
-            ), 0)).where(
+            entry_rows = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
                 BoxSpreadPaperLedgerEntry.trade_id == trade.id,
                 BoxSpreadPaperLedgerEntry.role == role,
                 BoxSpreadPaperLedgerEntry.account_key == account_key,
-            ))
-            if int(already_filled or 0) + qty > trade.quantity:
+            )).all()
+            already_filled = sum(row.quantity for row in entry_rows if not row.fill_id.startswith(("EXIT:", "SETTLE:")))
+            if already_filled + qty > trade.quantity:
                 raise ValueError("fill quantity exceeds remaining leg quantity")
             if cash_delta < 0 and Decimal(account.virtual_balance) + cash_delta < 0:
                 raise ValueError("insufficient virtual balance")
@@ -297,18 +296,161 @@ class BoxSpreadPaperLedger:
             account.virtual_balance = Decimal(account.virtual_balance) + cash_delta
             session.flush()
             role_totals = {
-                role_name: int(session.scalar(select(func.coalesce(func.sum(
-                    BoxSpreadPaperLedgerEntry.quantity
-                ), 0)).where(
-                    BoxSpreadPaperLedgerEntry.trade_id == trade.id,
-                    BoxSpreadPaperLedgerEntry.role == role_name,
-                    BoxSpreadPaperLedgerEntry.account_key == account_key,
-                )) or 0)
+                role_name: sum(
+                    row.quantity for row in session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                        BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+                        BoxSpreadPaperLedgerEntry.role == role_name,
+                        BoxSpreadPaperLedgerEntry.account_key == account_key,
+                    )).all()
+                    if not row.fill_id.startswith(("EXIT:", "SETTLE:"))
+                )
                 for role_name in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
             }
             trade.status = "FILLED" if all(total == trade.quantity for total in role_totals.values()) else "PARTIALLY_FILLED"
             receipt = self._receipt(entry, Decimal(account.virtual_balance))
             return receipt
+
+
+    def record_exit_fill(
+        self,
+        *,
+        trade_id: int,
+        fill_id: str,
+        role: str,
+        quantity: int,
+        fill_price: object,
+        account_key: str = "default",
+        settlement: bool = False,
+    ) -> BoxSpreadPaperFillReceipt:
+        """Close an existing paper position using a fresh exit or settlement price."""
+        key = self._account_key(account_key)
+        role = str(role or "").upper()
+        raw_id = str(fill_id or "").strip()
+        if role not in {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}:
+            raise ValueError("unknown box spread leg role")
+        if not raw_id or len(raw_id) > 96:
+            raise ValueError("exit fill_id is required and must be at most 96 characters")
+        qty = _positive_quantity(quantity)
+        price = _money(fill_price, field="exit price")
+        if price <= 0:
+            raise ValueError("exit price must be positive")
+        prefix = "SETTLE:" if settlement else "EXIT:"
+        stored_fill_id = f"{prefix}{raw_id}"
+        entry_key = f"{trade_id}:{stored_fill_id}"
+        notional = (price * qty).quantize(CENT, rounding=ROUND_HALF_UP)
+
+        with self._session_factory() as session, session.begin():
+            account = self._ensure_account_in_session(session, key)
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            existing = session.scalar(select(BoxSpreadPaperLedgerEntry).where(
+                BoxSpreadPaperLedgerEntry.account_key == key,
+                BoxSpreadPaperLedgerEntry.entry_key == entry_key,
+            ))
+            if existing is not None:
+                if (existing.role, existing.quantity, Decimal(existing.fill_price)) != (role, qty, price):
+                    raise ValueError("exit fill_id reused with different fill data")
+                return self._receipt(existing, Decimal(account.virtual_balance))
+            if trade.status in {"CLOSED", "CANCELLED"}:
+                raise ValueError("paper trade is already closed or cancelled")
+            rows = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+                BoxSpreadPaperLedgerEntry.account_key == key,
+                BoxSpreadPaperLedgerEntry.role == role,
+            )).all()
+            signed_position = sum(row.quantity * (1 if row.action == "BUY" else -1) for row in rows)
+            if signed_position == 0:
+                raise ValueError("no open position exists for this leg")
+            if qty > abs(signed_position):
+                raise ValueError("exit quantity exceeds open leg quantity")
+            action = "SELL" if signed_position > 0 else "BUY"
+            charges = self.fee_schedule.calculate(action=action, notional=notional)
+            cash_delta = (-notional if action == "BUY" else notional) - charges
+            if cash_delta < 0 and Decimal(account.virtual_balance) + cash_delta < 0:
+                raise ValueError("insufficient virtual balance for exit")
+            entry = BoxSpreadPaperLedgerEntry(
+                account_key=key, trade_id=trade.id, entry_key=entry_key,
+                fill_id=stored_fill_id, role=role, action=action, quantity=qty,
+                fill_price=price, notional=notional, charges=charges,
+                cash_delta=cash_delta, fee_schedule_version=self.fee_schedule.version,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(entry)
+            account.virtual_balance = Decimal(account.virtual_balance) + cash_delta
+            session.flush()
+            positions = {}
+            all_rows = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+                BoxSpreadPaperLedgerEntry.account_key == key,
+            )).all()
+            for row in all_rows:
+                positions[row.role] = positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
+            trade.status = "CLOSED" if all(position == 0 for position in positions.values()) else "EXITING"
+            return self._receipt(entry, Decimal(account.virtual_balance))
+
+    def settle_expiry(
+        self,
+        *,
+        trade_id: int,
+        settlement_prices: dict[str, object],
+        settlement_date: date | str,
+        account_key: str = "default",
+    ) -> dict[str, object]:
+        """Settle on/after expiry using explicit official settlement prices, never stale LTP."""
+        key = self._account_key(account_key)
+        try:
+            actual_date = settlement_date if isinstance(settlement_date, date) else date.fromisoformat(str(settlement_date))
+        except (TypeError, ValueError):
+            raise ValueError("settlement_date must be an ISO date") from None
+        with self._session_factory() as session:
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            try:
+                expiry_date = date.fromisoformat(trade.expiry[:10])
+            except ValueError:
+                raise ValueError("trade expiry must be normalized to YYYY-MM-DD before settlement") from None
+            if actual_date < expiry_date:
+                raise ValueError("cannot settle before expiry")
+            rows = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+                BoxSpreadPaperLedgerEntry.account_key == key,
+            )).all()
+        positions: dict[str, int] = {}
+        for row in rows:
+            positions[row.role] = positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
+        open_roles = {role for role, quantity in positions.items() if quantity != 0}
+        if open_roles - set(settlement_prices):
+            raise ValueError("settlement_prices must include every open leg role")
+        receipts = []
+        for role in sorted(open_roles):
+            receipts.append(self.record_exit_fill(
+                trade_id=trade_id, fill_id=f"{actual_date.isoformat()}:{role}",
+                role=role, quantity=abs(positions[role]), fill_price=settlement_prices[role],
+                account_key=key, settlement=True,
+            ))
+        return {
+            "trade_id": trade_id, "settlement_date": actual_date.isoformat(),
+            "settled_legs": len(receipts),
+            "status": self.get_trade_summary(trade_id, account_key=key)["status"],
+            "receipts": tuple(receipts),
+        }
+
+    def list_open_trades(self, account_key: str = "default") -> list[dict[str, object]]:
+        """Return durable non-terminal trades for restart recovery."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session:
+            trades = session.scalars(select(BoxSpreadPaperTradeRecord).where(
+                BoxSpreadPaperTradeRecord.account_key == key,
+                BoxSpreadPaperTradeRecord.status.notin_(("CLOSED", "CANCELLED")),
+            ).order_by(BoxSpreadPaperTradeRecord.created_at, BoxSpreadPaperTradeRecord.id)).all()
+            return [
+                {"trade_id": trade.id, "idempotency_key": trade.idempotency_key,
+                 "underlying": trade.underlying, "expiry": trade.expiry,
+                 "status": trade.status, "quantity": trade.quantity}
+                for trade in trades
+            ]
 
     def get_account_summary(self, account_key: str = "default") -> dict[str, Decimal | int | str]:
         key = self._account_key(account_key)
@@ -365,17 +507,12 @@ class BoxSpreadPaperLedger:
                 if not mark.is_finite() or mark <= 0:
                     raise ValueError(f"{row.role} mark price must be positive")
                 # Aggregate fills by role so multiple partial fills do not multiply the mark.
-            role_positions: dict[str, tuple[str, int]] = {}
+            role_positions: dict[str, int] = {}
             for row in entries:
-                prior_action, prior_qty = role_positions.get(row.role, (row.action, 0))
-                if prior_action != row.action:
-                    raise ValueError("inconsistent action history for paper leg")
-                role_positions[row.role] = (row.action, prior_qty + row.quantity)
+                role_positions[row.role] = role_positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
             market_value = sum(
-                (
-                    Decimal(str(mark_prices[role])) * quantity * (1 if action == "BUY" else -1)
-                    for role, (action, quantity) in role_positions.items()
-                ),
+                (Decimal(str(mark_prices[role])) * signed_quantity
+                 for role, signed_quantity in role_positions.items() if signed_quantity != 0),
                 Decimal("0.00"),
             )
             unrealized_pnl = (net_cash_flow + market_value).quantize(CENT, rounding=ROUND_HALF_UP)
@@ -391,7 +528,7 @@ class BoxSpreadPaperLedger:
             "net_cash_flow": net_cash_flow,
             "unrealized_pnl": unrealized_pnl,
             # Realized P&L remains unavailable until Phase 6 exit/settlement records exist.
-            "realized_pnl": None,
+            "realized_pnl": net_cash_flow.quantize(CENT, rounding=ROUND_HALF_UP) if trade.status == "CLOSED" else None,
             "fee_schedule_version": trade.fee_schedule_version,
         }
 
