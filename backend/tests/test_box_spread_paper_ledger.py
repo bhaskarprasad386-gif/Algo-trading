@@ -241,3 +241,105 @@ def test_trade_summary_rejects_missing_or_invalid_mark_prices(paper_ledger):
         paper_ledger.get_trade_summary(trade.id, mark_prices={})
     with pytest.raises(ValueError, match="mark price must be positive"):
         paper_ledger.get_trade_summary(trade.id, mark_prices={"LOW_CE": 0})
+
+
+def _fill_all_legs(ledger, trade):
+    for role, action, price in [
+        ("LOW_CE", "BUY", 100),
+        ("HIGH_CE", "SELL", 50),
+        ("HIGH_PE", "BUY", 55),
+        ("LOW_PE", "SELL", 95),
+    ]:
+        ledger.record_fill(
+            trade_id=trade.id, fill_id=f"entry-{role}", role=role,
+            action=action, quantity=25, fill_price=price,
+        )
+
+
+def test_exit_fills_close_positions_and_report_realized_pnl(paper_ledger):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    for role, exit_price in [
+        ("LOW_CE", 101), ("HIGH_CE", 49),
+        ("HIGH_PE", 56), ("LOW_PE", 94),
+    ]:
+        paper_ledger.record_exit_fill(
+            trade_id=trade.id, fill_id=f"close-{role}", role=role,
+            quantity=25, fill_price=exit_price,
+        )
+    summary = paper_ledger.get_trade_summary(trade.id)
+    assert summary["status"] == "CLOSED"
+    assert summary["realized_pnl"] is not None
+    assert summary["unrealized_pnl"] is None
+    assert paper_ledger.list_open_trades() == []
+
+
+def test_exit_fill_idempotency_and_over_exit_protection(paper_ledger):
+    trade = _trade(paper_ledger)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="entry-one", role="LOW_CE", action="BUY",
+        quantity=10, fill_price=100,
+    )
+    kwargs = dict(
+        trade_id=trade.id, fill_id="exit-one", role="LOW_CE",
+        quantity=5, fill_price=101,
+    )
+    first = paper_ledger.record_exit_fill(**kwargs)
+    second = paper_ledger.record_exit_fill(**kwargs)
+    assert first.cash_delta == second.cash_delta
+    with pytest.raises(ValueError, match="exceeds open leg quantity"):
+        paper_ledger.record_exit_fill(
+            trade_id=trade.id, fill_id="exit-too-much", role="LOW_CE",
+            quantity=6, fill_price=101,
+        )
+
+
+def test_expiry_settlement_requires_expiry_and_explicit_prices(paper_ledger):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    prices = {"LOW_CE": 0, "HIGH_CE": 0, "HIGH_PE": 0, "LOW_PE": 0}
+    with pytest.raises(ValueError, match="before expiry"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-28",
+        )
+    with pytest.raises(ValueError, match="include every open leg role"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id, settlement_prices={}, settlement_date="2026-10-29",
+        )
+    # Zero-valued intrinsic settlement is invalid as a trade price; no last-LTP fallback.
+    with pytest.raises(ValueError, match="positive"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+        )
+
+
+def test_expiry_settlement_is_idempotent_and_restart_recoverable(paper_ledger):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    prices = {"LOW_CE": 10, "HIGH_CE": 0.5, "HIGH_PE": 2, "LOW_PE": 8}
+    # Use positive settlement values and explicit expiry date.
+    first = paper_ledger.settle_expiry(
+        trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+    )
+    balance_after = paper_ledger.get_account_summary()["virtual_balance"]
+    second = paper_ledger.settle_expiry(
+        trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+    )
+    assert first["status"] == "CLOSED"
+    assert second["status"] == "CLOSED"
+    assert paper_ledger.get_account_summary()["virtual_balance"] == balance_after
+    restored = BoxSpreadPaperLedger(paper_ledger._session_factory)
+    assert restored.get_trade_summary(trade.id)["realized_pnl"] is not None
+    assert restored.list_open_trades() == []
+
+
+def test_open_trade_recovery_preserves_partial_state(paper_ledger):
+    trade = _trade(paper_ledger)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="recovery-partial", role="LOW_CE",
+        action="BUY", quantity=7, fill_price=100,
+    )
+    recovered = BoxSpreadPaperLedger(paper_ledger._session_factory).list_open_trades()
+    assert len(recovered) == 1
+    assert recovered[0]["trade_id"] == trade.id
+    assert recovered[0]["status"] == "PARTIALLY_FILLED"
