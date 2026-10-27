@@ -43,7 +43,7 @@ class LiveBoxSpreadRunner:
     def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None):
         self.data_db=data_db; self.targets=tuple(targets); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
-        self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None
+        self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
         self._readiness = {"state": "starting", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
 
     @staticmethod
@@ -175,6 +175,7 @@ class LiveBoxSpreadRunner:
                     ),
                     policy=self.policy,
                 )
+                self.scanner = scanner
                 pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results)
                 subscribed_strikes = {}
                 for sub in subs:
@@ -229,6 +230,7 @@ class LiveBoxSpreadRunner:
             "underlying_feed": None if self.feed is None else self.feed.snapshot(),
             "option_recorder": None if self.recorder is None else self.recorder.snapshot(),
             "readiness": dict(self._readiness),
+            "scanner_diagnostics": None if self.scanner is None else self.scanner.diagnostics_snapshot(),
         }
 
     def stop(self):
