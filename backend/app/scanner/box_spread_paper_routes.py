@@ -103,6 +103,25 @@ def _canonical_expiry(value: object) -> str:
     return text
 
 
+def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict[str, float]:
+    """Select executable quote sides consistent with the four paper leg actions."""
+    if direction == "LONG":
+        return {
+            "LOW_CE": row["low_call_ask"],
+            "HIGH_CE": row["high_call_bid"],
+            "HIGH_PE": row["high_put_ask"],
+            "LOW_PE": row["low_put_bid"],
+        }
+    if direction == "SHORT":
+        return {
+            "LOW_CE": row["low_call_bid"],
+            "HIGH_CE": row["high_call_ask"],
+            "HIGH_PE": row["high_put_bid"],
+            "LOW_PE": row["low_put_ask"],
+        }
+    raise ValueError("direction must be LONG or SHORT")
+
+
 def _contract_payload(contracts) -> list[dict[str, Any]]:
     return [{
         "role": leg.role, "exchange_type": leg.exchange_type, "token": leg.token,
@@ -198,20 +217,7 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
         # row, which has already passed the five-second four-leg freshness check.
         # Map executable bid/ask sides by each paper leg action. Never feed a
         # sell-side quote into a simulated BUY (or vice versa).
-        if contracts.direction == "LONG":
-            reference_prices = {
-                "LOW_CE": current_row["low_call_ask"],
-                "HIGH_CE": current_row["high_call_bid"],
-                "HIGH_PE": current_row["high_put_ask"],
-                "LOW_PE": current_row["low_put_bid"],
-            }
-        else:
-            reference_prices = {
-                "LOW_CE": current_row["low_call_bid"],
-                "HIGH_CE": current_row["high_call_ask"],
-                "HIGH_PE": current_row["high_put_bid"],
-                "LOW_PE": current_row["low_put_ask"],
-            }
+        reference_prices = _reference_prices_for_direction(current_row, contracts.direction)
         await _engine.create_intent(
             contracts=contracts, lots=request.lots, idempotency_key=request.idempotency_key,
         )
