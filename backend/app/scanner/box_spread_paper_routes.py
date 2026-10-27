@@ -353,4 +353,21 @@ def trade_ledger(trade_id: int, account_key: str = "default"):
         _error(exc)
 
 
+@router.get("/recovery")
+def recovery(account_key: str = "default"):
+    """List durable non-terminal paper trades after restart; never replay fills automatically."""
+    try:
+        open_trades = _ledger.list_open_trades(account_key=account_key)
+        return {
+            "mode": "PAPER_ONLY",
+            "broker_orders_enabled": False,
+            "recovery_mode": "READ_ONLY",
+            "automatic_replay": False,
+            "count": len(open_trades),
+            "data": open_trades,
+        }
+    except Exception as exc:
+        _error(exc)
+
+
 __all__ = ["router"]
