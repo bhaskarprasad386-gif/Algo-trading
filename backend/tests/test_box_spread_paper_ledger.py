@@ -270,7 +270,7 @@ def test_exit_fills_close_positions_and_report_realized_pnl(paper_ledger):
     summary = paper_ledger.get_trade_summary(trade.id)
     assert summary["status"] == "CLOSED"
     assert summary["realized_pnl"] is not None
-    assert summary["unrealized_pnl"] is None
+    assert summary["unrealized_pnl"] == Decimal("0.00")
     assert paper_ledger.list_open_trades() == []
 
 
@@ -369,3 +369,21 @@ def test_exit_is_never_blocked_by_low_virtual_balance():
     )
     assert receipt.virtual_balance < Decimal("0")
     engine.dispose()
+
+
+def test_partial_exit_separates_realized_and_open_leg_pnl(paper_ledger):
+    trade = _trade(paper_ledger)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="partial-entry", role="LOW_CE",
+        action="BUY", quantity=10, fill_price=100,
+    )
+    paper_ledger.record_exit_fill(
+        trade_id=trade.id, fill_id="partial-exit", role="LOW_CE",
+        quantity=4, fill_price=110,
+    )
+    summary = paper_ledger.get_trade_summary(
+        trade.id, mark_prices={"LOW_CE": 105},
+    )
+    assert summary["realized_pnl"] > Decimal("0")
+    assert summary["unrealized_pnl"] > Decimal("0")
+    assert summary["status"] == "EXITING"
