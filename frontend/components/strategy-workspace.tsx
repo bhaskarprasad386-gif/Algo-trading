@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowLeft, Bell, Filter, RefreshCw, Search, ShieldCheck, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import LiveOpportunityGrid from "@/components/LiveOpportunityGrid";
 
 export type WorkspaceConfig = {
   slug: string;
@@ -57,7 +58,7 @@ const configs: Record<string, WorkspaceConfig> = {
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
     pairColumns: ["Time", "Underlying", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Lot Size", "Direction", "Freshness"],
-    historyEndpoint: "/api/v1/scanner/box-spread/alerts?days=1&limit=100",
+    historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=500",
   },
   "custom-strategy": {
     slug: "custom-strategy",
@@ -364,7 +365,7 @@ function pairCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
-      Time: ["last_update_timestamp_ns", "timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
+      Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
       "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
       "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
       "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
@@ -451,7 +452,7 @@ async function copyTextWithFallback(text: string): Promise<boolean> {
 }
 
 function historyCell(slug: string, column: string, row: Row) {
-  if (slug === "synthetic-arbitrage" && column === "Time") {
+  if ((slug === "synthetic-arbitrage" || slug === "box-spread") && column === "Time") {
     const observed = row.observed_at;
     if (observed !== undefined && observed !== null && observed !== "") {
       const date = new Date(String(observed));
@@ -484,6 +485,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     slug === "box-spread" ? "/api/v1/scanner/box-spread/live?limit=50&max_age_seconds=5" : null;
 
   const [currentLiveTime, setCurrentLiveTime] = useState("");
+  const [liveApiLastOkAt, setLiveApiLastOkAt] = useState<number | null>(null);
+  const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR">("CHECKING");
   const [search, setSearch] = useState("");
   const [control, setControl] = useState(c.controls[0]);
   const [top15StockSymbols, setTop15StockSymbols] = useState<string[]>([
@@ -613,6 +616,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (!response.ok) throw new Error(body?.detail || c.title + " HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
       if (requestId !== loadRequestRef.current) return;
+      setLiveApiLastOkAt(Date.now());
+      setLiveApiStatus("RESPONDING");
       if (data.length > 0) {
         rowsRef.current = data;
         setRows(data);
@@ -658,6 +663,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setError(null);
     } catch (e) {
       if (requestId !== loadRequestRef.current) return;
+      setLiveApiStatus("ERROR");
       // Preserve the last good rows during a temporary API failure, including
       // after a page reload. Cached rows are never presented as confirmed live.
       if (slug === "synthetic-arbitrage") {
@@ -971,6 +977,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />
 
+      {slug === "box-spread" && <LiveOpportunityGrid />}
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Common Market Data Feed</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Activity className="h-4 w-4" />{feedTicks == null ? "CHECKING" : feedTicks.toLocaleString("en-IN") + " ticks"}</p></Card>
@@ -1092,18 +1100,18 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <Card className="overflow-hidden theme-border theme-surface">
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
           <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span></div>
         </div>
         <div className="grid gap-2 p-3 md:hidden">
-          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No live opportunity data</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</div></div>)}</div></div>)}
+          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</div></div>)}</div></div>)}
         </div>
         <div className="hidden overflow-x-auto md:block">
           <table className="min-w-[1100px] w-full text-left text-sm">
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
               {loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr> :
-              filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">No live opportunity data</td></tr> :
+              filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</td></tr> :
               filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className={"border-b theme-border last:border-0 " + (slug === "synthetic-arbitrage" && (index === 0 || String(filteredRows[index - 1]?.underlying ?? "").toUpperCase() !== String(row.underlying ?? "").toUpperCase()) ? "border-t-2 theme-border" : "")}>
                 {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted") + " " + syntheticCellTone(slug, column, row)}>{formatCell(slug, column, row)}</td>)}
               </tr>)}
