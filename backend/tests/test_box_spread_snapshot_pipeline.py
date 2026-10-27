@@ -227,3 +227,48 @@ def test_disk_spool_survives_database_outage_and_replays_when_database_returns(t
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_pipeline_retains_snapshots_older_than_deduplication_window(tmp_path, monkeypatch):
+    """Old saved opportunities must remain available to complete-history analysis."""
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    old_observed_at = datetime(2020, 1, 2, 4, 0, 0, tzinfo=timezone.utc)
+
+    try:
+        with Session() as db:
+            db.add(
+                LiveBoxSpreadSnapshot(
+                    observed_at=old_observed_at,
+                    timestamp_ns=123,
+                    symbol="NIFTY",
+                    expiry=20261103,
+                    low_strike=22000,
+                    high_strike=23000,
+                    direction="LONG",
+                    payload_json='{"executable_edge": 12.5}',
+                )
+            )
+            db.commit()
+
+        pipeline = LiveBoxSpreadPipeline(
+            scanner=RepeatingScanner(make_result(1_793_084_708_000_000_000)),
+            session_factory=Session,
+            alerts=NoopAlerts(),
+        )
+        pipeline.observe({})
+
+        with Session() as db:
+            rows = db.query(LiveBoxSpreadSnapshot).order_by(LiveBoxSpreadSnapshot.observed_at).all()
+            assert len(rows) == 2
+            assert rows[0].observed_at.year == 2020
+            assert rows[0].payload_json == '{"executable_edge": 12.5}'
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
