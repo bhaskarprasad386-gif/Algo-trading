@@ -1,7 +1,7 @@
-from dataclasses import replace
 import asyncio
 
 import pytest
+from decimal import Decimal
 
 from app.market_data.live_synthetic_stream import SyntheticSubscription
 from app.scanner.box_spread_contract_resolver import resolve_box_spread_contracts
@@ -92,3 +92,77 @@ def test_get_and_list_return_only_created_paper_intents():
         await engine.create_intent(contracts=_contracts("SHORT"), lots=1, idempotency_key="two")
         assert len(await engine.list_intents()) == 2
     asyncio.run(scenario())
+
+
+
+def test_paper_execution_applies_200ms_async_latency_and_adverse_slippage():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        intent = await engine.create_intent(
+            contracts=_contracts(), lots=1, idempotency_key="execute-1"
+        )
+        # Keep CI fast while asserting the production default is exactly 200ms.
+        assert BoxSpreadPaperEngine.execution_latency_seconds == 0.2
+        engine.execution_latency_seconds = 0
+        execution = await engine.execute_intent(
+            idempotency_key=intent.idempotency_key,
+            reference_prices={
+                "LOW_CE": "100.00", "HIGH_CE": "50.00",
+                "HIGH_PE": "55.00", "LOW_PE": "95.00",
+            },
+        )
+        assert execution.latency_seconds == 0
+        assert str(execution.slippage_rate) == "0.0005"
+        assert [fill.role for fill in execution.fills] == [
+            "LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"
+        ]
+        assert [fill.action for fill in execution.fills] == ["BUY", "SELL", "BUY", "SELL"]
+        assert [fill.fill_price for fill in execution.fills] == [
+            Decimal("100.050000"), Decimal("49.975000"),
+            Decimal("55.027500"), Decimal("94.952500"),
+        ]
+        assert all(fill.quantity == 25 for fill in execution.fills)
+    asyncio.run(scenario())
+
+
+def test_paper_execution_is_idempotent_and_rejects_changed_prices():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="execute-2")
+        engine.execution_latency_seconds = 0
+        prices = {"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95}
+        first, second = await asyncio.gather(
+            engine.execute_intent(idempotency_key="execute-2", reference_prices=prices),
+            engine.execute_intent(idempotency_key="execute-2", reference_prices=prices),
+        )
+        assert first == second
+        with pytest.raises(BoxSpreadPaperEngineError, match="different reference prices"):
+            await engine.execute_intent(
+                idempotency_key="execute-2",
+                reference_prices={**prices, "LOW_CE": 101},
+            )
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("prices", [
+    {"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55},
+    {"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95, "EXTRA": 1},
+    {"LOW_CE": 0, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95},
+    {"LOW_CE": "NaN", "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95},
+])
+def test_paper_execution_rejects_incomplete_or_invalid_reference_prices(prices):
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="bad-prices")
+        engine.execution_latency_seconds = 0
+        with pytest.raises(BoxSpreadPaperEngineError):
+            await engine.execute_intent(idempotency_key="bad-prices", reference_prices=prices)
+    asyncio.run(scenario())
+
+
+def test_paper_execution_requires_existing_intent():
+    with pytest.raises(BoxSpreadPaperEngineError, match="paper intent not found"):
+        asyncio.run(BoxSpreadPaperEngine().execute_intent(
+            idempotency_key="missing",
+            reference_prices={"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95},
+        ))
