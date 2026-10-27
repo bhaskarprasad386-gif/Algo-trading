@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Callable
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, create_engine, select
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.core.database import Base
@@ -267,10 +267,24 @@ class BoxSpreadPaperLedger:
                     raise ValueError("fill_id reused with different fill data")
                 receipt = self._receipt(existing, Decimal(account.virtual_balance))
                 return receipt
-            if qty > trade.quantity:
-                raise ValueError("fill quantity cannot exceed trade leg quantity")
             if trade.status in {"CLOSED", "CANCELLED"}:
                 raise ValueError("cannot add a fill to a closed or cancelled trade")
+            expected_actions = (
+                {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+                if trade.direction == "LONG"
+                else {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+            )
+            if action != expected_actions[role]:
+                raise ValueError("fill action does not match the paper trade direction")
+            already_filled = session.scalar(select(func.coalesce(func.sum(
+                BoxSpreadPaperLedgerEntry.quantity
+            ), 0)).where(
+                BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+                BoxSpreadPaperLedgerEntry.role == role,
+                BoxSpreadPaperLedgerEntry.account_key == account_key,
+            ))
+            if int(already_filled or 0) + qty > trade.quantity:
+                raise ValueError("fill quantity exceeds remaining leg quantity")
             if cash_delta < 0 and Decimal(account.virtual_balance) + cash_delta < 0:
                 raise ValueError("insufficient virtual balance")
             entry = BoxSpreadPaperLedgerEntry(
@@ -282,6 +296,17 @@ class BoxSpreadPaperLedger:
             session.add(entry)
             account.virtual_balance = Decimal(account.virtual_balance) + cash_delta
             session.flush()
+            role_totals = {
+                role_name: int(session.scalar(select(func.coalesce(func.sum(
+                    BoxSpreadPaperLedgerEntry.quantity
+                ), 0)).where(
+                    BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+                    BoxSpreadPaperLedgerEntry.role == role_name,
+                    BoxSpreadPaperLedgerEntry.account_key == account_key,
+                )) or 0)
+                for role_name in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+            }
+            trade.status = "FILLED" if all(total == trade.quantity for total in role_totals.values()) else "PARTIALLY_FILLED"
             receipt = self._receipt(entry, Decimal(account.virtual_balance))
             return receipt
 
