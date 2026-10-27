@@ -70,3 +70,35 @@ def test_simulation_rejects_missing_fresh_backend_opportunity_before_execution(m
 
     assert raised.value.status_code == 409
     assert "No matching fresh live Box Spread opportunity" in raised.value.detail
+
+
+def test_simulation_blocks_duplicate_replay_when_durable_fills_exist(monkeypatch):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="already-filled", account_key="isolated-test",
+    )
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+    monkeypatch.setattr(
+        routes._ledger, "list_fills",
+        lambda trade_id, account_key="default": [object()],
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("duplicate entry must be blocked before resolving contracts or reading new quotes")
+
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
+
+    async def forbidden_execution(**kwargs):
+        pytest.fail("duplicate entry must not execute again")
+
+    monkeypatch.setattr(routes._engine, "create_intent", forbidden_execution)
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(routes.simulate_entry(
+            123, routes.SimulateEntry(account_key="isolated-test"),
+        ))
+
+    assert raised.value.status_code == 409
+    assert "already has durable fills" in raised.value.detail
