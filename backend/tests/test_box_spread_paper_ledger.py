@@ -167,3 +167,41 @@ def test_fill_records_survive_ledger_instance_recreation(paper_ledger):
     assert summary["fill_count"] == 1
     assert fills[0].fill_id == "restart-fill"
     assert fills[0].quantity == 25
+
+
+def test_persistent_ledger_prevents_cumulative_leg_overfill_and_wrong_action(paper_ledger):
+    trade = _trade(paper_ledger)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="part-a", role="LOW_CE", action="BUY",
+        quantity=20, fill_price=100,
+    )
+    with pytest.raises(ValueError, match="remaining leg quantity"):
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id="part-b", role="LOW_CE", action="BUY",
+            quantity=6, fill_price=100,
+        )
+    with pytest.raises(ValueError, match="does not match"):
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id="wrong-action", role="HIGH_CE", action="BUY",
+            quantity=1, fill_price=50,
+        )
+
+
+def test_trade_status_changes_only_when_all_four_legs_fully_fill(paper_ledger):
+    trade = _trade(paper_ledger)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="leg-1", role="LOW_CE", action="BUY",
+        quantity=25, fill_price=100,
+    )
+    with paper_ledger._session_factory() as session:
+        first_status = session.get(BoxSpreadPaperTradeRecord, trade.id).status
+    assert first_status == "PARTIALLY_FILLED"
+    actions = {"HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+    for role, action in actions.items():
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id=f"{role}-full", role=role, action=action,
+            quantity=25, fill_price=50,
+        )
+    with paper_ledger._session_factory() as session:
+        final_status = session.get(BoxSpreadPaperTradeRecord, trade.id).status
+    assert final_status == "FILLED"
