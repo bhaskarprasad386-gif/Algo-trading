@@ -22,6 +22,7 @@ type TimingAnalysis = {
   positive_edge_observations: number;
   latest_observed_at: string | null;
   minimum_samples_for_average_conclusion: number;
+  minimum_distinct_dates_for_average_conclusion: number;
   best_max_edge_day: TimingGroup | null;
   best_max_edge_time: TimingGroup | null;
   best_average_edge_day: TimingGroup | null;
