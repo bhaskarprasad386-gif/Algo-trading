@@ -228,7 +228,7 @@ def test_trade_summary_reports_charges_cash_flow_and_mark_to_market_pnl(paper_le
     assert summary["fill_count"] == 4
     assert summary["total_charges"] > Decimal("0")
     assert summary["unrealized_pnl"] == -summary["total_charges"]
-    assert summary["realized_pnl"] is None
+    assert summary["realized_pnl"] == Decimal("0.00")
 
 
 def test_trade_summary_rejects_missing_or_invalid_mark_prices(paper_ledger):
@@ -237,7 +237,7 @@ def test_trade_summary_rejects_missing_or_invalid_mark_prices(paper_ledger):
         trade_id=trade.id, fill_id="marked", role="LOW_CE", action="BUY",
         quantity=5, fill_price=100,
     )
-    with pytest.raises(ValueError, match="include every filled leg"):
+    with pytest.raises(ValueError, match="include every open leg role"):
         paper_ledger.get_trade_summary(trade.id, mark_prices={})
     with pytest.raises(ValueError, match="mark price must be positive"):
         paper_ledger.get_trade_summary(trade.id, mark_prices={"LOW_CE": 0})
