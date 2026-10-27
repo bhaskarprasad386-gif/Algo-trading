@@ -204,6 +204,17 @@ def _load_trade_request(trade_id: int, account_key: str) -> CreatePaperTrade:
 async def simulate_entry(trade_id: int, payload: SimulateEntry):
     try:
         request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
+        # A process restart clears the in-memory execution registry. Never replay
+        # a trade with durable fills against a newer quote snapshot: that could
+        # conflict with the ledger's stable fill IDs or mix two entry snapshots.
+        existing_fills = await asyncio.to_thread(
+            _ledger.list_fills, trade_id, account_key=payload.account_key
+        )
+        if existing_fills:
+            raise HTTPException(
+                status_code=409,
+                detail="Paper entry already has durable fills; duplicate execution was blocked. Inspect the ledger before any recovery action.",
+            )
         # Instrument-master refresh, scanner snapshot reads, and SQL writes are
         # synchronous dependencies; keep them off the ASGI event loop.
         contracts = await asyncio.to_thread(_resolve, request)
