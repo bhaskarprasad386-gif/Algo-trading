@@ -50,6 +50,7 @@ from app.scanner.calendar_spread_routes import router as calendar_spread_scanner
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, set_expiry_types as set_live_box_expiry_types
+from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -199,6 +200,7 @@ app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
 app.include_router(live_synthetic_trace_router)
 app.include_router(live_box_spread_router)
+app.include_router(live_box_spread_websocket_router)
 app.include_router(intelligence_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(monthly_results_router)
@@ -970,6 +972,7 @@ def _update_live_box_spread_results(results: tuple) -> None:
         ):
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
+    publish_live_box_spread_opportunities(results)
 
 
 async def _live_calendar_spread_loop() -> None:
