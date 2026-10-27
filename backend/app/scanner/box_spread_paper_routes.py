@@ -186,22 +186,30 @@ def create_trade(payload: CreatePaperTrade):
         _error(exc)
 
 
+def _load_trade_request(trade_id: int, account_key: str) -> CreatePaperTrade:
+    with SessionLocal() as session:
+        trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+        if trade is None or trade.account_key != account_key:
+            raise HTTPException(status_code=404, detail="paper trade not found")
+        return CreatePaperTrade(
+            underlying=trade.underlying, instrument_class=trade.instrument_class,
+            expiry=trade.expiry, low_strike=float(trade.low_strike),
+            high_strike=float(trade.high_strike), direction=trade.direction,
+            lots=trade.lots, idempotency_key=trade.idempotency_key,
+            account_key=account_key,
+        )
+
+
 @router.post("/trades/{trade_id}/simulate-entry")
 async def simulate_entry(trade_id: int, payload: SimulateEntry):
     try:
-        with SessionLocal() as session:
-            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
-            if trade is None or trade.account_key != payload.account_key:
-                raise HTTPException(status_code=404, detail="paper trade not found")
-            request = CreatePaperTrade(
-                underlying=trade.underlying, instrument_class=trade.instrument_class,
-                expiry=trade.expiry, low_strike=float(trade.low_strike),
-                high_strike=float(trade.high_strike), direction=trade.direction,
-                lots=trade.lots, idempotency_key=trade.idempotency_key,
-                account_key=payload.account_key,
-            )
-        contracts = _resolve(request)
-        live_snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
+        request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
+        # Instrument-master refresh, scanner snapshot reads, and SQL writes are
+        # synchronous dependencies; keep them off the ASGI event loop.
+        contracts = await asyncio.to_thread(_resolve, request)
+        live_snapshot = await asyncio.to_thread(
+            live_box_spread_opportunities, limit=500, max_age_seconds=5.0
+        )
         current_row = next((
             row for row in live_snapshot.get("data", [])
             if str(row.get("symbol", "")).strip().upper() == contracts.underlying
@@ -226,12 +234,15 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
         )
         receipts = []
         for fill in execution.fills:
-            receipts.append(_ledger.record_fill(
+            receipts.append(await asyncio.to_thread(
+                _ledger.record_fill,
                 trade_id=trade_id, fill_id=f"{request.idempotency_key}:{fill.role}",
                 role=fill.role, action=fill.action, quantity=fill.quantity,
                 fill_price=fill.fill_price, account_key=payload.account_key,
             ))
-        summary = _ledger.get_trade_summary(trade_id, account_key=payload.account_key)
+        summary = await asyncio.to_thread(
+            _ledger.get_trade_summary, trade_id, account_key=payload.account_key
+        )
         return {
             "mode": "PAPER_ONLY", "broker_orders_enabled": False,
             "trade_id": trade_id, "status": summary["status"],
