@@ -21,7 +21,7 @@ def _snapshot_payload(result, observed_at):
         "low_strike": low.strike,
         "high_strike": high.strike,
         "direction": result.direction,
-        "observed_at": observed_at.isoformat(timespec="seconds") + "Z",
+        "observed_at": observed_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
         "last_update_timestamp_ns": max(int(low.timestamp_ns), int(high.timestamp_ns)),
