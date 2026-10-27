@@ -103,51 +103,60 @@ class LiveBoxSpreadPipeline:
 
         # Snapshot history, alert history, and notifications are independent:
         # a snapshot DB error must not suppress alert processing or the live feed.
-        try:
-            with self.session_factory() as db:
-                now = datetime.now(timezone.utc)
-                retention_days = max(1, int(getattr(settings, "LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS", 7)))
-                cutoff = now - timedelta(days=retention_days)
-                db.query(LiveBoxSpreadSnapshot).filter(LiveBoxSpreadSnapshot.observed_at < cutoff).delete(synchronize_session=False)
-                db.query(LiveBoxSpreadSnapshotKey).filter(LiveBoxSpreadSnapshotKey.created_at < cutoff).delete(synchronize_session=False)
-                batch_keys = set()
-                for result in results:
-                    observed_at = datetime.now(timezone.utc)
-                    row = _snapshot_payload(result, observed_at)
-                    key = _snapshot_key(row)
-                    if key in batch_keys:
-                        continue
-                    batch_keys.add(key)
-                    digest = hashlib.sha256(json.dumps(key, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
-                    try:
-                        with db.begin_nested():
-                            db.add(LiveBoxSpreadSnapshotKey(snapshot_key=digest, created_at=observed_at))
-                            db.flush()
-                            exists = db.query(LiveBoxSpreadSnapshot.id).filter(
-                                LiveBoxSpreadSnapshot.symbol == str(row["symbol"]).strip().upper(),
-                                LiveBoxSpreadSnapshot.expiry == int(row["expiry"]),
-                                LiveBoxSpreadSnapshot.low_strike == float(row["low_strike"]),
-                                LiveBoxSpreadSnapshot.high_strike == float(row["high_strike"]),
-                                LiveBoxSpreadSnapshot.direction == str(row["direction"]).strip().upper(),
-                                LiveBoxSpreadSnapshot.timestamp_ns == int(row["last_update_timestamp_ns"]),
-                            ).first()
-                            if not exists:
-                                db.add(LiveBoxSpreadSnapshot(
-                                    observed_at=observed_at,
-                                    timestamp_ns=int(row["last_update_timestamp_ns"]),
-                                    symbol=str(row["symbol"]).strip().upper(),
-                                    expiry=int(row["expiry"]),
-                                    low_strike=float(row["low_strike"]),
-                                    high_strike=float(row["high_strike"]),
-                                    direction=str(row["direction"]).strip().upper(),
-                                    payload_json=json.dumps(row, separators=(",", ":"), allow_nan=False),
-                                ))
+        # Retry transient database failures so brief DB hiccups do not drop
+        # opportunities from Post-Market history. Each retry uses a fresh session.
+        import time
+        for attempt in range(3):
+            try:
+                with self.session_factory() as db:
+                    now = datetime.now(timezone.utc)
+                    retention_days = max(1, int(getattr(settings, "LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS", 7)))
+                    cutoff = now - timedelta(days=retention_days)
+                    db.query(LiveBoxSpreadSnapshot).filter(LiveBoxSpreadSnapshot.observed_at < cutoff).delete(synchronize_session=False)
+                    db.query(LiveBoxSpreadSnapshotKey).filter(LiveBoxSpreadSnapshotKey.created_at < cutoff).delete(synchronize_session=False)
+                    batch_keys = set()
+                    for result in results:
+                        observed_at = datetime.now(timezone.utc)
+                        row = _snapshot_payload(result, observed_at)
+                        key = _snapshot_key(row)
+                        if key in batch_keys:
+                            continue
+                        batch_keys.add(key)
+                        digest = hashlib.sha256(json.dumps(key, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+                        try:
+                            with db.begin_nested():
+                                db.add(LiveBoxSpreadSnapshotKey(snapshot_key=digest, created_at=observed_at))
                                 db.flush()
-                    except IntegrityError:
-                        continue
-                db.commit()
-        except Exception:
-            logger.exception("Failed to persist Box Spread snapshots")
+                                exists = db.query(LiveBoxSpreadSnapshot.id).filter(
+                                    LiveBoxSpreadSnapshot.symbol == str(row["symbol"]).strip().upper(),
+                                    LiveBoxSpreadSnapshot.expiry == int(row["expiry"]),
+                                    LiveBoxSpreadSnapshot.low_strike == float(row["low_strike"]),
+                                    LiveBoxSpreadSnapshot.high_strike == float(row["high_strike"]),
+                                    LiveBoxSpreadSnapshot.direction == str(row["direction"]).strip().upper(),
+                                    LiveBoxSpreadSnapshot.timestamp_ns == int(row["last_update_timestamp_ns"]),
+                                ).first()
+                                if not exists:
+                                    db.add(LiveBoxSpreadSnapshot(
+                                        observed_at=observed_at,
+                                        timestamp_ns=int(row["last_update_timestamp_ns"]),
+                                        symbol=str(row["symbol"]).strip().upper(),
+                                        expiry=int(row["expiry"]),
+                                        low_strike=float(row["low_strike"]),
+                                        high_strike=float(row["high_strike"]),
+                                        direction=str(row["direction"]).strip().upper(),
+                                        payload_json=json.dumps(row, separators=(",", ":"), allow_nan=False),
+                                    ))
+                                    db.flush()
+                        except IntegrityError:
+                            continue
+                    db.commit()
+                break
+            except Exception:
+                if attempt == 2:
+                    logger.exception("Failed to persist Box Spread snapshots after 3 attempts")
+                else:
+                    logger.warning("Box Spread snapshot persistence failed (attempt %s/3); retrying", attempt + 1, exc_info=True)
+                    time.sleep(0.1 * (attempt + 1))
 
         try:
             with self.session_factory() as db:
