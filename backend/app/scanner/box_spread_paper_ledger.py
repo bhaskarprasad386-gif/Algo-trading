@@ -390,7 +390,8 @@ class BoxSpreadPaperLedger:
             "total_charges": total_charges,
             "net_cash_flow": net_cash_flow,
             "unrealized_pnl": unrealized_pnl,
-            "realized_pnl": None if trade.status != "CLOSED" else Decimal("0.00"),
+            # Realized P&L remains unavailable until Phase 6 exit/settlement records exist.
+            "realized_pnl": None,
             "fee_schedule_version": trade.fee_schedule_version,
         }
 
