@@ -37,6 +37,10 @@ export default function BoxSpreadPaperTrading() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [ledger, setLedger] = useState<any | null>(null);
+  const [exitRole, setExitRole] = useState<Role>("LOW_CE");
+  const [exitQuantity, setExitQuantity] = useState("1");
+  const [exitPrice, setExitPrice] = useState("");
+  const [settlementDate, setSettlementDate] = useState("");
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(api + path, {
@@ -155,6 +159,42 @@ export default function BoxSpreadPaperTrading() {
     } finally { setBusy(false); }
   }
 
+  async function exitSelectedLeg(event: FormEvent) {
+    event.preventDefault();
+    if (selectedTrade == null) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const result = await request("/trades/" + selectedTrade + "/exit", {
+        method: "POST",
+        body: JSON.stringify({
+          account_key: account, role: exitRole, quantity: Number(exitQuantity),
+          fill_price: Number(exitPrice), fill_id: "exit-" + crypto.randomUUID(),
+        }),
+      });
+      setLedger(await request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account)));
+      setMessage("Paper exit fill recorded for " + exitRole + ". Remaining legs stay visible until fully closed.");
+      await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : "Paper exit failed"); }
+    finally { setBusy(false); }
+  }
+
+  async function settleSelectedExpiry(event: FormEvent) {
+    event.preventDefault();
+    if (selectedTrade == null) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const settlement_prices = Object.fromEntries(roles.map(role => [role, Number(prices[role])]));
+      const result = await request("/trades/" + selectedTrade + "/settle-expiry", {
+        method: "POST",
+        body: JSON.stringify({ account_key: account, settlement_date: settlementDate, settlement_prices }),
+      });
+      setLedger(await request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account)));
+      setMessage("Expiry settlement recorded using the explicitly entered official settlement prices. Status: " + result.status);
+      await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : "Expiry settlement failed"); }
+    finally { setBusy(false); }
+  }
+
   async function loadLedger(tradeId: number) {
     setSelectedTrade(tradeId); setError(null);
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
@@ -239,6 +279,34 @@ export default function BoxSpreadPaperTrading() {
           {trades.length === 0 && <tr><td colSpan={8} className="px-3 py-5 text-center theme-muted">No paper trades recorded for this account.</td></tr>}</tbody>
         </table>
       </div>
+
+      {selectedTrade != null && <div className="grid gap-3 md:grid-cols-2">
+        <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-xl border theme-border p-3">
+          <h3 className="font-semibold theme-text">Close one paper leg</h3>
+          <p className="text-xs theme-muted">Enter the actual observed exit price. Closing is not blocked by low virtual balance.</p>
+          <label className="block text-xs theme-muted">Leg
+            <select value={exitRole} onChange={e => setExitRole(e.target.value as Role)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text">{roles.map(role=><option key={role}>{role}</option>)}</select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-xs theme-muted">Quantity
+              <input required type="number" min="1" step="1" value={exitQuantity} onChange={e => setExitQuantity(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
+            </label>
+            <label className="text-xs theme-muted">Exit fill price
+              <input required type="number" min="0.01" step="any" value={exitPrice} onChange={e => setExitPrice(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
+            </label>
+          </div>
+          <button disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Record paper exit</button>
+        </form>
+        <form onSubmit={settleSelectedExpiry} className="space-y-3 rounded-xl border theme-border p-3">
+          <h3 className="font-semibold theme-text">Expiry settlement</h3>
+          <p className="text-xs theme-muted">Use official settlement values only, on or after contract expiry. Zero is allowed for worthless options.</p>
+          <label className="block text-xs theme-muted">Settlement date
+            <input required type="date" value={settlementDate} onChange={e => setSettlementDate(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
+          </label>
+          <p className="text-xs theme-muted">Settlement prices reuse the four leg price fields above. Confirm they are official settlement values before submitting.</p>
+          <button disabled={busy || !settlementDate} className="rounded-lg border border-amber-500/50 px-4 py-2 text-sm font-semibold text-amber-500 disabled:opacity-50">Settle expiry</button>
+        </form>
+      </div>}
 
       {ledger && <div className="space-y-2 rounded-xl border theme-border p-3">
         <div className="flex items-center justify-between gap-2"><h3 className="font-semibold theme-text">Paper ledger details</h3><button type="button" onClick={() => setLedger(null)} className="rounded-md border theme-border px-2 py-1 text-xs theme-text">Close</button></div>
