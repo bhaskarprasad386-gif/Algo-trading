@@ -106,7 +106,6 @@ def edge_timing_analysis():
     weekdays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
     day_groups = defaultdict(list)
     time_groups = defaultdict(list)
-    weekday_groups = defaultdict(list)
     valid_edges = []
     total_rows = 0
     latest_observed = None
@@ -145,12 +144,11 @@ def edge_timing_analysis():
             valid_edges.append(item)
             day_groups[day].append(item)
             time_groups[bucket].append(item)
-            weekday_groups[day].append(item)
 
     def stats(key, values):
         edges = [item["edge"] for item in values]
         return {
-            key: key,
+            "key": key,
             "count": len(edges),
             "max_edge": round(max(edges), 4),
             "average_edge": round(sum(edges) / len(edges), 4),
