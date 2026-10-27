@@ -126,7 +126,8 @@ def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict
 def _engine_key(*, trade_id: int, account_key: str, idempotency_key: str) -> str:
     """Namespace in-memory engine keys by persistent trade and paper account."""
     account_digest = hashlib.sha256(account_key.encode("utf-8")).hexdigest()[:16]
-    return f"paper:{trade_id}:{account_digest}:{idempotency_key}"
+    key_digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"paper:{trade_id}:{account_digest}:{key_digest}"
 
 
 def _contract_payload(contracts) -> list[dict[str, Any]]:
