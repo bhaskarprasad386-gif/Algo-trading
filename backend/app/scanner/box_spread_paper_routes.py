@@ -130,6 +130,12 @@ def _engine_key(*, trade_id: int, account_key: str, idempotency_key: str) -> str
     return f"paper:{trade_id}:{account_digest}:{key_digest}"
 
 
+def _ledger_fill_id(idempotency_key: str, role: str) -> str:
+    """Keep durable per-leg fill IDs stable and within the ledger's 128-char limit."""
+    key_digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"paper:{key_digest}:{role}"
+
+
 def _contract_payload(contracts) -> list[dict[str, Any]]:
     return [{
         "role": leg.role, "exchange_type": leg.exchange_type, "token": leg.token,
@@ -259,7 +265,7 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
         for fill in execution.fills:
             receipts.append(await asyncio.to_thread(
                 _ledger.record_fill,
-                trade_id=trade_id, fill_id=f"{request.idempotency_key}:{fill.role}",
+                trade_id=trade_id, fill_id=_ledger_fill_id(request.idempotency_key, fill.role),
                 role=fill.role, action=fill.action, quantity=fill.quantity,
                 fill_price=fill.fill_price, account_key=payload.account_key,
             ))
