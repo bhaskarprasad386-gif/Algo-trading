@@ -63,8 +63,8 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
 @router.get("/snapshots")
 def snapshots(days: int = Query(1, ge=1, le=30), limit: int = Query(500, ge=1, le=5000)):
     """Persisted observations of live opportunities, newest first."""
-    from datetime import datetime, timedelta
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     with SessionLocal() as db:
         rows = (
             db.query(LiveBoxSpreadSnapshot)
@@ -79,7 +79,7 @@ def snapshots(days: int = Query(1, ge=1, le=30), limit: int = Query(500, ge=1, l
                 item = json.loads(row.payload_json)
             except (TypeError, ValueError):
                 continue
-            item["observed_at"] = row.observed_at.isoformat(timespec="seconds") + "Z"
+            item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             item["expiry_type"] = _expiry_types.get(
                 (str(row.symbol).strip().upper(), _expiry_key(row.expiry)), "UNKNOWN"
             )
