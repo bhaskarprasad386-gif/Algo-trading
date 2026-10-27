@@ -24,14 +24,6 @@ export default function BoxSpreadPaperTrading() {
   const [balance, setBalance] = useState<string | null>(null);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [opportunities, setOpportunities] = useState<LiveOpportunity[]>([]);
-  const [underlying, setUnderlying] = useState("NIFTY");
-  const [instrumentClass, setInstrumentClass] = useState("INDEX");
-  const [expiry, setExpiry] = useState("");
-  const [lowStrike, setLowStrike] = useState("25000");
-  const [highStrike, setHighStrike] = useState("25100");
-  const [direction, setDirection] = useState("LONG");
-  const [lots, setLots] = useState("1");
-  const [prices, setPrices] = useState<Record<Role, string>>({ LOW_CE: "", HIGH_CE: "", HIGH_PE: "", LOW_PE: "" });
   const [selectedTrade, setSelectedTrade] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +33,7 @@ export default function BoxSpreadPaperTrading() {
   const [exitQuantity, setExitQuantity] = useState("1");
   const [exitPrice, setExitPrice] = useState("");
   const [settlementDate, setSettlementDate] = useState("");
+  const [settlementPrices, setSettlementPrices] = useState<Record<Role, string>>({ LOW_CE: "", HIGH_CE: "", HIGH_PE: "", LOW_PE: "" });
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(api + path, {
@@ -85,43 +78,6 @@ export default function BoxSpreadPaperTrading() {
   }, []);
 
   useEffect(() => { void refresh(); void loadOpportunities(); }, [refresh, loadOpportunities]);
-
-  async function createTrade(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError(null); setMessage(null); setLedger(null);
-    try {
-      const result = await request("/trades", {
-        method: "POST",
-        body: JSON.stringify({
-          underlying, instrument_class: instrumentClass, expiry,
-          low_strike: Number(lowStrike), high_strike: Number(highStrike),
-          direction, lots: Number(lots), account_key: account,
-          idempotency_key: "box-paper-" + crypto.randomUUID(),
-        }),
-      });
-      setSelectedTrade(Number(result.trade_id));
-      setMessage("Paper trade #" + result.trade_id + " created. Exact four contracts resolved; no broker order sent.");
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to create paper trade");
-    } finally { setBusy(false); }
-  }
-
-  async function simulateEntry(event: React.FormEvent) {
-    event.preventDefault();
-    if (selectedTrade == null) return;
-    setBusy(true); setError(null); setMessage(null);
-    try {
-      const reference_prices = Object.fromEntries(roles.map(role => [role, Number(prices[role])]));
-      const result = await request("/trades/" + selectedTrade + "/simulate-entry", {
-        method: "POST", body: JSON.stringify({ account_key: account, reference_prices }),
-      });
-      setLedger(result);
-      setMessage("Paper fills recorded with 200 ms simulated latency and adverse slippage. Broker orders remain disabled.");
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Paper execution failed");
-    } finally { setBusy(false); }
-  }
 
   async function paperTradeOpportunity(opportunity: LiveOpportunity) {
     setBusy(true); setError(null); setMessage(null); setLedger(null);
@@ -183,7 +139,7 @@ export default function BoxSpreadPaperTrading() {
     if (selectedTrade == null) return;
     setBusy(true); setError(null); setMessage(null);
     try {
-      const settlement_prices = Object.fromEntries(roles.map(role => [role, Number(prices[role])]));
+      const settlement_prices = Object.fromEntries(roles.map(role => [role, Number(settlementPrices[role])]));
       const result = await request("/trades/" + selectedTrade + "/settle-expiry", {
         method: "POST",
         body: JSON.stringify({ account_key: account, settlement_date: settlementDate, settlement_prices }),
@@ -233,53 +189,6 @@ export default function BoxSpreadPaperTrading() {
         </tbody></table></div>
       </div>
 
-      <form onSubmit={createTrade} className="grid gap-3 rounded-xl border theme-border p-3 sm:grid-cols-4">
-        <div className="sm:col-span-4"><h3 className="font-semibold theme-text">Create validated paper trade</h3><p className="text-xs theme-muted">Contract tokens/symbols are resolved from the instrument master; the request is rejected if the four-leg chain is ambiguous.</p></div>
-        <label className="text-xs theme-muted">Underlying
-          <input required value={underlying} onChange={e => setUnderlying(e.target.value.toUpperCase())} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text" />
-        </label>
-        <label className="text-xs theme-muted">Class
-          <select value={instrumentClass} onChange={e => setInstrumentClass(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"><option value="INDEX">INDEX</option><option value="STOCK">STOCK (Top 15 only)</option></select>
-        </label>
-        <label className="text-xs theme-muted">Expiry
-          <input required value={expiry} onChange={e => setExpiry(e.target.value)} placeholder="YYYY-MM-DD or 29OCT2026" className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text" />
-        </label>
-        <label className="text-xs theme-muted">Direction
-          <select value={direction} onChange={e => setDirection(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"><option>LONG</option><option>SHORT</option></select>
-        </label>
-        <label className="text-xs theme-muted">Low strike
-          <input required type="number" min="0.01" step="any" value={lowStrike} onChange={e => setLowStrike(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text" />
-        </label>
-        <label className="text-xs theme-muted">High strike
-          <input required type="number" min="0.01" step="any" value={highStrike} onChange={e => setHighStrike(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text" />
-        </label>
-        <label className="text-xs theme-muted">Lots
-          <input required type="number" min="1" max="100" step="1" value={lots} onChange={e => setLots(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text" />
-        </label>
-        <div className="flex items-end"><button disabled={busy} className="w-full rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy ? "Working…" : "Create paper trade"}</button></div>
-      </form>
-
-      {selectedTrade != null && <form onSubmit={simulateEntry} className="grid gap-3 rounded-xl border theme-border p-3 sm:grid-cols-5">
-        <div className="sm:col-span-5"><h3 className="font-semibold theme-text">Simulate four-leg entry · Trade #{selectedTrade}</h3><p className="text-xs theme-muted">Enter the observed reference price for each exact option leg. Simulation applies 200 ms latency and 0.05% adverse slippage; prices are not fetched or invented by the UI.</p></div>
-        {roles.map(role => <label key={role} className="text-xs theme-muted">{role} reference price
-          <input required type="number" min="0.01" step="any" value={prices[role]} onChange={e => setPrices(old => ({ ...old, [role]: e.target.value }))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text" />
-        </label>)}
-        <div className="flex items-end"><button disabled={busy} className="w-full rounded-lg bg-emerald-500 px-3 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy ? "Simulating…" : "Simulate paper fills"}</button></div>
-      </form>}
-
-      {error && <div role="alert" className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-400">{error}</div>}
-      {message && <div role="status" className="rounded-lg border theme-border p-3 text-sm theme-text">{message}</div>}
-
-      <div className="overflow-x-auto rounded-xl border theme-border">
-        <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="theme-surface-2 theme-muted"><tr>{["Trade","Underlying","Expiry","Strikes","Direction","Lots","Status","Ledger"].map(label => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead>
-          <tbody>{trades.map(trade => <tr key={trade.trade_id} className="border-t theme-border">
-            <td className="px-3 py-2 theme-text">#{trade.trade_id}</td><td className="px-3 py-2 theme-text">{trade.underlying}</td><td className="px-3 py-2 theme-text">{trade.expiry}</td><td className="px-3 py-2 theme-text">{trade.low_strike} / {trade.high_strike}</td><td className="px-3 py-2 theme-text">{trade.direction}</td><td className="px-3 py-2 theme-text">{trade.lots} × {trade.lot_size}</td><td className="px-3 py-2 theme-text">{trade.status}</td><td className="px-3 py-2"><button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-md border theme-border px-2 py-1 text-xs font-semibold theme-text">View</button></td>
-          </tr>)}
-          {trades.length === 0 && <tr><td colSpan={8} className="px-3 py-5 text-center theme-muted">No paper trades recorded for this account.</td></tr>}</tbody>
-        </table>
-      </div>
-
       {selectedTrade != null && <div className="grid gap-3 md:grid-cols-2">
         <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-xl border theme-border p-3">
           <h3 className="font-semibold theme-text">Close one paper leg</h3>
@@ -303,8 +212,10 @@ export default function BoxSpreadPaperTrading() {
           <label className="block text-xs theme-muted">Settlement date
             <input required type="date" value={settlementDate} onChange={e => setSettlementDate(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
           </label>
-          <p className="text-xs theme-muted">Settlement prices reuse the four leg price fields above. Confirm they are official settlement values before submitting.</p>
-          <button disabled={busy || !settlementDate} className="rounded-lg border border-amber-500/50 px-4 py-2 text-sm font-semibold text-amber-500 disabled:opacity-50">Settle expiry</button>
+          <div className="grid grid-cols-2 gap-2">{roles.map(role=><label key={role} className="text-xs theme-muted">{role}
+            <input required type="number" min="0" step="any" value={settlementPrices[role]} onChange={e => setSettlementPrices(old => ({ ...old, [role]: e.target.value }))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
+          </label>)}</div>
+          <button disabled={busy || !settlementDate || roles.some(role => settlementPrices[role] === "")} className="rounded-lg border border-amber-500/50 px-4 py-2 text-sm font-semibold text-amber-500 disabled:opacity-50">Settle expiry</button>
         </form>
       </div>}
 
