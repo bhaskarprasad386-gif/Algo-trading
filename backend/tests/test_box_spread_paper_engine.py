@@ -204,3 +204,123 @@ def test_paper_execution_rejects_unparseable_reference_prices(bad_price):
                 },
             )
     asyncio.run(scenario())
+
+def test_partial_fills_track_remaining_and_residual_exposure():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=2, idempotency_key="partial-1")
+        first = await engine.record_leg_fill(
+            idempotency_key="partial-1", role="LOW_CE", fill_id="fill-a",
+            quantity=20, fill_price="100.25",
+        )
+        assert first.quantity == 20
+        progress = await engine.get_fill_progress("partial-1")
+        assert progress.status == "PARTIALLY_FILLED"
+        assert progress.matched_quantity == 0
+        assert progress.legs[0].filled_quantity == 20
+        assert progress.legs[0].remaining_quantity == 30
+        assert progress.residual_exposure[0].role == "LOW_CE"
+        assert progress.residual_exposure[0].signed_quantity == 20
+    asyncio.run(scenario())
+
+
+def test_partial_fill_idempotency_and_overfill_protection():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="partial-2")
+        kwargs = dict(idempotency_key="partial-2", role="LOW_CE", fill_id="same-fill",
+                      quantity=10, fill_price="100")
+        first, second = await asyncio.gather(
+            engine.record_leg_fill(**kwargs), engine.record_leg_fill(**kwargs)
+        )
+        assert first == second
+        progress = await engine.get_fill_progress("partial-2")
+        assert progress.legs[0].filled_quantity == 10
+        with pytest.raises(BoxSpreadPaperEngineError, match="exceeds"):
+            await engine.record_leg_fill(
+                idempotency_key="partial-2", role="LOW_CE", fill_id="overfill",
+                quantity=16, fill_price="100",
+            )
+        with pytest.raises(BoxSpreadPaperEngineError, match="different fill data"):
+            await engine.record_leg_fill(
+                idempotency_key="partial-2", role="LOW_CE", fill_id="same-fill",
+                quantity=11, fill_price="100",
+            )
+    asyncio.run(scenario())
+
+
+def test_partial_fills_match_only_equal_quantity_across_all_legs():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="matched-1")
+        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
+            await engine.record_leg_fill(
+                idempotency_key="matched-1", role=role, fill_id=f"{role}-1",
+                quantity=10, fill_price="100",
+            )
+        progress = await engine.get_fill_progress("matched-1")
+        assert progress.matched_quantity == 10
+        assert progress.residual_exposure == ()
+        assert progress.status == "PARTIALLY_FILLED"
+        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
+            await engine.record_leg_fill(
+                idempotency_key="matched-1", role=role, fill_id=f"{role}-2",
+                quantity=15, fill_price="101",
+            )
+        progress = await engine.get_fill_progress("matched-1")
+        assert progress.matched_quantity == 25
+        assert progress.status == "FILLED"
+        assert progress.residual_exposure == ()
+    asyncio.run(scenario())
+
+
+def test_retry_and_cancel_preserve_residual_and_prevent_late_fill():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="cancel-1")
+        await engine.record_leg_fill(
+            idempotency_key="cancel-1", role="HIGH_CE", fill_id="ce-part",
+            quantity=5, fill_price="50",
+        )
+        retried = await engine.retry_leg(idempotency_key="cancel-1", role="HIGH_CE")
+        assert retried.retry_count == 1
+        cancelled = await engine.cancel_leg(idempotency_key="cancel-1", role="HIGH_CE")
+        assert cancelled.status == "CANCELLED_WITH_RESIDUAL"
+        assert cancelled.remaining_quantity == 20
+        progress = await engine.get_fill_progress("cancel-1")
+        assert progress.status == "CANCELLED_WITH_RESIDUAL"
+        assert progress.residual_exposure[0].signed_quantity == -5
+        with pytest.raises(BoxSpreadPaperEngineError, match="cancelled leg"):
+            await engine.record_leg_fill(
+                idempotency_key="cancel-1", role="HIGH_CE", fill_id="late",
+                quantity=1, fill_price="50",
+            )
+        with pytest.raises(BoxSpreadPaperEngineError, match="cancelled leg"):
+            await engine.retry_leg(idempotency_key="cancel-1", role="HIGH_CE")
+    asyncio.run(scenario())
+
+
+def test_partial_fill_validation_and_full_execution_isolation():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="partial-3")
+        with pytest.raises(BoxSpreadPaperEngineError, match="positive integer"):
+            await engine.record_leg_fill(
+                idempotency_key="partial-3", role="LOW_CE", fill_id="bad-qty",
+                quantity=0, fill_price=100,
+            )
+        with pytest.raises(BoxSpreadPaperEngineError, match="unknown paper leg role"):
+            await engine.record_leg_fill(
+                idempotency_key="partial-3", role="UNKNOWN", fill_id="unknown",
+                quantity=1, fill_price=100,
+            )
+        await engine.record_leg_fill(
+            idempotency_key="partial-3", role="LOW_CE", fill_id="partial",
+            quantity=1, fill_price=100,
+        )
+        with pytest.raises(BoxSpreadPaperEngineError, match="partial fill records"):
+            await engine.execute_intent(
+                idempotency_key="partial-3",
+                reference_prices={"LOW_CE": 100, "HIGH_CE": 50, "HIGH_PE": 55, "LOW_PE": 95},
+            )
+    asyncio.run(scenario())
