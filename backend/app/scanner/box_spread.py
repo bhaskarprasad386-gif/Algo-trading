@@ -47,7 +47,6 @@ def _liquid_box_pairs(quotes: dict[float, OptionQuote], *, atm_strike: float,
     liquid = [s for s in ordered if _liquid_quote(quotes[s], BoxSpreadScanConfig(
         min_option_volume=1, min_option_oi=1, max_option_spread_pct=100.0
     ))]
-    # Pair only liquid strikes; they need not be consecutive or ATM-adjacent.
     pairs = []
     for low, high in combinations(liquid, 2):
         distance = abs(ordered.index(high) - ordered.index(low))
@@ -56,12 +55,19 @@ def _liquid_box_pairs(quotes: dict[float, OptionQuote], *, atm_strike: float,
     return tuple(pairs)
 
 def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float,
-                       instrument_class: str, config: BoxSpreadScanConfig | None = None,
-                       policy: ScanPolicy | None = None) -> tuple[BoxSpreadScanResult, ...]:
+                      instrument_class: str, config: BoxSpreadScanConfig | None = None,
+                      policy: ScanPolicy | None = None,
+                      diagnostics: dict[str, int] | None = None) -> tuple[BoxSpreadScanResult, ...]:
+    """Scan a snapshot; optionally fill per-snapshot rejection counters for live diagnostics."""
+    stats = diagnostics if diagnostics is not None else {}
+    for key in ("quotes", "pairs_considered", "liquidity_rejected_pairs", "timestamp_skew_rejected_pairs",
+                "backtest_rejected_directions", "edge_rejected_directions", "qualified_directions"):
+        stats[key] = 0
     config = config or BoxSpreadScanConfig()
     policy = policy or BOX_SCAN_POLICY
     cls = str(instrument_class).strip().upper()
     quotes = tuple(option_quotes)
+    stats["quotes"] = len(quotes)
     if not quotes:
         return ()
     if cls not in {"STOCK", "INDEX"}:
@@ -77,22 +83,17 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
     if len(by_strike) != len(quotes):
         raise ValueError("duplicate box strike")
 
-    ordered = ordered_strikes_around_atm(by_strike, atm_strike=float(atm_strike))
     pairs = enumerate_box_pairs(
         by_strike.keys(), atm_strike=float(atm_strike), instrument_class=cls, policy=policy
     )
-    liquid = {
-        strike for strike, quote in by_strike.items()
-        if _liquid_quote(quote, config)
-    }
+    liquid = {strike for strike, quote in by_strike.items() if _liquid_quote(quote, config)}
     results = []
     for low_strike, high_strike, distance in pairs:
+        stats["pairs_considered"] += 1
         if low_strike not in liquid or high_strike not in liquid:
+            stats["liquidity_rejected_pairs"] += 1
             continue
         low, high = by_strike[low_strike], by_strike[high_strike]
-        # Validate the four original executable legs, not synthetic strike
-        # timestamps. Legacy/manual OptionQuote instances fall back to their
-        # timestamp_ns for both legs.
         leg_timestamps = (
             low.call_timestamp_ns if low.call_timestamp_ns is not None else low.timestamp_ns,
             low.put_timestamp_ns if low.put_timestamp_ns is not None else low.timestamp_ns,
@@ -100,17 +101,20 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
             high.put_timestamp_ns if high.put_timestamp_ns is not None else high.timestamp_ns,
         )
         if max(leg_timestamps) - min(leg_timestamps) > 3_000_000_000:
+            stats["timestamp_skew_rejected_pairs"] += 1
             continue
-        # Backtester equality remains a guard for ordinary quotes. For this
-        # scanner only, pass timestamp-aligned copies after the original four
-        # legs have passed the explicit skew check; keep originals in results.
         anchor_ts = max(leg_timestamps)
         eval_low = replace(low, timestamp_ns=anchor_ts)
         eval_high = replace(high, timestamp_ns=anchor_ts)
         for direction in ("LONG", "SHORT"):
             opp = BoxSpreadBacktester.evaluate(eval_low, eval_high, direction=direction, fees_per_unit=config.fees_per_unit)
-            if opp is None or opp.executable_edge < config.min_executable_edge:
+            if opp is None:
+                stats["backtest_rejected_directions"] += 1
                 continue
+            if opp.executable_edge < config.min_executable_edge:
+                stats["edge_rejected_directions"] += 1
+                continue
+            stats["qualified_directions"] += 1
             results.append(BoxSpreadScanResult(
                 low, high, direction, opp.executable_edge, opp.edge_per_lot, opp.gross_pnl, distance
             ))
