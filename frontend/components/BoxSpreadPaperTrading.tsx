@@ -77,7 +77,12 @@ export default function BoxSpreadPaperTrading() {
     }
   }, []);
 
-  useEffect(() => {\n    void refresh();\n    void loadOpportunities();\n    const timer = window.setInterval(() => { void loadOpportunities(); }, 7000);\n    return () => window.clearInterval(timer);\n  }, [refresh, loadOpportunities]);
+  useEffect(() => {
+    void refresh();
+    void loadOpportunities();
+    const timer = window.setInterval(() => { void loadOpportunities(); }, 7000);
+    return () => window.clearInterval(timer);
+  }, [refresh, loadOpportunities]);
 
   async function paperTradeOpportunity(opportunity: LiveOpportunity) {
     setBusy(true); setError(null); setMessage(null); setLedger(null);
