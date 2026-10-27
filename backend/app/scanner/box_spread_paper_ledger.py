@@ -334,8 +334,8 @@ class BoxSpreadPaperLedger:
             raise ValueError("exit fill_id is required and must be at most 96 characters")
         qty = _positive_quantity(quantity)
         price = _money(fill_price, field="exit price")
-        if price <= 0:
-            raise ValueError("exit price must be positive")
+        if price < 0 or (price == 0 and not settlement):
+            raise ValueError("exit price must be positive; zero is allowed only for official expiry settlement")
         prefix = "SETTLE:" if settlement else "EXIT:"
         stored_fill_id = f"{prefix}{raw_id}"
         entry_key = f"{trade_id}:{stored_fill_id}"
@@ -496,7 +496,7 @@ class BoxSpreadPaperLedger:
         buy_notional = sum((Decimal(row.notional) for row in entries if row.action == "BUY"), Decimal("0.00"))
         sell_notional = sum((Decimal(row.notional) for row in entries if row.action == "SELL"), Decimal("0.00"))
         unrealized_pnl: Decimal | None = None
-        if mark_prices is not None:
+        if mark_prices is not None and trade.status != "CLOSED":
             role_positions_for_marks: dict[str, int] = {}
             for row in entries:
                 role_positions_for_marks[row.role] = role_positions_for_marks.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
