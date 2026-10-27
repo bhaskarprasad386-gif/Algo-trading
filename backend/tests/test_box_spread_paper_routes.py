@@ -193,3 +193,11 @@ def test_engine_idempotency_key_isolated_by_account_and_trade():
     assert long_key != routes._engine_key(
         trade_id=123, account_key="alpha", idempotency_key="y" * 200,
     )
+
+
+def test_ledger_fill_id_stays_within_persistent_column_limit_for_long_keys():
+    fill_id = routes._ledger_fill_id("x" * 200, "LOW_CE")
+    assert len(fill_id) <= 128
+    assert fill_id.endswith(":LOW_CE")
+    assert fill_id == routes._ledger_fill_id("x" * 200, "LOW_CE")
+    assert fill_id != routes._ledger_fill_id("y" * 200, "LOW_CE")
