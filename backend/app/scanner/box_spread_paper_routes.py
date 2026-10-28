@@ -131,6 +131,8 @@ def paper_login(payload: PaperLogin, request: Request = None):
     configured_password = settings.BOX_SPREAD_PAPER_PASSWORD
     if not configured_password:
         raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
+    if len(configured_password) < 16:
+        raise HTTPException(status_code=503, detail="Box Spread paper password must be at least 16 characters")
     if len(settings.SECRET_KEY) < 32:
         raise HTTPException(status_code=503, detail="A strong server SECRET_KEY is required for paper-trading sessions")
     client_host = _paper_login_client_host(request)
@@ -146,6 +148,8 @@ def require_paper_access(authorization: str | None = Header(default=None)) -> di
     """Fail closed unless a valid single-owner bearer token is supplied."""
     if not settings.BOX_SPREAD_PAPER_PASSWORD:
         raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
+    if len(settings.BOX_SPREAD_PAPER_PASSWORD) < 16:
+        raise HTTPException(status_code=503, detail="Box Spread paper password must be at least 16 characters")
     if len(settings.SECRET_KEY) < 32:
         raise HTTPException(status_code=503, detail="A strong server SECRET_KEY is required for paper-trading sessions")
     if not authorization or not authorization.startswith("Bearer "):
