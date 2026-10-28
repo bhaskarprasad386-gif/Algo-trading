@@ -537,9 +537,17 @@ def test_open_trade_recovery_preserves_per_leg_entry_exit_progress_and_fill_deta
     assert {fill["fill_id"] for fill in legs["LOW_CE"]["fills"]} == {
         "recovery-partial", "EXIT:recovery-exit",
     }
-    assert legs["HIGH_CE"]["entry_filled_quantity"] == 0
-    assert legs["HIGH_CE"]["entry_remaining_quantity"] == 25
-    assert legs["HIGH_CE"]["fills"] == []
+    # The HIGH_CE short entry is a real opening fill, not an exit fill.
+    assert legs["HIGH_CE"]["entry_filled_quantity"] == 5
+    assert legs["HIGH_CE"]["entry_remaining_quantity"] == 20
+    assert legs["HIGH_CE"]["exited_quantity"] == 0
+    assert legs["HIGH_CE"]["fills"] == [{
+        "fill_id": "recovery-short-entry",
+        "action": "SELL",
+        "quantity": 5,
+        "fill_price": "50.000000",
+        "created_at": legs["HIGH_CE"]["fills"][0]["created_at"],
+    }]
 
 
 def test_exit_is_never_blocked_by_low_virtual_balance():
