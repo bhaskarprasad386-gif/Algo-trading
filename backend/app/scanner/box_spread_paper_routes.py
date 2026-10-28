@@ -336,6 +336,16 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
         # Map executable bid/ask sides by each paper leg action. Never feed a
         # sell-side quote into a simulated BUY (or vice versa).
         reference_prices = _reference_prices_for_direction(current_row, contracts.direction)
+        # Durable unique claim serializes entry across separate API worker processes.
+        # It remains after a crash: ambiguous execution is inspected manually, never retried automatically.
+        claim = await asyncio.to_thread(
+            _ledger.claim_entry_attempt, trade_id=trade_id, account_key=payload.account_key
+        )
+        if not claim.get("created"):
+            raise HTTPException(
+                status_code=409,
+                detail="Paper entry attempt is already durably claimed; automatic retry is blocked. Inspect recovery and the ledger before any manual decision.",
+            )
         engine_key = _engine_key(
             trade_id=trade_id, account_key=payload.account_key,
             idempotency_key=request.idempotency_key,
