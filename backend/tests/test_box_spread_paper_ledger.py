@@ -453,12 +453,16 @@ def test_expiry_settlement_retries_after_partial_commit_without_duplicate_fills(
     # The first leg committed before interruption; recovery must settle only
     # the still-open legs and preserve the existing durable fill.
     partial = paper_ledger.list_fills(trade.id)
-    assert sum(fill.fill_id.startswith("SETTLE:") for fill in partial) == 1
+    committed_settlements = [fill for fill in partial if fill.fill_id.startswith("SETTLE:")]
+    assert len(committed_settlements) == 1
 
     # A recovery must reuse the committed leg's price and settlement date.
+    # Settlement legs are processed in sorted role order, so assert against
+    # the actual durable leg rather than assuming LOW_CE committed first.
     recovered = BoxSpreadPaperLedger(paper_ledger._session_factory)
     changed_prices = dict(prices)
-    changed_prices["LOW_CE"] = 11
+    committed_role = committed_settlements[0].role
+    changed_prices[committed_role] = Decimal(committed_settlements[0].fill_price) + Decimal("1")
     with pytest.raises(ValueError, match="settlement price mismatch"):
         recovered.settle_expiry(
             trade_id=trade.id, settlement_prices=changed_prices,
