@@ -710,7 +710,7 @@ class BoxSpreadPaperLedger:
                     "lot_size": trade.lot_size,
                     "status": trade.status,
                     "quantity": trade.quantity,
-                    "manual_review_required": claim is not None and claim.status != "COMPLETED",
+                    "manual_review_required": (claim is not None and claim.status != "COMPLETED") or (claim is None and any(leg["entry_filled_quantity"] > 0 for leg in legs)),
                     "automatic_replay": False,
                     "legs": legs,
                 })
