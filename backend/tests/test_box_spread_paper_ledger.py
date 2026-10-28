@@ -673,6 +673,10 @@ def test_entry_claim_is_durable_and_one_shot_across_ledger_recreation(paper_ledg
     )
     assert second["created"] is False
     assert second["status"] == "CLAIMED"
+    restored.complete_entry_attempt(trade_id=trade.id, account_key="claim-recovery")
+    completed = restored.get_entry_claim(trade_id=trade.id, account_key="claim-recovery")
+    assert completed["status"] == "COMPLETED"
+    assert completed["completed_at"] is not None
     assert restored.get_entry_claim(
         trade_id=trade.id, account_key="claim-recovery",
     )["claimed_at"] == first["claimed_at"]
