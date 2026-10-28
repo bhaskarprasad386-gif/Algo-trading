@@ -401,10 +401,14 @@ class BoxSpreadPaperLedger:
     ) -> dict[str, object]:
         """Settle on/after expiry using explicit official settlement prices, never stale LTP."""
         key = self._account_key(account_key)
+        # datetime subclasses date, but comparing it with the parsed expiry date
+        # raises TypeError. Settlement is date-based, so reject timestamps explicitly.
+        if isinstance(settlement_date, datetime):
+            raise ValueError("settlement_date must be an ISO date (YYYY-MM-DD)")
         try:
             actual_date = settlement_date if isinstance(settlement_date, date) else date.fromisoformat(str(settlement_date))
         except (TypeError, ValueError):
-            raise ValueError("settlement_date must be an ISO date") from None
+            raise ValueError("settlement_date must be an ISO date (YYYY-MM-DD)") from None
         with self._session_factory() as session:
             trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
             if trade is None or trade.account_key != key:
