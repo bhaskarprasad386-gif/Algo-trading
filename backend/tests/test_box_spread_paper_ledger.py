@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from threading import Barrier
 from decimal import Decimal
 
 import pytest
@@ -86,6 +88,47 @@ def test_fill_ledger_applies_cash_flow_charges_and_virtual_balance(paper_ledger)
     assert summary["fill_count"] == 1
     assert summary["total_charges"] == receipt.charges
     assert summary["virtual_balance"] == receipt.virtual_balance
+
+
+def test_concurrent_entry_fills_cannot_overfill_same_leg(tmp_path):
+    # Use a file-backed SQLite database so each worker has an independent
+    # connection. An in-memory StaticPool would not model concurrent requests.
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-ledger-concurrency.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperAccount.__table__,
+        BoxSpreadPaperTradeRecord.__table__,
+        BoxSpreadPaperLedgerEntry.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    ledger = BoxSpreadPaperLedger(factory)
+    trade = _trade(ledger, lots=1)
+    barrier = Barrier(2)
+
+    def submit(fill_id):
+        barrier.wait(timeout=5)
+        try:
+            ledger.record_fill(
+                trade_id=trade.id, fill_id=fill_id, role="LOW_CE", action="BUY",
+                quantity=20, fill_price=100,
+            )
+            return "accepted"
+        except ValueError as exc:
+            if "fill quantity exceeds" in str(exc):
+                return "rejected"
+            raise
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(submit, ("concurrent-a", "concurrent-b")))
+        assert sorted(outcomes) == ["accepted", "rejected"]
+        fills = ledger.list_fills(trade.id)
+        assert sum(fill.quantity for fill in fills if fill.role == "LOW_CE") == 20
+        assert ledger.get_account_summary()["fill_count"] == 1
+    finally:
+        engine.dispose()
 
 
 def test_entry_fill_rejects_reserved_exit_and_settlement_prefixes(paper_ledger):
