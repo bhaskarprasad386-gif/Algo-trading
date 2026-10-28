@@ -252,6 +252,8 @@ class BoxSpreadPaperLedger:
         fill_id, role, action = str(fill_id or "").strip(), str(role or "").upper(), str(action or "").upper()
         if not fill_id or len(fill_id) > 128:
             raise ValueError("fill_id is required and must be at most 128 characters")
+        if fill_id.upper().startswith(("EXIT:", "SETTLE:")):
+            raise ValueError("entry fill_id cannot use reserved EXIT: or SETTLE: prefix")
         if role not in {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}:
             raise ValueError("unknown box spread leg role")
         if action not in {"BUY", "SELL"}:
