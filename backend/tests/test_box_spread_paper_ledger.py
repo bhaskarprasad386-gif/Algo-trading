@@ -313,6 +313,26 @@ def test_expiry_settlement_requires_expiry_and_explicit_prices(paper_ledger):
     assert settled["status"] == "CLOSED"
 
 
+def test_expiry_settlement_validates_all_prices_before_any_fill(paper_ledger):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    balance_before = paper_ledger.get_account_summary()["virtual_balance"]
+    fill_count_before = paper_ledger.get_account_summary()["fill_count"]
+
+    # The invalid price is deliberately on the final sorted leg: earlier legs
+    # must not be committed before the malformed price is discovered.
+    prices = {"LOW_CE": 10, "HIGH_CE": 0.5, "HIGH_PE": 2, "LOW_PE": "not-a-price"}
+    with pytest.raises(ValueError, match="settlement price for LOW_PE"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+        )
+
+    assert paper_ledger.get_account_summary()["virtual_balance"] == balance_before
+    assert paper_ledger.get_account_summary()["fill_count"] == fill_count_before
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "FILLED"
+    assert all(not fill.fill_id.startswith("SETTLE:") for fill in paper_ledger.list_fills(trade.id))
+
+
 def test_expiry_settlement_is_idempotent_and_restart_recoverable(paper_ledger):
     trade = _trade(paper_ledger)
     _fill_all_legs(paper_ledger, trade)
