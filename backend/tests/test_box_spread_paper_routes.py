@@ -361,6 +361,53 @@ def test_private_paper_login_rate_limits_failed_attempts_per_peer_and_clears_on_
     assert "198.51.100.42" not in routes._login_attempts
 
 
+def test_private_paper_login_trusts_forwarded_chain_only_from_configured_proxy(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
+    # The left-most value is a spoofed client-supplied prefix. The proxy appends
+    # the actual client address, so walking from the right selects that address.
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={"x-forwarded-for": "203.0.113.250, 198.51.100.44"},
+    )
+    routes._clear_paper_login_attempts("198.51.100.44")
+
+    for _ in range(routes._LOGIN_MAX_ATTEMPTS):
+        with pytest.raises(HTTPException) as raised:
+            routes.paper_login(routes.PaperLogin(password="wrong-password"), request)
+        assert raised.value.status_code == 401
+
+    with pytest.raises(HTTPException) as raised:
+        routes.paper_login(routes.PaperLogin(password="owner-only-test-password"), request)
+    assert raised.value.status_code == 429
+    assert "198.51.100.44" in routes._login_attempts
+    assert "203.0.113.250" not in routes._login_attempts
+    routes._clear_paper_login_attempts("198.51.100.44")
+
+
+def test_private_paper_login_ignores_forwarded_header_from_untrusted_peer(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="198.51.100.43"),
+        headers={"x-forwarded-for": "203.0.113.250"},
+    )
+    routes._clear_paper_login_attempts("198.51.100.43")
+
+    with pytest.raises(HTTPException) as raised:
+        routes.paper_login(routes.PaperLogin(password="wrong-password"), request)
+    assert raised.value.status_code == 401
+    assert "198.51.100.43" in routes._login_attempts
+    assert "203.0.113.250" not in routes._login_attempts
+    routes._clear_paper_login_attempts("198.51.100.43")
+
+
 def test_private_paper_login_uses_socket_peer_not_forwarded_header(monkeypatch):
     from types import SimpleNamespace
 
