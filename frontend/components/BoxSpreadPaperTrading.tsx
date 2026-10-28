@@ -43,7 +43,6 @@ export default function BoxSpreadPaperTrading() {
   const [ledger, setLedger] = useState<any | null>(null);
   const [exitRole, setExitRole] = useState<Role>("LOW_CE");
   const [exitQuantity, setExitQuantity] = useState("1");
-  const [exitPrice, setExitPrice] = useState("");
   const [settlementDate, setSettlementDate] = useState("");
   const [settlementPrices, setSettlementPrices] = useState<Record<Role, string>>({ LOW_CE: "", HIGH_CE: "", HIGH_PE: "", LOW_PE: "" });
 
@@ -145,7 +144,7 @@ export default function BoxSpreadPaperTrading() {
         method: "POST",
         body: JSON.stringify({
           account_key: account, role: exitRole, quantity: Number(exitQuantity),
-          fill_price: Number(exitPrice), fill_id: "exit-" + crypto.randomUUID(),
+          fill_id: "exit-" + crypto.randomUUID(),
         }),
       });
       setLedger(await request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account)));
@@ -233,16 +232,13 @@ export default function BoxSpreadPaperTrading() {
       {selectedTrade != null && <div className="grid gap-3 md:grid-cols-2">
         <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-xl border theme-border p-3">
           <h3 className="font-semibold theme-text">Close one paper leg</h3>
-          <p className="text-xs theme-muted">The submitted price below is compatibility-only and is not recorded. The backend records the fresh executable quote from the live scanner. Closing is not blocked by low virtual balance.</p>
+          <p className="text-xs theme-muted">The backend records the fresh executable quote from the live scanner; no browser-entered price is used. Closing is not blocked by low virtual balance.</p>
           <label className="block text-xs theme-muted">Leg
             <select value={exitRole} onChange={e => setExitRole(e.target.value as Role)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text">{roles.map(role=><option key={role}>{role}</option>)}</select>
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2">
             <label className="text-xs theme-muted">Quantity
               <input required type="number" min="1" step="1" value={exitQuantity} onChange={e => setExitQuantity(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
-            </label>
-            <label className="text-xs theme-muted">Unused reference price (not recorded)
-              <input required type="number" min="0.01" step="any" value={exitPrice} onChange={e => setExitPrice(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
             </label>
           </div>
           <button disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Record paper exit</button>
