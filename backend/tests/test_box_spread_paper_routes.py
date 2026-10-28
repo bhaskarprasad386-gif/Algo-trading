@@ -378,3 +378,19 @@ def test_private_paper_guard_rejects_expired_token(monkeypatch):
         routes.require_paper_access("Bearer " + expired)
     assert raised.value.status_code == 401
     assert "expired" in raised.value.detail.lower() or "invalid" in raised.value.detail.lower()
+
+
+@pytest.mark.parametrize(("subject", "scope"), [
+    ("box-spread-paper-owner", "general-api"),
+    ("another-user", "box-spread-paper"),
+])
+def test_private_paper_guard_rejects_wrong_scope_or_subject(monkeypatch, subject, scope):
+    from app.core.security import create_access_token
+
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    token = create_access_token({"sub": subject, "scope": scope})
+    with pytest.raises(HTTPException) as raised:
+        routes.require_paper_access("Bearer " + token)
+    assert raised.value.status_code == 401
+    assert "session" in raised.value.detail.lower()
