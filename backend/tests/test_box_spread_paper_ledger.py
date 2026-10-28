@@ -31,7 +31,6 @@ def paper_ledger():
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
-        BoxSpreadPaperEntryClaim.__table__,
     ]
     Base.metadata.create_all(bind=engine, tables=tables)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -104,6 +103,7 @@ def test_concurrent_entry_fills_cannot_overfill_same_leg(tmp_path):
         BoxSpreadPaperAccount.__table__,
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
