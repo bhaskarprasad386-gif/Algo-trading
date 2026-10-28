@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from jose import jwt
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -29,3 +29,16 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     )
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_access_token(token: str) -> dict:
+    """Decode a signed access token, rejecting malformed or expired tokens."""
+    if not settings.SECRET_KEY:
+        raise ValueError("SECRET_KEY must be configured before validating access tokens")
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        raise ValueError("invalid or expired access token") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invalid access token payload")
+    return payload
