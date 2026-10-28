@@ -429,6 +429,53 @@ def test_expiry_settlement_is_idempotent_and_restart_recoverable(paper_ledger):
     assert restored.list_open_trades() == []
 
 
+def test_expiry_settlement_retries_after_partial_commit_without_duplicate_fills(paper_ledger, monkeypatch):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    prices = {"LOW_CE": 10, "HIGH_CE": 0.5, "HIGH_PE": 2, "LOW_PE": 8}
+    initial_fill_count = paper_ledger.get_account_summary()["fill_count"]
+    original_record_exit_fill = paper_ledger.record_exit_fill
+    calls = 0
+
+    def fail_after_one_committed_settlement_leg(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated process interruption")
+        return original_record_exit_fill(**kwargs)
+
+    monkeypatch.setattr(paper_ledger, "record_exit_fill", fail_after_one_committed_settlement_leg)
+    with pytest.raises(RuntimeError, match="simulated process interruption"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+        )
+
+    # The first leg committed before interruption; recovery must settle only
+    # the still-open legs and preserve the existing durable fill.
+    partial = paper_ledger.list_fills(trade.id)
+    assert sum(fill.fill_id.startswith("SETTLE:") for fill in partial) == 1
+    monkeypatch.setattr(paper_ledger, "record_exit_fill", original_record_exit_fill)
+    recovered = BoxSpreadPaperLedger(paper_ledger._session_factory)
+    result = recovered.settle_expiry(
+        trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+    )
+
+    assert result["status"] == "CLOSED"
+    assert result["settled_legs"] == 3
+    fills = recovered.list_fills(trade.id)
+    assert sum(fill.fill_id.startswith("SETTLE:") for fill in fills) == 4
+    assert recovered.get_account_summary()["fill_count"] == initial_fill_count + 4
+    assert recovered.list_open_trades() == []
+
+    # A lost response after the final commit is also safe to retry.
+    repeated = recovered.settle_expiry(
+        trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+    )
+    assert repeated["status"] == "CLOSED"
+    assert repeated["settled_legs"] == 4
+    assert recovered.get_account_summary()["fill_count"] == initial_fill_count + 4
+
+
 def test_open_trade_recovery_isolated_by_account(paper_ledger):
     alpha_trade = _trade(
         paper_ledger, account_key="alpha-recovery", idempotency_key="alpha-open",
