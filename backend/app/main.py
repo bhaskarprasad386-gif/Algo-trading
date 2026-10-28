@@ -50,6 +50,7 @@ from app.scanner.calendar_spread_routes import router as calendar_spread_scanner
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, set_expiry_types as set_live_box_expiry_types
+from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
@@ -67,6 +68,7 @@ from app.backtesting.calendar_spread_strategy_routes import router as calendar_s
 from app.backtesting.universal_factory import create_universal_ledger
 from app.backtesting.universal_result_routes import create_universal_result_router
 from app.backtesting.universal_result_service import UniversalResultService
+from app.scanner import box_spread_paper_ledger as _box_spread_paper_ledger_models  # noqa: F401
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
@@ -201,6 +203,7 @@ app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
 app.include_router(live_synthetic_trace_router)
 app.include_router(live_box_spread_router)
+app.include_router(box_spread_paper_router)
 app.include_router(live_box_spread_websocket_router)
 app.include_router(intelligence_router)
 if settings.BACKTESTING_ENABLED:

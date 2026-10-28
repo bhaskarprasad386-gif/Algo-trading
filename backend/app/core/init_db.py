@@ -4,6 +4,7 @@ from app.core.database import Base, engine
 
 # Import models so SQLAlchemy registers all tables before create_all.
 from app import models  # noqa: F401,E402
+from app.scanner import box_spread_paper_ledger  # noqa: F401,E402
 
 
 def _ensure_cash_future_history_columns() -> None:

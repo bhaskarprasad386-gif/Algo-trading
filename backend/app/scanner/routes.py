@@ -341,3 +341,4 @@ def full_fno_job_purge_alias(job_id: str, db: Session = Depends(get_db)):
     deleted = delete_result_chunks_batched(db, job_id)
     return {"status": "success", "job_id": job_id, "job_status": job.status, "deleted_chunks": deleted}
 
+
