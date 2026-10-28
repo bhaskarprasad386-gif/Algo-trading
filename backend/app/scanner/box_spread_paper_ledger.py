@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Callable
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func, select
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.core.database import Base
@@ -267,8 +267,12 @@ class BoxSpreadPaperLedger:
         cash_delta = (-notional if action == "BUY" else notional) - charges
         entry_key = f"{trade_id}:{fill_id}"
 
+        # Ensure the account is committed before entering the write transaction.
+        # The account row is then the database-level serialization point for all
+        # fills in this account, including requests handled by different workers.
+        self.ensure_account(account_key)
         with self._session_factory() as session, session.begin():
-            account = self._ensure_account_in_session(session, account_key)
+            account = self._lock_account_for_write(session, account_key)
             trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
             if trade is None or trade.account_key != account_key:
                 raise ValueError("paper trade not found for account")
@@ -357,8 +361,11 @@ class BoxSpreadPaperLedger:
         entry_key = f"{trade_id}:{stored_fill_id}"
         notional = (price * qty).quantize(CENT, rounding=ROUND_HALF_UP)
 
+        # Use the same database-level account lock for entry and exit fills so
+        # quantity checks and cash-balance updates cannot race across workers.
+        self.ensure_account(key)
         with self._session_factory() as session, session.begin():
-            account = self._ensure_account_in_session(session, key)
+            account = self._lock_account_for_write(session, key)
             trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
             if trade is None or trade.account_key != key:
                 raise ValueError("paper trade not found for account")
@@ -726,6 +733,38 @@ class BoxSpreadPaperLedger:
             )
             session.add(account)
             session.flush()
+        return account
+
+    @staticmethod
+    def _lock_account_for_write(session: Session, key: str) -> BoxSpreadPaperAccount:
+        """Serialize account mutations using a database-level lock.
+
+        PostgreSQL and other supporting databases use SELECT FOR UPDATE. SQLite
+        ignores FOR UPDATE, so issue a no-op UPDATE as the first statement in
+        the transaction to acquire its write reservation before reading balance
+        or positions. This avoids process-local locks, which do not protect
+        multiple API workers.
+        """
+        bind = session.get_bind()
+        if bind.dialect.name == "sqlite":
+            result = session.execute(
+                update(BoxSpreadPaperAccount)
+                .where(BoxSpreadPaperAccount.account_key == key)
+                .values(virtual_balance=BoxSpreadPaperAccount.virtual_balance)
+            )
+            if result.rowcount != 1:
+                raise ValueError("paper account is unavailable for ledger write")
+            account = session.scalar(
+                select(BoxSpreadPaperAccount).where(BoxSpreadPaperAccount.account_key == key)
+            )
+        else:
+            account = session.scalar(
+                select(BoxSpreadPaperAccount)
+                .where(BoxSpreadPaperAccount.account_key == key)
+                .with_for_update()
+            )
+        if account is None:
+            raise ValueError("paper account is unavailable for ledger write")
         return account
 
     @staticmethod
