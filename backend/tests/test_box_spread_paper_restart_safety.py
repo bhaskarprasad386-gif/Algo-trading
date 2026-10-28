@@ -65,6 +65,31 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
         assert after_restart.get_entry_claim(
             trade_id=trade.id, account_key="restart-partial",
         )["status"] == "CLAIMED"
+        # A second ledger instance (as in a separate API worker) cannot claim
+        # the same durable entry attempt again.
+        duplicate_claim = after_restart.claim_entry_attempt(
+            trade_id=trade.id, account_key="restart-partial",
+        )
+        assert duplicate_claim["created"] is False
+        assert duplicate_claim["status"] == "CLAIMED"
+
+        recovery = after_restart.list_open_trades(account_key="restart-partial")
+        assert len(recovery) == 1
+        recovered_trade = recovery[0]
+        assert recovered_trade["trade_id"] == trade.id
+        assert recovered_trade["instrument_class"] == "INDEX"
+        assert recovered_trade["low_strike"] == 25000.0
+        assert recovered_trade["high_strike"] == 25100.0
+        assert recovered_trade["direction"] == "LONG"
+        assert recovered_trade["lots"] == 1
+        assert recovered_trade["lot_size"] == 25
+        assert recovered_trade["manual_review_required"] is True
+        assert recovered_trade["automatic_replay"] is False
+        assert recovered_trade["legs"][0]["role"] == "LOW_CE"
+        assert recovered_trade["legs"][0]["entry_filled_quantity"] == 25
+        assert recovered_trade["legs"][0]["open_position_action"] == "BUY"
+        assert recovered_trade["legs"][0]["open_position_quantity"] == 25
+
         recovered_fills = after_restart.list_fills(
             trade.id, account_key="restart-partial",
         )
