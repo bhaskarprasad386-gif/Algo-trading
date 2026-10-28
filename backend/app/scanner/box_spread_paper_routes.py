@@ -35,6 +35,9 @@ router = APIRouter(prefix="/api/v1/scanner/box-spread-paper", tags=["box-spread-
 _engine = BoxSpreadPaperEngine()
 _master = InstrumentMaster()
 _ledger = BoxSpreadPaperLedger(SessionLocal)
+# Explicit per-process operator switch. Always resets to OFF on API restart.
+_paper_execution_enabled = False
+_paper_execution_state_lock = threading.Lock()
 # Per-trade entry locks prevent same-process concurrent entry requests.
 _entry_locks: dict[tuple[str, int], asyncio.Lock] = {}
 
@@ -161,6 +164,10 @@ def require_paper_access(authorization: str | None = Header(default=None)) -> di
     if claims.get("sub") != "box-spread-paper-owner" or claims.get("scope") != "box-spread-paper":
         raise HTTPException(status_code=401, detail="Invalid paper-trading session")
     return claims
+
+
+class PaperExecutionControl(BaseModel):
+    enabled: bool
 
 
 class CreatePaperTrade(BaseModel):
@@ -310,6 +317,25 @@ def _contract_payload(contracts) -> list[dict[str, Any]]:
     } for leg in contracts.legs]
 
 
+@router.get("/execution-control", dependencies=[Depends(require_paper_access)])
+def get_execution_control():
+    with _paper_execution_state_lock:
+        enabled = _paper_execution_enabled
+    return {"mode": "PAPER_ONLY", "broker_orders_enabled": False, "enabled": enabled,
+            "status": "ON" if enabled else "OFF", "restart_default": "OFF"}
+
+
+@router.post("/execution-control", dependencies=[Depends(require_paper_access)])
+def set_execution_control(payload: PaperExecutionControl):
+    global _paper_execution_enabled
+    with _paper_execution_state_lock:
+        _paper_execution_enabled = payload.enabled
+        enabled = _paper_execution_enabled
+    return {"mode": "PAPER_ONLY", "broker_orders_enabled": False, "enabled": enabled,
+            "status": "ON" if enabled else "OFF", "restart_default": "OFF",
+            "message": "New paper entries enabled" if enabled else "New paper entries disabled; existing positions and safe exits remain available"}
+
+
 @router.get("/account", dependencies=[Depends(require_paper_access)])
 def account(account_key: str = "default"):
     try:
@@ -392,6 +418,10 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
 
 async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
     try:
+        with _paper_execution_state_lock:
+            enabled = _paper_execution_enabled
+        if not enabled:
+            raise HTTPException(status_code=423, detail="Live paper trading is OFF. Manually switch execution ON before starting a new paper entry.")
         request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
         existing_claim = await asyncio.to_thread(
             _ledger.get_entry_claim, trade_id=trade_id, account_key=payload.account_key
