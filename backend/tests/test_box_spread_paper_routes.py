@@ -424,3 +424,78 @@ def test_simulate_entry_serializes_concurrent_requests_for_same_trade(monkeypatc
     assert len(results) == 2
     assert calls == 2
     assert maximum_active == 1
+
+
+def test_simulation_partial_durable_fill_blocks_replay_after_write_failure(monkeypatch):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="partial-ledger-write", account_key="partial-write-test",
+    )
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    durable_fills = []
+    writes = 0
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
+    monkeypatch.setattr(
+        routes._ledger, "list_fills",
+        lambda trade_id, account_key="default": list(durable_fills),
+    )
+
+    async def create_intent(**kwargs):
+        return None
+
+    fills = [
+        SimpleNamespace(role=role, action=action, quantity=1, fill_price=price,
+                         reference_price=price, slippage=0, notional=price, charges=0)
+        for role, action, price in (
+            ("LOW_CE", "BUY", 11), ("HIGH_CE", "SELL", 20),
+            ("HIGH_PE", "BUY", 31), ("LOW_PE", "SELL", 40),
+        )
+    ]
+
+    async def execute_intent(**kwargs):
+        return SimpleNamespace(fills=fills, latency_seconds=0.2, slippage_rate=0.0005)
+
+    monkeypatch.setattr(routes._engine, "create_intent", create_intent)
+    monkeypatch.setattr(routes._engine, "execute_intent", execute_intent)
+
+    def record_fill(**kwargs):
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise RuntimeError("simulated database write failure after first durable fill")
+        durable_fills.append(SimpleNamespace(fill_id=kwargs["fill_id"]))
+        return SimpleNamespace(charges=0, virtual_balance=100000)
+
+    monkeypatch.setattr(routes._ledger, "record_fill", record_fill)
+
+    with pytest.raises(HTTPException):
+        asyncio.run(routes.simulate_entry(
+            456, routes.SimulateEntry(account_key="partial-write-test"),
+        ))
+
+    assert len(durable_fills) == 1
+
+    async def forbidden_execution(**kwargs):
+        pytest.fail("entry replay must be blocked after any durable partial fill")
+
+    monkeypatch.setattr(routes._engine, "create_intent", forbidden_execution)
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(routes.simulate_entry(
+            456, routes.SimulateEntry(account_key="partial-write-test"),
+        ))
+    assert raised.value.status_code == 409
+    assert "durable fills" in raised.value.detail
