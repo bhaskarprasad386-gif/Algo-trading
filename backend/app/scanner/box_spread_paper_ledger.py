@@ -425,11 +425,18 @@ class BoxSpreadPaperLedger:
         open_roles = {role for role, quantity in positions.items() if quantity != 0}
         if open_roles - set(settlement_prices):
             raise ValueError("settlement_prices must include every open leg role")
+        # Validate every open leg price before writing any settlement fill. Each
+        # record_exit_fill call commits independently, so validating lazily in the
+        # loop could leave a partially settled trade if a later price is invalid.
+        validated_prices = {
+            role: _money(settlement_prices[role], field=f"settlement price for {role}")
+            for role in open_roles
+        }
         receipts = []
         for role in sorted(open_roles):
             receipts.append(self.record_exit_fill(
                 trade_id=trade_id, fill_id=f"{actual_date.isoformat()}:{role}",
-                role=role, quantity=abs(positions[role]), fill_price=settlement_prices[role],
+                role=role, quantity=abs(positions[role]), fill_price=validated_prices[role],
                 account_key=key, settlement=True,
             ))
         return {
