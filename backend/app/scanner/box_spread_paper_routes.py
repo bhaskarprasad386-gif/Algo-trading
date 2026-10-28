@@ -7,8 +7,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
+import hmac
+
+from app.core.config import settings
+from app.core.security import create_access_token, decode_access_token
 from sqlalchemy import select
 
 from app.core.database import SessionLocal
@@ -28,6 +32,39 @@ router = APIRouter(prefix="/api/v1/scanner/box-spread-paper", tags=["box-spread-
 _engine = BoxSpreadPaperEngine()
 _master = InstrumentMaster()
 _ledger = BoxSpreadPaperLedger(SessionLocal)
+
+
+
+
+class PaperLogin(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
+@router.post("/auth/login")
+def paper_login(payload: PaperLogin):
+    """Issue a short-lived token for the single configured paper-trading owner."""
+    configured_password = settings.BOX_SPREAD_PAPER_PASSWORD
+    if not configured_password:
+        raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
+    if not hmac.compare_digest(payload.password, configured_password):
+        raise HTTPException(status_code=401, detail="Invalid paper-trading password")
+    token = create_access_token({"sub": "box-spread-paper-owner", "scope": "box-spread-paper"})
+    return {"access_token": token, "token_type": "bearer", "expires_in": 86400}
+
+
+def require_paper_access(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Fail closed unless a valid single-owner bearer token is supplied."""
+    if not settings.BOX_SPREAD_PAPER_PASSWORD:
+        raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Paper-trading login required")
+    try:
+        claims = decode_access_token(authorization[7:].strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired paper-trading session") from exc
+    if claims.get("sub") != "box-spread-paper-owner" or claims.get("scope") != "box-spread-paper":
+        raise HTTPException(status_code=401, detail="Invalid paper-trading session")
+    return claims
 
 
 class CreatePaperTrade(BaseModel):
@@ -177,7 +214,7 @@ def _contract_payload(contracts) -> list[dict[str, Any]]:
     } for leg in contracts.legs]
 
 
-@router.get("/account")
+@router.get("/account", dependencies=[Depends(require_paper_access)])
 def account(account_key: str = "default"):
     try:
         balance = _ledger.ensure_account(account_key)
@@ -187,7 +224,7 @@ def account(account_key: str = "default"):
         _error(exc)
 
 
-@router.get("/trades")
+@router.get("/trades", dependencies=[Depends(require_paper_access)])
 def trades(account_key: str = "default", limit: int = 100):
     if not 1 <= limit <= 500:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
@@ -211,7 +248,7 @@ def trades(account_key: str = "default", limit: int = 100):
         _error(exc)
 
 
-@router.post("/trades")
+@router.post("/trades", dependencies=[Depends(require_paper_access)])
 def create_trade(payload: CreatePaperTrade):
     try:
         contracts = _resolve(payload)
@@ -247,7 +284,7 @@ def _load_trade_request(trade_id: int, account_key: str) -> CreatePaperTrade:
         )
 
 
-@router.post("/trades/{trade_id}/simulate-entry")
+@router.post("/trades/{trade_id}/simulate-entry", dependencies=[Depends(require_paper_access)])
 async def simulate_entry(trade_id: int, payload: SimulateEntry):
     try:
         request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
@@ -324,7 +361,7 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
         _error(exc)
 
 
-@router.post("/trades/{trade_id}/exit")
+@router.post("/trades/{trade_id}/exit", dependencies=[Depends(require_paper_access)])
 def exit_leg(trade_id: int, payload: ExitLeg):
     try:
         # Never trust browser-entered exit prices. Resolve this persisted trade
@@ -361,7 +398,7 @@ def exit_leg(trade_id: int, payload: ExitLeg):
         _error(exc)
 
 
-@router.post("/trades/{trade_id}/settle-expiry")
+@router.post("/trades/{trade_id}/settle-expiry", dependencies=[Depends(require_paper_access)])
 def settle_expiry(trade_id: int, payload: ExpirySettlement):
     try:
         result = _ledger.settle_expiry(
@@ -383,7 +420,7 @@ def settle_expiry(trade_id: int, payload: ExpirySettlement):
         _error(exc)
 
 
-@router.get("/trades/{trade_id}/ledger")
+@router.get("/trades/{trade_id}/ledger", dependencies=[Depends(require_paper_access)])
 def trade_ledger(trade_id: int, account_key: str = "default"):
     try:
         summary = _ledger.get_trade_summary(trade_id, account_key=account_key)
@@ -405,7 +442,7 @@ def trade_ledger(trade_id: int, account_key: str = "default"):
         _error(exc)
 
 
-@router.get("/recovery")
+@router.get("/recovery", dependencies=[Depends(require_paper_access)])
 def recovery(account_key: str = "default"):
     """List durable non-terminal paper trades after restart; never replay fills automatically."""
     try:
