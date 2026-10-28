@@ -57,7 +57,8 @@ class ExpirySettlement(BaseModel):
 class ExitLeg(BaseModel):
     role: str
     quantity: int = Field(ge=1)
-    fill_price: float = Field(ge=0)
+    # Compatibility-only: execution price is always derived from a fresh backend quote.
+    fill_price: float = Field(default=0, ge=0)
     fill_id: str = Field(min_length=1, max_length=96)
     account_key: str = Field(default="default", min_length=1, max_length=128)
 
