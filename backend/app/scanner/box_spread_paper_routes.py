@@ -372,6 +372,9 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
                 role=fill.role, action=fill.action, quantity=fill.quantity,
                 fill_price=fill.fill_price, account_key=payload.account_key,
             ))
+        await asyncio.to_thread(
+            _ledger.complete_entry_attempt, trade_id=trade_id, account_key=payload.account_key
+        )
         summary = await asyncio.to_thread(
             _ledger.get_trade_summary, trade_id, account_key=payload.account_key
         )
