@@ -46,8 +46,6 @@ export default function BoxSpreadPaperTrading() {
   const [ledger, setLedger] = useState<any | null>(null);
   const [exitRole, setExitRole] = useState<Role>("LOW_CE");
   const [exitQuantity, setExitQuantity] = useState("1");
-  const [settlementDate, setSettlementDate] = useState("");
-  const [settlementPrices, setSettlementPrices] = useState<Record<Role, string>>({ LOW_CE: "", HIGH_CE: "", HIGH_PE: "", LOW_PE: "" });
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(api + path, {
@@ -179,27 +177,7 @@ export default function BoxSpreadPaperTrading() {
   async function settleSelectedExpiry(event: FormEvent) {
     event.preventDefault();
     if (selectedTrade == null) return;
-    if (!settlementDate || roles.some(role => settlementPrices[role].trim() === "")) {
-      setError("Enter the settlement date and an explicit official settlement price for every leg role. Use 0 only when the official settlement value is zero.");
-      return;
-    }
-    setBusy(true); setError(null); setMessage(null);
-    try {
-      const settlement_prices = Object.fromEntries(roles.map(role => [role, Number(settlementPrices[role])]));
-      const result = await request("/trades/" + selectedTrade + "/settle-expiry", {
-        method: "POST",
-        body: JSON.stringify({ account_key: account, settlement_date: settlementDate, settlement_prices }),
-      });
-      setLedger(await request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account)));
-      setMessage("Expiry settlement recorded using the explicitly entered official settlement prices. Status: " + result.status);
-      await refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : "Expiry settlement failed"); }
-    finally { setBusy(false); }
-  }
-
-  async function loadLedger(tradeId: number) {
-    setSelectedTrade(tradeId); setError(null);
-    try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
+    if (!settlementDate || roles.some(role => settlementPrices[role].trccount))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
 
@@ -276,17 +254,10 @@ export default function BoxSpreadPaperTrading() {
           </div>
           <button disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Record paper exit</button>
         </form>
-        <form onSubmit={settleSelectedExpiry} className="space-y-3 rounded-xl border theme-border p-3">
-          <h3 className="font-semibold theme-text">Expiry settlement</h3>
-          <p className="text-xs theme-muted">Use official settlement values only, on or after contract expiry. Zero is allowed for worthless options.</p>
-          <label className="block text-xs theme-muted">Settlement date
-            <input required type="date" value={settlementDate} onChange={e => setSettlementDate(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
-          </label>
-          <div className="grid grid-cols-2 gap-2">{roles.map(role=><label key={role} className="text-xs theme-muted">{role}
-            <input required type="number" min="0" step="any" value={settlementPrices[role]} onChange={e => setSettlementPrices(old => ({ ...old, [role]: e.target.value }))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
-          </label>)}</div>
-          <button disabled={busy || !settlementDate || roles.some(role => settlementPrices[role] === "")} className="rounded-lg border border-amber-500/50 px-4 py-2 text-sm font-semibold text-amber-500 disabled:opacity-50">Settle expiry</button>
-        </form>
+        <div className="space-y-2 rounded-xl border border-amber-500/50 p-3" role="status">
+          <h3 className="font-semibold theme-text">Expiry settlement disabled</h3>
+          <p className="text-xs theme-muted">Disabled until the backend verifies official underlying settlement data and calculates each option leg's intrinsic value. User-entered leg prices are not accepted as official settlement values.</p>
+        </div>
       </div>}
 
       {ledger && <div className="space-y-2 rounded-xl border theme-border p-3">
