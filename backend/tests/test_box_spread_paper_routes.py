@@ -187,8 +187,9 @@ def test_exit_uses_fresh_backend_executable_quote_not_browser_price(monkeypatch)
 
     monkeypatch.setattr(routes._ledger, "record_exit_fill", record_exit_fill)
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "OPEN"})
+    # Browser price is omitted: the API must use the fresh backend executable quote.
     result = routes.exit_leg(123, routes.ExitLeg(
-        role="LOW_CE", quantity=50, fill_price=999999,
+        role="LOW_CE", quantity=50,
         fill_id="exit-fresh-quote", account_key="exit-test",
     ))
 
