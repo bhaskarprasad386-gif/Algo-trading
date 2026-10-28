@@ -233,7 +233,7 @@ export default function BoxSpreadPaperTrading() {
       {selectedTrade != null && <div className="grid gap-3 md:grid-cols-2">
         <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-xl border theme-border p-3">
           <h3 className="font-semibold theme-text">Close one paper leg</h3>
-          <p className="text-xs theme-muted">Enter the actual observed exit price. Closing is not blocked by low virtual balance.</p>
+          <p className="text-xs theme-muted">The submitted price below is compatibility-only and is not recorded. The backend records the fresh executable quote from the live scanner. Closing is not blocked by low virtual balance.</p>
           <label className="block text-xs theme-muted">Leg
             <select value={exitRole} onChange={e => setExitRole(e.target.value as Role)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text">{roles.map(role=><option key={role}>{role}</option>)}</select>
           </label>
@@ -241,7 +241,7 @@ export default function BoxSpreadPaperTrading() {
             <label className="text-xs theme-muted">Quantity
               <input required type="number" min="1" step="1" value={exitQuantity} onChange={e => setExitQuantity(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
             </label>
-            <label className="text-xs theme-muted">Exit fill price
+            <label className="text-xs theme-muted">Unused reference price (not recorded)
               <input required type="number" min="0.01" step="any" value={exitPrice} onChange={e => setExitPrice(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
             </label>
           </div>
