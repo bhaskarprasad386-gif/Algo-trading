@@ -361,3 +361,20 @@ def test_all_paper_ledger_routes_have_auth_dependency():
                 actual.add((method, path))
                 assert any(dependency.dependency is routes.require_paper_access for dependency in route.dependencies), path
     assert protected <= actual
+
+
+def test_private_paper_guard_rejects_expired_token(monkeypatch):
+    from datetime import timedelta
+
+    from app.core.security import create_access_token
+
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    expired = create_access_token(
+        {"sub": "box-spread-paper-owner", "scope": "box-spread-paper"},
+        expires_delta=timedelta(seconds=-1),
+    )
+    with pytest.raises(HTTPException) as raised:
+        routes.require_paper_access("Bearer " + expired)
+    assert raised.value.status_code == 401
+    assert "expired" in raised.value.detail.lower() or "invalid" in raised.value.detail.lower()
