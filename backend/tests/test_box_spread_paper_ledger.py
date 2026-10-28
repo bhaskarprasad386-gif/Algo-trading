@@ -343,6 +343,10 @@ def test_open_trade_recovery_preserves_per_leg_entry_exit_progress_and_fill_deta
         trade_id=trade.id, fill_id="recovery-exit", role="LOW_CE",
         quantity=2, fill_price=101,
     )
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="recovery-short-entry", role="HIGH_CE",
+        action="SELL", quantity=5, fill_price=50,
+    )
     recovered = BoxSpreadPaperLedger(paper_ledger._session_factory).list_open_trades()
     assert len(recovered) == 1
     row = recovered[0]
@@ -353,6 +357,11 @@ def test_open_trade_recovery_preserves_per_leg_entry_exit_progress_and_fill_deta
     assert legs["LOW_CE"]["entry_remaining_quantity"] == 18
     assert legs["LOW_CE"]["exited_quantity"] == 2
     assert legs["LOW_CE"]["open_position_quantity"] == 5
+    assert legs["LOW_CE"]["signed_open_position_quantity"] == 5
+    assert legs["LOW_CE"]["open_position_action"] == "BUY"
+    assert legs["HIGH_CE"]["open_position_quantity"] == 5
+    assert legs["HIGH_CE"]["signed_open_position_quantity"] == -5
+    assert legs["HIGH_CE"]["open_position_action"] == "SELL"
     assert {fill["fill_id"] for fill in legs["LOW_CE"]["fills"]} == {
         "recovery-partial", "EXIT:recovery-exit",
     }
