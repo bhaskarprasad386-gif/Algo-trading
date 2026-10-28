@@ -303,6 +303,14 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
 async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
     try:
         request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
+        existing_claim = await asyncio.to_thread(
+            _ledger.get_entry_claim, trade_id=trade_id, account_key=payload.account_key
+        )
+        if existing_claim is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Paper entry attempt is already durably claimed; automatic retry is blocked. Inspect recovery and the ledger before any manual decision.",
+            )
         # A process restart clears the in-memory execution registry. Never replay
         # a trade with durable fills against a newer quote snapshot: that could
         # conflict with the ledger's stable fill IDs or mix two entry snapshots.
