@@ -224,24 +224,32 @@ def test_exit_rejects_when_matching_fresh_backend_quote_is_missing(monkeypatch):
     assert raised.value.status_code == 409
     assert "No matching fresh live Box Spread opportunity" in raised.value.detail
 
-def test_recovery_endpoint_is_read_only(monkeypatch):
+def test_recovery_endpoint_is_read_only_and_scoped_to_requested_account(monkeypatch):
     open_trades = [
         {"trade_id": 321, "idempotency_key": "durable-key", "underlying": "NIFTY",
          "expiry": "2026-10-29", "status": "PARTIALLY_FILLED", "quantity": 50},
     ]
-    monkeypatch.setattr(
-        routes._ledger, "list_open_trades",
-        lambda account_key="default": open_trades,
-    )
+    requested_accounts = []
+
+    def list_open_trades(*, account_key="default"):
+        requested_accounts.append(account_key)
+        # Model the ledger's account filter: another account has no open trades.
+        return open_trades if account_key == "recovery-test" else []
+
+    monkeypatch.setattr(routes._ledger, "list_open_trades", list_open_trades)
 
     result = routes.recovery(account_key="recovery-test")
+    other_account_result = routes.recovery(account_key="different-account")
 
+    assert requested_accounts == ["recovery-test", "different-account"]
     assert result["mode"] == "PAPER_ONLY"
     assert result["broker_orders_enabled"] is False
     assert result["recovery_mode"] == "READ_ONLY"
     assert result["automatic_replay"] is False
     assert result["count"] == 1
     assert result["data"] == open_trades
+    assert other_account_result["count"] == 0
+    assert other_account_result["data"] == []
 
 
 def test_engine_idempotency_key_isolated_by_account_and_trade():
