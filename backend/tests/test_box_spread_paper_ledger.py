@@ -14,6 +14,7 @@ from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperFeeSchedule,
     BoxSpreadPaperLedger,
     BoxSpreadPaperLedgerEntry,
+    BoxSpreadPaperEntryClaim,
     BoxSpreadPaperTradeRecord,
 )
 
@@ -29,6 +30,8 @@ def paper_ledger():
         BoxSpreadPaperAccount.__table__,
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
     ]
     Base.metadata.create_all(bind=engine, tables=tables)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
