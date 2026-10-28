@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     # Dedicated single-owner password for the isolated Box Spread paper ledger.
     # Empty means paper-trading authentication is disabled (fail closed).
     BOX_SPREAD_PAPER_PASSWORD: str = ""
+    # Only trust X-Forwarded-For when the socket peer is in this explicit CIDR allowlist.
+    BOX_SPREAD_PAPER_TRUSTED_PROXY_CIDRS: str = ""
     DATABASE_URL: str = "sqlite:///./algo_trading.db"
 
     # Trading safety limits
