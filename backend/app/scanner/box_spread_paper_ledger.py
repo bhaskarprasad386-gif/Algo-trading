@@ -294,8 +294,11 @@ class BoxSpreadPaperLedger:
     def complete_entry_attempt(self, *, trade_id: int, account_key: str = "default") -> None:
         """Mark the one-shot attempt complete only after all leg fills are durable."""
         key = self._account_key(account_key)
+        # Claim completion only updates the durable claim row. Do not take the
+        # account balance lock here: it is unrelated to a cash mutation and can
+        # fail with isolated/in-memory SQLite sessions after the four fills have
+        # already committed. The unique claim row serializes this status update.
         with self._session_factory() as session, session.begin():
-            self._lock_account_for_write(session, key)
             claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
                 BoxSpreadPaperEntryClaim.account_key == key,
                 BoxSpreadPaperEntryClaim.trade_id == trade_id,
