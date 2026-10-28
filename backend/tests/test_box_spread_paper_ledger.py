@@ -186,6 +186,7 @@ def test_prevents_overspending_and_invalid_fill_values():
         BoxSpreadPaperAccount.__table__,
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(
@@ -623,6 +624,7 @@ def test_exit_is_never_blocked_by_low_virtual_balance():
         BoxSpreadPaperAccount.__table__,
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory, starting_balance=100)
