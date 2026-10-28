@@ -29,7 +29,7 @@ The index floors are inclusive at equality; stock synthetic rows retain the stri
 
 The isolated Box Spread paper ledger is single-owner only. Configure these backend environment variables on the server before using its UI:
 
-- `BOX_SPREAD_PAPER_PASSWORD`: a strong, private password supplied through the server environment/secret manager. Do not commit it or expose it through a `NEXT_PUBLIC_*` variable.
+- `BOX_SPREAD_PAPER_PASSWORD`: a strong, private password of at least 16 characters supplied through the server environment/secret manager. The API fails closed if it is shorter. Do not commit it or expose it through a `NEXT_PUBLIC_*` variable.
 - `SECRET_KEY`: a strong server-side signing key of at least 32 characters; non-development environments already require this.
 
 The UI exchanges the password for a short-lived bearer token and stores that token in the browser session only. All paper-ledger read/write/recovery routes require the token; missing configuration fails closed. The live Box Spread opportunity feed remains a separate read-only request. This feature does not submit broker orders. Setting these variables and deploying the feature are separate operational steps; do not restart the production service during market hours without explicit approval.
