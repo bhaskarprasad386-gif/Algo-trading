@@ -23,7 +23,9 @@ type RecoveryLeg = {
 };
 type RecoveryTrade = {
   trade_id: number; underlying: string; expiry: string; status: string;
-  quantity: number; legs: RecoveryLeg[];
+  quantity: number; entry_claim_status: string | null; entry_claimed_at: string | null;
+  entry_claim_completed_at: string | null; manual_review_required: boolean;
+  automatic_replay: boolean; legs: RecoveryLeg[];
 };
 
 const roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"] as const;
@@ -253,6 +255,8 @@ export default function BoxSpreadPaperTrading() {
           ? <p className="py-2 text-sm theme-muted">No persisted non-terminal paper trades for this account.</p>
           : recoveryTrades.map(trade => <div key={trade.trade_id} className="space-y-2 rounded-lg border theme-border p-3">
             <div className="flex flex-wrap items-center justify-between gap-2"><div className="font-semibold theme-text">#{trade.trade_id} · {trade.underlying} · {trade.expiry}</div><div className="text-xs theme-muted">{trade.status} · expected qty {trade.quantity}</div></div>
+            <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-md border theme-border px-2 py-1 theme-muted">Entry claim: {trade.entry_claim_status ?? "MISSING"}</span><span className="rounded-md border theme-border px-2 py-1 theme-muted">Claimed: {trade.entry_claimed_at ?? "—"}</span>{trade.entry_claim_completed_at && <span className="rounded-md border theme-border px-2 py-1 theme-muted">Completed: {trade.entry_claim_completed_at}</span>}</div>
+            {(trade.manual_review_required || trade.automatic_replay !== false) && <div role="alert" className="rounded-lg border border-amber-500/60 bg-amber-500/10 p-3 text-sm theme-text"><strong>Manual review required.</strong> This entry may be incomplete or ambiguous. Automatic replay is disabled; inspect all four legs and persisted fills before taking any action.</div>}
             <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Leg","Entry filled","Entry remaining","Exited","Open qty","Exposure"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead><tbody>
               {trade.legs.map(leg=><tr key={leg.role} className="border-t theme-border"><td className="px-2 py-2 theme-text">{leg.role}</td><td className="px-2 py-2 theme-text">{leg.entry_filled_quantity}</td><td className="px-2 py-2 theme-text">{leg.entry_remaining_quantity}</td><td className="px-2 py-2 theme-text">{leg.exited_quantity}</td><td className="px-2 py-2 theme-text">{leg.open_position_quantity}</td><td className="px-2 py-2 theme-text">{leg.open_position_action} ({leg.signed_open_position_quantity > 0 ? "+" : ""}{leg.signed_open_position_quantity})</td></tr>)}
             </tbody></table></div>
