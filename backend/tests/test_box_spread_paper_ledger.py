@@ -454,8 +454,23 @@ def test_expiry_settlement_retries_after_partial_commit_without_duplicate_fills(
     # the still-open legs and preserve the existing durable fill.
     partial = paper_ledger.list_fills(trade.id)
     assert sum(fill.fill_id.startswith("SETTLE:") for fill in partial) == 1
-    monkeypatch.setattr(paper_ledger, "record_exit_fill", original_record_exit_fill)
+
+    # A recovery must reuse the committed leg's price and settlement date.
     recovered = BoxSpreadPaperLedger(paper_ledger._session_factory)
+    changed_prices = dict(prices)
+    changed_prices["LOW_CE"] = 11
+    with pytest.raises(ValueError, match="settlement price mismatch"):
+        recovered.settle_expiry(
+            trade_id=trade.id, settlement_prices=changed_prices,
+            settlement_date="2026-10-29",
+        )
+    with pytest.raises(ValueError, match="different date"):
+        recovered.settle_expiry(
+            trade_id=trade.id, settlement_prices=prices,
+            settlement_date="2026-10-30",
+        )
+
+    monkeypatch.setattr(paper_ledger, "record_exit_fill", original_record_exit_fill)
     result = recovered.settle_expiry(
         trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
     )
