@@ -436,24 +436,13 @@ def exit_leg(trade_id: int, payload: ExitLeg):
 
 @router.post("/trades/{trade_id}/settle-expiry", dependencies=[Depends(require_paper_access)])
 def settle_expiry(trade_id: int, payload: ExpirySettlement):
-    try:
-        result = _ledger.settle_expiry(
-            trade_id=trade_id, settlement_prices=payload.settlement_prices,
-            settlement_date=payload.settlement_date, account_key=payload.account_key,
-        )
-        return {
-            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
-            "trade_id": trade_id, "settlement_date": result["settlement_date"],
-            "settled_legs": result["settled_legs"], "status": result["status"],
-            "receipts": [{
-                "role": receipt.role, "action": receipt.action,
-                "quantity": receipt.quantity, "fill_price": str(receipt.fill_price),
-                "charges": str(receipt.charges), "cash_delta": str(receipt.cash_delta),
-                "virtual_balance": str(receipt.virtual_balance),
-            } for receipt in result["receipts"]],
-        }
-    except Exception as exc:
-        _error(exc)
+    # Fail closed: caller-supplied leg prices are not authenticated official settlement data.
+    # Re-enable only after a trusted server-side underlying settlement source is verified
+    # and CE/PE intrinsic values are derived from persisted strikes and option types.
+    raise HTTPException(
+        status_code=503,
+        detail="Expiry settlement is temporarily disabled until official settlement data can be verified server-side.",
+    )
 
 
 @router.get("/trades/{trade_id}/ledger", dependencies=[Depends(require_paper_access)])
