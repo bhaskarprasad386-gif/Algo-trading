@@ -194,6 +194,14 @@ class BoxSpreadPaperLedger:
             raise ValueError("low strike must be below high strike")
         if not str(underlying).strip() or not str(expiry).strip() or not str(instrument_class).strip():
             raise ValueError("underlying, instrument_class and expiry are required")
+        # Persist a canonical date so recovery/expiry settlement never has to
+        # interpret an arbitrary instrument-master expiry string later.
+        expiry_text = str(expiry).strip()
+        try:
+            expiry_date = date.fromisoformat(expiry_text)
+        except (TypeError, ValueError):
+            raise ValueError("expiry must be an ISO date (YYYY-MM-DD)") from None
+        canonical_expiry = expiry_date.isoformat()
         with self._session_factory() as session, session.begin():
             self._ensure_account_in_session(session, account)
             existing = session.scalar(select(BoxSpreadPaperTradeRecord).where(
@@ -201,7 +209,7 @@ class BoxSpreadPaperLedger:
                 BoxSpreadPaperTradeRecord.idempotency_key == key,
             ))
             if existing is not None:
-                expected = (str(underlying).upper(), str(instrument_class).upper(), str(expiry),
+                expected = (str(underlying).upper(), str(instrument_class).upper(), canonical_expiry,
                             low, high, direction, lots_value, lot_value)
                 actual = (existing.underlying, existing.instrument_class, existing.expiry,
                           Decimal(existing.low_strike), Decimal(existing.high_strike),
@@ -212,7 +220,7 @@ class BoxSpreadPaperLedger:
                 return existing
             trade = BoxSpreadPaperTradeRecord(
                 account_key=account, idempotency_key=key, underlying=str(underlying).upper(),
-                instrument_class=str(instrument_class).upper(), expiry=str(expiry),
+                instrument_class=str(instrument_class).upper(), expiry=canonical_expiry,
                 low_strike=low, high_strike=high, direction=direction,
                 quantity=lots_value * lot_value, lots=lots_value, lot_size=lot_value,
                 status="CREATED", fee_schedule_version=self.fee_schedule.version,
