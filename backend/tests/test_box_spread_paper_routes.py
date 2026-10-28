@@ -125,6 +125,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
     monkeypatch.setattr(routes._ledger, "claim_entry_attempt", lambda **kwargs: {"created": True, "status": "CLAIMED"})
+    monkeypatch.setattr(routes._ledger, "complete_entry_attempt", lambda **kwargs: None)
     monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
