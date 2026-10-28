@@ -673,6 +673,21 @@ def test_entry_claim_is_durable_and_one_shot_across_ledger_recreation(paper_ledg
     )
     assert second["created"] is False
     assert second["status"] == "CLAIMED"
+    with pytest.raises(ValueError, match="all four legs are fully filled"):
+        restored.complete_entry_attempt(trade_id=trade.id, account_key="claim-recovery")
+    assert restored.get_entry_claim(
+        trade_id=trade.id, account_key="claim-recovery",
+    )["status"] == "CLAIMED"
+
+    for role, action in (
+        ("LOW_CE", "BUY"), ("HIGH_CE", "SELL"),
+        ("HIGH_PE", "BUY"), ("LOW_PE", "SELL"),
+    ):
+        restored.record_fill(
+            trade_id=trade.id, account_key="claim-recovery",
+            fill_id=f"claim-complete-{role}", role=role, action=action,
+            quantity=trade.quantity, fill_price=100,
+        )
     restored.complete_entry_attempt(trade_id=trade.id, account_key="claim-recovery")
     completed = restored.get_entry_claim(trade_id=trade.id, account_key="claim-recovery")
     assert completed["status"] == "COMPLETED"
