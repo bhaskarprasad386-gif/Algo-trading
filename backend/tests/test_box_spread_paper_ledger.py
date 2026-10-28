@@ -360,6 +360,22 @@ def test_expiry_settlement_validates_all_prices_before_any_fill(paper_ledger):
     assert all(not fill.fill_id.startswith("SETTLE:") for fill in paper_ledger.list_fills(trade.id))
 
 
+def test_expiry_settlement_rejects_trade_without_open_positions(paper_ledger):
+    trade = _trade(paper_ledger)
+    balance_before = paper_ledger.get_account_summary()["virtual_balance"]
+
+    with pytest.raises(ValueError, match="no open positions to settle"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id,
+            settlement_prices={"LOW_CE": 10, "HIGH_CE": 2, "HIGH_PE": 2, "LOW_PE": 10},
+            settlement_date="2026-10-29",
+        )
+
+    assert paper_ledger.get_account_summary()["virtual_balance"] == balance_before
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "CREATED"
+    assert paper_ledger.list_fills(trade.id) == []
+
+
 def test_expiry_settlement_is_idempotent_and_restart_recoverable(paper_ledger):
     trade = _trade(paper_ledger)
     _fill_all_legs(paper_ledger, trade)
