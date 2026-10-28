@@ -46,7 +46,9 @@ def paper_login(payload: PaperLogin):
     configured_password = settings.BOX_SPREAD_PAPER_PASSWORD
     if not configured_password:
         raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
-    if not hmac.compare_digest(payload.password, configured_password):
+    if len(settings.SECRET_KEY) < 32:
+        raise HTTPException(status_code=503, detail="A strong server SECRET_KEY is required for paper-trading sessions")
+    if not hmac.compare_digest(payload.password.encode("utf-8"), configured_password.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid paper-trading password")
     token = create_access_token({"sub": "box-spread-paper-owner", "scope": "box-spread-paper"})
     return {"access_token": token, "token_type": "bearer", "expires_in": 86400}
@@ -56,6 +58,8 @@ def require_paper_access(authorization: str | None = Header(default=None)) -> di
     """Fail closed unless a valid single-owner bearer token is supplied."""
     if not settings.BOX_SPREAD_PAPER_PASSWORD:
         raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
+    if len(settings.SECRET_KEY) < 32:
+        raise HTTPException(status_code=503, detail="A strong server SECRET_KEY is required for paper-trading sessions")
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Paper-trading login required")
     try:
