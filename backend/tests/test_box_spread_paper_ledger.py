@@ -339,13 +339,13 @@ def test_open_trade_recovery_preserves_per_leg_entry_exit_progress_and_fill_deta
         trade_id=trade.id, fill_id="recovery-partial", role="LOW_CE",
         action="BUY", quantity=7, fill_price=100,
     )
-    paper_ledger.record_exit_fill(
-        trade_id=trade.id, fill_id="recovery-exit", role="LOW_CE",
-        quantity=2, fill_price=101,
-    )
     paper_ledger.record_fill(
         trade_id=trade.id, fill_id="recovery-short-entry", role="HIGH_CE",
         action="SELL", quantity=5, fill_price=50,
+    )
+    paper_ledger.record_exit_fill(
+        trade_id=trade.id, fill_id="recovery-exit", role="LOW_CE",
+        quantity=2, fill_price=101,
     )
     recovered = BoxSpreadPaperLedger(paper_ledger._session_factory).list_open_trades()
     assert len(recovered) == 1
