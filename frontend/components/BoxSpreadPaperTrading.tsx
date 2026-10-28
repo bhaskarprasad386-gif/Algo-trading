@@ -174,10 +174,9 @@ export default function BoxSpreadPaperTrading() {
     finally { setBusy(false); }
   }
 
-  async function settleSelectedExpiry(event: FormEvent) {
-    event.preventDefault();
-    if (selectedTrade == null) return;
-    if (!settlementDate || roles.some(role => settlementPrices[role].trccount))); }
+  async function loadLedger(tradeId: number) {
+    setSelectedTrade(tradeId); setError(null);
+    try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
 
