@@ -32,6 +32,9 @@ type Role = typeof roles[number];
 export default function BoxSpreadPaperTrading() {
   const api = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread-paper";
   const [account, setAccount] = useState("default");
+  const [token, setToken] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [recoveryTrades, setRecoveryTrades] = useState<RecoveryTrade[]>([]);
@@ -50,13 +53,25 @@ export default function BoxSpreadPaperTrading() {
     const response = await fetch(api + path, {
       ...init,
       cache: "no-store",
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}), ...(init?.headers ?? {}) },
       signal: AbortSignal.timeout(12000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(String(body?.detail ?? "Paper API request failed (" + response.status + ")"));
     return body;
-  }, [api]);
+  }, [api, token]);
+
+  async function login(event: FormEvent) {
+    event.preventDefault(); setLoginBusy(true); setError(null);
+    try {
+      const response = await fetch(api + "/auth/login", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }), signal: AbortSignal.timeout(12000) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || typeof body.access_token !== "string") throw new Error(String(body?.detail ?? "Paper-trading login failed"));
+      window.sessionStorage.setItem("box-spread-paper-token", body.access_token);
+      setToken(body.access_token); setPassword(""); setMessage("Private paper-trading session started.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Paper-trading login failed"); }
+    finally { setLoginBusy(false); }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -92,12 +107,26 @@ export default function BoxSpreadPaperTrading() {
     }
   }, []);
 
+  useEffect(() => { setToken(window.sessionStorage.getItem("box-spread-paper-token")); }, []);
+
   useEffect(() => {
+    if (!token) return;
     void refresh();
     void loadOpportunities();
     const timer = window.setInterval(() => { void loadOpportunities(); }, 7000);
-    return () => window.clearInterval(timer);
-  }, [refresh, loadOpportunities]);
+    if (!token) return (
+    <section className="mx-auto max-w-lg space-y-4 rounded-2xl border theme-border theme-surface p-4 sm:p-5">
+      <div><h2 className="text-xl font-semibold theme-text">Private Box Spread Paper Trading</h2><p className="mt-1 text-sm theme-muted">Enter your server-configured private password. This session only accesses the paper ledger; broker orders remain OFF.</p></div>
+      <form onSubmit={login} className="space-y-3">
+        <label className="block text-sm theme-muted">Private access password<input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" /></label>
+        <button type="submit" disabled={loginBusy || !password} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{loginBusy ? "Signing in…" : "Unlock paper trading"}</button>
+      </form>
+      {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
+    </section>
+  );
+
+  return () => window.clearInterval(timer);
+  }, [token, refresh, loadOpportunities]);
 
   async function paperTradeOpportunity(opportunity: LiveOpportunity) {
     setBusy(true); setError(null); setMessage(null); setLedger(null);
