@@ -36,6 +36,8 @@ export default function BoxSpreadPaperTrading() {
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
+  const [executionEnabled, setExecutionEnabled] = useState(false);
+  const [controlBusy, setControlBusy] = useState(false);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [recoveryTrades, setRecoveryTrades] = useState<RecoveryTrade[]>([]);
   const [opportunities, setOpportunities] = useState<LiveOpportunity[]>([]);
@@ -77,11 +79,13 @@ export default function BoxSpreadPaperTrading() {
 
   const refresh = useCallback(async () => {
     try {
-      const [accountBody, tradesBody] = await Promise.all([
+      const [accountBody, tradesBody, controlBody] = await Promise.all([
         request("/account?account_key=" + encodeURIComponent(account)),
         request("/trades?account_key=" + encodeURIComponent(account)),
+        request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
+      setExecutionEnabled(controlBody.enabled === true);
       setTrades(Array.isArray(tradesBody.data) ? tradesBody.data : []);
       setError(null);
       // Recovery is a separate read-only request so its failure never blocks the normal ledger.
@@ -118,6 +122,22 @@ export default function BoxSpreadPaperTrading() {
     const timer = window.setInterval(() => { void loadOpportunities(); }, 7000);
   return () => window.clearInterval(timer);
   }, [token, refresh, loadOpportunities]);
+
+  async function togglePaperExecution() {
+    setControlBusy(true); setError(null); setMessage(null);
+    try {
+      const body = await request("/execution-control", {
+        method: "POST",
+        body: JSON.stringify({ enabled: !executionEnabled }),
+      });
+      setExecutionEnabled(body.enabled === true);
+      setMessage(body.enabled === true
+        ? "Paper execution ON. New four-leg entries are allowed only with fresh backend quotes and safety checks."
+        : "Paper execution OFF. New entries are blocked; existing positions and safe exits remain available.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to change paper execution switch");
+    } finally { setControlBusy(false); }
+  }
 
   async function paperTradeOpportunity(opportunity: LiveOpportunity) {
     setBusy(true); setError(null); setMessage(null); setLedger(null);
@@ -204,6 +224,17 @@ export default function BoxSpreadPaperTrading() {
           <div className="text-lg font-semibold theme-text">{balance == null ? "—" : "₹" + Number(balance).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</div>
           <div className="text-xs text-emerald-500">PAPER ONLY · ORDERS OFF</div>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border theme-border p-3">
+        <div>
+          <h3 className="font-semibold theme-text">Live Paper Trading Execution</h3>
+          <p className="mt-1 text-xs theme-muted">Manual control for new Box Spread paper entries. OFF is the default after API restart. Market-data scanner remains read-only; broker orders stay OFF.</p>
+          <p className={"mt-2 text-sm font-bold " + (executionEnabled ? "text-emerald-500" : "text-amber-500")}>{executionEnabled ? "PAPER EXECUTION ON" : "PAPER EXECUTION OFF"}</p>
+        </div>
+        <button type="button" onClick={() => void togglePaperExecution()} disabled={controlBusy || busy} className={"rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 " + (executionEnabled ? "border border-amber-500 text-amber-500" : "bg-emerald-500 text-slate-950")}>
+          {controlBusy ? "Updating…" : executionEnabled ? "Turn OFF" : "Manually Turn ON"}
+        </button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
