@@ -449,6 +449,37 @@ class BoxSpreadPaperLedger:
                 BoxSpreadPaperLedgerEntry.trade_id == trade_id,
                 BoxSpreadPaperLedgerEntry.account_key == key,
             )).all()
+
+        # A partially committed settlement may be retried after a process
+        # interruption. Keep every leg on one settlement date and one price
+        # snapshot; otherwise a retry could silently mix settlement values.
+        settlement_prefix = "SETTLE:"
+        prior_settlements = [
+            row for row in rows if row.fill_id.startswith(settlement_prefix)
+        ]
+        prior_dates = {
+            row.fill_id.split(":", 2)[1]
+            for row in prior_settlements
+            if len(row.fill_id.split(":", 2)) == 3
+        }
+        requested_date = actual_date.isoformat()
+        if prior_dates and prior_dates != {requested_date}:
+            raise ValueError("expiry settlement was already started for a different date")
+        for row in prior_settlements:
+            previous_price = Decimal(row.fill_price)
+            if row.role not in settlement_prices:
+                raise ValueError(
+                    f"settlement_prices must include previously settled leg {row.role}"
+                )
+            requested_price = _money(
+                settlement_prices[row.role],
+                field=f"settlement price for {row.role}",
+            )
+            if requested_price != previous_price:
+                raise ValueError(
+                    f"settlement price mismatch for previously settled leg {row.role}"
+                )
+
         positions: dict[str, int] = {}
         for row in rows:
             positions[row.role] = positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
