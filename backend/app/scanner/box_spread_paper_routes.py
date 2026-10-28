@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 import hmac
 
@@ -35,6 +37,44 @@ _ledger = BoxSpreadPaperLedger(SessionLocal)
 # Per-trade entry locks prevent same-process concurrent entry requests.
 _entry_locks: dict[tuple[str, int], asyncio.Lock] = {}
 
+# Best-effort per-process brute-force protection. Deliberately use the socket peer
+# address only; X-Forwarded-For is untrusted unless proxy trust is configured.
+_LOGIN_WINDOW_SECONDS = 15 * 60
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_BUCKET_LIMIT = 4096
+_login_attempts: dict[str, list[float]] = {}
+_login_attempts_lock = threading.Lock()
+
+
+def _consume_paper_login_attempt(client_host: str) -> None:
+    now = time.monotonic()
+    with _login_attempts_lock:
+        bucket = [stamp for stamp in _login_attempts.get(client_host, [])
+                  if now - stamp < _LOGIN_WINDOW_SECONDS]
+        if len(bucket) >= _LOGIN_MAX_ATTEMPTS:
+            _login_attempts[client_host] = bucket
+            retry_after = max(1, int(_LOGIN_WINDOW_SECONDS - (now - bucket[0])) + 1)
+            raise HTTPException(
+                status_code=429,
+                detail="Too many paper-trading login attempts; try again later",
+                headers={"Retry-After": str(retry_after)},
+            )
+        bucket.append(now)
+        _login_attempts[client_host] = bucket
+        if len(_login_attempts) > _LOGIN_BUCKET_LIMIT:
+            # Bound memory under high-cardinality source-address traffic.
+            expired = [key for key, stamps in _login_attempts.items()
+                       if not stamps or now - stamps[-1] >= _LOGIN_WINDOW_SECONDS]
+            for key in expired:
+                _login_attempts.pop(key, None)
+            while len(_login_attempts) > _LOGIN_BUCKET_LIMIT:
+                _login_attempts.pop(next(iter(_login_attempts)))
+
+
+def _clear_paper_login_attempts(client_host: str) -> None:
+    with _login_attempts_lock:
+        _login_attempts.pop(client_host, None)
+
 
 
 
@@ -43,15 +83,18 @@ class PaperLogin(BaseModel):
 
 
 @router.post("/auth/login")
-def paper_login(payload: PaperLogin):
+def paper_login(payload: PaperLogin, request: Request | None = None):
     """Issue a short-lived token for the single configured paper-trading owner."""
     configured_password = settings.BOX_SPREAD_PAPER_PASSWORD
     if not configured_password:
         raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
     if len(settings.SECRET_KEY) < 32:
         raise HTTPException(status_code=503, detail="A strong server SECRET_KEY is required for paper-trading sessions")
+    client_host = request.client.host if request is not None and request.client is not None else "unknown"
+    _consume_paper_login_attempt(client_host)
     if not hmac.compare_digest(payload.password.encode("utf-8"), configured_password.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid paper-trading password")
+    _clear_paper_login_attempts(client_host)
     token = create_access_token({"sub": "box-spread-paper-owner", "scope": "box-spread-paper"}, expires_delta=timedelta(minutes=60))
     return {"access_token": token, "token_type": "bearer", "expires_in": 3600}
 
