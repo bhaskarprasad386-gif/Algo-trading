@@ -32,6 +32,8 @@ router = APIRouter(prefix="/api/v1/scanner/box-spread-paper", tags=["box-spread-
 _engine = BoxSpreadPaperEngine()
 _master = InstrumentMaster()
 _ledger = BoxSpreadPaperLedger(SessionLocal)
+# Per-trade entry locks prevent same-process concurrent entry requests.
+_entry_locks: dict[tuple[str, int], asyncio.Lock] = {}
 
 
 
@@ -290,6 +292,15 @@ def _load_trade_request(trade_id: int, account_key: str) -> CreatePaperTrade:
 
 @router.post("/trades/{trade_id}/simulate-entry", dependencies=[Depends(require_paper_access)])
 async def simulate_entry(trade_id: int, payload: SimulateEntry):
+    # Serialize entry attempts for the same paper trade within this API process.
+    # The durable-fill check below remains the restart/replay protection.
+    lock_key = (payload.account_key, trade_id)
+    entry_lock = _entry_locks.setdefault(lock_key, asyncio.Lock())
+    async with entry_lock:
+        return await _simulate_entry_locked(trade_id, payload)
+
+
+async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
     try:
         request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
         # A process restart clears the in-memory execution registry. Never replay
