@@ -333,6 +333,35 @@ def test_expiry_settlement_is_idempotent_and_restart_recoverable(paper_ledger):
     assert restored.list_open_trades() == []
 
 
+def test_open_trade_recovery_isolated_by_account(paper_ledger):
+    alpha_trade = _trade(
+        paper_ledger, account_key="alpha-recovery", idempotency_key="alpha-open",
+    )
+    beta_trade = _trade(
+        paper_ledger, account_key="beta-recovery", idempotency_key="beta-open",
+    )
+    paper_ledger.record_fill(
+        trade_id=alpha_trade.id, account_key="alpha-recovery",
+        fill_id="alpha-recovery-fill", role="LOW_CE", action="BUY",
+        quantity=3, fill_price=100,
+    )
+    paper_ledger.record_fill(
+        trade_id=beta_trade.id, account_key="beta-recovery",
+        fill_id="beta-recovery-fill", role="LOW_CE", action="BUY",
+        quantity=4, fill_price=100,
+    )
+
+    alpha_rows = paper_ledger.list_open_trades(account_key="alpha-recovery")
+    beta_rows = paper_ledger.list_open_trades(account_key="beta-recovery")
+    unknown_rows = paper_ledger.list_open_trades(account_key="no-such-account")
+
+    assert [row["trade_id"] for row in alpha_rows] == [alpha_trade.id]
+    assert alpha_rows[0]["legs"][0]["entry_filled_quantity"] == 3
+    assert [row["trade_id"] for row in beta_rows] == [beta_trade.id]
+    assert beta_rows[0]["legs"][0]["entry_filled_quantity"] == 4
+    assert unknown_rows == []
+
+
 def test_open_trade_recovery_preserves_per_leg_entry_exit_progress_and_fill_details(paper_ledger):
     trade = _trade(paper_ledger)
     paper_ledger.record_fill(
