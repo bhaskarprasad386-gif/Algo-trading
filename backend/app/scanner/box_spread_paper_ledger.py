@@ -100,6 +100,20 @@ class BoxSpreadPaperTradeRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class BoxSpreadPaperEntryClaim(Base):
+    """Durable one-shot claim for a paper entry attempt; never auto-cleared on restart."""
+    __tablename__ = "box_spread_paper_entry_claims"
+    __table_args__ = (
+        UniqueConstraint("account_key", "trade_id", name="uq_box_paper_entry_claim_trade"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("box_spread_paper_trades.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="CLAIMED")
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class BoxSpreadPaperLedgerEntry(Base):
     __tablename__ = "box_spread_paper_ledger_entries"
     __table_args__ = (
@@ -236,6 +250,48 @@ class BoxSpreadPaperLedger:
             session.flush()
             session.expunge(trade)
             return trade
+
+    def claim_entry_attempt(self, *, trade_id: int, account_key: str = "default") -> dict[str, object]:
+        """Atomically reserve a trade's sole entry attempt across API workers.
+
+        Claims intentionally survive crashes and are never automatically released:
+        a crash near execution is ambiguous, so a retry must be a manual decision.
+        """
+        key = self._account_key(account_key)
+        self.ensure_account(key)
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            with self._session_factory() as session, session.begin():
+                self._lock_account_for_write(session, key)
+                trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+                if trade is None or trade.account_key != key:
+                    raise ValueError("paper trade not found for account")
+                claim = BoxSpreadPaperEntryClaim(
+                    account_key=key, trade_id=trade_id, status="CLAIMED",
+                    claimed_at=datetime.now(timezone.utc),
+                )
+                session.add(claim)
+                session.flush()
+                return {"trade_id": trade_id, "account_key": key, "status": claim.status,
+                        "claimed_at": claim.claimed_at.isoformat(), "created": True}
+        except IntegrityError:
+            existing = self.get_entry_claim(trade_id=trade_id, account_key=key)
+            if existing is not None:
+                return {**existing, "created": False}
+            raise
+
+    def get_entry_claim(self, *, trade_id: int, account_key: str = "default") -> dict[str, object] | None:
+        key = self._account_key(account_key)
+        with self._session_factory() as session:
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is None:
+                return None
+            return {"trade_id": claim.trade_id, "account_key": claim.account_key,
+                    "status": claim.status, "claimed_at": claim.claimed_at.isoformat()}
 
     def record_fill(
         self,
@@ -591,8 +647,14 @@ class BoxSpreadPaperLedger:
                             "created_at": entry.created_at.isoformat(),
                         } for entry in role_entries],
                     })
+                claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                    BoxSpreadPaperEntryClaim.account_key == key,
+                    BoxSpreadPaperEntryClaim.trade_id == trade.id,
+                ))
                 recovered.append({
                     "trade_id": trade.id,
+                    "entry_claim_status": claim.status if claim is not None else None,
+                    "entry_claimed_at": claim.claimed_at.isoformat() if claim is not None else None,
                     "idempotency_key": trade.idempotency_key,
                     "underlying": trade.underlying,
                     "expiry": trade.expiry,
