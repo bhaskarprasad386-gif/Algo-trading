@@ -83,7 +83,7 @@ class PaperLogin(BaseModel):
 
 
 @router.post("/auth/login")
-def paper_login(payload: PaperLogin, request: Request | None = None):
+def paper_login(payload: PaperLogin, request: Request = None):
     """Issue a short-lived token for the single configured paper-trading owner."""
     configured_password = settings.BOX_SPREAD_PAPER_PASSWORD
     if not configured_password:
