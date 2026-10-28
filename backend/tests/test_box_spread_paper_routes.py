@@ -433,6 +433,24 @@ def test_private_paper_login_fails_closed_when_password_not_configured(monkeypat
     assert raised.value.status_code == 503
 
 
+def test_private_paper_login_fails_closed_for_weak_configured_password(monkeypatch):
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "short-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    with pytest.raises(HTTPException) as raised:
+        routes.paper_login(routes.PaperLogin(password="short-password"))
+    assert raised.value.status_code == 503
+    assert "16 characters" in raised.value.detail
+
+
+def test_private_paper_guard_fails_closed_for_weak_configured_password(monkeypatch):
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "short-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    with pytest.raises(HTTPException) as raised:
+        routes.require_paper_access("Bearer any-token")
+    assert raised.value.status_code == 503
+    assert "16 characters" in raised.value.detail
+
+
 def test_private_paper_login_rejects_wrong_password(monkeypatch):
     monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
     monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
