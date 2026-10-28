@@ -114,17 +114,6 @@ export default function BoxSpreadPaperTrading() {
     void refresh();
     void loadOpportunities();
     const timer = window.setInterval(() => { void loadOpportunities(); }, 7000);
-    if (!token) return (
-    <section className="mx-auto max-w-lg space-y-4 rounded-2xl border theme-border theme-surface p-4 sm:p-5">
-      <div><h2 className="text-xl font-semibold theme-text">Private Box Spread Paper Trading</h2><p className="mt-1 text-sm theme-muted">Enter your server-configured private password. This session only accesses the paper ledger; broker orders remain OFF.</p></div>
-      <form onSubmit={login} className="space-y-3">
-        <label className="block text-sm theme-muted">Private access password<input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" /></label>
-        <button type="submit" disabled={loginBusy || !password} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{loginBusy ? "Signing in…" : "Unlock paper trading"}</button>
-      </form>
-      {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
-    </section>
-  );
-
   return () => window.clearInterval(timer);
   }, [token, refresh, loadOpportunities]);
 
@@ -209,6 +198,17 @@ export default function BoxSpreadPaperTrading() {
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
+
+  if (!token) return (
+    <section className="mx-auto max-w-lg space-y-4 rounded-2xl border theme-border theme-surface p-4 sm:p-5">
+      <div><h2 className="text-xl font-semibold theme-text">Private Box Spread Paper Trading</h2><p className="mt-1 text-sm theme-muted">Enter your server-configured private password. This session only accesses the paper ledger; broker orders remain OFF.</p></div>
+      <form onSubmit={login} className="space-y-3">
+        <label className="block text-sm theme-muted">Private access password<input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" /></label>
+        <button type="submit" disabled={loginBusy || !password} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{loginBusy ? "Signing in…" : "Unlock paper trading"}</button>
+      </form>
+      {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
+    </section>
+  );
 
   return (
     <section className="space-y-4 rounded-2xl border theme-border theme-surface p-4 sm:p-5">
