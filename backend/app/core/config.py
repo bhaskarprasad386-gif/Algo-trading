@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     SECRET_KEY: str = ""
+    # Dedicated single-owner password for the isolated Box Spread paper ledger.
+    # Empty means paper-trading authentication is disabled (fail closed).
+    BOX_SPREAD_PAPER_PASSWORD: str = ""
     DATABASE_URL: str = "sqlite:///./algo_trading.db"
 
     # Trading safety limits
