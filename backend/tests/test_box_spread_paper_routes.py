@@ -307,3 +307,56 @@ def test_paper_api_endpoints_are_mounted_in_application():
         ("GET", f"{prefix}/recovery"),
     }
     assert expected <= mounted
+
+
+
+def test_private_paper_login_fails_closed_when_password_not_configured(monkeypatch):
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "")
+    with pytest.raises(HTTPException) as raised:
+        routes.paper_login(routes.PaperLogin(password="anything"))
+    assert raised.value.status_code == 503
+
+
+def test_private_paper_login_rejects_wrong_password(monkeypatch):
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    with pytest.raises(HTTPException) as raised:
+        routes.paper_login(routes.PaperLogin(password="wrong-password"))
+    assert raised.value.status_code == 401
+
+
+def test_private_paper_login_issues_token_and_guard_accepts_owner_scope(monkeypatch):
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    result = routes.paper_login(routes.PaperLogin(password="owner-only-test-password"))
+    assert result["token_type"] == "bearer"
+    claims = routes.require_paper_access("Bearer " + result["access_token"])
+    assert claims["sub"] == "box-spread-paper-owner"
+    assert claims["scope"] == "box-spread-paper"
+
+
+def test_private_paper_guard_rejects_missing_and_invalid_tokens(monkeypatch):
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    for authorization in (None, "Bearer invalid-token"):
+        with pytest.raises(HTTPException) as raised:
+            routes.require_paper_access(authorization)
+        assert raised.value.status_code == 401
+
+
+def test_all_paper_ledger_routes_have_auth_dependency():
+    protected = {
+        ("GET", "/account"), ("GET", "/trades"), ("POST", "/trades"),
+        ("POST", "/trades/{trade_id}/simulate-entry"),
+        ("POST", "/trades/{trade_id}/exit"),
+        ("POST", "/trades/{trade_id}/settle-expiry"),
+        ("GET", "/trades/{trade_id}/ledger"), ("GET", "/recovery"),
+    }
+    actual = set()
+    for route in routes.router.routes:
+        path = route.path.removeprefix(routes.router.prefix)
+        methods = getattr(route, "methods", set())
+        for method in methods:
+            if method in {"GET", "POST"} and path != "/auth/login":
+                actual.add((method, path))
+                assert any(dependency.call is routes.require_paper_access for dependency in route.dependencies), path
+    assert protected <= actual
