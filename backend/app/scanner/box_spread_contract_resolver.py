@@ -185,12 +185,21 @@ def resolve_box_spread_contracts(
                 f"ambiguous duplicate subscriptions for {role}"
             )
         item = candidates[0]
-        try:
-            exchange_type = int(item.exchange_type)
-        except (TypeError, ValueError, OverflowError):
+        raw_exchange_type = item.exchange_type
+        # Do not coerce booleans or fractional floats into valid exchange IDs
+        # (e.g. True -> 1 or 2.5 -> 2). Subscription identity must be exact.
+        if isinstance(raw_exchange_type, bool):
             raise BoxSpreadContractResolutionError(
                 f"{role} has invalid exchange type"
-            ) from None
+            )
+        if isinstance(raw_exchange_type, int):
+            exchange_type = raw_exchange_type
+        elif isinstance(raw_exchange_type, str) and raw_exchange_type.strip() in {"2", "4"}:
+            exchange_type = int(raw_exchange_type.strip())
+        else:
+            raise BoxSpreadContractResolutionError(
+                f"{role} has invalid exchange type"
+            )
         if exchange_type != expected_exchange_type:
             raise BoxSpreadContractResolutionError(
                 f"{role} exchange mismatch: expected {segment} ({expected_exchange_type}), "
