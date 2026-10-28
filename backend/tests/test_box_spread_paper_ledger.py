@@ -50,6 +50,17 @@ def _trade(ledger, *, account_key="default", idempotency_key="paper-1", lots=1):
     )
 
 
+def test_paper_trade_creation_rejects_non_iso_expiry(paper_ledger):
+    with pytest.raises(ValueError, match="expiry must be an ISO date"):
+        paper_ledger.create_trade(
+            idempotency_key="bad-expiry", underlying="NIFTY",
+            instrument_class="INDEX", expiry="29-Oct-2026",
+            low_strike=25000, high_strike=25100, direction="LONG",
+            lots=1, lot_size=25,
+        )
+    assert paper_ledger.list_open_trades() == []
+
+
 def test_persistent_trade_creation_is_idempotent_and_conflicts_rejected(paper_ledger):
     first = _trade(paper_ledger)
     second = _trade(paper_ledger)
