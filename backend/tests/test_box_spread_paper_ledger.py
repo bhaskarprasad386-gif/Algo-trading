@@ -652,3 +652,22 @@ def test_partial_exit_separates_realized_and_open_leg_pnl(paper_ledger):
     assert summary["realized_pnl"] > Decimal("0")
     assert summary["unrealized_pnl"] > Decimal("0")
     assert summary["status"] == "EXITING"
+
+
+def test_entry_claim_is_durable_and_one_shot_across_ledger_recreation(paper_ledger):
+    trade = _trade(paper_ledger, account_key="claim-recovery", idempotency_key="claim-recovery")
+    first = paper_ledger.claim_entry_attempt(
+        trade_id=trade.id, account_key="claim-recovery",
+    )
+    assert first["created"] is True
+    assert first["status"] == "CLAIMED"
+
+    restored = BoxSpreadPaperLedger(paper_ledger._session_factory)
+    second = restored.claim_entry_attempt(
+        trade_id=trade.id, account_key="claim-recovery",
+    )
+    assert second["created"] is False
+    assert second["status"] == "CLAIMED"
+    assert restored.get_entry_claim(
+        trade_id=trade.id, account_key="claim-recovery",
+    )["claimed_at"] == first["claimed_at"]
