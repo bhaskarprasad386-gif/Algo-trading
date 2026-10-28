@@ -156,3 +156,20 @@ def test_uses_bfo_for_sensex_index_contracts():
     )
     assert resolved.exchange_segment == "BFO"
     assert all(leg.exchange_type == 4 for leg in resolved.legs)
+
+
+
+@pytest.mark.parametrize("exchange_type", [2.5, 2.0, True, None, "2.5", ""])
+def test_rejects_malformed_exchange_type_without_coercion(exchange_type):
+    subscriptions = _chain()
+    subscriptions[0] = replace(subscriptions[0], exchange_type=exchange_type)
+    with pytest.raises(BoxSpreadContractResolutionError, match="invalid exchange type"):
+        _resolve(subscriptions)
+
+
+@pytest.mark.parametrize("exchange_type", ["2", " 2 "])
+def test_accepts_canonical_integer_string_exchange_type(exchange_type):
+    subscriptions = _chain()
+    subscriptions[0] = replace(subscriptions[0], exchange_type=exchange_type)
+    resolved = _resolve(subscriptions)
+    assert resolved.low_ce.exchange_type == 2
