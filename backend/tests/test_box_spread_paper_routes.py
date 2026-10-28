@@ -281,3 +281,26 @@ def test_ledger_fill_id_stays_within_persistent_column_limit_for_long_keys():
     assert fill_id.endswith(":LOW_CE")
     assert fill_id == routes._ledger_fill_id("x" * 200, "LOW_CE")
     assert fill_id != routes._ledger_fill_id("y" * 200, "LOW_CE")
+
+
+def test_paper_api_endpoints_are_mounted_in_application():
+    # Import the production application only for this integration-level assertion.
+    from app.main import app
+
+    mounted = {
+        (method, route.path)
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
+    prefix = "/api/v1/scanner/box-spread-paper"
+    expected = {
+        ("GET", f"{prefix}/account"),
+        ("GET", f"{prefix}/trades"),
+        ("POST", f"{prefix}/trades"),
+        ("POST", f"{prefix}/trades/{{trade_id}}/simulate-entry"),
+        ("POST", f"{prefix}/trades/{{trade_id}}/exit"),
+        ("POST", f"{prefix}/trades/{{trade_id}}/settle-expiry"),
+        ("GET", f"{prefix}/trades/{{trade_id}}/ledger"),
+        ("GET", f"{prefix}/recovery"),
+    }
+    assert expected <= mounted
