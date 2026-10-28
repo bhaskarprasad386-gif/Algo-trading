@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -50,8 +50,8 @@ def paper_login(payload: PaperLogin):
         raise HTTPException(status_code=503, detail="A strong server SECRET_KEY is required for paper-trading sessions")
     if not hmac.compare_digest(payload.password.encode("utf-8"), configured_password.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid paper-trading password")
-    token = create_access_token({"sub": "box-spread-paper-owner", "scope": "box-spread-paper"})
-    return {"access_token": token, "token_type": "bearer", "expires_in": 86400}
+    token = create_access_token({"sub": "box-spread-paper-owner", "scope": "box-spread-paper"}, expires_delta=timedelta(minutes=60))
+    return {"access_token": token, "token_type": "bearer", "expires_in": 3600}
 
 
 def require_paper_access(authorization: str | None = Header(default=None)) -> dict[str, Any]:
