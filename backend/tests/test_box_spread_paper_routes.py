@@ -331,6 +331,54 @@ def test_paper_api_endpoints_are_mounted_in_application():
 
 
 
+
+def test_private_paper_login_rate_limits_failed_attempts_per_peer_and_clears_on_success(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    peer = SimpleNamespace(client=SimpleNamespace(host="198.51.100.42"))
+    routes._clear_paper_login_attempts("198.51.100.42")
+
+    for _ in range(routes._LOGIN_MAX_ATTEMPTS):
+        with pytest.raises(HTTPException) as raised:
+            routes.paper_login(routes.PaperLogin(password="wrong-password"), peer)
+        assert raised.value.status_code == 401
+
+    with pytest.raises(HTTPException) as raised:
+        routes.paper_login(routes.PaperLogin(password="owner-only-test-password"), peer)
+    assert raised.value.status_code == 429
+    assert int(raised.value.headers["Retry-After"]) > 0
+
+    # A successful login clears that peer's failed-attempt bucket once the window
+    # has elapsed; force expiry here rather than sleeping in a regression test.
+    routes._login_attempts["198.51.100.42"] = [
+        stamp - routes._LOGIN_WINDOW_SECONDS - 1
+        for stamp in routes._login_attempts["198.51.100.42"]
+    ]
+    result = routes.paper_login(routes.PaperLogin(password="owner-only-test-password"), peer)
+    assert result["token_type"] == "bearer"
+    assert "198.51.100.42" not in routes._login_attempts
+
+
+def test_private_paper_login_uses_socket_peer_not_forwarded_header(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "owner-only-test-password")
+    monkeypatch.setattr(routes.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    peer = SimpleNamespace(client=SimpleNamespace(host="198.51.100.43"))
+    routes._clear_paper_login_attempts("198.51.100.43")
+    for _ in range(routes._LOGIN_MAX_ATTEMPTS):
+        with pytest.raises(HTTPException) as raised:
+            routes.paper_login(routes.PaperLogin(password="wrong-password"), peer)
+        assert raised.value.status_code == 401
+    with pytest.raises(HTTPException) as raised:
+        routes.paper_login(routes.PaperLogin(password="owner-only-test-password"), peer)
+    assert raised.value.status_code == 429
+    # No forwarded-address input is consulted by the login function.
+    assert "198.51.100.43" in routes._login_attempts
+    routes._clear_paper_login_attempts("198.51.100.43")
+
 def test_private_paper_login_fails_closed_when_password_not_configured(monkeypatch):
     monkeypatch.setattr(routes.settings, "BOX_SPREAD_PAPER_PASSWORD", "")
     with pytest.raises(HTTPException) as raised:
