@@ -88,6 +88,20 @@ def test_fill_ledger_applies_cash_flow_charges_and_virtual_balance(paper_ledger)
     assert summary["virtual_balance"] == receipt.virtual_balance
 
 
+def test_entry_fill_rejects_reserved_exit_and_settlement_prefixes(paper_ledger):
+    trade = _trade(paper_ledger)
+    for fill_id in ("EXIT:manual", "SETTLE:manual", "exit:lowercase"):
+        with pytest.raises(ValueError, match="entry fill_id cannot use reserved"):
+            paper_ledger.record_fill(
+                trade_id=trade.id, fill_id=fill_id, role="LOW_CE", action="BUY",
+                quantity=1, fill_price=100,
+            )
+    assert paper_ledger.get_account_summary()["fill_count"] == 0
+    recovered = paper_ledger.list_open_trades()
+    assert recovered[0]["legs"][0]["entry_filled_quantity"] == 0
+    assert recovered[0]["legs"][0]["exited_quantity"] == 0
+
+
 def test_duplicate_fill_does_not_double_charge_or_change_balance(paper_ledger):
     trade = _trade(paper_ledger)
     kwargs = dict(
