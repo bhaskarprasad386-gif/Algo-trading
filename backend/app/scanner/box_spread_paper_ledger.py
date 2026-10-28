@@ -430,7 +430,7 @@ class BoxSpreadPaperLedger:
         # loop could leave a partially settled trade if a later price is invalid.
         validated_prices = {
             role: _money(settlement_prices[role], field=f"settlement price for {role}")
-            for role in open_roles
+            for role in sorted(open_roles)
         }
         receipts = []
         for role in sorted(open_roles):
