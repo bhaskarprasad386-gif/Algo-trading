@@ -108,6 +108,9 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
             idempotency_key="restart-partial-entry",
             account_key="restart-partial",
         )
+        # This test targets durable replay protection, not the independent
+        # manual execution switch. Enable the switch to reach the ledger guard.
+        monkeypatch.setattr(routes, "_paper_execution_enabled", True)
         monkeypatch.setattr(routes, "_ledger", after_restart)
         monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
 
