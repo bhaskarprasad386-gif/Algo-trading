@@ -464,6 +464,17 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
         # Map executable bid/ask sides by each paper leg action. Never feed a
         # sell-side quote into a simulated BUY (or vice versa).
         reference_prices = _reference_prices_for_direction(current_row, contracts.direction)
+        # Recheck immediately before the durable claim: OFF pressed while quotes
+        # and contracts were being prepared must prevent this entry from starting.
+        # Once the claim is created, the four-leg attempt is in flight; OFF does
+        # not cancel it midway because that could strand a partial four-leg state.
+        with _paper_execution_state_lock:
+            enabled = _paper_execution_enabled
+        if not enabled:
+            raise HTTPException(
+                status_code=423,
+                detail="Live paper trading was switched OFF before entry started; no entry claim was created.",
+            )
         # Durable unique claim serializes entry across separate API worker processes.
         # It remains after a crash: ambiguous execution is inspected manually, never retried automatically.
         claim = await asyncio.to_thread(
