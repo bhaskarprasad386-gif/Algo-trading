@@ -454,6 +454,29 @@ class BoxSpreadPaperLedger:
             positions[row.role] = positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
         open_roles = {role for role, quantity in positions.items() if quantity != 0}
         if not open_roles:
+            # A client may retry after the original settlement committed but
+            # its response was lost. Return the durable receipts for that same
+            # settlement date instead of reporting a misleading no-position
+            # error. A normally exited trade (or a different date) is not
+            # treated as a settlement retry.
+            settlement_prefix = f"SETTLE:{actual_date.isoformat()}:"
+            settled_rows = [
+                row for row in rows
+                if row.fill_id.startswith(settlement_prefix)
+            ]
+            if trade.status == "CLOSED" and settled_rows:
+                balance = self.get_account_summary(key)["virtual_balance"]
+                receipts = tuple(
+                    self._receipt(row, Decimal(balance))
+                    for row in sorted(settled_rows, key=lambda item: item.id)
+                )
+                return {
+                    "trade_id": trade_id,
+                    "settlement_date": actual_date.isoformat(),
+                    "settled_legs": len(receipts),
+                    "status": "CLOSED",
+                    "receipts": receipts,
+                }
             raise ValueError("no open positions to settle")
         if open_roles - set(settlement_prices):
             raise ValueError("settlement_prices must include every open leg role")
