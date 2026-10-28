@@ -466,13 +466,23 @@ class BoxSpreadPaperLedger:
                     ]
                     entry_filled = sum(entry.quantity for entry in entry_fills)
                     exited = sum(entry.quantity for entry in exit_fills)
+                    signed_open_position = sum(
+                        entry.quantity * (1 if entry.action == "BUY" else -1)
+                        for entry in role_entries
+                    )
                     legs.append({
                         "role": role,
                         "expected_quantity": trade.quantity,
                         "entry_filled_quantity": entry_filled,
                         "entry_remaining_quantity": max(0, trade.quantity - entry_filled),
                         "exited_quantity": exited,
-                        "open_position_quantity": max(0, entry_filled - exited),
+                        "open_position_quantity": abs(signed_open_position),
+                        "signed_open_position_quantity": signed_open_position,
+                        "open_position_action": (
+                            "BUY" if signed_open_position > 0
+                            else "SELL" if signed_open_position < 0
+                            else "FLAT"
+                        ),
                         "fills": [{
                             "fill_id": entry.fill_id,
                             "action": entry.action,
