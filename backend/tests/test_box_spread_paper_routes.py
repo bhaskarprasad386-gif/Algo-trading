@@ -124,6 +124,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     }
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
+    monkeypatch.setattr(routes._ledger, "claim_entry_attempt", lambda **kwargs: {"created": True, "status": "CLAIMED"})
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "FILLED"})
@@ -394,6 +395,27 @@ def test_private_paper_guard_rejects_wrong_scope_or_subject(monkeypatch, subject
         routes.require_paper_access("Bearer " + token)
     assert raised.value.status_code == 401
     assert "session" in raised.value.detail.lower()
+
+
+def test_simulate_entry_rejects_existing_durable_claim_before_engine_execution(monkeypatch):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="already-claimed", account_key="isolated-test",
+    )
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+    monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
+    monkeypatch.setattr(routes._ledger, "claim_entry_attempt", lambda **kwargs: {"created": False, "status": "CLAIMED"})
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a durable entry claim must block execution before quote/engine work")
+
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(routes.simulate_entry(123, routes.SimulateEntry(account_key="isolated-test")))
+    assert raised.value.status_code == 409
+    assert "durably claimed" in raised.value.detail
 
 
 def test_simulate_entry_serializes_concurrent_requests_for_same_trade(monkeypatch):
