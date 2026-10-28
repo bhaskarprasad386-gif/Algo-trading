@@ -50,11 +50,12 @@ def _trade(ledger, *, account_key="default", idempotency_key="paper-1", lots=1):
     )
 
 
-def test_paper_trade_creation_rejects_non_iso_expiry(paper_ledger):
+@pytest.mark.parametrize("expiry", ["29-Oct-2026", "20261029", "2026-W44-4"])
+def test_paper_trade_creation_rejects_non_iso_expiry(paper_ledger, expiry):
     with pytest.raises(ValueError, match="expiry must be an ISO date"):
         paper_ledger.create_trade(
             idempotency_key="bad-expiry", underlying="NIFTY",
-            instrument_class="INDEX", expiry="29-Oct-2026",
+            instrument_class="INDEX", expiry=expiry,
             low_strike=25000, high_strike=25100, direction="LONG",
             lots=1, lot_size=25,
         )
@@ -356,6 +357,24 @@ def test_expiry_settlement_validates_all_prices_before_any_fill(paper_ledger):
 
     assert paper_ledger.get_account_summary()["virtual_balance"] == balance_before
     assert paper_ledger.get_account_summary()["fill_count"] == fill_count_before
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "FILLED"
+    assert all(not fill.fill_id.startswith("SETTLE:") for fill in paper_ledger.list_fills(trade.id))
+
+
+@pytest.mark.parametrize("settlement_date", ["20261029", "2026-W44-4"])
+def test_expiry_settlement_rejects_noncanonical_date_strings(paper_ledger, settlement_date):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    balance_before = paper_ledger.get_account_summary()["virtual_balance"]
+
+    with pytest.raises(ValueError, match="settlement_date must be an ISO date"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id,
+            settlement_prices={"LOW_CE": 10, "HIGH_CE": 2, "HIGH_PE": 2, "LOW_PE": 10},
+            settlement_date=settlement_date,
+        )
+
+    assert paper_ledger.get_account_summary()["virtual_balance"] == balance_before
     assert paper_ledger.get_trade_summary(trade.id)["status"] == "FILLED"
     assert all(not fill.fill_id.startswith("SETTLE:") for fill in paper_ledger.list_fills(trade.id))
 
