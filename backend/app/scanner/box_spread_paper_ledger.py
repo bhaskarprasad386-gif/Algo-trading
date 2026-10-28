@@ -198,6 +198,12 @@ class BoxSpreadPaperLedger:
         # interpret an arbitrary instrument-master expiry string later.
         expiry_text = str(expiry).strip()
         try:
+            if (
+                len(expiry_text) != 10
+                or expiry_text[4] != "-"
+                or expiry_text[7] != "-"
+            ):
+                raise ValueError
             expiry_date = date.fromisoformat(expiry_text)
         except (TypeError, ValueError):
             raise ValueError("expiry must be an ISO date (YYYY-MM-DD)") from None
@@ -414,7 +420,17 @@ class BoxSpreadPaperLedger:
         if isinstance(settlement_date, datetime):
             raise ValueError("settlement_date must be an ISO date (YYYY-MM-DD)")
         try:
-            actual_date = settlement_date if isinstance(settlement_date, date) else date.fromisoformat(str(settlement_date))
+            if isinstance(settlement_date, date):
+                actual_date = settlement_date
+            else:
+                settlement_text = str(settlement_date).strip()
+                if (
+                    len(settlement_text) != 10
+                    or settlement_text[4] != "-"
+                    or settlement_text[7] != "-"
+                ):
+                    raise ValueError
+                actual_date = date.fromisoformat(settlement_text)
         except (TypeError, ValueError):
             raise ValueError("settlement_date must be an ISO date (YYYY-MM-DD)") from None
         with self._session_factory() as session:
