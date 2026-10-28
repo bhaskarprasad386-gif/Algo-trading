@@ -688,3 +688,47 @@ def test_simulate_entry_is_blocked_before_ledger_or_quote_access_when_switch_off
         asyncio.run(routes.simulate_entry(123, routes.SimulateEntry(account_key="toggle-off-test")))
     assert raised.value.status_code == 423
     assert "OFF" in raised.value.detail
+
+def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypatch):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="toggle-race-test", account_key="toggle-race-test",
+    )
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    monkeypatch.setattr(routes, "_paper_execution_enabled", True)
+    monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
+    monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
+    monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: [])
+    claims = []
+
+    def resolve_and_switch_off(payload):
+        monkeypatch.setattr(routes, "_paper_execution_enabled", False)
+        return contracts
+
+    monkeypatch.setattr(routes, "_resolve", resolve_and_switch_off)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
+    monkeypatch.setattr(
+        routes._ledger, "claim_entry_attempt",
+        lambda **kwargs: claims.append(kwargs) or {"created": True},
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(routes.simulate_entry(
+            789, routes.SimulateEntry(account_key="toggle-race-test"),
+        ))
+
+    assert raised.value.status_code == 423
+    assert claims == []
+
