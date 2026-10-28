@@ -405,7 +405,7 @@ def test_simulate_entry_rejects_existing_durable_claim_before_engine_execution(m
     )
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
-    monkeypatch.setattr(routes._ledger, "claim_entry_attempt", lambda **kwargs: {"created": False, "status": "CLAIMED"})
+    monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: {"status": "CLAIMED"})
 
     def forbidden(*args, **kwargs):
         pytest.fail("a durable entry claim must block execution before quote/engine work")
