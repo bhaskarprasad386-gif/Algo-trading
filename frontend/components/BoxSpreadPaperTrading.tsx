@@ -14,6 +14,17 @@ type PaperTrade = {
   low_strike: number; high_strike: number; direction: string; lots: number;
   quantity: number; lot_size: number; status: string; created_at: string;
 };
+type RecoveryLeg = {
+  role: Role; expected_quantity: number; entry_filled_quantity: number;
+  entry_remaining_quantity: number; exited_quantity: number;
+  open_position_quantity: number; signed_open_position_quantity: number;
+  open_position_action: "BUY" | "SELL" | "FLAT";
+  fills: Array<{ fill_id: string; action: string; quantity: number; fill_price: string; created_at: string }>;
+};
+type RecoveryTrade = {
+  trade_id: number; underlying: string; expiry: string; status: string;
+  quantity: number; legs: RecoveryLeg[];
+};
 
 const roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"] as const;
 type Role = typeof roles[number];
@@ -23,6 +34,7 @@ export default function BoxSpreadPaperTrading() {
   const [account, setAccount] = useState("default");
   const [balance, setBalance] = useState<string | null>(null);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
+  const [recoveryTrades, setRecoveryTrades] = useState<RecoveryTrade[]>([]);
   const [opportunities, setOpportunities] = useState<LiveOpportunity[]>([]);
   const [selectedTrade, setSelectedTrade] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,6 +68,10 @@ export default function BoxSpreadPaperTrading() {
       setBalance(String(accountBody.virtual_balance));
       setTrades(Array.isArray(tradesBody.data) ? tradesBody.data : []);
       setError(null);
+      // Recovery is a separate read-only request so its failure never blocks the normal ledger.
+      void request("/recovery?account_key=" + encodeURIComponent(account))
+        .then(body => setRecoveryTrades(Array.isArray(body.data) ? body.data : []))
+        .catch(() => { /* Preserve the last durable recovery snapshot on transient API errors. */ });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load paper ledger");
     }
@@ -186,6 +202,22 @@ export default function BoxSpreadPaperTrading() {
           <input value={account} onChange={e => setAccount(e.target.value)} maxLength={128} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" />
         </label>
         <div className="flex items-end"><button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Refresh ledger</button></div>
+      </div>
+
+      <div className="space-y-3 rounded-xl border theme-border p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><h3 className="font-semibold theme-text">Restart recovery · read only</h3><p className="text-xs theme-muted">Persisted non-terminal trades and per-leg exposure. No automatic replay and no broker orders.</p></div>
+          <span className="rounded-md border theme-border px-2 py-1 text-xs theme-muted">{recoveryTrades.length} open</span>
+        </div>
+        {recoveryTrades.length === 0
+          ? <p className="py-2 text-sm theme-muted">No persisted non-terminal paper trades for this account.</p>
+          : recoveryTrades.map(trade => <div key={trade.trade_id} className="space-y-2 rounded-lg border theme-border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="font-semibold theme-text">#{trade.trade_id} · {trade.underlying} · {trade.expiry}</div><div className="text-xs theme-muted">{trade.status} · expected qty {trade.quantity}</div></div>
+            <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Leg","Entry filled","Entry remaining","Exited","Open qty","Exposure"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead><tbody>
+              {trade.legs.map(leg=><tr key={leg.role} className="border-t theme-border"><td className="px-2 py-2 theme-text">{leg.role}</td><td className="px-2 py-2 theme-text">{leg.entry_filled_quantity}</td><td className="px-2 py-2 theme-text">{leg.entry_remaining_quantity}</td><td className="px-2 py-2 theme-text">{leg.exited_quantity}</td><td className="px-2 py-2 theme-text">{leg.open_position_quantity}</td><td className="px-2 py-2 theme-text">{leg.open_position_action} ({leg.signed_open_position_quantity > 0 ? "+" : ""}{leg.signed_open_position_quantity})</td></tr>)}
+            </tbody></table></div>
+            {trade.legs.some(leg => leg.fills.length > 0) && <details className="text-xs"><summary className="cursor-pointer theme-text">Persisted fills</summary><div className="mt-2 overflow-x-auto"><table className="w-full min-w-[600px] text-left"><thead className="theme-surface-2 theme-muted"><tr>{["Leg","Fill ID","Action","Qty","Price","Time"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead><tbody>{trade.legs.flatMap(leg => leg.fills.map((fill, index)=><tr key={leg.role + fill.fill_id + index} className="border-t theme-border"><td className="px-2 py-2 theme-text">{leg.role}</td><td className="px-2 py-2 theme-text">{fill.fill_id}</td><td className="px-2 py-2 theme-text">{fill.action}</td><td className="px-2 py-2 theme-text">{fill.quantity}</td><td className="px-2 py-2 theme-text">{fill.fill_price}</td><td className="px-2 py-2 theme-muted">{fill.created_at}</td></tr>))}</tbody></table></div></details>}
+          </div>)}
       </div>
 
       <div className="space-y-2 rounded-xl border theme-border p-3">
