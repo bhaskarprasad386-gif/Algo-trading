@@ -57,6 +57,10 @@ export default function BoxSpreadPaperTrading() {
       signal: AbortSignal.timeout(12000),
     });
     const body = await response.json().catch(() => ({}));
+    if (response.status === 401 && token) {
+      window.sessionStorage.removeItem("box-spread-paper-token");
+      setToken(null);
+    }
     if (!response.ok) throw new Error(String(body?.detail ?? "Paper API request failed (" + response.status + ")"));
     return body;
   }, [api, token]);
