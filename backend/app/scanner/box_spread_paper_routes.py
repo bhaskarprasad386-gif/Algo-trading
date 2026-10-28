@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -44,6 +45,48 @@ _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_BUCKET_LIMIT = 4096
 _login_attempts: dict[str, list[float]] = {}
 _login_attempts_lock = threading.Lock()
+
+
+def _paper_login_client_host(request: Request | None) -> str:
+    """Resolve the login rate-limit key without trusting spoofable proxy headers.
+
+    Forwarded addresses are considered only when the direct socket peer belongs
+    to BOX_SPREAD_PAPER_TRUSTED_PROXY_CIDRS. Walk X-Forwarded-For right-to-left
+    so a trusted proxy-appended client address wins over user-supplied prefixes.
+    """
+    peer = request.client.host if request is not None and request.client is not None else "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+
+    networks = []
+    for item in settings.BOX_SPREAD_PAPER_TRUSTED_PROXY_CIDRS.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            # Invalid trust entries never broaden trust; the peer remains the key.
+            continue
+    if not networks or not any(peer_ip in network for network in networks):
+        return peer
+
+    forwarded = request.headers.get("x-forwarded-for", "") if request is not None else ""
+    if not forwarded:
+        return peer
+    try:
+        forwarded_ips = [ipaddress.ip_address(part.strip()) for part in forwarded.split(",")]
+    except ValueError:
+        # Malformed forwarding chains are ignored rather than partially trusted.
+        return peer
+
+    for candidate in reversed(forwarded_ips):
+        if any(candidate in network for network in networks):
+            continue
+        return str(candidate)
+    return peer
 
 
 def _consume_paper_login_attempt(client_host: str) -> None:
@@ -90,7 +133,7 @@ def paper_login(payload: PaperLogin, request: Request = None):
         raise HTTPException(status_code=503, detail="Box Spread paper access is not configured on the server")
     if len(settings.SECRET_KEY) < 32:
         raise HTTPException(status_code=503, detail="A strong server SECRET_KEY is required for paper-trading sessions")
-    client_host = request.client.host if request is not None and request.client is not None else "unknown"
+    client_host = _paper_login_client_host(request)
     _consume_paper_login_attempt(client_host)
     if not hmac.compare_digest(payload.password.encode("utf-8"), configured_password.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid paper-trading password")
