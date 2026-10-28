@@ -7,6 +7,13 @@ import pytest
 from app.scanner import box_spread_paper_routes as routes
 
 
+@pytest.fixture(autouse=True)
+def enable_paper_execution_for_existing_route_tests(monkeypatch):
+    # Existing execution-path tests exercise ON behavior explicitly; dedicated tests
+    # below verify that OFF blocks new entries before any ledger/quote access.
+    monkeypatch.setattr(routes, "_paper_execution_enabled", True)
+
+
 def test_paper_quote_selector_uses_ask_for_buys_and_bid_for_sells():
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
