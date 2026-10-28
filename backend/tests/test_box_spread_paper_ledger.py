@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -292,6 +293,21 @@ def test_exit_fill_idempotency_and_over_exit_protection(paper_ledger):
             trade_id=trade.id, fill_id="exit-too-much", role="LOW_CE",
             quantity=6, fill_price=101,
         )
+
+
+def test_expiry_settlement_rejects_datetime_timestamp(paper_ledger):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+
+    with pytest.raises(ValueError, match="settlement_date must be an ISO date"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id,
+            settlement_prices={"LOW_CE": 0, "HIGH_CE": 0, "HIGH_PE": 0, "LOW_PE": 0},
+            settlement_date=datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc),
+        )
+
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "FILLED"
+    assert all(not fill.fill_id.startswith("SETTLE:") for fill in paper_ledger.list_fills(trade.id))
 
 
 def test_expiry_settlement_requires_expiry_and_explicit_prices(paper_ledger):
