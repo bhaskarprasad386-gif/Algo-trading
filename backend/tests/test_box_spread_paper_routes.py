@@ -656,3 +656,28 @@ def test_simulation_partial_durable_fill_blocks_replay_after_write_failure(monke
         ))
     assert raised.value.status_code == 409
     assert "durable fills" in raised.value.detail
+
+
+
+def test_manual_paper_execution_switch_defaults_off_and_requires_explicit_enable(monkeypatch):
+    monkeypatch.setattr(routes, "_paper_execution_enabled", False)
+    assert routes.get_execution_control()["enabled"] is False
+    enabled = routes.set_execution_control(routes.PaperExecutionControl(enabled=True))
+    assert enabled["enabled"] is True
+    assert enabled["broker_orders_enabled"] is False
+    disabled = routes.set_execution_control(routes.PaperExecutionControl(enabled=False))
+    assert disabled["enabled"] is False
+    assert disabled["restart_default"] == "OFF"
+
+
+def test_simulate_entry_is_blocked_before_ledger_or_quote_access_when_switch_off(monkeypatch):
+    monkeypatch.setattr(routes, "_paper_execution_enabled", False)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("OFF must block entry before loading trade, quotes, or ledger")
+
+    monkeypatch.setattr(routes, "_load_trade_request", forbidden)
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(routes.simulate_entry(123, routes.SimulateEntry(account_key="toggle-off-test")))
+    assert raised.value.status_code == 423
+    assert "OFF" in raised.value.detail
