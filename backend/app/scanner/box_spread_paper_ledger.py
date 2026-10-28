@@ -17,6 +17,15 @@ from app.core.database import Base
 
 
 CENT = Decimal("0.01")
+
+
+def _utc_iso(value: datetime) -> str:
+    """Return timezone-stable UTC ISO timestamps across SQLite and PostgreSQL."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
 DEFAULT_PAPER_BALANCE = Decimal("10000000.00")
 
 
@@ -112,6 +121,7 @@ class BoxSpreadPaperEntryClaim(Base):
     trade_id: Mapped[int] = mapped_column(ForeignKey("box_spread_paper_trades.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="CLAIMED")
     claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BoxSpreadPaperLedgerEntry(Base):
@@ -274,12 +284,26 @@ class BoxSpreadPaperLedger:
                 session.add(claim)
                 session.flush()
                 return {"trade_id": trade_id, "account_key": key, "status": claim.status,
-                        "claimed_at": claim.claimed_at.isoformat(), "created": True}
+                        "claimed_at": _utc_iso(claim.claimed_at), "created": True}
         except IntegrityError:
             existing = self.get_entry_claim(trade_id=trade_id, account_key=key)
             if existing is not None:
                 return {**existing, "created": False}
             raise
+
+    def complete_entry_attempt(self, *, trade_id: int, account_key: str = "default") -> None:
+        """Mark the one-shot attempt complete only after all leg fills are durable."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session, session.begin():
+            self._lock_account_for_write(session, key)
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is None:
+                raise ValueError("paper entry claim is missing")
+            claim.status = "COMPLETED"
+            claim.completed_at = datetime.now(timezone.utc)
 
     def get_entry_claim(self, *, trade_id: int, account_key: str = "default") -> dict[str, object] | None:
         key = self._account_key(account_key)
@@ -291,7 +315,8 @@ class BoxSpreadPaperLedger:
             if claim is None:
                 return None
             return {"trade_id": claim.trade_id, "account_key": claim.account_key,
-                    "status": claim.status, "claimed_at": claim.claimed_at.isoformat()}
+                    "status": claim.status, "claimed_at": _utc_iso(claim.claimed_at),
+                    "completed_at": _utc_iso(claim.completed_at) if claim.completed_at else None}
 
     def record_fill(
         self,
@@ -654,7 +679,8 @@ class BoxSpreadPaperLedger:
                 recovered.append({
                     "trade_id": trade.id,
                     "entry_claim_status": claim.status if claim is not None else None,
-                    "entry_claimed_at": claim.claimed_at.isoformat() if claim is not None else None,
+                    "entry_claimed_at": _utc_iso(claim.claimed_at) if claim is not None else None,
+                    "entry_claim_completed_at": _utc_iso(claim.completed_at) if claim is not None and claim.completed_at else None,
                     "idempotency_key": trade.idempotency_key,
                     "underlying": trade.underlying,
                     "expiry": trade.expiry,
