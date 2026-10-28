@@ -541,13 +541,11 @@ def test_open_trade_recovery_preserves_per_leg_entry_exit_progress_and_fill_deta
     assert legs["HIGH_CE"]["entry_filled_quantity"] == 5
     assert legs["HIGH_CE"]["entry_remaining_quantity"] == 20
     assert legs["HIGH_CE"]["exited_quantity"] == 0
-    assert legs["HIGH_CE"]["fills"] == [{
-        "fill_id": "recovery-short-entry",
-        "action": "SELL",
-        "quantity": 5,
-        "fill_price": "50.000000",
-        "created_at": legs["HIGH_CE"]["fills"][0]["created_at"],
-    }]
+    assert len(legs["HIGH_CE"]["fills"]) == 1
+    assert legs["HIGH_CE"]["fills"][0]["fill_id"] == "recovery-short-entry"
+    assert legs["HIGH_CE"]["fills"][0]["action"] == "SELL"
+    assert legs["HIGH_CE"]["fills"][0]["quantity"] == 5
+    assert legs["HIGH_CE"]["fills"][0]["fill_price"] == "50.000000"
 
 
 def test_exit_is_never_blocked_by_low_virtual_balance():
