@@ -287,10 +287,12 @@ def test_paper_api_endpoints_are_mounted_in_application():
     # Import the production application only for this integration-level assertion.
     from app.main import app
 
+    # FastAPI's newer router implementation may keep included routers lazy
+    # in app.routes. OpenAPI resolves the complete mounted route table reliably.
     mounted = {
-        (method, route.path)
-        for route in app.routes
-        for method in getattr(route, "methods", set())
+        (method.upper(), path)
+        for path, operations in app.openapi()["paths"].items()
+        for method in operations
     }
     prefix = "/api/v1/scanner/box-spread-paper"
     expected = {
