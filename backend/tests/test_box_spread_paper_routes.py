@@ -394,3 +394,33 @@ def test_private_paper_guard_rejects_wrong_scope_or_subject(monkeypatch, subject
         routes.require_paper_access("Bearer " + token)
     assert raised.value.status_code == 401
     assert "session" in raised.value.detail.lower()
+
+
+def test_simulate_entry_serializes_concurrent_requests_for_same_trade(monkeypatch):
+    active = 0
+    maximum_active = 0
+    calls = 0
+
+    async def fake_locked_entry(trade_id, payload):
+        nonlocal active, maximum_active, calls
+        active += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        calls += 1
+        return {"trade_id": trade_id, "ok": True}
+
+    monkeypatch.setattr(routes, "_simulate_entry_locked", fake_locked_entry)
+    payload = routes.SimulateEntry(account_key="concurrency-test")
+
+    async def invoke_both():
+        return await asyncio.gather(
+            routes.simulate_entry(987654, payload),
+            routes.simulate_entry(987654, payload),
+        )
+
+    results = asyncio.run(invoke_both())
+
+    assert len(results) == 2
+    assert calls == 2
+    assert maximum_active == 1
