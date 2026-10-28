@@ -435,6 +435,8 @@ class BoxSpreadPaperLedger:
         for row in rows:
             positions[row.role] = positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
         open_roles = {role for role, quantity in positions.items() if quantity != 0}
+        if not open_roles:
+            raise ValueError("no open positions to settle")
         if open_roles - set(settlement_prices):
             raise ValueError("settlement_prices must include every open leg role")
         # Validate every open leg price before writing any settlement fill. Each
