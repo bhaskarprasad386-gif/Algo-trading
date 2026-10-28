@@ -299,6 +299,21 @@ class BoxSpreadPaperLedger:
         # fail with isolated/in-memory SQLite sessions after the four fills have
         # already committed. The unique claim row serializes this status update.
         with self._session_factory() as session, session.begin():
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            entries = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                BoxSpreadPaperLedgerEntry.account_key == key,
+                BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+            )).all()
+            filled_by_role = {role: 0 for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")}
+            for entry in entries:
+                if entry.fill_id.upper().startswith(("EXIT:", "SETTLE:")):
+                    continue
+                if entry.role in filled_by_role:
+                    filled_by_role[entry.role] += entry.quantity
+            if any(quantity != trade.quantity for quantity in filled_by_role.values()):
+                raise ValueError("cannot complete entry attempt until all four legs are fully filled")
             claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
                 BoxSpreadPaperEntryClaim.account_key == key,
                 BoxSpreadPaperEntryClaim.trade_id == trade_id,
