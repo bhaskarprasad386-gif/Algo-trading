@@ -287,6 +287,24 @@ def test_ledger_fill_id_stays_within_persistent_column_limit_for_long_keys():
     assert fill_id != routes._ledger_fill_id("y" * 200, "LOW_CE")
 
 
+def test_expiry_settlement_fails_closed_without_trusted_server_source(monkeypatch):
+    payload = routes.ExpirySettlement(
+        settlement_date=__import__("datetime").date(2026, 10, 29),
+        settlement_prices={"LOW_CE": 999999, "HIGH_CE": 0, "HIGH_PE": 999999, "LOW_PE": 0},
+        account_key="isolated-test",
+    )
+
+    def forbidden_settlement(**kwargs):
+        pytest.fail("unverified client prices must never reach the ledger")
+
+    monkeypatch.setattr(routes._ledger, "settle_expiry", forbidden_settlement)
+    with pytest.raises(HTTPException) as raised:
+        routes.settle_expiry(123, payload)
+
+    assert raised.value.status_code == 503
+    assert "verified server-side" in raised.value.detail
+
+
 def test_paper_api_endpoints_are_mounted_in_application():
     # Import the production application only for this integration-level assertion.
     from app.main import app
