@@ -312,7 +312,9 @@ object ApiService {
                 val authenticated = if (isBrokerApi && !token.isNullOrBlank()) {
                     request.newBuilder().header("Authorization", "Bearer $token").build()
                 } else request
-                chain.proceed(authenticated)
+                val response = chain.proceed(authenticated)
+                if (isBrokerApi && response.code == 401) realOwnerAccessToken = null
+                response
             }
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
