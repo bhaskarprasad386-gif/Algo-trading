@@ -300,6 +300,15 @@ def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> flo
     return bid if sell_to_close else ask
 
 
+def _strike_matches(raw_value: Any, expected: float) -> bool:
+    """Treat malformed scanner strike data as a non-match, never as a route error."""
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return math.isfinite(value) and abs(value - expected) < 0.0001
+
+
 def _matching_live_row(contracts) -> dict[str, Any] | None:
     snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
     return next((
@@ -307,8 +316,8 @@ def _matching_live_row(contracts) -> dict[str, Any] | None:
         if str(row.get("symbol", "")).strip().upper() == contracts.underlying
         and str(row.get("instrument_class", "")).strip().upper() == contracts.instrument_class
         and _canonical_expiry(row.get("expiry_date") or row.get("expiry")) == _canonical_expiry(contracts.expiry)
-        and abs(float(row.get("low_strike", 0)) - contracts.low_strike) < 0.0001
-        and abs(float(row.get("high_strike", 0)) - contracts.high_strike) < 0.0001
+        and _strike_matches(row.get("low_strike"), contracts.low_strike)
+        and _strike_matches(row.get("high_strike"), contracts.high_strike)
         and str(row.get("direction", "")).strip().upper() == contracts.direction
     ), None)
 
