@@ -70,10 +70,16 @@ def _clear_spool():
 
 
 
-def _snapshot_payload(result, observed_at):
+def _snapshot_payload(result, observed_at, spot_provider=None):
     low, high = result.low, result.high
+    spot = spot_provider(low.underlying) if callable(spot_provider) else None
+    if not isinstance(spot, dict):
+        spot = {}
     return {
         "symbol": low.underlying,
+        "spot_price": spot.get("spot_price"),
+        "spot_timestamp_ns": spot.get("spot_timestamp_ns"),
+        "spot_age_seconds": spot.get("spot_age_seconds"),
         "instrument_class": low.instrument_class,
         "expiry": low.expiry,
         "expiry_date": str(low.expiry),
@@ -138,11 +144,12 @@ def _snapshot_key(row):
 
 
 class LiveBoxSpreadPipeline:
-    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None):
+    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None):
         self.scanner = scanner
         self.session_factory = session_factory
         self.alerts = alerts or BoxSpreadAlertService()
         self.on_results = on_results
+        self.spot_provider = spot_provider
 
     def observe(self, payload):
         results = self.scanner.observe(payload)
@@ -164,7 +171,7 @@ class LiveBoxSpreadPipeline:
                     fresh_rows = []
                     for result in results:
                         observed_at = datetime.now(timezone.utc)
-                        row = _snapshot_payload(result, observed_at)
+                        row = _snapshot_payload(result, observed_at, self.spot_provider)
                         key = _snapshot_key(row)
                         row["_snapshot_identity"] = list(key)
                         fresh_rows.append(row)
