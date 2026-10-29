@@ -86,72 +86,45 @@ jobs:
             fi
           done
 
-          echo "=== SYNTHETIC FEED ACCEPTANCE ==="
-          synthetic_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/synthetic_diag_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/scanner/synthetic-cash-carry/diagnostics 2>/dev/null || true)
-          echo "SYNTHETIC_DIAGNOSTICS_HTTP=$synthetic_code"
-          if [ "$synthetic_code" != "000" ]; then
-            cat /tmp/synthetic_diag_body || true
+          echo "=== BOX SPREAD ACCEPTANCE ==="
+          box_diag_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/box_spread_diag_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/scanner/box-spread/diagnostics 2>/dev/null || true)
+          echo "BOX_SPREAD_DIAGNOSTICS_HTTP=$box_diag_code"
+          if [ "$box_diag_code" != "000" ]; then
+            cat /tmp/box_spread_diag_body || true
             echo
           fi
           python3 - <<'PY'
           import json
           from pathlib import Path
 
-          def load(path):
-              try:
-                  return json.loads(Path(path).read_text())
-              except Exception:
-                  return {}
+          try:
+              diag = json.loads(Path("/tmp/box_spread_diag_body").read_text())
+          except Exception:
+              diag = {}
 
-          def walk(value):
-              if isinstance(value, dict):
-                  yield value
-                  for child in value.values():
-                      yield from walk(child)
-              elif isinstance(value, list):
-                  for child in value:
-                      yield from walk(child)
+          last_scan = diag.get("last_scan")
+          counts = diag.get("counts") if isinstance(diag.get("counts"), dict) else {}
+          outcome = last_scan.get("outcome", "UNKNOWN") if isinstance(last_scan, dict) else "UNKNOWN"
+          active_buckets = diag.get("active_buckets", 0)
+          status = str(diag.get("status", "waiting")).lower()
+          print(f"BOX_SPREAD_STATUS={status.upper()}")
+          print(f"BOX_SPREAD_ACTIVE_BUCKETS={active_buckets}")
+          print(f"BOX_SPREAD_LAST_SCAN_OUTCOME={outcome}")
+          print(f"BOX_SPREAD_DIAGNOSTIC_COUNTERS={json.dumps(counts, sort_keys=True)}")
 
-          diag = load("/tmp/synthetic_diag_body")
-          runtime = load("/tmp/runtime_body")
-          live_health = load("/tmp/live_health_body")
-          nodes = list(walk(runtime)) + list(walk(live_health))
-          session = next((str(x.get("market_session", "")).upper() for x in nodes if x.get("market_session")), "")
-          feed = diag.get("underlying_feed") if isinstance(diag.get("underlying_feed"), dict) else {}
-          symbols = feed.get("symbols") if isinstance(feed.get("symbols"), dict) else {}
-          resolved = [name for name, item in symbols.items() if isinstance(item, dict) and item.get("token_resolved")]
-          fresh_10s = [name for name, item in symbols.items() if isinstance(item, dict) and isinstance(item.get("last_tick_age_seconds"), (int, float)) and item["last_tick_age_seconds"] <= 10]
-          fresh_5s = [name for name, item in symbols.items() if isinstance(item, dict) and isinstance(item.get("last_tick_age_seconds"), (int, float)) and item["last_tick_age_seconds"] <= 5]
-          readiness = next((x for x in nodes if isinstance(x.get("ready_symbols"), list) and isinstance(x.get("waiting_symbols"), list)), {})
-          ready_symbols = readiness.get("ready_symbols", [])
-          initialized = bool(diag.get("scanner_initialized"))
-          state = str(feed.get("state") or "NO_FEED_SNAPSHOT")
-          reason = str(feed.get("state_reason") or "no_underlying_feed_snapshot")
-          expected = max(len(symbols), int(diag.get("target_count") or 0))
-          minimum_ready = max(1, (expected + 1) // 2)
-          print(f"MARKET_SESSION={session or 'UNKNOWN'}")
-          print(f"UNDERLYING_FEED_STATE={state}")
-          print(f"UNDERLYING_FEED_REASON={reason}")
-          print(f"TOKENS_RESOLVED={len(resolved)}/{len(symbols)}")
-          print(f"FRESH_TICKS_LE_10S={len(fresh_10s)}/{len(symbols)}")
-          print(f"FRESH_TICKS_LE_5S={len(fresh_5s)}/{len(symbols)}")
-          print(f"ATM_READY_SYMBOLS={len(ready_symbols)}/{expected}")
-          print(f"ATM_READY_MINIMUM_REQUIRED={minimum_ready}")
-          print(f"SCANNER_INITIALIZED={initialized}")
-          if session != "OPEN":
-              print("ACCEPTANCE_RESULT=DEFERRED_MARKET_NOT_OPEN")
-          else:
-              checks = {
-                  "token_resolution": bool(symbols) and len(resolved) == len(symbols),
-                  "fresh_ticks_le_5s": bool(symbols) and len(fresh_5s) >= minimum_ready,
-                  "atm_readiness": len(ready_symbols) >= minimum_ready,
-                  "scanner_initialization": initialized,
-              }
-              for name, passed in checks.items():
-                  print(f"GATE_{name.upper()}={'PASS' if passed else 'FAIL'}")
-              print("ACCEPTANCE_RESULT=" + ("PASS" if all(checks.values()) else "FAIL"))
-              if not all(checks.values()):
-                  raise SystemExit(1)
+          # No qualifying box is a valid market outcome; health depends on the
+          # Box Spread scanner producing diagnostics, not the unrelated synthetic scanner.
+          checks = {
+              "diagnostics_available": status == "available",
+              "last_scan_present": isinstance(last_scan, dict) and bool(last_scan),
+              "active_bucket_count_valid": isinstance(active_buckets, int) and active_buckets >= 0,
+          }
+          for name, passed in checks.items():
+              print(f"BOX_SPREAD_GATE_{name.upper()}={'PASS' if passed else 'FAIL'}")
+          passed = all(checks.values())
+          print("BOX_SPREAD_ACCEPTANCE_RESULT=" + ("PASS" if passed else "FAIL"))
+          if not passed:
+              raise SystemExit(1)
           PY
           acceptance_status=$?
 
