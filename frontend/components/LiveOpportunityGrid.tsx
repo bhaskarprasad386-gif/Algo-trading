@@ -19,6 +19,11 @@ function n(row: Opportunity, field: string) {
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
+function quote(row: Opportunity, priceField: string, quantityField: string) {
+  const price = n(row, priceField);
+  const quantity = n(row, quantityField);
+  return `${price === null ? "—" : fmt(price)} (${quantity === null ? "—" : fmt(quantity)})`;
+}
 function fmt(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
@@ -129,9 +134,9 @@ export default function LiveOpportunityGrid() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px] border-collapse text-left text-xs">
+          <table className="w-full min-w-[1350px] border-collapse text-left text-xs">
             <thead><tr className="border-b border-slate-700 text-slate-400">
-              {["Status","Time (IST)","Underlying","Spot Price","Expiry","Expiry Type","Low / High Strike","Direction","Box Edge","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
+              {["Status","Time (IST)","Underlying","Spot Price","Expiry","Expiry Type","Low / High Strike","Direction","Box Edge","Bid / Ask depth (price (qty))","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
             <tbody>{rows.map(({ key, row, lastSeen, status }) => (
               <tr key={key} className={"border-b border-slate-800 transition-opacity " + (status === "STALE" ? "opacity-40" : "opacity-100")}>
@@ -144,6 +149,7 @@ export default function LiveOpportunityGrid() {
                 <td className="px-3 py-3 tabular-nums">{fmt(row.low_strike)} / {fmt(row.high_strike)}</td>
                 <td className="px-3 py-3">{String(row.direction || "—")}</td>
                 <td className="px-3 py-3 font-bold text-emerald-300 tabular-nums">{fmt(row.executable_edge)}</td>
+                <td className="px-3 py-3 whitespace-nowrap tabular-nums">LC {quote(row, "low_call_bid", "low_call_bid_qty")} / {quote(row, "low_call_ask", "low_call_ask_qty")}<br/>LP {quote(row, "low_put_bid", "low_put_bid_qty")} / {quote(row, "low_put_ask", "low_put_ask_qty")}<br/>HC {quote(row, "high_call_bid", "high_call_bid_qty")} / {quote(row, "high_call_ask", "high_call_ask_qty")}<br/>HP {quote(row, "high_put_bid", "high_put_bid_qty")} / {quote(row, "high_put_ask", "high_put_ask_qty")}</td>
                 <td className="px-3 py-3 tabular-nums">{fmt(row.edge_per_lot)}</td>
                 <td className="px-3 py-3 tabular-nums">{fmt(row.gross_pnl)}</td>
               </tr>

@@ -183,6 +183,15 @@ def run_schema_migrations() -> None:
 
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
+        live_box_tables = set(inspect(connection).get_table_names())
+        if "live_box_spread_alert_history" in live_box_tables:
+            box_alert_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_alert_history")}
+            for name in (
+                "low_call_bid_qty", "low_call_ask_qty", "low_put_bid_qty", "low_put_ask_qty",
+                "high_call_bid_qty", "high_call_ask_qty", "high_put_bid_qty", "high_put_ask_qty",
+            ):
+                if name not in box_alert_columns:
+                    connection.execute(text(f"ALTER TABLE live_box_spread_alert_history ADD COLUMN {name} INTEGER"))
         if "live_cash_future_alert_history" in account_tables:
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_cf_alert_identity ON live_cash_future_alert_history (symbol, contract_month, timestamp_ns, event)"))
         if "live_synthetic_alert_history" not in account_tables:

@@ -11,11 +11,16 @@ class BoxSpreadAlertService:
         self._notifier=WhatsAppNotifier(WhatsAppConfig(access_token=settings.WHATSAPP_ACCESS_TOKEN,phone_number_id=settings.WHATSAPP_PHONE_NUMBER_ID,graph_api_version=settings.WHATSAPP_GRAPH_API_VERSION,enabled=settings.WHATSAPP_ENABLED))
         self._last_sent={}
     @staticmethod
+    def _qty(value):
+        return "—" if value is None else str(value)
+
+    @staticmethod
     def _message(r):
         l,h=r.low,r.high
+        qty = BoxSpreadAlertService._qty
         return ("BOX SPREAD ALERT\n"+f"{l.underlying} {l.instrument_class} | Expiry: {l.expiry}\n"+f"Strikes: {l.strike:g}/{h.strike:g} | Distance: {r.strike_distance}\n"+f"Direction: {r.direction}\n"+
-            f"LOW CE Bid/Ask: ₹{l.call_bid:.2f}/₹{l.call_ask:.2f} | LOW PE Bid/Ask: ₹{l.put_bid:.2f}/₹{l.put_ask:.2f}\n"+
-            f"HIGH CE Bid/Ask: ₹{h.call_bid:.2f}/₹{h.call_ask:.2f} | HIGH PE Bid/Ask: ₹{h.put_bid:.2f}/₹{h.put_ask:.2f}\n"+
+            f"LOW CE Bid/Ask: ₹{l.call_bid:.2f} ({qty(getattr(l, 'call_bid_qty', None))})/₹{l.call_ask:.2f} ({qty(getattr(l, 'call_ask_qty', None))}) | LOW PE Bid/Ask: ₹{l.put_bid:.2f} ({qty(getattr(l, 'put_bid_qty', None))})/₹{l.put_ask:.2f} ({qty(getattr(l, 'put_ask_qty', None))})\n"+
+            f"HIGH CE Bid/Ask: ₹{h.call_bid:.2f} ({qty(getattr(h, 'call_bid_qty', None))})/₹{h.call_ask:.2f} ({qty(getattr(h, 'call_ask_qty', None))}) | HIGH PE Bid/Ask: ₹{h.put_bid:.2f} ({qty(getattr(h, 'put_bid_qty', None))})/₹{h.put_ask:.2f} ({qty(getattr(h, 'put_ask_qty', None))})\n"+
             f"Executable Edge: ₹{r.executable_edge:.4f} | Edge/Lot: ₹{r.edge_per_lot:.2f}\n"+f"Gross P&L: ₹{r.gross_pnl:.2f}")
     def persist(self,db,results):
         retention=max(1,int(settings.LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS))
@@ -25,7 +30,7 @@ class BoxSpreadAlertService:
             l,h=r.low,r.high
             exists=db.query(LiveBoxSpreadAlertHistory.id).filter(LiveBoxSpreadAlertHistory.symbol==l.underlying,LiveBoxSpreadAlertHistory.expiry==l.expiry,LiveBoxSpreadAlertHistory.timestamp_ns==l.timestamp_ns,LiveBoxSpreadAlertHistory.low_strike==l.strike,LiveBoxSpreadAlertHistory.high_strike==h.strike,LiveBoxSpreadAlertHistory.direction==r.direction).first()
             if exists: continue
-            db.add(LiveBoxSpreadAlertHistory(observed_at=datetime.utcnow(),timestamp_ns=l.timestamp_ns,symbol=l.underlying,instrument_class=l.instrument_class,expiry=l.expiry,low_strike=l.strike,high_strike=h.strike,direction=r.direction,low_call_bid=l.call_bid,low_call_ask=l.call_ask,low_put_bid=l.put_bid,low_put_ask=l.put_ask,high_call_bid=h.call_bid,high_call_ask=h.call_ask,high_put_bid=h.put_bid,high_put_ask=h.put_ask,executable_edge=r.executable_edge,edge_per_lot=r.edge_per_lot,gross_pnl=r.gross_pnl,lot_size=l.lot_size)); added+=1
+            db.add(LiveBoxSpreadAlertHistory(observed_at=datetime.utcnow(),timestamp_ns=l.timestamp_ns,symbol=l.underlying,instrument_class=l.instrument_class,expiry=l.expiry,low_strike=l.strike,high_strike=h.strike,direction=r.direction,low_call_bid=l.call_bid,low_call_ask=l.call_ask,low_put_bid=l.put_bid,low_put_ask=l.put_ask,high_call_bid=h.call_bid,high_call_ask=h.call_ask,high_put_bid=h.put_bid,high_put_ask=h.put_ask,low_call_bid_qty=getattr(l,"call_bid_qty",None),low_call_ask_qty=getattr(l,"call_ask_qty",None),low_put_bid_qty=getattr(l,"put_bid_qty",None),low_put_ask_qty=getattr(l,"put_ask_qty",None),high_call_bid_qty=getattr(h,"call_bid_qty",None),high_call_ask_qty=getattr(h,"call_ask_qty",None),high_put_bid_qty=getattr(h,"put_bid_qty",None),high_put_ask_qty=getattr(h,"put_ask_qty",None),executable_edge=r.executable_edge,edge_per_lot=r.edge_per_lot,gross_pnl=r.gross_pnl,lot_size=l.lot_size)); added+=1
         db.commit(); return added
     def notify_users(self,db,results):
         if not results: return 0

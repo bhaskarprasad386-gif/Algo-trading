@@ -18,6 +18,10 @@ class LiveBoxSpreadAlertHistory(Base):
     low_put_bid:Mapped[float]=mapped_column(Float,nullable=False); low_put_ask:Mapped[float]=mapped_column(Float,nullable=False)
     high_call_bid:Mapped[float]=mapped_column(Float,nullable=False); high_call_ask:Mapped[float]=mapped_column(Float,nullable=False)
     high_put_bid:Mapped[float]=mapped_column(Float,nullable=False); high_put_ask:Mapped[float]=mapped_column(Float,nullable=False)
+    low_call_bid_qty:Mapped[int|None]=mapped_column(Integer,nullable=True); low_call_ask_qty:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    low_put_bid_qty:Mapped[int|None]=mapped_column(Integer,nullable=True); low_put_ask_qty:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    high_call_bid_qty:Mapped[int|None]=mapped_column(Integer,nullable=True); high_call_ask_qty:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    high_put_bid_qty:Mapped[int|None]=mapped_column(Integer,nullable=True); high_put_ask_qty:Mapped[int|None]=mapped_column(Integer,nullable=True)
     executable_edge:Mapped[float]=mapped_column(Float,nullable=False); edge_per_lot:Mapped[float]=mapped_column(Float,nullable=False)
     gross_pnl:Mapped[float]=mapped_column(Float,nullable=False); lot_size:Mapped[int]=mapped_column(Integer,nullable=False)
 __all__=["LiveBoxSpreadAlertHistory"]
