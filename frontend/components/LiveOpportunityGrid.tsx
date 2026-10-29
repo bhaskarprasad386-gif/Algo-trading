@@ -14,10 +14,13 @@ function keyOf(row: Opportunity) {
   return [row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].map(String).join("|");
 }
 function n(row: Opportunity, field: string) {
-  const value = Number(row[field]);
+  const raw = row[field];
+  if (raw === null || raw === undefined || raw === "") return null;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
 function fmt(value: unknown) {
+  if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
   return Number.isFinite(number) ? number.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—";
 }
@@ -126,7 +129,7 @@ export default function LiveOpportunityGrid() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+          <table className="w-full min-w-[1050px] border-collapse text-left text-xs">
             <thead><tr className="border-b border-slate-700 text-slate-400">
               {["Status","Time (IST)","Underlying","Spot Price","Expiry","Low / High Strike","Direction","Box Edge","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
