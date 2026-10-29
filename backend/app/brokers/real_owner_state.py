@@ -5,6 +5,7 @@ import hashlib
 import hmac
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -62,6 +63,27 @@ def claim_authenticated_account(db: Session, broker_name: str, client_code: str)
     try:
         db.commit()
         db.refresh(state)
+    except IntegrityError as exc:
+        # A first-time concurrent claim may not lock a row that does not yet
+        # exist. The unique owner_key constraint is the final arbiter; after a
+        # collision, re-read the committed owner and never overwrite it.
+        db.rollback()
+        persisted = (
+            db.query(BoxSpreadRealOwnerState)
+            .filter(BoxSpreadRealOwnerState.owner_key == OWNER_KEY)
+            .first()
+        )
+        if persisted is not None and not hmac.compare_digest(
+            persisted.account_fingerprint or "", fingerprint
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="A different broker account won the Box Spread ownership claim; manual ownership recovery is required",
+            ) from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Concurrent Box Spread account ownership claim could not be safely resolved; retry after checking the persisted owner",
+        ) from exc
     except Exception:
         db.rollback()
         raise
