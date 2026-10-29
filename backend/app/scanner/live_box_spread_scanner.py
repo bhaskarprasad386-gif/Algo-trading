@@ -164,8 +164,17 @@ class LiveBoxSpreadScanner:
         candidates=[key for key in self._buckets if key[0]==symbol and key[2]==expiry and abs(key[1]-ts)<=self.TIMESTAMP_TOLERANCE_NS]
         return min(candidates,key=lambda key:abs(key[1]-ts)) if candidates else (symbol,ts,expiry)
 
+    MAX_ACTIVE_BUCKETS = 256
+
     def _prune(self,ts):
-        cutoff=ts-3_000_000_000
-        self._buckets={k:v for k,v in self._buckets.items() if k[1]>=cutoff}
+        cutoff=ts-self.TIMESTAMP_TOLERANCE_NS
+        retained={k:v for k,v in self._buckets.items() if k[1]>=cutoff}
+        if len(retained) > self.MAX_ACTIVE_BUCKETS:
+            newest=sorted(retained, key=lambda key: (key[1], key[0], key[2]))[-self.MAX_ACTIVE_BUCKETS:]
+            retained={key:retained[key] for key in newest}
+        pruned=len(self._buckets)-len(retained)
+        if pruned:
+            self._diagnostic_counts["pruned_buckets"] += pruned
+        self._buckets=retained
 
 __all__=["LiveBoxSpreadScanner"]
