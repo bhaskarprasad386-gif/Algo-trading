@@ -53,7 +53,7 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Box Spread",
     description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
     universe: "SUPPORTED INDEX OPTIONS ONLY",
-    columns: ["Underlying", "Spot Price", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty), "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
+    columns: ["Underlying", "Spot Price", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)", "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
