@@ -131,3 +131,25 @@ def test_box_scanner_rejects_malformed_timestamp_and_nonfinite_quotes():
     base["bid"] = float("inf")
     assert scanner.observe(base) == ()
     assert scanner.diagnostics_snapshot()["counts"]["invalid_bid_quote"] == 1
+
+
+def test_box_scanner_caps_active_buckets_and_counts_pruning():
+    scanner = LiveBoxSpreadScanner(atm_provider=lambda _s, _t: None)
+    scanner.MAX_ACTIVE_BUCKETS = 2
+    base = {
+        "instrument_class": "STOCK",
+        "source_timestamp_ns": 1,
+        "expiry": "30SEP2026",
+        "strike": 100,
+        "option_type": "CE",
+        "bid": 10,
+        "ask": 11,
+    }
+
+    for symbol, timestamp in (("AAA", 1), ("BBB", 2), ("CCC", 3)):
+        scanner.observe(base | {"underlying": symbol, "source_timestamp_ns": timestamp})
+
+    snapshot = scanner.diagnostics_snapshot()
+    assert snapshot["active_buckets"] == 2
+    assert snapshot["counts"]["pruned_buckets"] == 1
+    assert {key[0] for key in scanner._buckets} == {"BBB", "CCC"}
