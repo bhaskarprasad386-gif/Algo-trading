@@ -112,19 +112,37 @@ jobs:
           print(f"BOX_SPREAD_LAST_SCAN_OUTCOME={outcome}")
           print(f"BOX_SPREAD_DIAGNOSTIC_COUNTERS={json.dumps(counts, sort_keys=True)}")
 
-          # No qualifying box is a valid market outcome; health depends on the
-          # Box Spread scanner producing diagnostics, not the unrelated synthetic scanner.
-          checks = {
-              "diagnostics_available": status == "available",
-              "last_scan_present": isinstance(last_scan, dict) and bool(last_scan),
-              "active_bucket_count_valid": isinstance(active_buckets, int) and active_buckets >= 0,
-          }
-          for name, passed in checks.items():
-              print(f"BOX_SPREAD_GATE_{name.upper()}={'PASS' if passed else 'FAIL'}")
-          passed = all(checks.values())
-          print("BOX_SPREAD_ACCEPTANCE_RESULT=" + ("PASS" if passed else "FAIL"))
-          if not passed:
-              raise SystemExit(1)
+          # During a closed market session, no fresh scan is expected. Keep
+          # diagnostics visible, but only enforce scanner readiness while the
+          # live-health endpoint reports an open market. Unknown session state
+          # fails closed rather than masking a real outage.
+          try:
+              live_health = json.loads(Path("/tmp/live_health_body").read_text())
+              market_session = str(live_health.get("market_session", "")).strip().upper()
+          except Exception:
+              market_session = ""
+          print(f"BOX_SPREAD_MARKET_SESSION={market_session or 'UNKNOWN'}")
+          if market_session == "CLOSED":
+              print("BOX_SPREAD_GATE_DIAGNOSTICS_AVAILABLE=SKIP_MARKET_CLOSED")
+              print("BOX_SPREAD_GATE_LAST_SCAN_PRESENT=SKIP_MARKET_CLOSED")
+              valid_buckets = isinstance(active_buckets, int) and active_buckets >= 0
+              print(f"BOX_SPREAD_GATE_ACTIVE_BUCKET_COUNT_VALID={'PASS' if valid_buckets else 'FAIL'}")
+              if not valid_buckets:
+                  print("BOX_SPREAD_ACCEPTANCE_RESULT=FAIL")
+                  raise SystemExit(1)
+              print("BOX_SPREAD_ACCEPTANCE_RESULT=SKIP_MARKET_CLOSED")
+          else:
+              checks = {
+                  "diagnostics_available": status == "available",
+                  "last_scan_present": isinstance(last_scan, dict) and bool(last_scan),
+                  "active_bucket_count_valid": isinstance(active_buckets, int) and active_buckets >= 0,
+              }
+              for name, passed in checks.items():
+                  print(f"BOX_SPREAD_GATE_{name.upper()}={'PASS' if passed else 'FAIL'}")
+              passed = all(checks.values())
+              print("BOX_SPREAD_ACCEPTANCE_RESULT=" + ("PASS" if passed else "FAIL"))
+              if not passed:
+                  raise SystemExit(1)
           PY
           acceptance_status=$?
 
