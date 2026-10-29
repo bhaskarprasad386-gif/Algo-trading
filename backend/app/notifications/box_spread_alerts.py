@@ -19,8 +19,8 @@ class BoxSpreadAlertService:
         l,h=r.low,r.high
         qty = BoxSpreadAlertService._qty
         return ("BOX SPREAD ALERT\n"+f"{l.underlying} {l.instrument_class} | Expiry: {l.expiry}\n"+f"Strikes: {l.strike:g}/{h.strike:g} | Distance: {r.strike_distance}\n"+f"Direction: {r.direction}\n"+
-            f"LOW CE Bid/Ask: ₹{l.call_bid:.2f} ({qty(getattr(l, \"call_bid_qty\", None))})/₹{l.call_ask:.2f} ({qty(getattr(l, \"call_ask_qty\", None))}) | LOW PE Bid/Ask: ₹{l.put_bid:.2f} ({qty(getattr(l, \"put_bid_qty\", None))})/₹{l.put_ask:.2f} ({qty(getattr(l, \"put_ask_qty\", None))})\n"+
-            f"HIGH CE Bid/Ask: ₹{h.call_bid:.2f} ({qty(getattr(h, \"call_bid_qty\", None))})/₹{h.call_ask:.2f} ({qty(getattr(h, \"call_ask_qty\", None))}) | HIGH PE Bid/Ask: ₹{h.put_bid:.2f} ({qty(getattr(h, \"put_bid_qty\", None))})/₹{h.put_ask:.2f} ({qty(getattr(h, \"put_ask_qty\", None))})\n"+
+            f"LOW CE Bid/Ask: ₹{l.call_bid:.2f} ({qty(getattr(l, 'call_bid_qty', None))})/₹{l.call_ask:.2f} ({qty(getattr(l, 'call_ask_qty', None))}) | LOW PE Bid/Ask: ₹{l.put_bid:.2f} ({qty(getattr(l, 'put_bid_qty', None))})/₹{l.put_ask:.2f} ({qty(getattr(l, 'put_ask_qty', None))})\n"+
+            f"HIGH CE Bid/Ask: ₹{h.call_bid:.2f} ({qty(getattr(h, 'call_bid_qty', None))})/₹{h.call_ask:.2f} ({qty(getattr(h, 'call_ask_qty', None))}) | HIGH PE Bid/Ask: ₹{h.put_bid:.2f} ({qty(getattr(h, 'put_bid_qty', None))})/₹{h.put_ask:.2f} ({qty(getattr(h, 'put_ask_qty', None))})\n"+
             f"Executable Edge: ₹{r.executable_edge:.4f} | Edge/Lot: ₹{r.edge_per_lot:.2f}\n"+f"Gross P&L: ₹{r.gross_pnl:.2f}")
     def persist(self,db,results):
         retention=max(1,int(settings.LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS))
