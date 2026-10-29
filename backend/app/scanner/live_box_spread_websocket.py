@@ -36,9 +36,23 @@ def _spot_fields(symbol):
     }
 
 
+def _expiry_key(value):
+    from datetime import datetime
+    text = str(value or "").strip().upper()
+    for fmt in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %b %y"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return "".join(character for character in text if character.isalnum())
+
+
 def set_expiry_types(mapping):
     global _expiry_types
-    _expiry_types = dict(mapping or {})
+    _expiry_types = {
+        (str(symbol).strip().upper(), _expiry_key(expiry)): str(kind).strip().upper()
+        for (symbol, expiry), kind in (mapping or {}).items()
+    }
 
 
 def _leg_timestamps(low, high):
@@ -68,7 +82,7 @@ def _row(result):
 
     return {
         "symbol": low.underlying, "instrument_class": low.instrument_class,
-        "expiry": low.expiry, "expiry_type": _expiry_types.get((str(low.underlying).strip().upper(), str(low.expiry).strip().upper()), "UNKNOWN"), "low_strike": low.strike, "high_strike": high.strike,
+        "expiry": low.expiry, "expiry_type": _expiry_types.get((str(low.underlying).strip().upper(), _expiry_key(low.expiry)), "UNKNOWN"), "low_strike": low.strike, "high_strike": high.strike,
         "direction": result.direction, **_spot_fields(low.underlying), "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
         "last_update_timestamp_ns": newest_timestamp,
