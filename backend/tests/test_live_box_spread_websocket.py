@@ -66,3 +66,15 @@ def test_websocket_quote_age_uses_oldest_leg_and_reports_newest(monkeypatch):
     assert 1.9 <= row["quote_age_seconds"] <= 2.1
     assert row["timestamp_skew_ms"] == 1900.0
     assert row["freshness"] == "LIVE"
+
+
+
+def test_websocket_row_includes_normalized_weekly_expiry_type(monkeypatch):
+    now_ns = time.time_ns()
+    monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
+    websocket.set_expiry_types({("NIFTY", "31DEC2026"): "WEEKLY"})
+
+    row = websocket._row(_result(now_ns))
+
+    assert row is not None
+    assert row["expiry_type"] == "WEEKLY"

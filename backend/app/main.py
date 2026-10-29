@@ -51,7 +51,7 @@ from app.scanner.live_synthetic_routes import router as live_synthetic_router, c
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_spot_provider as configure_live_box_spread_spot, set_expiry_types as set_live_box_expiry_types
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
-from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot
+from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -895,6 +895,7 @@ async def _live_box_spread_loop() -> None:
                 targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
 
             set_live_box_expiry_types(expiry_types)
+            set_live_box_websocket_expiry_types(expiry_types)
             targets = tuple(targets_list)
             if not targets:
                 app_logger.warning(
