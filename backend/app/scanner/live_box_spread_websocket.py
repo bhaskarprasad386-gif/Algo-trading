@@ -68,7 +68,7 @@ def _row(result):
 
     return {
         "symbol": low.underlying, "instrument_class": low.instrument_class,
-        "expiry": low.expiry, "low_strike": low.strike, "high_strike": high.strike,
+        "expiry": low.expiry, "expiry_type": _expiry_types.get((str(low.underlying).strip().upper(), str(low.expiry).strip().upper()), "UNKNOWN"), "low_strike": low.strike, "high_strike": high.strike,
         "direction": result.direction, **_spot_fields(low.underlying), "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
         "last_update_timestamp_ns": newest_timestamp,
