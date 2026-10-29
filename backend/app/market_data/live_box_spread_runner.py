@@ -150,12 +150,17 @@ class LiveBoxSpreadRunner:
                     "ready_symbols": ready_symbols,
                     "waiting_symbols": waiting_symbols,
                     "unavailable_symbols": [],
+                    "selected_expiries": dict(selected_expiries),
+                    "contract_expiries": {},
+                    "subscription_counts": {},
                 }
                 if not ready_targets:
                     sleep(.25)
                     continue
                 subs=[]
                 unavailable_symbols = []
+                contract_expiries = {}
+                subscription_counts = {}
                 for target in ready_targets:
                     # Reuse the same valid expiry used to seed the ATM tracker.
                     # Letting the selector infer expiry independently can pick an
@@ -187,12 +192,17 @@ class LiveBoxSpreadRunner:
                     except (LookupError, ValueError) as exc:
                         unavailable_symbols.append({"symbol": target.underlying, "reason": str(exc)})
                         continue
+                    contract_expiries[target.underlying.strip().upper()] = str(sel.expiry)
+                    subscription_counts[target.underlying.strip().upper()] = len(sel.subscriptions)
                     subs.extend(sel.subscriptions)
                 self._readiness = {
                     "state": "ready" if subs else "waiting_for_contracts",
                     "ready_symbols": ready_symbols,
                     "waiting_symbols": waiting_symbols,
                     "unavailable_symbols": unavailable_symbols,
+                    "selected_expiries": dict(selected_expiries),
+                    "contract_expiries": contract_expiries,
+                    "subscription_counts": subscription_counts,
                 }
                 if not subs:
                     sleep(.25)
