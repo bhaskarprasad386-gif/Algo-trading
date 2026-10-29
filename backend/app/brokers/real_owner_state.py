@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import BoxSpreadRealOwnerState
+from app.models.box_spread_real_owner_state import BoxSpreadRealOwnerState
 
 OWNER_KEY = "box-spread-real-owner"
 
