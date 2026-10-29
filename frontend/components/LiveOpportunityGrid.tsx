@@ -140,6 +140,7 @@ export default function LiveOpportunityGrid() {
                 <td className="px-3 py-3 font-bold">{String(row.symbol || "—")}</td>
                 <td className="px-3 py-3 tabular-nums">{fmt(row.spot_price)}{n(row, "spot_age_seconds") !== null ? <span className="ml-1 text-[10px] text-slate-400">({fmt(row.spot_age_seconds)}s)</span> : null}</td>
                 <td className="px-3 py-3">{String(row.expiry_date || row.expiry || "—")}</td>
+                <td className="px-3 py-3"><span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (String(row.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-950 text-cyan-300" : String(row.expiry_type || "").toUpperCase() === "MONTHLY" ? "bg-violet-950 text-violet-300" : "bg-slate-800 text-slate-300")}>{String(row.expiry_type || "UNKNOWN").toUpperCase()}</span></td>
                 <td className="px-3 py-3 tabular-nums">{fmt(row.low_strike)} / {fmt(row.high_strike)}</td>
                 <td className="px-3 py-3">{String(row.direction || "—")}</td>
                 <td className="px-3 py-3 font-bold text-emerald-300 tabular-nums">{fmt(row.executable_edge)}</td>
