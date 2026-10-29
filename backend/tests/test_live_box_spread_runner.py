@@ -103,6 +103,7 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
 
     class Master:
         instruments = [
+            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "22OCT2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "0"},
             {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "29OCT2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "1"},
             {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "05NOV2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "2"},
         ]
@@ -122,7 +123,9 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
         def run_forever(self): pass
         def stop(self): pass
 
+    selected_expiries = []
     def stop_after_selection(*args, **kwargs):
+        selected_expiries.append(kwargs.get("expiry"))
         raise RuntimeError("stop-after-selection")
 
     monkeypatch.setattr(mod, "concrete_strikes_from_master", concrete)
@@ -141,3 +144,4 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
     except RuntimeError as exc:
         assert str(exc) == "stop-after-selection"
     assert seeded == ["29OCT2026"]
+    assert selected_expiries == ["29OCT2026"]

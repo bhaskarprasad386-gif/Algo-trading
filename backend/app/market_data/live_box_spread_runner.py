@@ -87,6 +87,7 @@ class LiveBoxSpreadRunner:
         from datetime import datetime
         today = datetime.now().date()
         strikes = {}
+        selected_expiries = {}
         for target in self.targets:
             wanted = target.expiry
             if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
@@ -127,6 +128,7 @@ class LiveBoxSpreadRunner:
                             continue
                 if expiries: wanted = min(expiries)[1]
             if wanted:
+                selected_expiries[target.underlying.strip().upper()] = wanted
                 strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted, exchange_segment=("BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO")))
         # Track every configured target for spot quotes even if an option chain
         # is temporarily unavailable. Empty strike sets intentionally disable
@@ -155,7 +157,10 @@ class LiveBoxSpreadRunner:
                 subs=[]
                 unavailable_symbols = []
                 for target in ready_targets:
-                    wanted = target.expiry
+                    # Reuse the same valid expiry used to seed the ATM tracker.
+                    # Letting the selector infer expiry independently can pick an
+                    # expired option chain from the instrument master.
+                    wanted = target.expiry or selected_expiries.get(target.underlying.strip().upper())
                     if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                         expiries = []
