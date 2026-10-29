@@ -122,3 +122,26 @@ def test_live_box_route_reports_actual_four_leg_skew(monkeypatch):
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     row = routes.live(10, max_age_seconds=5)["data"][0]
     assert row["timestamp_skew_ms"] == 1000.0
+
+
+
+def test_box_spread_diagnostics_endpoint_fails_closed_without_runner(monkeypatch):
+    monkeypatch.setattr(routes, "_diagnostics_getter", None)
+    payload = routes.diagnostics()
+    assert payload["strategy"] == "box-spread"
+    assert payload["status"] == "waiting"
+    assert payload["counts"] == {}
+    assert payload["active_buckets"] == 0
+
+
+def test_box_spread_diagnostics_endpoint_returns_scanner_snapshot(monkeypatch):
+    snapshot = {
+        "counts": {"missing_bid_quote": 2},
+        "last_scan": {"outcome": "waiting_for_complete_executable_call_put_pairs"},
+        "active_buckets": 1,
+    }
+    monkeypatch.setattr(routes, "_diagnostics_getter", lambda: snapshot)
+    payload = routes.diagnostics()
+    assert payload["status"] == "available"
+    assert payload["counts"]["missing_bid_quote"] == 2
+    assert payload["last_scan"]["outcome"] == "waiting_for_complete_executable_call_put_pairs"
