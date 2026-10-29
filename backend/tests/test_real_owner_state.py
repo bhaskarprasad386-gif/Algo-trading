@@ -125,3 +125,30 @@ def test_concurrent_first_claim_cannot_replace_persisted_owner(db, monkeypatch):
     assert persisted.account_fingerprint == account_fingerprint("angel_one", "CLIENT123")
     assert persisted.real_trading_enabled is False
     assert persisted.kill_switch is True
+
+
+def test_connection_lifecycle_persists_state_and_never_arms_trading(db):
+    from app.brokers.real_owner_state import set_owner_connection_state
+
+    state = claim_authenticated_account(db, "angel_one", "CLIENT123")
+    state.real_trading_enabled = True
+    state.kill_switch = False
+    db.commit()
+
+    connected = set_owner_connection_state(db, True)
+    assert connected.connected is True
+    assert connected.real_trading_enabled is False
+    assert connected.kill_switch is True
+
+    disconnected = set_owner_connection_state(db, False)
+    assert disconnected.connected is False
+    assert disconnected.real_trading_enabled is False
+    assert disconnected.kill_switch is True
+
+
+def test_connection_lifecycle_fails_closed_without_owner_row(db):
+    from app.brokers.real_owner_state import set_owner_connection_state
+
+    with pytest.raises(HTTPException) as raised:
+        set_owner_connection_state(db, True)
+    assert raised.value.status_code == 503
