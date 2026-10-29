@@ -518,6 +518,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState("");
+  const [historyExpiryView, setHistoryExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
   const [historyPage, setHistoryPage] = useState(1);
   const [historyHealth, setHistoryHealth] = useState<{ last_save_at?: string | null; last_saved_count?: number; last_error?: string | null; storage?: string } | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
@@ -959,9 +960,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   const normalizedHistoryFilter = historyFilter.trim().toUpperCase();
-  const filteredHistoryRows = normalizedHistoryFilter
-    ? historyRows.filter((row) => String(row.underlying ?? row.symbol ?? "").toUpperCase().includes(normalizedHistoryFilter))
-    : historyRows;
+  const filteredHistoryRows = historyRows.filter((row) => {
+    const symbol = String(row.underlying ?? row.symbol ?? "").toUpperCase();
+    const symbolMatches = !normalizedHistoryFilter || symbol.includes(normalizedHistoryFilter);
+    const expiryType = String(row.expiry_type ?? "").trim().toUpperCase();
+    const expiryMatches = slug !== "box-spread" || expiryType === historyExpiryView;
+    return symbolMatches && expiryMatches;
+  });
   const historyPageSize = 25;
   const historyPageCount = Math.max(1, Math.ceil(filteredHistoryRows.length / historyPageSize));
   const safeHistoryPage = Math.min(historyPage, historyPageCount);
@@ -1326,12 +1331,17 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Post-Market {c.title} Pair History</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> {slug === "box-spread" ? "Post-Market Opportunity (" + (historyExpiryView === "MONTHLY" ? "Monthly" : "Weekly") + ") History" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
             <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
           </div>
         </div>
+        {slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Post-market opportunity expiry type">
+          <button type="button" onClick={() => { setHistoryExpiryView("MONTHLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
+          <button type="button" onClick={() => { setHistoryExpiryView("WEEKLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
+          <span className="self-center text-xs theme-muted">{filteredHistoryRows.length.toLocaleString("en-IN")} saved {historyExpiryView.toLowerCase()} rows</span>
+        </div>}
         {slug === "synthetic-arbitrage" && <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <label className="flex min-h-10 flex-1 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3">
             <span className="text-xs theme-muted">Symbol</span>
