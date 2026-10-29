@@ -42,6 +42,7 @@ export default function LiveOpportunityGrid() {
   const [rows, setRows] = useState<TrackedRow[]>([]);
   const [connection, setConnection] = useState<"CONNECTING" | "LIVE" | "RECONNECTING">("CONNECTING");
   const [lastMessageAt, setLastMessageAt] = useState<number | null>(null);
+  const [expiryView, setExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
   const rowsRef = useRef<Map<string, TrackedRow>>(new Map());
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -115,22 +116,27 @@ export default function LiveOpportunityGrid() {
     };
   }, []);
 
-  const liveCount = useMemo(() => rows.filter((item) => item.status === "LIVE").length, [rows]);
+  const expiryRows = useMemo(() => rows.filter((item) => String(item.row.expiry_type || "").toUpperCase() === expiryView), [rows, expiryView]);
+  const liveCount = useMemo(() => expiryRows.filter((item) => item.status === "LIVE").length, [expiryRows]);
   return (
     <section className="rounded-2xl border border-slate-700 bg-slate-950 p-4 text-slate-100 shadow-xl">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold">Live Box Spread Opportunities</h2>
-          <p className="mt-1 text-xs text-slate-400">Event stream · threshold-filtered · rows retained for 60 seconds</p>
+          <h2 className="text-lg font-bold">Opportunity ({expiryView === "MONTHLY" ? "Monthly" : "Weekly"})</h2>
+          <p className="mt-1 text-xs text-slate-400">Live backend event stream · expiry types kept separate · rows retained for 60 seconds</p>
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className={connection === "LIVE" ? "rounded-full bg-emerald-950 px-3 py-1 font-bold text-emerald-300" : "rounded-full bg-amber-950 px-3 py-1 font-bold text-amber-300"}>{connection}</span>
-          <span className="text-slate-400">{liveCount} LIVE / {rows.length} visible</span>
+          <span className="text-slate-400">{liveCount} LIVE / {expiryRows.length} {expiryView.toLowerCase()} rows · {rows.length} total</span>
         </div>
       </div>
-      {rows.length === 0 ? (
+      <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Opportunity expiry type">
+        <button type="button" onClick={() => setExpiryView("MONTHLY")} aria-pressed={expiryView === "MONTHLY"} className={"rounded-lg border px-4 py-2 text-xs font-bold " + (expiryView === "MONTHLY" ? "border-violet-500 bg-violet-950 text-violet-200" : "border-slate-700 text-slate-400")}>Opportunity (Monthly)</button>
+        <button type="button" onClick={() => setExpiryView("WEEKLY")} aria-pressed={expiryView === "WEEKLY"} className={"rounded-lg border px-4 py-2 text-xs font-bold " + (expiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-950 text-cyan-200" : "border-slate-700 text-slate-400")}>Opportunity (Weekly)</button>
+      </div>
+      {expiryRows.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-sm text-slate-400">
-          {connection === "LIVE" ? "WebSocket connected — no qualifying opportunity received yet." : "Connecting to the live scanner…"}
+          {connection !== "LIVE" ? "Connecting to the live scanner…" : rows.length === 0 ? "WebSocket connected — no qualifying opportunity received yet." : `No ${expiryView.toLowerCase()} opportunities received. Only backend rows explicitly classified ${expiryView} are shown.`}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -138,7 +144,7 @@ export default function LiveOpportunityGrid() {
             <thead><tr className="border-b border-slate-700 text-slate-400">
               {["Status","Time (IST)","Underlying","Spot Price","Expiry","Expiry Type","Weekly Opportunity","Low / High Strike","Direction","Box Edge","Bid (qty) / Ask (qty) — 4 legs","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
-            <tbody>{rows.map(({ key, row, lastSeen, status }) => (
+            <tbody>{expiryRows.map(({ key, row, lastSeen, status }) => (
               <tr key={key} className={"border-b border-slate-800 transition-opacity " + (status === "STALE" ? "opacity-40" : "opacity-100")}>
                 <td className="px-3 py-3"><span className={status === "LIVE" ? "rounded-full bg-emerald-950 px-2 py-1 font-bold text-emerald-300" : "rounded-full bg-amber-950 px-2 py-1 font-bold text-amber-300"}>{status}</span></td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums">{new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}</td>
