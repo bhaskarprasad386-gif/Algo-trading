@@ -13,7 +13,7 @@ from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 TOKEN_REFRESH_SECONDS = 30.0
-UNDERLYING_STALE_AFTER_SECONDS = 10.0
+UNDERLYING_STALE_AFTER_SECONDS = 5.0
 
 
 def filter_resolvable_index_symbols(instrument_master: InstrumentMaster, symbols) -> tuple[str, ...]:
