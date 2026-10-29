@@ -88,3 +88,26 @@ def claim_authenticated_account(db: Session, broker_name: str, client_code: str)
         db.rollback()
         raise
     return state
+
+
+
+def set_owner_connection_state(db: Session, connected: bool) -> BoxSpreadRealOwnerState:
+    """Persist broker session state while keeping trading disarmed."""
+    state = (
+        db.query(BoxSpreadRealOwnerState)
+        .filter(BoxSpreadRealOwnerState.owner_key == OWNER_KEY)
+        .with_for_update()
+        .first()
+    )
+    if state is None or not state.account_fingerprint:
+        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable")
+    state.connected = bool(connected)
+    state.real_trading_enabled = False
+    state.kill_switch = True
+    try:
+        db.commit()
+        db.refresh(state)
+    except Exception:
+        db.rollback()
+        raise
+    return state
