@@ -149,7 +149,7 @@ class LiveSyntheticAtmTracker:
         return lower if price - lower <= upper - price else upper
 
     def spot_snapshot(
-        self, symbol: str, now_ns: int | None = None, *, max_age_seconds: float = 5.0
+        self, symbol: str, now_ns: int | None = None, *, max_age_seconds: float = 10.0
     ) -> dict | None:
         """Return the source-backed underlying spot only while its tick is fresh."""
         key = str(symbol).strip().upper()
