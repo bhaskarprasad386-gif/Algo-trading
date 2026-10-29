@@ -121,8 +121,14 @@ export default function BoxSpreadPaperTrading() {
     if (!token) return;
     void refresh();
     void loadOpportunities();
-    const timer = window.setInterval(() => { void loadOpportunities(); }, 7000);
-  return () => window.clearInterval(timer);
+    // Keep the control and ledger in sync with backend state (including restart-default OFF),
+    // independently of the faster live-opportunity refresh.
+    const statusTimer = window.setInterval(() => { void refresh(); }, 7000);
+    const opportunitiesTimer = window.setInterval(() => { void loadOpportunities(); }, 7000);
+    return () => {
+      window.clearInterval(statusTimer);
+      window.clearInterval(opportunitiesTimer);
+    };
   }, [token, refresh, loadOpportunities]);
 
   async function togglePaperExecution() {
