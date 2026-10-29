@@ -22,11 +22,12 @@ from app.models.live_box_spread_snapshot_key import LiveBoxSpreadSnapshotKey
 from app.models.live_calendar_spread_alert_history import LiveCalendarSpreadAlertHistory
 from app.models.alert_rule import AlertRule
 from app.models.alert_contact import AlertContact
+from app.models.box_spread_real_owner_state import BoxSpreadRealOwnerState
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
     "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk", "PasswordResetToken",
     "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
     "LiveSyntheticAlertHistory", "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
-    "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact",
+    "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact", "BoxSpreadRealOwnerState",
 ]
