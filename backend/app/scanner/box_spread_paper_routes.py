@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import math
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -246,41 +247,57 @@ def _canonical_expiry(value: object) -> str:
 
 
 def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict[str, float]:
-    """Select executable quote sides consistent with the four paper leg actions."""
-    if direction == "LONG":
-        return {
-            "LOW_CE": row["low_call_ask"],
-            "HIGH_CE": row["high_call_bid"],
-            "HIGH_PE": row["high_put_ask"],
-            "LOW_PE": row["low_put_bid"],
-        }
-    if direction == "SHORT":
-        return {
-            "LOW_CE": row["low_call_bid"],
-            "HIGH_CE": row["high_call_ask"],
-            "HIGH_PE": row["high_put_bid"],
-            "LOW_PE": row["low_put_ask"],
-        }
-    raise ValueError("direction must be LONG or SHORT")
+    """Validate complete two-sided quotes and select executable prices before claiming entry."""
+    quote_pairs = {
+        "LOW_CE": ("low_call_bid", "low_call_ask"),
+        "HIGH_CE": ("high_call_bid", "high_call_ask"),
+        "HIGH_PE": ("high_put_bid", "high_put_ask"),
+        "LOW_PE": ("low_put_bid", "low_put_ask"),
+    }
+    if direction not in {"LONG", "SHORT"}:
+        raise ValueError("direction must be LONG or SHORT")
+
+    prices: dict[str, float] = {}
+    for role, (bid_field, ask_field) in quote_pairs.items():
+        try:
+            bid, ask = float(row[bid_field]), float(row[ask_field])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=409,
+                detail=f"fresh executable entry quote is unavailable for {role}",
+            ) from None
+        if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
+            raise HTTPException(
+                status_code=409,
+                detail=f"fresh executable entry quote is unavailable for {role}",
+            )
+        buy = direction == "LONG" if role in {"LOW_CE", "HIGH_PE"} else direction == "SHORT"
+        prices[role] = ask if buy else bid
+    return prices
 
 
 def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> float:
-    """Use the executable opposite quote side to close an existing paper leg."""
-    exit_sides = {
-        "LOW_CE": "low_call_bid" if direction == "LONG" else "low_call_ask",
-        "HIGH_CE": "high_call_ask" if direction == "LONG" else "high_call_bid",
-        "HIGH_PE": "high_put_bid" if direction == "LONG" else "high_put_ask",
-        "LOW_PE": "low_put_ask" if direction == "LONG" else "low_put_bid",
+    """Validate the leg's two-sided market and use the executable side to close it."""
+    quote_pairs = {
+        "LOW_CE": ("low_call_bid", "low_call_ask"),
+        "HIGH_CE": ("high_call_bid", "high_call_ask"),
+        "HIGH_PE": ("high_put_bid", "high_put_ask"),
+        "LOW_PE": ("low_put_bid", "low_put_ask"),
     }
-    if role not in exit_sides:
+    if direction not in {"LONG", "SHORT"}:
+        raise ValueError("direction must be LONG or SHORT")
+    if role not in quote_pairs:
         raise HTTPException(status_code=422, detail="unknown paper leg role")
+    bid_field, ask_field = quote_pairs[role]
     try:
-        price = float(row[exit_sides[role]])
-    except (KeyError, TypeError, ValueError):
+        bid, ask = float(row[bid_field]), float(row[ask_field])
+    except (KeyError, TypeError, ValueError, OverflowError):
         raise HTTPException(status_code=409, detail="fresh executable exit quote is unavailable") from None
-    if not (price > 0 and price < float("inf")):
+    if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
         raise HTTPException(status_code=409, detail="fresh executable exit quote is unavailable")
-    return price
+    # Closing a long position sells at bid; closing a short position buys at ask.
+    sell_to_close = (role in {"LOW_CE", "HIGH_PE"}) == (direction == "LONG")
+    return bid if sell_to_close else ask
 
 
 def _matching_live_row(contracts) -> dict[str, Any] | None:
