@@ -12,7 +12,7 @@ from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
 from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
-from app.brokers.real_owner_state import claim_authenticated_account
+from app.brokers.real_owner_state import claim_authenticated_account, set_owner_connection_state
 from app.core.database import get_db
 from app.core.logger import app_logger
 
@@ -103,6 +103,13 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
         db.rollback()
         app_logger.error("Durable Box Spread account binding failed: %s", exc)
         raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable") from exc
+    try:
+        set_owner_connection_state(db, True)
+    except Exception as exc:
+        adapter.disconnect()
+        db.rollback()
+        app_logger.error("Durable Box Spread connection state update failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
     old = _sessions.get((user_id, broker))
     if old is not None:
         old.disconnect()
@@ -122,13 +129,19 @@ def status(broker: str, user_id: int = Depends(require_real_owner_access)) -> di
 
 
 @router.delete("/{broker}")
-def disconnect(broker: str, user_id: int = Depends(require_real_owner_access)) -> dict:
+def disconnect(broker: str, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     name = broker.strip().lower()
     adapter = _sessions.pop((user_id, name), None)
     if adapter is not None:
         adapter.disconnect()
     broker_connections.disconnect(user_id, name)
     trading_safety.disable(user_id)
+    try:
+        set_owner_connection_state(db, False)
+    except Exception as exc:
+        db.rollback()
+        app_logger.error("Durable Box Spread disconnect state update failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Broker disconnected locally but durable connection state could not be confirmed") from exc
     return {"connected": False, "broker": name, "real_trading": False, "kill_switch": True}
 
 
