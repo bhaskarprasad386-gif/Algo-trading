@@ -31,7 +31,11 @@ def account_fingerprint(broker_name: str, client_code: str) -> str:
 
 def claim_authenticated_account(db: Session, broker_name: str, client_code: str) -> BoxSpreadRealOwnerState:
     """Bind the dedicated owner to one broker account, failing closed on changes."""
-    fingerprint = account_fingerprint(broker_name, client_code)
+    normalized_broker = (broker_name or "").strip().lower()
+    normalized_client = (client_code or "").strip()
+    if not normalized_broker or not normalized_client:
+        raise HTTPException(status_code=503, detail="Authenticated broker account identity is required")
+    fingerprint = account_fingerprint(normalized_broker, normalized_client)
     state = (
         db.query(BoxSpreadRealOwnerState)
         .filter(BoxSpreadRealOwnerState.owner_key == OWNER_KEY)
@@ -41,7 +45,7 @@ def claim_authenticated_account(db: Session, broker_name: str, client_code: str)
     if state is None:
         state = BoxSpreadRealOwnerState(
             owner_key=OWNER_KEY,
-            broker_name=broker_name.strip().lower(),
+            broker_name=normalized_broker,
             account_fingerprint=fingerprint,
             connected=False,
             real_trading_enabled=False,
@@ -54,7 +58,7 @@ def claim_authenticated_account(db: Session, broker_name: str, client_code: str)
             detail="A different broker account is already bound to the Box Spread real owner; manual ownership recovery is required",
         )
     else:
-        state.broker_name = broker_name.strip().lower()
+        state.broker_name = normalized_broker
         # Account binding is durable; live session state is intentionally not.
         state.connected = False
         state.real_trading_enabled = False
