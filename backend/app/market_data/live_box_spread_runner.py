@@ -89,7 +89,7 @@ class LiveBoxSpreadRunner:
         strikes = {}
         for target in self.targets:
             wanted = target.expiry
-            if wanted is None:
+            if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                 future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                 expiries = []
                 for item in self.master.instruments:
