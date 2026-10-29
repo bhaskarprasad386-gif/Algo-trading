@@ -45,6 +45,31 @@ def test_paper_error_handler_preserves_http_status():
     assert raised.value.status_code == 409
 
 
+def test_matching_live_row_skips_malformed_strikes_without_crashing(monkeypatch):
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    malformed = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
+        "low_strike": "not-a-number", "high_strike": 25100, "direction": "LONG",
+    }
+    matching = {
+        **malformed, "low_strike": 25000, "high_strike": 25100,
+    }
+    monkeypatch.setattr(
+        routes, "live_box_spread_opportunities",
+        lambda **kwargs: {"data": [malformed, matching]},
+    )
+
+    assert routes._matching_live_row(contracts) is matching
+
+
+@pytest.mark.parametrize("raw_strike", [None, "NaN", "inf", "bad"])
+def test_strike_match_rejects_nonfinite_or_malformed_values(raw_strike):
+    assert routes._strike_matches(raw_strike, 25000.0) is False
+
+
 def test_simulation_rejects_missing_fresh_backend_opportunity_before_execution(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
