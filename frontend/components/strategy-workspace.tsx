@@ -53,11 +53,11 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Box Spread",
     description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
     universe: "SUPPORTED INDEX OPTIONS ONLY",
-    columns: ["Underlying", "Spot Price", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid (qty)/Ask (qty))", "Low Put (LTP/Bid (qty)/Ask (qty))", "High Call (LTP/Bid (qty)/Ask (qty))", "High Put (LTP/Bid (qty)/Ask (qty)), "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
+    columns: ["Underlying", "Spot Price", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty), "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Spot Price", "Spot Quote Time / Age", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid (qty)/Ask (qty))", "Low Put (LTP/Bid (qty)/Ask (qty))", "High Call (LTP/Bid (qty)/Ask (qty))", "High Put (LTP/Bid (qty)/Ask (qty))", "Box Edge", "Lot Size", "Direction", "Freshness"],
+    pairColumns: ["Time", "Underlying", "Spot Price", "Spot Quote Time / Age", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)", "Box Edge", "Lot Size", "Direction", "Freshness"],
     historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=500",
   },
   "custom-strategy": {
@@ -274,8 +274,8 @@ function formatCell(slug: string, column: string, row: Row) {
     },
     "box-spread": {
       Underlying: ["symbol"], "Spot Price": ["spot_price"], "Expiry / Quote Time": ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
-      "Low Call (LTP/Bid (qty)/Ask (qty))": ["low_call_ltp"], "Low Put (LTP/Bid (qty)/Ask (qty))": ["low_put_ltp"],
-      "High Call (LTP/Bid (qty)/Ask (qty))": ["high_call_ltp"], "High Put (LTP/Bid (qty)/Ask (qty))": ["high_put_ltp"],
+      "Low Call (LTP/Bid Qty/Ask Qty)": ["low_call_ltp"], "Low Put (LTP/Bid Qty/Ask Qty)": ["low_put_ltp"],
+      "High Call (LTP/Bid Qty/Ask Qty)": ["high_call_ltp"], "High Put (LTP/Bid Qty/Ask Qty)": ["high_put_ltp"],
       "Box Edge": ["executable_edge"], "Min Leg Volume": ["liquidity_qty"], Direction: ["direction"], Freshness: ["freshness"],
     },
   };
@@ -290,7 +290,7 @@ function formatCell(slug: string, column: string, row: Row) {
   if (slug === "box-spread" && column === "Quote Time") {
     return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
   }
-  if (slug === "box-spread" && ["Low Call (LTP/Bid (qty)/Ask (qty))", "Low Put (LTP/Bid (qty)/Ask (qty))", "High Call (LTP/Bid (qty)/Ask (qty))", "High Put (LTP/Bid (qty)/Ask (qty))"].includes(column)) {
+  if (slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column)) {
     const prefix = column.startsWith("Low ") ? "low_" : "high_";
     const option = column.includes("Call") ? "call" : "put";
     const key = prefix + option;
@@ -367,8 +367,8 @@ function pairCell(slug: string, column: string, row: Row) {
     "box-spread": {
       Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], "Spot Price": ["spot_price"], "Spot Quote Time / Age": ["spot_timestamp_ns", "spot_age_seconds"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
       "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
-      "Low Call (LTP/Bid (qty)/Ask (qty))": ["low_call_ltp"], "Low Put (LTP/Bid (qty)/Ask (qty))": ["low_put_ltp"],
-      "High Call (LTP/Bid (qty)/Ask (qty))": ["high_call_ltp"], "High Put (LTP/Bid (qty)/Ask (qty))": ["high_put_ltp"],
+      "Low Call (LTP/Bid Qty/Ask Qty)": ["low_call_ltp"], "Low Put (LTP/Bid Qty/Ask Qty)": ["low_put_ltp"],
+      "High Call (LTP/Bid Qty/Ask Qty)": ["high_call_ltp"], "High Put (LTP/Bid Qty/Ask Qty)": ["high_put_ltp"],
       "Box Edge": ["executable_edge"], "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
     },
   };
@@ -393,7 +393,7 @@ function pairCell(slug: string, column: string, row: Row) {
   if (slug === "box-spread" && column === "Quote Time") {
     return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
   }
-  if (slug === "box-spread" && ["Low Call (LTP/Bid (qty)/Ask (qty))", "Low Put (LTP/Bid (qty)/Ask (qty))", "High Call (LTP/Bid (qty)/Ask (qty))", "High Put (LTP/Bid (qty)/Ask (qty))"].includes(column)) {
+  if (slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column)) {
     const prefix = column.startsWith("Low ") ? "low_" : "high_";
     const option = column.includes("Call") ? "call" : "put";
     const key = prefix + option;
