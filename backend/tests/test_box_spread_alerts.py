@@ -22,10 +22,10 @@ def _result():
 def test_box_alert_message_contains_exact_bid_ask_snapshot():
     message = BoxSpreadAlertService._message(_result())
 
-    assert "LOW CE Bid/Ask: ₹10.00/₹11.00" in message
-    assert "LOW PE Bid/Ask: ₹1.00/₹2.00" in message
-    assert "HIGH CE Bid/Ask: ₹8.00/₹9.00" in message
-    assert "HIGH PE Bid/Ask: ₹2.00/₹3.00" in message
+    assert "LOW CE Bid/Ask: ₹10.00 (—)/₹11.00 (—)" in message
+    assert "LOW PE Bid/Ask: ₹1.00 (—)/₹2.00 (—)" in message
+    assert "HIGH CE Bid/Ask: ₹8.00 (—)/₹9.00 (—)" in message
+    assert "HIGH PE Bid/Ask: ₹2.00 (—)/₹3.00 (—)" in message
     assert "Executable Edge: ₹6.0000" in message
 
 
@@ -46,5 +46,23 @@ def test_box_alert_message_preserves_bse_index_and_bid_ask_fields():
     result.low.instrument_class = "INDEX"
     message = BoxSpreadAlertService._message(result)
     assert "SENSEX INDEX" in message
-    assert "LOW CE Bid/Ask: ₹10.00/₹11.00" in message
-    assert "HIGH PE Bid/Ask: ₹2.00/₹3.00" in message
+    assert "LOW CE Bid/Ask: ₹10.00 (—)/₹11.00 (—)" in message
+    assert "HIGH PE Bid/Ask: ₹2.00 (—)/₹3.00 (—)" in message
+
+
+def test_box_alert_message_shows_depth_qty_next_to_each_bid_ask_price():
+    result = _result()
+    result.low.call_bid_qty = 15
+    result.low.call_ask_qty = 25
+    result.low.put_bid_qty = 35
+    result.low.put_ask_qty = 45
+    result.high.call_bid_qty = 55
+    result.high.call_ask_qty = 65
+    result.high.put_bid_qty = 75
+    result.high.put_ask_qty = 85
+
+    message = BoxSpreadAlertService._message(result)
+    assert "₹10.00 (15)/₹11.00 (25)" in message
+    assert "₹1.00 (35)/₹2.00 (45)" in message
+    assert "₹8.00 (55)/₹9.00 (65)" in message
+    assert "₹2.00 (75)/₹3.00 (85)" in message
