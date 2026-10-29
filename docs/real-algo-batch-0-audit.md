@@ -30,14 +30,15 @@
 - `/safety/enable` only arms an in-memory state and explicitly returns `live_order_routing: false`. This must not be represented as live execution.
 - **Blocker:** No real order routing until authenticated owner authorization, durable single-account ownership, session lifecycle, order reconciliation, risk controls, and failure recovery are designed and tested.
 
-### Verification baseline
+### Verification scope and status
 
-- The repository's `.github/workflows/build.yml` defines dependency install, Python compilation, and pytest, but its current trigger is `workflow_dispatch` only.
-- A fresh user-triggered pytest run was attempted on branch `fix/daily-shard-test-syntax` (PR #292). The syntax/collection blocker and dashboard test path were corrected in test-only commits; no production runtime code was changed by those fixes.
-- The subsequent run collected 2,740 tests but stopped because `pytest -x` encountered a pre-existing failure after 35 passing tests: `app/backtesting/tests/test_durable_replay.py::test_durable_replay_journals_events_decisions_and_checkpoint`. Actual records include `ORDER_LIFECYCLE` and `FILL`, while that test's expected list omits them. The same stale expectation exists on `main`, and another test in the same file explicitly checks lifecycle/fill records.
-- Per the project owner's instruction, **do not modify or otherwise work on backtesting**. The failing test was left unchanged. Since `-x` stopped the run, this is not a full-suite pass and remaining tests are unverified.
-- **Baseline status: BLOCKED / NOT GREEN.** Do not claim a passing full-suite baseline. Batch 1 must not start until an acceptable baseline is established without changing out-of-scope backtesting, or the project owner explicitly changes the scope.
-- Existing targeted backend, integration, and common-feed regression checks recorded for PR #290 are not a substitute for a fresh full-suite result.
+- **Batch 0 is a read-only audit. Its deliverable is complete.** Backtesting is explicitly out of scope and must not be edited, repaired, or treated as a Box Spread audit defect.
+- The earlier full-suite run used `pytest -x`, collected 2,740 tests, passed 35, then stopped at `app/backtesting/tests/test_durable_replay.py::test_durable_replay_journals_events_decisions_and_checkpoint`. The assertion expects no `ORDER_LIFECYCLE` or `FILL` records although the actual replay emits them. This is an out-of-scope test result, not evidence that the Box Spread audit failed.
+- Because `-x` stopped at that point, tests after the failure remain unverified. We must not call the entire repository test suite green.
+- The repository's `.github/workflows/ci-tests.yml` runs the narrower `backend/tests` suite and excludes several named integration/E2E tests. It is not a full run of all `backend/app` tests. A passing result from that workflow should be reported only as scoped backend CI, not a full-suite pass.
+- The repository's `.github/workflows/build.yml` runs compilation and `pytest -x -vv`, and its trigger is `workflow_dispatch` only.
+- Earlier syntax and dashboard test-path fixes were test-only changes on PR #292; no production runtime code was changed by those fixes.
+- **Scope decision:** Do not change Backtesting or alter tests/workflows to hide its failure. For Batch 0, record the Backtesting result as excluded/out-of-scope and assess Box Spread/non-Backtesting checks separately. A full-repository green claim remains unavailable until a non-invasive, appropriately scoped verification can actually establish it.
 - The current audit base commit is `16711dd71bb0f372b0666e0898491791eefff0b4`, which aligns Box Spread WebSocket freshness to individual option-leg timestamps.
 
 ## Batch 0 exit checklist
@@ -52,13 +53,14 @@
 - [x] Complete and record the read-only Batch 0 audit deliverable.
 
 **Separate implementation gates (not audit-documentation tasks):**
-- [ ] Obtain a green, fresh full-suite baseline without touching out-of-scope backtesting.
+- [ ] Run and record relevant non-Backtesting checks; do not modify Backtesting to obtain a green result.
 - [ ] Owner review/sign-off before any runtime code change.
+- [ ] Keep full-repository test status explicitly unverified unless a complete non-invasive run actually finishes.
 
 ## Batch 0 disposition
 
-**BATCH 0 AUDIT: COMPLETE.** All read-only audit tasks and findings are recorded above. The full-suite baseline / implementation gate remains **BLOCKED** by the documented existing Backtesting test failure. This does not mean the full test suite is green, and it does not authorize Batch 1 or live execution.
+**BATCH 0 AUDIT: COMPLETE.** The Backtesting failure is explicitly classified as out-of-scope, not a Batch 0 Box Spread audit failure, and Backtesting remains untouched. Relevant non-Backtesting verification and owner review are separate gates. The full repository test suite is **not verified green**; do not claim otherwise. Live order routing stays OFF.
 
 ## Next batch gate
 
-Batch 1 may begin only after the baseline gate is resolved and the owner reviews the findings. It must use a dedicated feature branch and isolated broker/security modules. Do not change `backend/app/main.py`, the common feed manager, existing scanner runners, deployment workflows, or paper-trading routes without a demonstrated dependency and separate review. Backtesting, Cash-Future, Synthetic Future, and Calendar Spread remain out of scope. Live order routing stays OFF.
+Batch 1 may begin only after relevant non-Backtesting checks are run and recorded, the owner reviews the findings, and any required implementation gates are explicitly cleared. It must use a dedicated feature branch and isolated broker/security modules. Do not change `backend/app/main.py`, the common feed manager, existing scanner runners, deployment workflows, or paper-trading routes without a demonstrated dependency and separate review. Backtesting, Cash-Future, Synthetic Future, and Calendar Spread remain out of scope. Live order routing stays OFF.
