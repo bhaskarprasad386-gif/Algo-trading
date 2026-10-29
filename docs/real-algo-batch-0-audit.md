@@ -49,12 +49,15 @@
 - [x] Define out-of-scope strategies and deployment restrictions.
 - [x] Attempt baseline verification and document the exact existing blocker and test-run limits.
 - [x] Record the read-only audit findings for review.
+- [x] Complete and record the read-only Batch 0 audit deliverable.
+
+**Separate implementation gates (not audit-documentation tasks):**
 - [ ] Obtain a green, fresh full-suite baseline without touching out-of-scope backtesting.
 - [ ] Owner review/sign-off before any runtime code change.
 
 ## Batch 0 disposition
 
-**The read-only audit deliverable is complete. The implementation gate is still blocked by the baseline failure above.** This distinction is intentional: finishing Batch 0 documentation does not authorize Batch 1 or live execution.
+**BATCH 0 AUDIT: COMPLETE.** All read-only audit tasks and findings are recorded above. The full-suite baseline / implementation gate remains **BLOCKED** by the documented existing Backtesting test failure. This does not mean the full test suite is green, and it does not authorize Batch 1 or live execution.
 
 ## Next batch gate
 
