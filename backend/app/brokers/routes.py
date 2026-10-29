@@ -12,8 +12,10 @@ from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
 from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
+from app.brokers.real_owner_state import claim_authenticated_account, disable_owner_trading, set_owner_connection_state
 from app.core.database import get_db
 from app.core.logger import app_logger
+from app.models import BoxSpreadRealOwnerState
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
 
@@ -51,9 +53,18 @@ def connections(user_id: int = Depends(require_real_owner_access)) -> dict:
 
 
 @router.get("/safety")
-def safety_status(user_id: int = Depends(require_real_owner_access)) -> dict:
-    state = trading_safety.get(user_id)
-    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "enabled_at": state.enabled_at.isoformat() if state.enabled_at else None}
+def safety_status(db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
+    # Report the durable owner flags, not process-local memory that resets on restart.
+    state = db.query(BoxSpreadRealOwnerState).filter(
+        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    ).first()
+    if state is None:
+        return {"real_trading_enabled": False, "kill_switch": True, "enabled_at": None}
+    return {
+        "real_trading_enabled": state.real_trading_enabled,
+        "kill_switch": state.kill_switch,
+        "enabled_at": None,
+    }
 
 
 @router.post("/safety/enable")
@@ -70,19 +81,33 @@ def enable_real_trading(payload: RealTradingEnableRequest, user_id: int = Depend
 
 
 @router.post("/safety/disable")
-def disable_real_trading(user_id: int = Depends(require_real_owner_access)) -> dict:
-    state = trading_safety.disable(user_id)
-    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Real trading disabled and kill switch engaged."}
+def disable_real_trading(db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
+    # Always disarm process-local state first, even if durable storage is unavailable.
+    trading_safety.disable(user_id)
+    try:
+        state = disable_owner_trading(db)
+    except Exception as exc:
+        db.rollback()
+        app_logger.error("Durable Box Spread disable failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Trading is disabled locally but durable kill-switch state could not be confirmed") from exc
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Real trading disabled and kill switch persisted."}
 
 
 @router.post("/safety/kill-switch")
-def emergency_kill_switch(user_id: int = Depends(require_real_owner_access)) -> dict:
-    state = trading_safety.disable(user_id)
-    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Emergency kill switch engaged."}
+def emergency_kill_switch(db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
+    # Engage the local kill switch before attempting the durable write.
+    trading_safety.disable(user_id)
+    try:
+        state = disable_owner_trading(db)
+    except Exception as exc:
+        db.rollback()
+        app_logger.error("Durable Box Spread kill-switch update failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Kill switch is engaged locally but durable state could not be confirmed") from exc
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Emergency kill switch engaged and persisted."}
 
 
 @router.post("/connect")
-def connect(payload: ConnectRequest, user_id: int = Depends(require_real_owner_access)) -> dict:
+def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     broker = payload.broker.strip().lower()
     if broker != "angel_one":
         raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
@@ -92,6 +117,23 @@ def connect(payload: ConnectRequest, user_id: int = Depends(require_real_owner_a
     except Exception as exc:
         app_logger.error("Angel One connection failed: %s", exc)
         raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
+    try:
+        claim_authenticated_account(db, broker, result.get("client_code") or "")
+    except HTTPException:
+        adapter.disconnect()
+        raise
+    except Exception as exc:
+        adapter.disconnect()
+        db.rollback()
+        app_logger.error("Durable Box Spread account binding failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable") from exc
+    try:
+        set_owner_connection_state(db, True)
+    except Exception as exc:
+        adapter.disconnect()
+        db.rollback()
+        app_logger.error("Durable Box Spread connection state update failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
     old = _sessions.get((user_id, broker))
     if old is not None:
         old.disconnect()
@@ -102,22 +144,37 @@ def connect(payload: ConnectRequest, user_id: int = Depends(require_real_owner_a
 
 
 @router.get("/{broker}/status")
-def status(broker: str, user_id: int = Depends(require_real_owner_access)) -> dict:
+def status(broker: str, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     key = (user_id, broker.strip().lower())
     adapter = _sessions.get(key)
     item = broker_connections.get(user_id, key[1])
-    state = trading_safety.get(user_id)
-    return {"broker": key[1], "connected": bool(adapter and adapter.connected and item and item.connected), "display_name": item.display_name if item else None, "real_trading": state.real_trading_enabled, "kill_switch": state.kill_switch}
+    owner_state = db.query(BoxSpreadRealOwnerState).filter(
+        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    ).first()
+    # The durable row is authoritative; missing ownership must remain fail-closed.
+    return {
+        "broker": key[1],
+        "connected": bool(adapter and adapter.connected and item and item.connected),
+        "display_name": item.display_name if item else None,
+        "real_trading": owner_state.real_trading_enabled if owner_state else False,
+        "kill_switch": owner_state.kill_switch if owner_state else True,
+    }
 
 
 @router.delete("/{broker}")
-def disconnect(broker: str, user_id: int = Depends(require_real_owner_access)) -> dict:
+def disconnect(broker: str, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     name = broker.strip().lower()
     adapter = _sessions.pop((user_id, name), None)
     if adapter is not None:
         adapter.disconnect()
     broker_connections.disconnect(user_id, name)
     trading_safety.disable(user_id)
+    try:
+        set_owner_connection_state(db, False)
+    except Exception as exc:
+        db.rollback()
+        app_logger.error("Durable Box Spread disconnect state update failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Broker disconnected locally but durable connection state could not be confirmed") from exc
     return {"connected": False, "broker": name, "real_trading": False, "kill_switch": True}
 
 
