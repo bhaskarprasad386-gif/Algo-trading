@@ -128,7 +128,10 @@ class LiveBoxSpreadRunner:
                             continue
                 if expiries: wanted = min(expiries)[1]
             if wanted:
-                selected_expiries[target.underlying.strip().upper()] = wanted
+                symbol_key = target.underlying.strip().upper()
+                selected_expiries.setdefault(symbol_key, [])
+                if wanted not in selected_expiries[symbol_key]:
+                    selected_expiries[symbol_key].append(wanted)
                 strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted, exchange_segment=("BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO")))
         # Track every configured target for spot quotes even if an option chain
         # is temporarily unavailable. Empty strike sets intentionally disable
@@ -192,8 +195,13 @@ class LiveBoxSpreadRunner:
                     except (LookupError, ValueError) as exc:
                         unavailable_symbols.append({"symbol": target.underlying, "reason": str(exc)})
                         continue
-                    contract_expiries[target.underlying.strip().upper()] = str(sel.expiry)
-                    subscription_counts[target.underlying.strip().upper()] = len(sel.subscriptions)
+                    symbol_key = target.underlying.strip().upper()
+                    contract_expiries.setdefault(symbol_key, [])
+                    contract_expiry = str(sel.expiry)
+                    if contract_expiry not in contract_expiries[symbol_key]:
+                        contract_expiries[symbol_key].append(contract_expiry)
+                    subscription_counts.setdefault(symbol_key, [])
+                    subscription_counts[symbol_key].append({"expiry": contract_expiry, "count": len(sel.subscriptions)})
                     subs.extend(sel.subscriptions)
                 self._readiness = {
                     "state": "ready" if subs else "waiting_for_contracts",
