@@ -19,9 +19,12 @@ class LiveBoxSpreadScanner:
 
     @staticmethod
     def _price(v):
+        from math import isfinite
         try:
-            n=float(v); return n if n>0 else None
-        except (TypeError,ValueError): return None
+            n = float(v)
+            return n if isfinite(n) and n > 0 else None
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     @staticmethod
     def _expiry(v):
@@ -43,7 +46,12 @@ class LiveBoxSpreadScanner:
     def observe(self,payload):
         symbol=str(payload.get("underlying") or "").strip().upper()
         cls=str(payload.get("instrument_class") or "").strip().upper()
-        ts=int(payload.get("source_timestamp_ns") or 0)
+        try:
+            ts = int(payload.get("source_timestamp_ns") or 0)
+        except (TypeError, ValueError, OverflowError):
+            with self._lock:
+                self._diagnostic_counts["invalid_identity_or_timestamp"] += 1
+            return ()
         import time
         if ts >= 1_000_000_000_000_000:
             age_ns = time.time_ns() - ts
