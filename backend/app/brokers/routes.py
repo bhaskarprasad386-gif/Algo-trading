@@ -94,7 +94,7 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
         app_logger.error("Angel One connection failed: %s", exc)
         raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
     try:
-        claim_authenticated_account(db, broker, result.get("client_code") or payload.client_code)
+        claim_authenticated_account(db, broker, result.get("client_code") or "")
     except HTTPException:
         adapter.disconnect()
         raise
