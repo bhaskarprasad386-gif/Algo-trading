@@ -97,7 +97,7 @@ def test_live_box_route_rejects_skew_hidden_inside_strike_timestamps(monkeypatch
     assert routes.live(10, max_age_seconds=5)["count"] == 0
 
 
-def test_live_box_route_age_uses_newest_individual_option_quote(monkeypatch):
+def test_live_box_route_age_uses_oldest_individual_option_quote(monkeypatch):
     now = time.time_ns()
     result = _result(low_ts=now - 2_000_000_000, high_ts=now - 1_500_000_000)
     result.low.call_timestamp_ns = now - 1_900_000_000
@@ -109,7 +109,7 @@ def test_live_box_route_age_uses_newest_individual_option_quote(monkeypatch):
     row = routes.live(10, max_age_seconds=5)["data"][0]
 
     assert row["last_update_timestamp_ns"] == now - 100_000_000
-    assert row["quote_age_seconds"] < 1.0
+    assert 1.8 <= row["quote_age_seconds"] < 2.1
 
 
 def test_live_box_route_reports_actual_four_leg_skew(monkeypatch):
