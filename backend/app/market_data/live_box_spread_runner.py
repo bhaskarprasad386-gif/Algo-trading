@@ -17,6 +17,7 @@ from app.scanner.box_spread import BoxSpreadScanConfig
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
     "FINNIFTY": 5.0,
@@ -41,7 +42,7 @@ class BoxSpreadLiveTarget:
 
 class LiveBoxSpreadRunner:
     def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None):
-        self.data_db=data_db; self.targets=tuple(targets); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
+        self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
         self._readiness = {"state": "starting", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
@@ -131,7 +132,7 @@ class LiveBoxSpreadRunner:
                 unavailable_symbols = []
                 for target in ready_targets:
                     wanted = target.expiry
-                    if wanted is None:
+                    if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                         expiries = []
                         for item in self.master.instruments:
