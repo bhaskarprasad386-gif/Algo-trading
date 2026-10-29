@@ -177,7 +177,7 @@ class LiveBoxSpreadRunner:
                     policy=self.policy,
                 )
                 self.scanner = scanner
-                pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results)
+                pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results,spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None)
                 subscribed_strikes = {}
                 for sub in subs:
                     symbol = str(getattr(sub, "underlying", "") or "").strip().upper()
