@@ -894,7 +894,8 @@ async def _live_box_spread_loop() -> None:
             for symbol in sorted(OPTION_STRATEGY_INDEX_SYMBOLS - targeted_symbols):
                 targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
 
-            set_live_box_expiry_types(expiry_types)\n            set_live_box_websocket_expiry_types(expiry_types)
+            set_live_box_expiry_types(expiry_types)
+            set_live_box_websocket_expiry_types(expiry_types)
             targets = tuple(targets_list)
             if not targets:
                 app_logger.warning(
