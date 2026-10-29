@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.models import LiveBoxSpreadSnapshot, LiveBoxSpreadSnapshotKey
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.notifications.box_spread_alerts import BoxSpreadAlertService
+from app.scanner.live_box_spread_routes import classify_expiry_type
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "instrument_class": low.instrument_class,
         "expiry": low.expiry,
         "expiry_date": str(low.expiry),
-        "expiry_type": "UNKNOWN",
+        "expiry_type": classify_expiry_type(low.underlying, low.expiry),
         "low_strike": low.strike,
         "high_strike": high.strike,
         "direction": result.direction,
@@ -196,6 +197,13 @@ class LiveBoxSpreadPipeline:
                             db.query(LiveBoxSpreadSnapshotKey).filter(LiveBoxSpreadSnapshotKey.created_at < cutoff).delete(synchronize_session=False)
                             batch_keys = set()
                             for row in pending_rows:
+                                # Older disk-spool entries may predate expiry typing.
+                                # Enrich them before the durable database write when the
+                                # current instrument-master mapping can classify them.
+                                if str(row.get("expiry_type") or "UNKNOWN").strip().upper() == "UNKNOWN":
+                                    row["expiry_type"] = classify_expiry_type(
+                                        row.get("symbol"), row.get("expiry")
+                                    )
                                 key = tuple(row.get("_snapshot_identity") or _snapshot_key(row))
                                 if key in batch_keys:
                                     continue
