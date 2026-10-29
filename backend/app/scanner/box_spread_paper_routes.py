@@ -479,8 +479,8 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
             if str(row.get("symbol", "")).strip().upper() == contracts.underlying
             and str(row.get("instrument_class", "")).strip().upper() == contracts.instrument_class
             and _canonical_expiry(row.get("expiry_date") or row.get("expiry")) == _canonical_expiry(contracts.expiry)
-            and abs(float(row.get("low_strike", 0)) - contracts.low_strike) < 0.0001
-            and abs(float(row.get("high_strike", 0)) - contracts.high_strike) < 0.0001
+            and _strike_matches(row.get("low_strike"), contracts.low_strike)
+            and _strike_matches(row.get("high_strike"), contracts.high_strike)
             and str(row.get("direction", "")).strip().upper() == contracts.direction
         ), None)
         if current_row is None:
