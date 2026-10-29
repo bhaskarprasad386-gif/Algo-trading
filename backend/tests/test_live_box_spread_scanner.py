@@ -153,3 +153,31 @@ def test_box_scanner_caps_active_buckets_and_counts_pruning():
     assert snapshot["active_buckets"] == 2
     assert snapshot["counts"]["pruned_buckets"] == 1
     assert {key[0] for key in scanner._buckets} == {"BBB", "CCC"}
+
+
+def test_box_scanner_preserves_top_of_book_bid_ask_quantities():
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig
+
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: 100,
+        config_provider=lambda _s: BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    results = ()
+    for strike in (100, 110):
+        for option_type, bid_qty, ask_qty in (("CE", 10 + strike, 20 + strike), ("PE", 30 + strike, 40 + strike)):
+            results = scanner.observe({
+                "underlying": "ABC", "instrument_class": "STOCK", "source_timestamp_ns": 10,
+                "expiry": "30SEP2026", "strike": strike, "option_type": option_type,
+                "bid": 10, "ask": 11, "bid_qty": bid_qty, "ask_qty": ask_qty,
+                "lot_size": 10, "volume": 100, "oi": 100,
+            }) or results
+
+    assert results
+    low = results[0].low
+    high = results[0].high
+    assert low.call_bid_qty == 110 and low.call_ask_qty == 120
+    assert low.put_bid_qty == 130 and low.put_ask_qty == 140
+    assert high.call_bid_qty == 120 and high.call_ask_qty == 130
+    assert high.put_bid_qty == 140 and high.put_ask_qty == 150
