@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { appConfig } from "@/lib/config";
 
 type Opportunity = Record<string, unknown> & {
-  symbol?: string; expiry?: string | number; low_strike?: number; high_strike?: number;
+  symbol?: string; expiry?: string | number; expiry_type?: string; low_strike?: number; high_strike?: number;
   spot_price?: number | null; spot_age_seconds?: number | null;
   direction?: string; executable_edge?: number; last_update_timestamp_ns?: number;
 };
@@ -131,7 +131,7 @@ export default function LiveOpportunityGrid() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1050px] border-collapse text-left text-xs">
             <thead><tr className="border-b border-slate-700 text-slate-400">
-              {["Status","Time (IST)","Underlying","Spot Price","Expiry","Low / High Strike","Direction","Box Edge","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
+              {["Status","Time (IST)","Underlying","Spot Price","Expiry","Expiry Type","Low / High Strike","Direction","Box Edge","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
             <tbody>{rows.map(({ key, row, lastSeen, status }) => (
               <tr key={key} className={"border-b border-slate-800 transition-opacity " + (status === "STALE" ? "opacity-40" : "opacity-100")}>
