@@ -221,12 +221,34 @@ def test_prevents_overspending_and_invalid_fill_values():
     engine.dispose()
 
 
-def test_fee_schedule_is_versioned_and_sell_stt_is_applied():
+def test_fee_schedule_uses_april_2026_options_rates_and_sell_stt():
     schedule = BoxSpreadPaperFeeSchedule()
     buy = schedule.calculate(action="BUY", notional=Decimal("10000"))
     sell = schedule.calculate(action="SELL", notional=Decimal("10000"))
-    assert schedule.version
+    assert schedule.version == "india-options-estimate-v2-apr-2026"
+    # NSE equity-options transaction charges from 1 March 2026: 0.03553%.
+    assert schedule.exchange_transaction_rate == Decimal("0.0003553")
+    # STT on sale of option premium increased to 0.15% from 1 April 2026.
+    assert schedule.sell_stt_rate == Decimal("0.0015")
     assert sell > buy
+
+
+def test_gst_includes_brokerage_exchange_and_sebi_charges():
+    schedule = BoxSpreadPaperFeeSchedule()
+    notional = Decimal("10000")
+    expected_gst = (
+        schedule.brokerage_per_fill
+        + notional * schedule.exchange_transaction_rate
+        + notional * schedule.sebi_rate
+    ) * schedule.gst_rate
+    charges = schedule.calculate(action="BUY", notional=notional)
+    non_gst = (
+        schedule.brokerage_per_fill
+        + notional * schedule.exchange_transaction_rate
+        + notional * schedule.sebi_rate
+        + notional * schedule.buy_stamp_rate
+    )
+    assert charges == (non_gst + expected_gst).quantize(Decimal("0.01"))
 
 
 def test_fill_records_survive_ledger_instance_recreation(paper_ledger):
