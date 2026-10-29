@@ -96,3 +96,48 @@ def test_box_atm_does_not_refresh_while_inside_subscribed_strike_coverage():
     assert _atm_outside_subscribed_range(120.0, coverage) is True
     assert _atm_outside_subscribed_range(80.0, coverage) is True
     assert _atm_outside_subscribed_range(None, coverage) is False
+
+
+def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+
+    class Master:
+        instruments = [
+            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "29OCT2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "1"},
+            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "05NOV2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "2"},
+        ]
+        def download(self): pass
+
+    seeded = []
+    def concrete(*args, **kwargs):
+        seeded.append(kwargs.get("expiry"))
+        return {"NIFTY": (100.0, 110.0)}
+
+    class Tracker:
+        def __init__(self, *args, **kwargs): pass
+        def atm(self, symbol, now_ns): return 100.0
+
+    class Feed:
+        def __init__(self, *args, **kwargs): pass
+        def run_forever(self): pass
+        def stop(self): pass
+
+    def stop_after_selection(*args, **kwargs):
+        raise RuntimeError("stop-after-selection")
+
+    monkeypatch.setattr(mod, "concrete_strikes_from_master", concrete)
+    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "select_box_contracts", stop_after_selection)
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(),
+        future_master=Master(),
+        auth=object(),
+    )
+    try:
+        runner._run_session()
+    except RuntimeError as exc:
+        assert str(exc) == "stop-after-selection"
+    assert seeded == ["29OCT2026"]

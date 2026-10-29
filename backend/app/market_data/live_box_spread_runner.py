@@ -17,6 +17,7 @@ from app.scanner.box_spread import BoxSpreadScanConfig
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
     "FINNIFTY": 5.0,
@@ -41,7 +42,7 @@ class BoxSpreadLiveTarget:
 
 class LiveBoxSpreadRunner:
     def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None):
-        self.data_db=data_db; self.targets=tuple(targets); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
+        self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
         self._readiness = {"state": "starting", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
@@ -88,7 +89,26 @@ class LiveBoxSpreadRunner:
         strikes = {}
         for target in self.targets:
             wanted = target.expiry
-            if wanted is None:
+            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
+                expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
+                option_expiries = []
+                for item in self.master.instruments:
+                    if str(item.get("exch_seg", "")).upper() != expected_segment or str(item.get("name", "")).strip().upper() != target.underlying:
+                        continue
+                    if str(item.get("instrumenttype", "")).upper() not in {"OPTIDX", "OPTSTK"}:
+                        continue
+                    text = str(item.get("expiry", "")).strip().upper()
+                    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+                        try:
+                            value = datetime.strptime(text, fmt).date()
+                            if value >= today:
+                                option_expiries.append((value, text))
+                            break
+                        except ValueError:
+                            continue
+                if option_expiries:
+                    wanted = min(option_expiries)[1]
+            if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                 future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                 expiries = []
                 for item in self.master.instruments:
@@ -131,7 +151,7 @@ class LiveBoxSpreadRunner:
                 unavailable_symbols = []
                 for target in ready_targets:
                     wanted = target.expiry
-                    if wanted is None:
+                    if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                         expiries = []
                         for item in self.master.instruments:
@@ -176,7 +196,7 @@ class LiveBoxSpreadRunner:
                     policy=self.policy,
                 )
                 self.scanner = scanner
-                pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results)
+                pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results,spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None)
                 subscribed_strikes = {}
                 for sub in subs:
                     symbol = str(getattr(sub, "underlying", "") or "").strip().upper()

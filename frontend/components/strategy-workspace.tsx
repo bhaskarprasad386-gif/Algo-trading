@@ -57,7 +57,7 @@ const configs: Record<string, WorkspaceConfig> = {
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Lot Size", "Direction", "Freshness"],
+    pairColumns: ["Time", "Underlying", "Spot Price", "Spot Quote Time / Age", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Lot Size", "Direction", "Freshness"],
     historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=500",
   },
   "custom-strategy": {
@@ -365,7 +365,7 @@ function pairCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
-      Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], "Spot Price": ["spot_price"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
+      Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], "Spot Price": ["spot_price"], "Spot Quote Time / Age": ["spot_timestamp_ns", "spot_age_seconds"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
       "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
       "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
       "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
@@ -373,6 +373,11 @@ function pairCell(slug: string, column: string, row: Row) {
     },
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
+  if (slug === "box-spread" && column === "Spot Quote Time / Age") {
+    const timestamp = formatTimestamp(value(row, "spot_timestamp_ns", "spot_observed_at"));
+    const age = nullableNumber(value(row, "spot_age_seconds"));
+    return timestamp === "—" ? "—" : timestamp + (age === null ? "" : " · " + age.toFixed(2) + "s");
+  }
   if (slug === "synthetic-arbitrage" && column === "Synthetic Future") return withQuoteTimestamp(syntheticFutureValue(row), row);
   if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
     const bid = column === "Future" ? row.future_bid : column === "Call (CE)" ? row.call_bid : row.put_bid;
