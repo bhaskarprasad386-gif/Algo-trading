@@ -52,11 +52,14 @@ def safety_status(user_id: int = Depends(current_user_id)) -> dict:
 def enable_real_trading(payload: RealTradingEnableRequest, user_id: int = Depends(current_user_id)) -> dict:
     if payload.confirmation.strip().upper() != "ENABLE REAL TRADING":
         raise HTTPException(status_code=400, detail="Explicit confirmation required: ENABLE REAL TRADING")
-    connection = next((c for c in broker_connections.list(user_id) if c.connected), None)
-    if connection is None:
-        raise HTTPException(status_code=409, detail="Connect a broker before enabling real trading")
-    state = trading_safety.enable(user_id)
-    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "live_order_routing": False, "message": "Real trading armed, but live order routing is still disabled."}
+
+    # Fail closed until this route has authenticated owner authorization and a
+    # durable, single-account ownership model. Broker sessions and safety state
+    # are currently process-local; an explicit phrase alone is not authorization.
+    raise HTTPException(
+        status_code=503,
+        detail="Real-trading arming is unavailable until owner authentication and durable account ownership are implemented",
+    )
 
 
 @router.post("/safety/disable")
