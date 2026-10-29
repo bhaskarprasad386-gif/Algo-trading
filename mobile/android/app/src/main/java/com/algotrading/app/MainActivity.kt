@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -74,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var scannerCountdownSeconds = 0L
     private var lastScannerResult: String? = null
     private var lastExecutableOpportunity: LiveCashFutureSignal? = null
+    private var ownerLoginPromptShown = false
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -256,7 +258,49 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.getRootStatus(); withContext(Dispatchers.Main) { tvStatus.text = "Server Status: ${response.status}" } } catch (_: Exception) { withContext(Dispatchers.Main) { tvStatus.text = "Server Error: Offline" } } }
-    private fun checkBrokerStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.brokerStatus("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = if (response.connected) "Broker Status: Angel One CONNECTED • Real Trading ${if (response.real_trading) "ON" else "OFF"}" else "Broker Status: Angel One not connected • Real Trading OFF" } } catch (_: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Unable to check • Real Trading OFF" } } }
+    private fun checkBrokerStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.brokerStatus("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = if (response.connected) "Broker Status: Angel One CONNECTED • Real Trading ${if (response.real_trading) "ON" else "OFF"}" else "Broker Status: Angel One not connected • Real Trading OFF" } } catch (_: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Owner login required • Real Trading OFF"; if (!ApiService.hasRealOwnerAccessToken()) promptRealOwnerLogin() } } }
+
+    private fun promptRealOwnerLogin() {
+        if (ownerLoginPromptShown || ApiService.hasRealOwnerAccessToken() || isFinishing) return
+        ownerLoginPromptShown = true
+        val passwordInput = EditText(this).apply {
+            hint = "Box Spread owner password"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Box Spread Owner Login")
+            .setMessage("Enter the dedicated real-owner password. This is separate from your broker password.")
+            .setView(passwordInput)
+            .setNegativeButton("LATER") { _, _ -> ownerLoginPromptShown = false }
+            .setPositiveButton("LOGIN") { _, _ ->
+                val password = passwordInput.text.toString()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val response = ApiService.retrofitService.loginRealOwner(RealOwnerLoginRequest(password))
+                        if (response.access_token.isBlank()) throw IllegalStateException("Server returned no owner token")
+                        ApiService.setRealOwnerAccessToken(response.access_token)
+                        withContext(Dispatchers.Main) {
+                            ownerLoginPromptShown = false
+                            tvBrokerStatus.text = "Broker Status: Owner authenticated • Real Trading OFF"
+                            checkBrokerStatus()
+                            checkSafetyStatus()
+                        }
+                    } catch (error: Exception) {
+                        withContext(Dispatchers.Main) {
+                            ownerLoginPromptShown = false
+                            tvBrokerStatus.text = "Broker Status: Owner login failed • Real Trading OFF"
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Owner Login Failed")
+                                .setMessage(error.message ?: "Authentication failed. Check server configuration and try again.")
+                                .setPositiveButton("OK", null)
+                                .show()
+                        }
+                    }
+                }
+            }
+            .setOnCancelListener { ownerLoginPromptShown = false }
+            .show()
+    }
     private fun checkSafetyStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.safetyStatus(); withContext(Dispatchers.Main) { renderSafety(response) } } catch (_: Exception) { withContext(Dispatchers.Main) { tvSafetyStatus.text = "Safety: OFF • Kill Switch: ON\nReal-trading arming unavailable: owner authentication and durable account ownership are required."; tvSafetyRouting.text = "Live order routing: DISABLED"; btnEnableRealTrading.isEnabled = false; btnEnableRealTrading.text = "REAL TRADING ARMING UNAVAILABLE" } } }
     private fun renderSafety(response: SafetyResponse) { val enabled = response.real_trading_enabled; val kill = response.kill_switch; tvSafetyStatus.text = "Safety: ${if (enabled) "ARMED" else "OFF"} • Kill Switch: ${if (kill) "ON" else "OFF"} • Broker: ${if (response.broker_connected) "CONNECTED" else "NOT CONNECTED"}\nReal-trading arming unavailable: owner authentication and durable account ownership are required."; tvSafetyRouting.text = "Live order routing: ${if (response.live_order_routing) "ENABLED" else "DISABLED"}"; btnEnableRealTrading.isEnabled = false; btnEnableRealTrading.text = "REAL TRADING ARMING UNAVAILABLE"; btnDisableRealTrading.isEnabled = enabled }
     private fun confirmEnableRealTrading() { AlertDialog.Builder(this).setTitle("Enable Real Trading Safety?").setMessage("This arms the real-trading safety state. Live order routing is still disabled until a later approved release. Continue only if you understand this.").setNegativeButton("CANCEL", null).setPositiveButton("CONTINUE") { _, _ -> enableRealTrading() }.show() }
