@@ -53,7 +53,7 @@ const configs: Record<string, WorkspaceConfig> = {
     title: "Box Spread",
     description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
     universe: "SUPPORTED INDEX OPTIONS ONLY",
-    columns: ["Underlying", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
+    columns: ["Underlying", "Spot Price", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid/Ask)", "Low Put (LTP/Bid/Ask)", "High Call (LTP/Bid/Ask)", "High Put (LTP/Bid/Ask)", "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
@@ -273,7 +273,7 @@ function formatCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
     },
     "box-spread": {
-      Underlying: ["symbol"], "Expiry / Quote Time": ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
+      Underlying: ["symbol"], "Spot Price": ["spot_price"], "Expiry / Quote Time": ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
       "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
       "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],
       "Box Edge": ["executable_edge"], "Min Leg Volume": ["liquidity_qty"], Direction: ["direction"], Freshness: ["freshness"],
@@ -365,7 +365,7 @@ function pairCell(slug: string, column: string, row: Row) {
       "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
     },
     "box-spread": {
-      Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
+      Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], "Spot Price": ["spot_price"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
       "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
       "Low Call (LTP/Bid/Ask)": ["low_call_ltp"], "Low Put (LTP/Bid/Ask)": ["low_put_ltp"],
       "High Call (LTP/Bid/Ask)": ["high_call_ltp"], "High Put (LTP/Bid/Ask)": ["high_put_ltp"],

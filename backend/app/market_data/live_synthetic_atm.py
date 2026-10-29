@@ -145,6 +145,28 @@ class LiveSyntheticAtmTracker:
         lower, upper = strikes[index - 1], strikes[index]
         return lower if price - lower <= upper - price else upper
 
+    def spot_snapshot(
+        self, symbol: str, now_ns: int | None = None, *, max_age_seconds: float = 5.0
+    ) -> dict | None:
+        """Return the source-backed underlying spot only while its tick is fresh."""
+        key = str(symbol).strip().upper()
+        if max_age_seconds < 0:
+            raise ValueError("max_age_seconds must be non-negative")
+        with self._lock:
+            quote = self._prices.get(key)
+        if quote is None:
+            return None
+        price, source_ns = quote
+        now = int(now_ns) if now_ns is not None else time_ns()
+        age_seconds = (now - source_ns) / 1_000_000_000
+        if age_seconds < -5.0 or age_seconds > max_age_seconds:
+            return None
+        return {
+            "spot_price": float(price),
+            "spot_timestamp_ns": int(source_ns),
+            "spot_age_seconds": round(max(0.0, age_seconds), 3),
+        }
+
     def diagnostics_snapshot(self, now_ns: int | None = None) -> dict:
         """Expose chain coverage and live ATM readiness without inventing quotes."""
         now = int(now_ns) if now_ns is not None else time_ns()

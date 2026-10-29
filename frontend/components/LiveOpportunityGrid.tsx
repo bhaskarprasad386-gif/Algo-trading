@@ -5,6 +5,7 @@ import { appConfig } from "@/lib/config";
 
 type Opportunity = Record<string, unknown> & {
   symbol?: string; expiry?: string | number; low_strike?: number; high_strike?: number;
+  spot_price?: number | null; spot_age_seconds?: number | null;
   direction?: string; executable_edge?: number; last_update_timestamp_ns?: number;
 };
 type TrackedRow = { key: string; row: Opportunity; lastSeen: number; status: "LIVE" | "STALE" };
@@ -13,10 +14,13 @@ function keyOf(row: Opportunity) {
   return [row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].map(String).join("|");
 }
 function n(row: Opportunity, field: string) {
-  const value = Number(row[field]);
+  const raw = row[field];
+  if (raw === null || raw === undefined || raw === "") return null;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
 function fmt(value: unknown) {
+  if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
   return Number.isFinite(number) ? number.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—";
 }
@@ -125,15 +129,16 @@ export default function LiveOpportunityGrid() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+          <table className="w-full min-w-[1050px] border-collapse text-left text-xs">
             <thead><tr className="border-b border-slate-700 text-slate-400">
-              {["Status","Time (IST)","Underlying","Expiry","Low / High Strike","Direction","Box Edge","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
+              {["Status","Time (IST)","Underlying","Spot Price","Expiry","Low / High Strike","Direction","Box Edge","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
             <tbody>{rows.map(({ key, row, lastSeen, status }) => (
               <tr key={key} className={"border-b border-slate-800 transition-opacity " + (status === "STALE" ? "opacity-40" : "opacity-100")}>
                 <td className="px-3 py-3"><span className={status === "LIVE" ? "rounded-full bg-emerald-950 px-2 py-1 font-bold text-emerald-300" : "rounded-full bg-amber-950 px-2 py-1 font-bold text-amber-300"}>{status}</span></td>
                 <td className="whitespace-nowrap px-3 py-3 tabular-nums">{new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}</td>
                 <td className="px-3 py-3 font-bold">{String(row.symbol || "—")}</td>
+                <td className="px-3 py-3 tabular-nums">{fmt(row.spot_price)}{n(row, "spot_age_seconds") !== null ? <span className="ml-1 text-[10px] text-slate-400">({fmt(row.spot_age_seconds)}s)</span> : null}</td>
                 <td className="px-3 py-3">{String(row.expiry_date || row.expiry || "—")}</td>
                 <td className="px-3 py-3 tabular-nums">{fmt(row.low_strike)} / {fmt(row.high_strike)}</td>
                 <td className="px-3 py-3">{String(row.direction || "—")}</td>
