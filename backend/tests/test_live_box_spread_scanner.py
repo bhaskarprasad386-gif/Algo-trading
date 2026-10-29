@@ -170,7 +170,7 @@ def test_box_scanner_preserves_top_of_book_bid_ask_quantities():
             results = scanner.observe({
                 "underlying": "ABC", "instrument_class": "STOCK", "source_timestamp_ns": 10,
                 "expiry": "30SEP2026", "strike": strike, "option_type": option_type,
-                "bid": 10, "ask": 11, "bid_qty": bid_qty, "ask_qty": ask_qty,
+                "bid": 10, "ask": 10.1, "bid_qty": bid_qty, "ask_qty": ask_qty,
                 "lot_size": 10, "volume": 100, "oi": 100,
             }) or results
 
