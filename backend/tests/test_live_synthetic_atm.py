@@ -112,3 +112,37 @@ def test_atm_tracker_diagnostics_separate_missing_chain_from_missing_price():
     assert by_symbol["ABC"]["concrete_strike_count"] == 2
     assert by_symbol["ABC"]["has_underlying_price"] is False
     assert by_symbol["ABC"]["atm_ready"] is False
+
+
+def test_spot_snapshot_returns_real_fresh_underlying_price_with_age():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (22000.0, 22100.0)})
+    now = time_ns()
+    tracker.update("NIFTY", 22054.25, now - 250_000_000)
+
+    snapshot = tracker.spot_snapshot("nifty", now_ns=now)
+
+    assert snapshot is not None
+    assert snapshot["spot_price"] == 22054.25
+    assert snapshot["spot_timestamp_ns"] == now - 250_000_000
+    assert snapshot["spot_age_seconds"] == 0.25
+
+
+def test_spot_snapshot_fails_closed_for_missing_or_stale_underlying_price():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (22000.0, 22100.0)})
+    now = time_ns()
+    assert tracker.spot_snapshot("NIFTY", now_ns=now) is None
+
+    tracker.update("NIFTY", 22054.25, now - 6_000_000_000)
+    assert tracker.spot_snapshot("NIFTY", now_ns=now) is None
+
+
+def test_spot_snapshot_rejects_unknown_symbols():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (22000.0, 22100.0)})
+    tracker.update("NIFTY", 22054.25, time_ns())
+    assert tracker.spot_snapshot("BANKNIFTY") is None
