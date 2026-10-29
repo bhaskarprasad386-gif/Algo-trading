@@ -1,5 +1,5 @@
 """Durable single-owner metadata for Box Spread real-broker safety."""
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -24,7 +24,7 @@ class BoxSpreadRealOwnerState(Base):
     real_trading_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     kill_switch: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False
     )
 
 
