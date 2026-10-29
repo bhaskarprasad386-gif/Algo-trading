@@ -69,8 +69,11 @@ class LiveSyntheticAtmTracker:
         for symbol, strikes in strikes_by_symbol.items():
             key = str(symbol).strip().upper()
             values = tuple(sorted({float(strike) for strike in strikes}))
-            if not key or not values:
-                raise ValueError("each ATM symbol requires at least one concrete strike")
+            if not key:
+                raise ValueError("ATM symbol must be non-empty")
+            # Spot-only index targets may not have a currently listed option
+            # chain. Keep them tracked for live spot quotes, but never mark ATM
+            # ready until concrete strikes are available.
             if any(value <= 0 for value in values):
                 raise ValueError("ATM strikes must be positive")
             normalized[key] = values
@@ -114,7 +117,7 @@ class LiveSyntheticAtmTracker:
     ) -> float | None:
         key = str(symbol).strip().upper()
         strikes = self._strikes.get(key)
-        if strikes is None:
+        if not strikes:
             return None
         with self._lock:
             quote = self._prices.get(key)
@@ -194,7 +197,10 @@ class LiveSyntheticAtmTracker:
         return {
             "tracked_symbol_count": len(strike_sets),
             "atm_ready_symbol_count": sum(1 for item in symbols if item["atm_ready"]),
-            "symbols_without_concrete_chain": [],
+            "symbols_without_concrete_chain": [
+                item["underlying"] for item in symbols
+                if item["concrete_strike_count"] == 0
+            ],
             "symbols": symbols,
         }
 

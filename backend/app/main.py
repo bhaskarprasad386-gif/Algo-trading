@@ -886,6 +886,14 @@ async def _live_box_spread_loop() -> None:
                     selected.append(expiries[0])
                 for _day, expiry, _kind in selected:
                     targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=expiry))
+
+            # Spot quotes are useful independently of whether the option master
+            # currently exposes an eligible expiry/strike chain. Ensure every
+            # supported NSE/BSE index remains subscribed for spot-only updates.
+            targeted_symbols = {target.underlying.strip().upper() for target in targets_list}
+            for symbol in sorted(OPTION_STRATEGY_INDEX_SYMBOLS - targeted_symbols):
+                targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
+
             set_live_box_expiry_types(expiry_types)
             targets = tuple(targets_list)
             if not targets:

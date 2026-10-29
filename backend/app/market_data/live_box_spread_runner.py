@@ -128,6 +128,11 @@ class LiveBoxSpreadRunner:
                 if expiries: wanted = min(expiries)[1]
             if wanted:
                 strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted, exchange_segment=("BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO")))
+        # Track every configured target for spot quotes even if an option chain
+        # is temporarily unavailable. Empty strike sets intentionally disable
+        # ATM readiness while preserving source-backed spot snapshots.
+        for symbol in symbols:
+            strikes.setdefault(symbol.strip().upper(), ())
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
         self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer="box-underlyings")
