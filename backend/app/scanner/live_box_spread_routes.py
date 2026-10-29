@@ -8,6 +8,7 @@ from app.core.database import SessionLocal
 
 router=APIRouter(prefix="/api/v1/scanner/box-spread",tags=["box-spread"])
 _latest=()
+_diagnostics_getter = None
 _expiry_types = {}
 MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
 
@@ -42,6 +43,19 @@ def _leg_timestamps(row):
 
 def configure(getter):
     global _latest; _latest=getter
+
+def configure_diagnostics(getter):
+    """Configure a read-only getter for the active Box Spread scanner diagnostics."""
+    global _diagnostics_getter
+    _diagnostics_getter = getter
+
+@router.get("/diagnostics")
+def diagnostics():
+    """Expose quote-assembly rejection reasons without raw quotes or account data."""
+    snapshot = _diagnostics_getter() if callable(_diagnostics_getter) else None
+    if not isinstance(snapshot, dict):
+        snapshot = {"counts": {}, "last_scan": {}, "active_buckets": 0}
+    return {"strategy": "box-spread", "status": "available" if snapshot.get("last_scan") else "waiting", **snapshot}
 
 def set_expiry_types(expiry_types):
     """Set expiry classifications derived from the current option instrument master."""

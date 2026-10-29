@@ -19,9 +19,12 @@ class LiveBoxSpreadScanner:
 
     @staticmethod
     def _price(v):
+        from math import isfinite
         try:
-            n=float(v); return n if n>0 else None
-        except (TypeError,ValueError): return None
+            n = float(v)
+            return n if isfinite(n) and n > 0 else None
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     @staticmethod
     def _expiry(v):
@@ -43,20 +46,48 @@ class LiveBoxSpreadScanner:
     def observe(self,payload):
         symbol=str(payload.get("underlying") or "").strip().upper()
         cls=str(payload.get("instrument_class") or "").strip().upper()
-        ts=int(payload.get("source_timestamp_ns") or 0)
-        import time
-        if ts >= 1_000_000_000_000_000 and time.time_ns() - ts > 5_000_000_000:
-            with self._lock: self._diagnostic_counts["stale_timestamp"] += 1
+        try:
+            ts = int(payload.get("source_timestamp_ns") or 0)
+        except (TypeError, ValueError, OverflowError):
+            with self._lock:
+                self._diagnostic_counts["invalid_identity_or_timestamp"] += 1
             return ()
+        import time
+        if ts >= 1_000_000_000_000_000:
+            age_ns = time.time_ns() - ts
+            if age_ns > 5_000_000_000:
+                with self._lock:
+                    self._diagnostic_counts["stale_timestamp"] += 1
+                return ()
+            if age_ns < -1_000_000_000:
+                with self._lock:
+                    self._diagnostic_counts["future_timestamp"] += 1
+                return ()
         typ=str(payload.get("option_type") or "").strip().upper()
         strike=self._price(payload.get("strike"))
         bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))
         if not symbol or cls not in {"STOCK","INDEX"} or ts<=0 or typ not in {"CE","PE"} or strike is None:
-            with self._lock: self._diagnostic_counts["invalid_identity_or_timestamp"] += 1
+            with self._lock:
+                self._diagnostic_counts["invalid_identity_or_timestamp"] += 1
+            return ()
+        if bid is None or ask is None:
+            with self._lock:
+                for side, value, raw in (("bid", bid, payload.get("bid")), ("ask", ask, payload.get("ask"))):
+                    if value is None:
+                        key = "missing_" + side + "_quote" if raw is None or str(raw).strip() == "" else "invalid_" + side + "_quote"
+                        self._diagnostic_counts[key] += 1
+            return ()
+        if ask < bid:
+            with self._lock:
+                self._diagnostic_counts["crossed_market_quote"] += 1
             return ()
         with self._lock:
+            try:
+                expiry = self._expiry(payload.get("expiry"))
+            except (TypeError, ValueError):
+                self._diagnostic_counts["invalid_expiry"] += 1
+                return ()
             self._diagnostic_counts["ticks_accepted_for_assembly"] += 1
-            expiry=self._expiry(payload.get("expiry"))
             key=self._matching_bucket_key(symbol,ts,expiry)
             bucket=self._buckets.setdefault(key,{})
             leg_key=(strike,typ)
