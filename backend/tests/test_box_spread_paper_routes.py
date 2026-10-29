@@ -65,6 +65,46 @@ def test_matching_live_row_skips_malformed_strikes_without_crashing(monkeypatch)
     assert routes._matching_live_row(contracts) is matching
 
 
+@pytest.mark.parametrize(("strike_field", "raw_strike"), [
+    ("low_strike", None),
+    ("low_strike", "bad"),
+    ("high_strike", "NaN"),
+    ("high_strike", "inf"),
+])
+def test_simulation_rejects_malformed_live_strikes_without_server_error(monkeypatch, strike_field, raw_strike):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key=f"malformed-live-{strike_field}-{raw_strike}", account_key="isolated-test",
+    )
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    row[strike_field] = raw_strike
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+    monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
+    monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: [])
+    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(routes.simulate_entry(
+            123, routes.SimulateEntry(account_key="isolated-test"),
+        ))
+
+    assert raised.value.status_code == 409
+    assert "No matching fresh live Box Spread opportunity" in raised.value.detail
+
+
 @pytest.mark.parametrize("raw_strike", [None, "NaN", "inf", "bad"])
 def test_strike_match_rejects_nonfinite_or_malformed_values(raw_strike):
     assert routes._strike_matches(raw_strike, 25000.0) is False
