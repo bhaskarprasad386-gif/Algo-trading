@@ -60,8 +60,6 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
     max_skew_ns=min(max_age_ns,MAX_LEG_TIMESTAMP_SKEW_NS)
     fresh_rows=[]
     for row in rows:
-        low_ts=int(getattr(row.low,"timestamp_ns",0) or 0)
-        high_ts=int(getattr(row.high,"timestamp_ns",0) or 0)
         leg_timestamps = _leg_timestamps(row)
         # All four executable option legs must be fresh and synchronized.
         if not all(cutoff <= stamp <= now_ns for stamp in leg_timestamps):
