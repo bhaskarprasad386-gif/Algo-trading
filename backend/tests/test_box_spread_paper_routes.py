@@ -764,3 +764,26 @@ def test_entry_quote_selector_rejects_missing_executable_quote():
 
     assert raised.value.status_code == 409
     assert "fresh executable entry quote is unavailable for LOW_PE" in raised.value.detail
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("low_call_bid", 12),  # crossed market: bid exceeds ask
+        ("high_call_ask", float("nan")),  # even the unselected side must be valid
+        ("high_put_bid", 0),
+    ],
+)
+def test_entry_quote_selector_rejects_invalid_two_sided_market(field, value):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    row[field] = value
+
+    with pytest.raises(HTTPException) as raised:
+        routes._reference_prices_for_direction(row, "LONG")
+
+    assert raised.value.status_code == 409
+    assert "fresh executable entry quote is unavailable" in raised.value.detail
