@@ -27,6 +27,14 @@ class LiveBoxSpreadScanner:
             return None
 
     @staticmethod
+    def _quantity(value):
+        try:
+            number = float(value)
+            return int(number) if number >= 0 and number.is_integer() else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
     def _expiry(v):
         text=str(v or "").strip().upper()
         for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d","%d-%m-%Y"):
@@ -124,6 +132,8 @@ class LiveBoxSpreadScanner:
                         min(int(float(ce.get("volume") or 0)),int(float(pe.get("volume") or 0))),
                         min(int(float(ce.get("oi") or 0)),int(float(pe.get("oi") or 0))),
                         self._price(ce.get("ltp")),self._price(pe.get("ltp")),ce_ts,pe_ts,
+                        self._quantity(ce.get("bid_qty")),self._quantity(ce.get("ask_qty")),
+                        self._quantity(pe.get("bid_qty")),self._quantity(pe.get("ask_qty")),
                     ))
                 except (ValueError,TypeError):
                     self._diagnostic_counts["malformed_leg_pair"] += 1
