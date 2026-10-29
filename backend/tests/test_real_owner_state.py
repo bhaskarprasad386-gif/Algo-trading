@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.brokers.real_owner_state import account_fingerprint, claim_authenticated_account
+from app.brokers.real_owner_state import account_fingerprint, claim_authenticated_account, reconcile_owner_state_on_startup
 from app.core.database import Base
 from app.models import BoxSpreadRealOwnerState
 
@@ -152,3 +152,25 @@ def test_connection_lifecycle_fails_closed_without_owner_row(db):
     with pytest.raises(HTTPException) as raised:
         set_owner_connection_state(db, True)
     assert raised.value.status_code == 503
+
+
+def test_startup_reconciliation_clears_stale_connection_and_disarms(db):
+    state = claim_authenticated_account(db, "angel_one", "CLIENT123")
+    state.connected = True
+    state.real_trading_enabled = True
+    state.kill_switch = False
+    db.commit()
+
+    assert reconcile_owner_state_on_startup(db) is True
+
+    db.expire_all()
+    persisted = db.query(BoxSpreadRealOwnerState).one()
+    assert persisted.id == state.id
+    assert persisted.connected is False
+    assert persisted.real_trading_enabled is False
+    assert persisted.kill_switch is True
+
+
+def test_startup_reconciliation_does_not_create_unclaimed_owner(db):
+    assert reconcile_owner_state_on_startup(db) is False
+    assert db.query(BoxSpreadRealOwnerState).count() == 0
