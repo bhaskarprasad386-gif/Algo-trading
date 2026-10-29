@@ -114,6 +114,27 @@ def set_owner_connection_state(db: Session, connected: bool) -> BoxSpreadRealOwn
 
 
 
+def disable_owner_trading(db: Session) -> BoxSpreadRealOwnerState:
+    """Durably engage the Box Spread kill switch without changing connection state."""
+    state = (
+        db.query(BoxSpreadRealOwnerState)
+        .filter(BoxSpreadRealOwnerState.owner_key == OWNER_KEY)
+        .with_for_update()
+        .first()
+    )
+    if state is None or not state.account_fingerprint:
+        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable")
+    state.real_trading_enabled = False
+    state.kill_switch = True
+    try:
+        db.commit()
+        db.refresh(state)
+    except Exception:
+        db.rollback()
+        raise
+    return state
+
+
 def reconcile_owner_state_on_startup(db: Session) -> bool:
     """Clear stale process-local connection claims after a service restart.
 
