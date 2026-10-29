@@ -196,3 +196,41 @@ def test_durable_kill_switch_fails_closed_without_owner_row(db):
     with pytest.raises(HTTPException) as raised:
         disable_owner_trading(db)
     assert raised.value.status_code == 503
+
+
+
+def test_safety_status_reports_durable_owner_flags_not_process_local_state(db):
+    from app.brokers.routes import safety_status
+    from app.brokers.safety import trading_safety
+
+    state = claim_authenticated_account(db, "angel_one", "CLIENT123")
+    state.real_trading_enabled = False
+    state.kill_switch = True
+    db.commit()
+
+    # Simulate stale or divergent process memory: durable state must win.
+    trading_safety.enable(999)
+    result = safety_status(db, 999)
+
+    assert result == {
+        "real_trading_enabled": False,
+        "kill_switch": True,
+        "enabled_at": None,
+    }
+
+
+def test_broker_status_reports_durable_owner_flags_and_defaults_closed(db):
+    from app.brokers.routes import status
+    from app.brokers.safety import trading_safety
+
+    state = claim_authenticated_account(db, "angel_one", "CLIENT123")
+    state.real_trading_enabled = False
+    state.kill_switch = True
+    db.commit()
+    trading_safety.enable(999)
+
+    result = status("angel_one", db, 999)
+
+    assert result["real_trading"] is False
+    assert result["kill_switch"] is True
+
