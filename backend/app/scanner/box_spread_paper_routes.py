@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import math
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -246,22 +247,40 @@ def _canonical_expiry(value: object) -> str:
 
 
 def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict[str, float]:
-    """Select executable quote sides consistent with the four paper leg actions."""
+    """Select and validate executable prices before durably claiming an entry."""
     if direction == "LONG":
-        return {
-            "LOW_CE": row["low_call_ask"],
-            "HIGH_CE": row["high_call_bid"],
-            "HIGH_PE": row["high_put_ask"],
-            "LOW_PE": row["low_put_bid"],
+        quote_fields = {
+            "LOW_CE": "low_call_ask",
+            "HIGH_CE": "high_call_bid",
+            "HIGH_PE": "high_put_ask",
+            "LOW_PE": "low_put_bid",
         }
-    if direction == "SHORT":
-        return {
-            "LOW_CE": row["low_call_bid"],
-            "HIGH_CE": row["high_call_ask"],
-            "HIGH_PE": row["high_put_bid"],
-            "LOW_PE": row["low_put_ask"],
+    elif direction == "SHORT":
+        quote_fields = {
+            "LOW_CE": "low_call_bid",
+            "HIGH_CE": "high_call_ask",
+            "HIGH_PE": "high_put_bid",
+            "LOW_PE": "low_put_ask",
         }
-    raise ValueError("direction must be LONG or SHORT")
+    else:
+        raise ValueError("direction must be LONG or SHORT")
+
+    prices: dict[str, float] = {}
+    for role, field in quote_fields.items():
+        try:
+            price = float(row[field])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=409,
+                detail=f"fresh executable entry quote is unavailable for {role}",
+            ) from None
+        if not math.isfinite(price) or price <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"fresh executable entry quote is unavailable for {role}",
+            )
+        prices[role] = price
+    return prices
 
 
 def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> float:
