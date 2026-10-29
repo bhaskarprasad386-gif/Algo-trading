@@ -64,7 +64,7 @@ def test_atm_tracker_rejects_stale_underlying_price():
     tracker = LiveSyntheticAtmTracker(
         strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)}
     )
-    old_timestamp = time_ns() - 6_000_000_000
+    old_timestamp = time_ns() - 11_000_000_000
     assert tracker.update("NIFTY", 107.0, old_timestamp) is None
     assert tracker.atm("NIFTY") is None
 
@@ -136,7 +136,7 @@ def test_spot_snapshot_fails_closed_for_missing_or_stale_underlying_price():
     now = time_ns()
     assert tracker.spot_snapshot("NIFTY", now_ns=now) is None
 
-    tracker.update("NIFTY", 22054.25, now - 6_000_000_000)
+    tracker.update("NIFTY", 22054.25, now - 11_000_000_000)
     assert tracker.spot_snapshot("NIFTY", now_ns=now) is None
 
 
