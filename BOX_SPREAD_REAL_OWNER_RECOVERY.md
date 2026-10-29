@@ -4,9 +4,12 @@
 
 This is an operator procedure for the dedicated Box Spread real-owner binding in
 `box_spread_real_owner_state`. It is not an automated recovery feature.
-Until an audited recovery tool and session reconciliation exist, account-switch
-rejection must remain fail-closed. Real-trading arming is unavailable and must
-not be enabled as part of recovery.
+Until an audited recovery tool exists, account-switch rejection must remain
+fail-closed. Real-trading arming is unavailable and must not be enabled as part
+of recovery. The disable and emergency kill-switch endpoints now persist
+`real_trading_enabled = false` and `kill_switch = true` to this owner row; they
+first disarm process-local state and return HTTP 503 if durable confirmation
+fails.
 
 This procedure applies only to Box Spread real-owner binding. Do not change
 Synthetic Future, Cash-Future, Calendar Spread, paper-trading state, or shared
