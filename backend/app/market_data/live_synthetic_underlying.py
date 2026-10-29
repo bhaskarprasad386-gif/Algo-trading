@@ -13,7 +13,7 @@ from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 TOKEN_REFRESH_SECONDS = 30.0
-UNDERLYING_STALE_AFTER_SECONDS = 5.0
+UNDERLYING_STALE_AFTER_SECONDS = 10.0
 
 
 def filter_resolvable_index_symbols(instrument_master: InstrumentMaster, symbols) -> tuple[str, ...]:
@@ -296,7 +296,7 @@ class LiveSyntheticUnderlyingFeed:
                 if source_timestamp_ns > 0 else None
             )
             # A frame arriving now is not fresh if its exchange timestamp is
-            # old. ATM tracking rejects source timestamps older than 5s and
+            # old. ATM tracking rejects source timestamps older than its configured freshness window.
             # future-skewed timestamps; diagnostics must agree instead of
             # reporting LIVE solely from a recent receive time.
             if receive_age_seconds is None:
