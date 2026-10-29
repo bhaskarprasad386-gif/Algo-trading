@@ -92,3 +92,15 @@ def test_owner_login_rate_limits_repeated_failures(monkeypatch):
     with pytest.raises(HTTPException) as raised:
         auth.login_real_owner(auth.RealOwnerLogin(password="wrong-password"), Request())
     assert raised.value.status_code == 429
+
+
+def test_broker_management_routes_require_owner_auth():
+    from app.brokers import routes
+
+    for route in routes.router.routes:
+        if route.path.endswith("/owner-auth/login") or route.path.endswith("/web/settings"):
+            continue
+        assert any(
+            dependency.dependency is auth.require_real_owner_access
+            for dependency in route.dependant.dependencies
+        ), route.path
