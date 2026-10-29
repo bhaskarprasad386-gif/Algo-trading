@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -11,9 +11,9 @@ from app.brokers.angel_one import AngelOneAdapter
 from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
+from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
 from app.core.database import get_db
 from app.core.logger import app_logger
-from app.core.user_context import current_user_id
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
 
@@ -32,50 +32,57 @@ class RealTradingEnableRequest(BaseModel):
 
 
 _sessions: dict[tuple[int, str], AngelOneAdapter] = {}
+
+
+@router.post("/owner-auth/login")
+def owner_login(payload: RealOwnerLogin, request: Request):
+    """Issue a short-lived token for the separately configured Box Spread owner."""
+    return login_real_owner(payload, request)
+
+
 @router.get("")
-def supported_brokers(user_id: int = Depends(current_user_id)) -> dict:
+def supported_brokers(user_id: int = Depends(require_real_owner_access)) -> dict:
     return {"brokers": BrokerRegistry().names()}
 
 
 @router.get("/connections")
-def connections(user_id: int = Depends(current_user_id)) -> dict:
+def connections(user_id: int = Depends(require_real_owner_access)) -> dict:
     return {"connections": [{"broker": c.broker, "connected": c.connected, "display_name": c.display_name, "connected_at": c.connected_at.isoformat() if c.connected_at else None} for c in broker_connections.list(user_id)]}
 
 
 @router.get("/safety")
-def safety_status(user_id: int = Depends(current_user_id)) -> dict:
+def safety_status(user_id: int = Depends(require_real_owner_access)) -> dict:
     state = trading_safety.get(user_id)
     return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "enabled_at": state.enabled_at.isoformat() if state.enabled_at else None}
 
 
 @router.post("/safety/enable")
-def enable_real_trading(payload: RealTradingEnableRequest, user_id: int = Depends(current_user_id)) -> dict:
+def enable_real_trading(payload: RealTradingEnableRequest, user_id: int = Depends(require_real_owner_access)) -> dict:
     if payload.confirmation.strip().upper() != "ENABLE REAL TRADING":
         raise HTTPException(status_code=400, detail="Explicit confirmation required: ENABLE REAL TRADING")
 
-    # Fail closed until this route has authenticated owner authorization and a
-    # durable, single-account ownership model. Broker sessions and safety state
-    # are currently process-local; an explicit phrase alone is not authorization.
+    # Fail closed until durable single-account ownership, session lifecycle,
+    # order reconciliation, risk controls, and recovery are implemented.
     raise HTTPException(
         status_code=503,
-        detail="Real-trading arming is unavailable until owner authentication and durable account ownership are implemented",
+        detail="Real-trading arming is unavailable until durable account ownership and execution safety controls are implemented",
     )
 
 
 @router.post("/safety/disable")
-def disable_real_trading(user_id: int = Depends(current_user_id)) -> dict:
+def disable_real_trading(user_id: int = Depends(require_real_owner_access)) -> dict:
     state = trading_safety.disable(user_id)
     return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Real trading disabled and kill switch engaged."}
 
 
 @router.post("/safety/kill-switch")
-def emergency_kill_switch(user_id: int = Depends(current_user_id)) -> dict:
+def emergency_kill_switch(user_id: int = Depends(require_real_owner_access)) -> dict:
     state = trading_safety.disable(user_id)
     return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Emergency kill switch engaged."}
 
 
 @router.post("/connect")
-def connect(payload: ConnectRequest, user_id: int = Depends(current_user_id)) -> dict:
+def connect(payload: ConnectRequest, user_id: int = Depends(require_real_owner_access)) -> dict:
     broker = payload.broker.strip().lower()
     if broker != "angel_one":
         raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
@@ -95,7 +102,7 @@ def connect(payload: ConnectRequest, user_id: int = Depends(current_user_id)) ->
 
 
 @router.get("/{broker}/status")
-def status(broker: str, user_id: int = Depends(current_user_id)) -> dict:
+def status(broker: str, user_id: int = Depends(require_real_owner_access)) -> dict:
     key = (user_id, broker.strip().lower())
     adapter = _sessions.get(key)
     item = broker_connections.get(user_id, key[1])
@@ -104,7 +111,7 @@ def status(broker: str, user_id: int = Depends(current_user_id)) -> dict:
 
 
 @router.delete("/{broker}")
-def disconnect(broker: str, user_id: int = Depends(current_user_id)) -> dict:
+def disconnect(broker: str, user_id: int = Depends(require_real_owner_access)) -> dict:
     name = broker.strip().lower()
     adapter = _sessions.pop((user_id, name), None)
     if adapter is not None:

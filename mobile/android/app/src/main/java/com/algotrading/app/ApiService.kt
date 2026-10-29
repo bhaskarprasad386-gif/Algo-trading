@@ -61,6 +61,8 @@ data class LiveCashFutureSignal(
 data class LiveCashFutureScanResponse(val status: String = "", val scanner: String = "", val mode: String = "", val data: List<LiveCashFutureSignal> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
 data class CashFutureScanError(val symbol: String = "", val error: String = "")
 data class CashFutureScanResponse(val status: String, val scanner: String, val mode: String, val symbols_requested: List<String> = emptyList(), val scanned_observations: Int = 0, val opportunity_count: Int = 0, val data: List<CashFutureOpportunity> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
+data class RealOwnerLoginRequest(val password: String)
+data class RealOwnerLoginResponse(val access_token: String = "", val token_type: String = "bearer", val expires_in: Long = 0L)
 data class BrokerConnectRequest(val broker: String = "angel_one", val display_name: String? = null, val api_key: String, val client_code: String, val password: String, val totp_secret: String)
 data class BrokerConnectionInfo(val broker: String, val connected: Boolean, val display_name: String? = null, val connected_at: String? = null)
 data class BrokerConnectionsResponse(val connections: List<BrokerConnectionInfo> = emptyList())
@@ -244,6 +246,7 @@ interface ApiInterface {
     @GET("/api/v1/scanner/calendar-spread/live") suspend fun calendarSpreadLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @GET("/api/v1/scanner/synthetic-cash-carry/live") suspend fun syntheticCashCarryLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @GET("/api/v1/scanner/box-spread/live") suspend fun boxSpreadLive(@Query("limit") limit: Int = 50): Map<String, Any?>
+    @POST("/api/v1/brokers/owner-auth/login") suspend fun loginRealOwner(@Body request: RealOwnerLoginRequest): RealOwnerLoginResponse
     @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
     @POST("/api/v1/brokers/connect") suspend fun connectBroker(@Body request: BrokerConnectRequest): BrokerConnectResponse
     @GET("/api/v1/brokers/{broker}/status") suspend fun brokerStatus(@Path("broker") broker: String): BrokerStatusResponse
@@ -294,8 +297,25 @@ interface ApiInterface {
 }
 
 object ApiService {
+    @Volatile private var realOwnerAccessToken: String? = null
+
+    fun setRealOwnerAccessToken(token: String?) { realOwnerAccessToken = token?.takeIf { it.isNotBlank() } }
+    fun hasRealOwnerAccessToken(): Boolean = !realOwnerAccessToken.isNullOrBlank()
+
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val isBrokerApi = request.url.encodedPath.startsWith("/api/v1/brokers/") &&
+                    !request.url.encodedPath.endsWith("/owner-auth/login")
+                val token = realOwnerAccessToken
+                val authenticated = if (isBrokerApi && !token.isNullOrBlank()) {
+                    request.newBuilder().header("Authorization", "Bearer $token").build()
+                } else request
+                val response = chain.proceed(authenticated)
+                if (isBrokerApi && response.code == 401) realOwnerAccessToken = null
+                response
+            }
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
