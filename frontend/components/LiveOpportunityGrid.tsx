@@ -136,7 +136,7 @@ export default function LiveOpportunityGrid() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1350px] border-collapse text-left text-xs">
             <thead><tr className="border-b border-slate-700 text-slate-400">
-              {["Status","Time (IST)","Underlying","Spot Price","Expiry","Expiry Type","Low / High Strike","Direction","Box Edge","Bid / Ask depth (price (qty))","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
+              {["Status","Time (IST)","Underlying","Spot Price","Expiry","Expiry Type","Weekly Opportunity","Low / High Strike","Direction","Box Edge","Bid / Ask depth (price (qty))","Edge / Lot","Gross P&L"].map((label) => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
             <tbody>{rows.map(({ key, row, lastSeen, status }) => (
               <tr key={key} className={"border-b border-slate-800 transition-opacity " + (status === "STALE" ? "opacity-40" : "opacity-100")}>
@@ -146,6 +146,7 @@ export default function LiveOpportunityGrid() {
                 <td className="px-3 py-3 tabular-nums">{fmt(row.spot_price)}{n(row, "spot_age_seconds") !== null ? <span className="ml-1 text-[10px] text-slate-400">({fmt(row.spot_age_seconds)}s)</span> : null}</td>
                 <td className="px-3 py-3">{String(row.expiry_date || row.expiry || "—")}</td>
                 <td className="px-3 py-3"><span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (String(row.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-950 text-cyan-300" : String(row.expiry_type || "").toUpperCase() === "MONTHLY" ? "bg-violet-950 text-violet-300" : "bg-slate-800 text-slate-300")}>{String(row.expiry_type || "UNKNOWN").toUpperCase()}</span></td>
+                <td className="px-3 py-3"><span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (String(row.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-950 text-cyan-300" : String(row.expiry_type || "").toUpperCase() === "MONTHLY" ? "bg-slate-800 text-slate-400" : "bg-slate-800 text-slate-300")}>{String(row.expiry_type || "").toUpperCase() === "WEEKLY" ? "YES" : String(row.expiry_type || "").toUpperCase() === "MONTHLY" ? "NO" : "UNKNOWN"}</span></td>
                 <td className="px-3 py-3 tabular-nums">{fmt(row.low_strike)} / {fmt(row.high_strike)}</td>
                 <td className="px-3 py-3">{String(row.direction || "—")}</td>
                 <td className="px-3 py-3 font-bold text-emerald-300 tabular-nums">{fmt(row.executable_edge)}</td>
