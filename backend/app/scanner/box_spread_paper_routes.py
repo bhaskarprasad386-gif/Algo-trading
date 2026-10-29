@@ -247,39 +247,32 @@ def _canonical_expiry(value: object) -> str:
 
 
 def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict[str, float]:
-    """Select and validate executable prices before durably claiming an entry."""
-    if direction == "LONG":
-        quote_fields = {
-            "LOW_CE": "low_call_ask",
-            "HIGH_CE": "high_call_bid",
-            "HIGH_PE": "high_put_ask",
-            "LOW_PE": "low_put_bid",
-        }
-    elif direction == "SHORT":
-        quote_fields = {
-            "LOW_CE": "low_call_bid",
-            "HIGH_CE": "high_call_ask",
-            "HIGH_PE": "high_put_bid",
-            "LOW_PE": "low_put_ask",
-        }
-    else:
+    """Validate complete two-sided quotes and select executable prices before claiming entry."""
+    quote_pairs = {
+        "LOW_CE": ("low_call_bid", "low_call_ask"),
+        "HIGH_CE": ("high_call_bid", "high_call_ask"),
+        "HIGH_PE": ("high_put_bid", "high_put_ask"),
+        "LOW_PE": ("low_put_bid", "low_put_ask"),
+    }
+    if direction not in {"LONG", "SHORT"}:
         raise ValueError("direction must be LONG or SHORT")
 
     prices: dict[str, float] = {}
-    for role, field in quote_fields.items():
+    for role, (bid_field, ask_field) in quote_pairs.items():
         try:
-            price = float(row[field])
+            bid, ask = float(row[bid_field]), float(row[ask_field])
         except (KeyError, TypeError, ValueError, OverflowError):
             raise HTTPException(
                 status_code=409,
                 detail=f"fresh executable entry quote is unavailable for {role}",
             ) from None
-        if not math.isfinite(price) or price <= 0:
+        if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
             raise HTTPException(
                 status_code=409,
                 detail=f"fresh executable entry quote is unavailable for {role}",
             )
-        prices[role] = price
+        buy = direction == "LONG" if role in {"LOW_CE", "HIGH_PE"} else direction == "SHORT"
+        prices[role] = ask if buy else bid
     return prices
 
 
