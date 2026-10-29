@@ -787,3 +787,60 @@ def test_entry_quote_selector_rejects_invalid_two_sided_market(field, value):
 
     assert raised.value.status_code == 409
     assert "fresh executable entry quote is unavailable" in raised.value.detail
+
+
+@pytest.mark.parametrize(
+    ("direction", "role", "expected"),
+    [
+        ("LONG", "LOW_CE", 10),
+        ("LONG", "HIGH_CE", 21),
+        ("LONG", "HIGH_PE", 30),
+        ("LONG", "LOW_PE", 41),
+        ("SHORT", "LOW_CE", 11),
+        ("SHORT", "HIGH_CE", 20),
+        ("SHORT", "HIGH_PE", 31),
+        ("SHORT", "LOW_PE", 40),
+    ],
+)
+def test_exit_quote_selector_uses_valid_executable_side(direction, role, expected):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+
+    assert routes._exit_reference_price(row, direction, role) == expected
+
+
+@pytest.mark.parametrize(
+    ("bid_field", "ask_field", "bid", "ask"),
+    [
+        ("low_call_bid", "low_call_ask", 12, 11),  # crossed
+        ("high_call_bid", "high_call_ask", float("nan"), 21),
+        ("high_put_bid", "high_put_ask", 30, float("inf")),
+        ("low_put_bid", "low_put_ask", 0, 41),
+    ],
+)
+def test_exit_quote_selector_rejects_invalid_two_sided_market(
+    bid_field, ask_field, bid, ask,
+):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    row[bid_field] = bid
+    row[ask_field] = ask
+
+    with pytest.raises(HTTPException) as raised:
+        routes._exit_reference_price(row, "LONG", {
+            "low_call_bid": "LOW_CE",
+            "high_call_bid": "HIGH_CE",
+            "high_put_bid": "HIGH_PE",
+            "low_put_bid": "LOW_PE",
+        }[bid_field])
+
+    assert raised.value.status_code == 409
+    assert "fresh executable exit quote is unavailable" in raised.value.detail
