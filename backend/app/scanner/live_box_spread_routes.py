@@ -81,6 +81,13 @@ def set_expiry_types(expiry_types):
         for (symbol, expiry), kind in (expiry_types or {}).items()
     }
 
+
+def classify_expiry_type(symbol, expiry):
+    """Return the currently known expiry type for a normalized symbol/expiry pair."""
+    return _expiry_types.get(
+        (str(symbol or "").strip().upper(), _expiry_key(expiry)), "UNKNOWN"
+    )
+
 @router.get("/live")
 def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annotated[float, Query(gt=0,le=60)] = 5.0):
     rows=list(_latest()) if callable(_latest) else list(_latest)
@@ -131,9 +138,11 @@ def snapshots(
             except (TypeError, ValueError):
                 continue
             item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            item["expiry_type"] = _expiry_types.get(
-                (str(row.symbol).strip().upper(), _expiry_key(row.expiry)), "UNKNOWN"
-            )
+            # Prefer the current instrument-master classification, but preserve the
+            # classification captured with the snapshot if the mapping is unavailable.
+            current_type = classify_expiry_type(row.symbol, row.expiry)
+            saved_type = str(item.get("expiry_type") or "UNKNOWN").strip().upper()
+            item["expiry_type"] = current_type if current_type != "UNKNOWN" else saved_type
             item["freshness"] = "SAVED SNAPSHOT"
             data.append(item)
         return {

@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.models import LiveBoxSpreadSnapshot
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
+from app.scanner import live_box_spread_routes as box_spread_routes
 
 
 def make_result(timestamp_ns, low_strike=22600, high_strike=23300, direction="LONG"):
@@ -100,6 +101,36 @@ def test_pipeline_persists_every_opportunity_returned_by_one_scan(tmp_path, monk
             }
         assert (tmp_path / "pending.jsonl").read_text(encoding="utf-8") == ""
     finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+
+def test_pipeline_persists_weekly_expiry_classification(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    box_spread_routes.set_expiry_types({("NIFTY", "03NOV2026"): "WEEKLY"})
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    try:
+        pipeline = LiveBoxSpreadPipeline(
+            scanner=RepeatingScanner(make_result(1_793_084_708_000_000_000)),
+            session_factory=Session,
+            alerts=NoopAlerts(),
+        )
+        pipeline.observe({})
+
+        with Session() as db:
+            row = db.query(LiveBoxSpreadSnapshot).one()
+            payload = __import__("json").loads(row.payload_json)
+            assert payload["expiry_type"] == "WEEKLY"
+    finally:
+        box_spread_routes.set_expiry_types({})
         Base.metadata.drop_all(engine)
         engine.dispose()
 
