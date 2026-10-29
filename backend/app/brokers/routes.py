@@ -12,6 +12,7 @@ from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
 from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
+from app.brokers.real_owner_state import claim_authenticated_account
 from app.core.database import get_db
 from app.core.logger import app_logger
 
@@ -82,7 +83,7 @@ def emergency_kill_switch(user_id: int = Depends(require_real_owner_access)) -> 
 
 
 @router.post("/connect")
-def connect(payload: ConnectRequest, user_id: int = Depends(require_real_owner_access)) -> dict:
+def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     broker = payload.broker.strip().lower()
     if broker != "angel_one":
         raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
@@ -92,6 +93,16 @@ def connect(payload: ConnectRequest, user_id: int = Depends(require_real_owner_a
     except Exception as exc:
         app_logger.error("Angel One connection failed: %s", exc)
         raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
+    try:
+        claim_authenticated_account(db, broker, result.get("client_code") or payload.client_code)
+    except HTTPException:
+        adapter.disconnect()
+        raise
+    except Exception as exc:
+        adapter.disconnect()
+        db.rollback()
+        app_logger.error("Durable Box Spread account binding failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable") from exc
     old = _sessions.get((user_id, broker))
     if old is not None:
         old.disconnect()
