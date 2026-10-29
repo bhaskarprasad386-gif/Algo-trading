@@ -113,7 +113,7 @@ class LiveSyntheticAtmTracker:
         symbol: str,
         _timestamp_ns: int | None = None,
         *,
-        max_age_seconds: float = 10.0,
+        max_age_seconds: float = 5.0,
     ) -> float | None:
         key = str(symbol).strip().upper()
         strikes = self._strikes.get(key)
@@ -134,7 +134,7 @@ class LiveSyntheticAtmTracker:
         # NSE spot and NFO derivative exchange timestamps can diverge while
         # both feeds are still live. Allow a bounded 5s lead for the spot tick
         # when evaluating a derivative snapshot; stale spot data is still
-        # rejected by the configured 10s freshness window in the other direction.
+        # rejected by the configured freshness window in the other direction.
         # This avoids dropping every scan for a symbol solely because its
         # latest spot timestamp is newer than the option/future snapshot.
         max_future_skew_ns = 5_000_000_000
