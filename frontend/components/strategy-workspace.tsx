@@ -493,6 +493,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [liveApiLastOkAt, setLiveApiLastOkAt] = useState<number | null>(null);
   const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR">("CHECKING");
   const [search, setSearch] = useState("");
+  const [liveExpiryView, setLiveExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
   const [control, setControl] = useState(c.controls[0]);
   const [top15StockSymbols, setTop15StockSymbols] = useState<string[]>([
     "RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY",
@@ -897,10 +898,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         return Number(b.timestamp_ns ?? 0) - Number(a.timestamp_ns ?? 0);
       });
     }
+    if (slug === "box-spread") {
+      // Keep weekly and monthly expiry opportunities in separate views; unknown
+      // expiry types are intentionally not guessed into either category.
+      scopedRows = scopedRows.filter((row) => String(row.expiry_type ?? "").trim().toUpperCase() === liveExpiryView);
+    }
     const q = search.trim().toUpperCase();
     if (!q) return scopedRows;
     return scopedRows.filter((row) => Object.values(row).some((v) => String(v ?? "").toUpperCase().includes(q)));
-  }, [rows, search, slug, control]);
+  }, [rows, search, slug, control, liveExpiryView]);
 
   const signals = rows.filter((row) => isSignal(slug, row)).length;
   const monitorRows = c.pairEndpoint ? pairRows : rows;
@@ -1110,7 +1116,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <Card className="overflow-hidden theme-border theme-surface">
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Live opportunity expiry type">
+            <button type="button" onClick={() => setLiveExpiryView("MONTHLY")} aria-pressed={liveExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
+            <button type="button" onClick={() => setLiveExpiryView("WEEKLY")} aria-pressed={liveExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
+          </div>}{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
           <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span></div>
         </div>
         <div className="grid gap-2 p-3 md:hidden">
