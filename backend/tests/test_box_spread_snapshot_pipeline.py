@@ -24,9 +24,13 @@ def make_result(timestamp_ns, low_strike=22600, high_strike=23300, direction="LO
             call_ltp=10.0,
             call_bid=9.5,
             call_ask=10.5,
+            call_bid_qty=11,
+            call_ask_qty=12,
             put_ltp=12.0,
             put_bid=11.5,
             put_ask=12.5,
+            put_bid_qty=13,
+            put_ask_qty=14,
             lot_size=65,
         )
 
@@ -129,6 +133,12 @@ def test_pipeline_persists_weekly_expiry_classification(tmp_path, monkeypatch):
             row = db.query(LiveBoxSpreadSnapshot).one()
             payload = __import__("json").loads(row.payload_json)
             assert payload["expiry_type"] == "WEEKLY"
+            assert payload["low_call_bid_qty"] == 11
+            assert payload["low_call_ask_qty"] == 12
+            assert payload["low_put_bid_qty"] == 13
+            assert payload["low_put_ask_qty"] == 14
+            assert payload["high_call_bid_qty"] == 11
+            assert payload["high_put_ask_qty"] == 14
     finally:
         box_spread_routes.set_expiry_types({})
         Base.metadata.drop_all(engine)
