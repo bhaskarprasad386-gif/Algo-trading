@@ -9,27 +9,55 @@ _subscribers = set()
 _loop = None
 _latest_getter = None
 _expiry_types = {}
+MAX_QUOTE_AGE_NS = 5_000_000_000
+MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
+
 
 def configure(getter, expiry_types_getter=None):
     global _latest_getter
     _latest_getter = getter
 
+
 def set_expiry_types(mapping):
     global _expiry_types
     _expiry_types = dict(mapping or {})
 
+
+def _leg_timestamps(low, high):
+    """Return timestamps for all four executable option legs."""
+    low_ts = int(getattr(low, "timestamp_ns", 0) or 0)
+    high_ts = int(getattr(high, "timestamp_ns", 0) or 0)
+    return (
+        int(getattr(low, "call_timestamp_ns", None) or low_ts),
+        int(getattr(low, "put_timestamp_ns", None) or low_ts),
+        int(getattr(high, "call_timestamp_ns", None) or high_ts),
+        int(getattr(high, "put_timestamp_ns", None) or high_ts),
+    )
+
+
 def _row(result):
     low, high = result.low, result.high
     now_ns = time.time_ns()
+    leg_timestamps = _leg_timestamps(low, high)
+    oldest_timestamp = min(leg_timestamps)
+    newest_timestamp = max(leg_timestamps)
+
+    # Keep the stream's freshness contract aligned with the HTTP live endpoint.
+    if not all(now_ns - MAX_QUOTE_AGE_NS <= stamp <= now_ns for stamp in leg_timestamps):
+        return None
+    if newest_timestamp - oldest_timestamp > MAX_LEG_TIMESTAMP_SKEW_NS:
+        return None
+
     return {
         "symbol": low.underlying, "instrument_class": low.instrument_class,
         "expiry": low.expiry, "low_strike": low.strike, "high_strike": high.strike,
         "direction": result.direction, "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
-        "last_update_timestamp_ns": max(int(low.timestamp_ns), int(high.timestamp_ns)),
+        "last_update_timestamp_ns": newest_timestamp,
         "observed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "freshness": "LIVE",
-        "quote_age_seconds": round(max(0.0, (now_ns - max(int(low.timestamp_ns), int(high.timestamp_ns))) / 1e9), 3),
+        "quote_age_seconds": round(max(0.0, (now_ns - oldest_timestamp) / 1e9), 3),
+        "timestamp_skew_ms": round((newest_timestamp - oldest_timestamp) / 1e6, 3),
         "low_call_ltp": getattr(low, "call_ltp", None), "low_call_bid": low.call_bid, "low_call_ask": low.call_ask,
         "low_put_ltp": getattr(low, "put_ltp", None), "low_put_bid": low.put_bid, "low_put_ask": low.put_ask,
         "high_call_ltp": getattr(high, "call_ltp", None), "high_call_bid": high.call_bid, "high_call_ask": high.call_ask,
@@ -37,6 +65,13 @@ def _row(result):
         "executable_edge": result.executable_edge, "edge_per_lot": result.edge_per_lot,
         "gross_pnl": result.gross_pnl, "lot_size": low.lot_size, "strike_distance": result.strike_distance,
     }
+
+
+def _passes_edge_threshold(row):
+    symbol = str(row["symbol"]).upper()
+    threshold = 5.0 if symbol == "NIFTY" else 10.0
+    return float(row["executable_edge"]) > threshold
+
 
 def publish(results):
     """Call from scanner callback threads; queues are touched on the event loop only."""
@@ -47,24 +82,28 @@ def publish(results):
     for result in results or ():
         try:
             row = _row(result)
-            symbol = str(row["symbol"]).upper()
-            threshold = 5.0 if symbol == "NIFTY" else 10.0
-            # The stream threshold is strict, independently of scanner config.
-            if float(row["executable_edge"]) > threshold:
+            if row is not None and _passes_edge_threshold(row):
                 rows.append(row)
         except (AttributeError, TypeError, ValueError, OverflowError):
             continue
     if not rows:
         return
     message = {"type": "opportunities", "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "data": rows}
+
     def deliver():
         for queue in tuple(_subscribers):
             if queue.full():
-                try: queue.get_nowait()
-                except asyncio.QueueEmpty: pass
-            try: queue.put_nowait(message)
-            except asyncio.QueueFull: pass
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                queue.put_nowait(message)
+            except asyncio.QueueFull:
+                pass
+
     loop.call_soon_threadsafe(deliver)
+
 
 @router.websocket("/ws/live-opportunities")
 async def live_opportunities(websocket: WebSocket):
@@ -77,8 +116,11 @@ async def live_opportunities(websocket: WebSocket):
         await websocket.send_json({"type": "connected", "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
         if callable(_latest_getter):
             try:
-                current = [_row(item) for item in (_latest_getter() or ())]
-                current = [r for r in current if float(r.get("executable_edge") or 0) > (5.0 if str(r.get("symbol")).upper() == "NIFTY" else 10.0)]
+                current = []
+                for item in (_latest_getter() or ()):
+                    row = _row(item)
+                    if row is not None and _passes_edge_threshold(row):
+                        current.append(row)
                 if current:
                     await websocket.send_json({"type": "opportunities", "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "data": current})
             except Exception:
