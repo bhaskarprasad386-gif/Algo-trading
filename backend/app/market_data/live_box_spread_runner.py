@@ -89,6 +89,25 @@ class LiveBoxSpreadRunner:
         strikes = {}
         for target in self.targets:
             wanted = target.expiry
+            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
+                expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
+                option_expiries = []
+                for item in self.master.instruments:
+                    if str(item.get("exch_seg", "")).upper() != expected_segment or str(item.get("name", "")).strip().upper() != target.underlying:
+                        continue
+                    if str(item.get("instrumenttype", "")).upper() not in {"OPTIDX", "OPTSTK"}:
+                        continue
+                    text = str(item.get("expiry", "")).strip().upper()
+                    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+                        try:
+                            value = datetime.strptime(text, fmt).date()
+                            if value >= today:
+                                option_expiries.append((value, text))
+                            break
+                        except ValueError:
+                            continue
+                if option_expiries:
+                    wanted = min(option_expiries)[1]
             if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                 future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                 expiries = []
