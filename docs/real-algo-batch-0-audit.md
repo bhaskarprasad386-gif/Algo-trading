@@ -9,7 +9,7 @@
 - No deployment or restart was initiated.
 - No broker order routing was enabled; Angel One adapter still raises `NotImplementedError` for place/cancel.
 - Box Spread paper trading remains a dedicated route and states it never submits broker orders.
-- Backtesting, Cash-Future, Synthetic Future, and Calendar Spread are out of scope.
+- Backtesting, Cash-Future, Synthetic Future, and Calendar Spread are out of scope. Backtesting code and tests must remain unchanged unless separately and explicitly authorized.
 
 ## Read-only findings
 
@@ -32,10 +32,13 @@
 
 ### Verification baseline
 
-- The repository's `.github/workflows/build.yml` defines dependency install, Python compilation, and pytest, but its current trigger is `workflow_dispatch` only. This audit did not dispatch a new CI run or run tests against a local checkout.
-- Existing context records the targeted backend, integration, and common-feed regression checks for PR #290 as passed. That is not a fresh full-suite result for this audit.
-- The current commit is `16711dd71bb0f372b0666e0898491791eefff0b4`, which aligns Box Spread WebSocket freshness to individual option-leg timestamps.
-- Before any runtime change, capture a fresh full-suite baseline and record exact test counts/results. If a suitable CI run cannot be triggered, report the baseline as unverified rather than assuming it passed.
+- The repository's `.github/workflows/build.yml` defines dependency install, Python compilation, and pytest, but its current trigger is `workflow_dispatch` only.
+- A fresh user-triggered pytest run was attempted on branch `fix/daily-shard-test-syntax` (PR #292). The syntax/collection blocker and dashboard test path were corrected in test-only commits; no production runtime code was changed by those fixes.
+- The subsequent run collected 2,740 tests but stopped because `pytest -x` encountered a pre-existing failure after 35 passing tests: `app/backtesting/tests/test_durable_replay.py::test_durable_replay_journals_events_decisions_and_checkpoint`. Actual records include `ORDER_LIFECYCLE` and `FILL`, while that test's expected list omits them. The same stale expectation exists on `main`, and another test in the same file explicitly checks lifecycle/fill records.
+- Per the project owner's instruction, **do not modify or otherwise work on backtesting**. The failing test was left unchanged. Since `-x` stopped the run, this is not a full-suite pass and remaining tests are unverified.
+- **Baseline status: BLOCKED / NOT GREEN.** Do not claim a passing full-suite baseline. Batch 1 must not start until an acceptable baseline is established without changing out-of-scope backtesting, or the project owner explicitly changes the scope.
+- Existing targeted backend, integration, and common-feed regression checks recorded for PR #290 are not a substitute for a fresh full-suite result.
+- The current audit base commit is `16711dd71bb0f372b0666e0898491791eefff0b4`, which aligns Box Spread WebSocket freshness to individual option-leg timestamps.
 
 ## Batch 0 exit checklist
 
@@ -44,9 +47,15 @@
 - [x] Identify Box Spread live-feed and paper-route separation.
 - [x] Identify broker integration and authentication blockers.
 - [x] Define out-of-scope strategies and deployment restrictions.
-- [ ] Obtain a fresh full-suite CI baseline before Batch 1.
-- [ ] Review the audit findings before any runtime code change.
+- [x] Attempt baseline verification and document the exact existing blocker and test-run limits.
+- [x] Record the read-only audit findings for review.
+- [ ] Obtain a green, fresh full-suite baseline without touching out-of-scope backtesting.
+- [ ] Owner review/sign-off before any runtime code change.
+
+## Batch 0 disposition
+
+**The read-only audit deliverable is complete. The implementation gate is still blocked by the baseline failure above.** This distinction is intentional: finishing Batch 0 documentation does not authorize Batch 1 or live execution.
 
 ## Next batch gate
 
-Batch 1 may begin only after a fresh baseline is recorded. It must use a dedicated feature branch and isolated broker/security modules. Do not change `backend/app/main.py`, the common feed manager, existing scanner runners, deployment workflows, or paper-trading routes without a demonstrated dependency and separate review. Live order routing stays OFF.
+Batch 1 may begin only after the baseline gate is resolved and the owner reviews the findings. It must use a dedicated feature branch and isolated broker/security modules. Do not change `backend/app/main.py`, the common feed manager, existing scanner runners, deployment workflows, or paper-trading routes without a demonstrated dependency and separate review. Backtesting, Cash-Future, Synthetic Future, and Calendar Spread remain out of scope. Live order routing stays OFF.
