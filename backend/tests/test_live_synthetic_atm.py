@@ -146,3 +146,25 @@ def test_spot_snapshot_rejects_unknown_symbols():
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (22000.0, 22100.0)})
     tracker.update("NIFTY", 22054.25, time_ns())
     assert tracker.spot_snapshot("BANKNIFTY") is None
+
+
+
+def test_spot_only_symbol_can_update_spot_without_concrete_strikes():
+    from time import time_ns
+
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"BANKEX": ()})
+    source_ns = time_ns()
+
+    assert tracker.update("BANKEX", 61234.5, source_ns) is None
+    assert tracker.atm("BANKEX", source_ns) is None
+    snapshot = tracker.spot_snapshot("BANKEX", source_ns)
+    assert snapshot == {
+        "spot_price": 61234.5,
+        "spot_timestamp_ns": source_ns,
+        "spot_age_seconds": 0.0,
+    }
+
+    diagnostics = tracker.diagnostics_snapshot(source_ns)
+    assert diagnostics["tracked_symbol_count"] == 1
+    assert diagnostics["atm_ready_symbol_count"] == 0
+    assert diagnostics["symbols_without_concrete_chain"] == ["BANKEX"]
