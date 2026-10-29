@@ -55,12 +55,12 @@ def _positive_quantity(value: object) -> int:
 class BoxSpreadPaperFeeSchedule:
     """Explicit, versioned estimates; rates must be reviewed before deployment."""
 
-    version: str = "india-options-estimate-v1"
+    version: str = "india-options-estimate-v2-apr-2026"
     brokerage_per_fill: Decimal = Decimal("20.00")
-    exchange_transaction_rate: Decimal = Decimal("0.0003503")
+    exchange_transaction_rate: Decimal = Decimal("0.0003553")
     sebi_rate: Decimal = Decimal("0.000001")
     gst_rate: Decimal = Decimal("0.18")
-    sell_stt_rate: Decimal = Decimal("0.001")
+    sell_stt_rate: Decimal = Decimal("0.0015")
     buy_stamp_rate: Decimal = Decimal("0.00003")
 
     def calculate(self, *, action: str, notional: Decimal) -> Decimal:
@@ -69,7 +69,7 @@ class BoxSpreadPaperFeeSchedule:
         brokerage = self.brokerage_per_fill
         exchange = notional * self.exchange_transaction_rate
         sebi = notional * self.sebi_rate
-        gst = (brokerage + exchange) * self.gst_rate
+        gst = (brokerage + exchange + sebi) * self.gst_rate
         stt = notional * self.sell_stt_rate if action == "SELL" else Decimal("0")
         stamp = notional * self.buy_stamp_rate if action == "BUY" else Decimal("0")
         return (brokerage + exchange + sebi + gst + stt + stamp).quantize(CENT, rounding=ROUND_HALF_UP)
