@@ -90,3 +90,38 @@ def test_fingerprint_fails_closed_with_weak_signing_key(monkeypatch):
     with pytest.raises(HTTPException) as raised:
         account_fingerprint("angel_one", "CLIENT123")
     assert raised.value.status_code == 503
+
+
+def test_concurrent_first_claim_cannot_replace_persisted_owner(db, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    real_commit = db.commit
+
+    def simulate_concurrent_winner():
+        # Simulate another request winning the unique owner_key insert after
+        # this request observed an empty table but before its commit.
+        db.rollback()
+        db.add(
+            BoxSpreadRealOwnerState(
+                owner_key="box-spread-real-owner",
+                broker_name="angel_one",
+                account_fingerprint=account_fingerprint("angel_one", "CLIENT123"),
+                connected=False,
+                real_trading_enabled=False,
+                kill_switch=True,
+            )
+        )
+        real_commit()
+        raise IntegrityError("insert", {}, RuntimeError("unique owner_key conflict"))
+
+    monkeypatch.setattr(db, "commit", simulate_concurrent_winner)
+
+    with pytest.raises(HTTPException) as raised:
+        claim_authenticated_account(db, "angel_one", "CLIENT999")
+
+    assert raised.value.status_code == 409
+    db.expire_all()
+    persisted = db.query(BoxSpreadRealOwnerState).one()
+    assert persisted.account_fingerprint == account_fingerprint("angel_one", "CLIENT123")
+    assert persisted.real_trading_enabled is False
+    assert persisted.kill_switch is True
