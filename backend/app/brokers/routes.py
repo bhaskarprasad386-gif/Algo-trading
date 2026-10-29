@@ -12,7 +12,7 @@ from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
 from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
-from app.brokers.real_owner_state import claim_authenticated_account, set_owner_connection_state
+from app.brokers.real_owner_state import claim_authenticated_account, disable_owner_trading, set_owner_connection_state
 from app.core.database import get_db
 from app.core.logger import app_logger
 
@@ -71,15 +71,29 @@ def enable_real_trading(payload: RealTradingEnableRequest, user_id: int = Depend
 
 
 @router.post("/safety/disable")
-def disable_real_trading(user_id: int = Depends(require_real_owner_access)) -> dict:
-    state = trading_safety.disable(user_id)
-    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Real trading disabled and kill switch engaged."}
+def disable_real_trading(db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
+    # Always disarm process-local state first, even if durable storage is unavailable.
+    trading_safety.disable(user_id)
+    try:
+        state = disable_owner_trading(db)
+    except Exception as exc:
+        db.rollback()
+        app_logger.error("Durable Box Spread disable failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Trading is disabled locally but durable kill-switch state could not be confirmed") from exc
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Real trading disabled and kill switch persisted."}
 
 
 @router.post("/safety/kill-switch")
-def emergency_kill_switch(user_id: int = Depends(require_real_owner_access)) -> dict:
-    state = trading_safety.disable(user_id)
-    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Emergency kill switch engaged."}
+def emergency_kill_switch(db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
+    # Engage the local kill switch before attempting the durable write.
+    trading_safety.disable(user_id)
+    try:
+        state = disable_owner_trading(db)
+    except Exception as exc:
+        db.rollback()
+        app_logger.error("Durable Box Spread kill-switch update failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Kill switch is engaged locally but durable state could not be confirmed") from exc
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Emergency kill switch engaged and persisted."}
 
 
 @router.post("/connect")
