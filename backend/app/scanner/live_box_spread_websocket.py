@@ -8,6 +8,7 @@ router = APIRouter(tags=["box-spread"])
 _subscribers = set()
 _loop = None
 _latest_getter = None
+_spot_provider = None
 _expiry_types = {}
 MAX_QUOTE_AGE_NS = 5_000_000_000
 MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
@@ -16,6 +17,23 @@ MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
 def configure(getter, expiry_types_getter=None):
     global _latest_getter
     _latest_getter = getter
+
+
+def configure_spot_provider(provider):
+    """Configure a source-backed, freshness-checked underlying spot getter."""
+    global _spot_provider
+    _spot_provider = provider
+
+
+def _spot_fields(symbol):
+    snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    if not isinstance(snapshot, dict):
+        return {"spot_price": None, "spot_timestamp_ns": None, "spot_age_seconds": None}
+    return {
+        "spot_price": snapshot.get("spot_price"),
+        "spot_timestamp_ns": snapshot.get("spot_timestamp_ns"),
+        "spot_age_seconds": snapshot.get("spot_age_seconds"),
+    }
 
 
 def set_expiry_types(mapping):
@@ -51,7 +69,7 @@ def _row(result):
     return {
         "symbol": low.underlying, "instrument_class": low.instrument_class,
         "expiry": low.expiry, "low_strike": low.strike, "high_strike": high.strike,
-        "direction": result.direction, "timestamp_ns": int(low.timestamp_ns),
+        "direction": result.direction, **_spot_fields(low.underlying), "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
         "last_update_timestamp_ns": newest_timestamp,
         "observed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
