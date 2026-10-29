@@ -224,3 +224,32 @@ class SystemLog(Base):
     level: Mapped[str] = mapped_column(String(16), index=True)
     message: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BoxSpreadRealOwnerState(Base):
+    """Durable single-owner metadata for Box Spread real-broker safety.
+
+    Broker credentials and live session tokens must never be stored in this row.
+    A successful broker login may persist only a keyed account fingerprint.
+    Restarts must still treat broker sessions as disconnected and live trading
+    as disabled until explicit reconciliation is implemented.
+    """
+
+    __tablename__ = "box_spread_real_owner_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_key: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, default="box-spread-real-owner"
+    )
+    broker_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    account_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, index=True
+    )
+    connected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    real_trading_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    kill_switch: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
