@@ -217,6 +217,7 @@ def test_safety_status_reports_durable_owner_flags_not_process_local_state(db):
         "kill_switch": True,
         "enabled_at": None,
     }
+    trading_safety.disable(999)
 
 
 def test_broker_status_reports_durable_owner_flags_and_defaults_closed(db):
@@ -233,4 +234,5 @@ def test_broker_status_reports_durable_owner_flags_and_defaults_closed(db):
 
     assert result["real_trading"] is False
     assert result["kill_switch"] is True
+    trading_safety.disable(999)
 
