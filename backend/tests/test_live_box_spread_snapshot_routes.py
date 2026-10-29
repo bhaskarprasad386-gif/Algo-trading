@@ -21,8 +21,12 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
     now = datetime.utcnow()
 
     try:
+        monkeypatch.setattr(routes, "_expiry_types", {})
         with Session() as db:
             for index in range(3):
+                payload = {"sequence": index}
+                if index == 0:
+                    payload["expiry_type"] = "WEEKLY"
                 db.add(LiveBoxSpreadSnapshot(
                     observed_at=now - timedelta(seconds=index),
                     timestamp_ns=1_790_000_000_000_000_000 + index,
@@ -31,7 +35,7 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
                     low_strike=22000 + index * 100,
                     high_strike=23000 + index * 100,
                     direction="LONG",
-                    payload_json=json.dumps({"sequence": index}),
+                    payload_json=json.dumps(payload),
                 ))
             db.commit()
 
@@ -48,6 +52,7 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
         assert second["offset"] == 2
         assert second["has_more"] is False
         assert [item["sequence"] for item in first["data"] + second["data"]] == [0, 1, 2]
+        assert first["data"][0]["expiry_type"] == "WEEKLY"
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
