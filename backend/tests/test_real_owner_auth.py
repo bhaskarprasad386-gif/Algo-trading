@@ -101,6 +101,6 @@ def test_broker_management_routes_require_owner_auth():
         if route.path.endswith("/owner-auth/login") or route.path.endswith("/web/settings"):
             continue
         assert any(
-            dependency.dependency is auth.require_real_owner_access
+            dependency.call is auth.require_real_owner_access
             for dependency in route.dependant.dependencies
         ), route.path
