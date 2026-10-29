@@ -40,7 +40,7 @@
 - Earlier syntax and dashboard test-path fixes were test-only changes on PR #292; no production runtime code was changed by those fixes.
 - **Scope decision:** Do not change Backtesting or alter tests/workflows to hide its failure. For Batch 0, record the Backtesting result as excluded/out-of-scope and assess Box Spread/non-Backtesting checks separately. A full-repository green claim remains unavailable until a non-invasive, appropriately scoped verification can actually establish it.
 - On the documentation update commit `db1173949bddb26639d1b5d6e443c40094593a02`, GitHub Actions reported **Integration Tests: success** and **Common Feed Targeted Regression: success** (run `40816144328`). These are scoped green checks, not a full non-Backtesting suite result.
-- The separate **Backend Tests** workflow (run `40816144312`) was still in progress at the latest status check; its final result must be checked before marking that check complete.
+- On audit-report commit `d0e53444ceec42273960c3226bc4fdeaa3c796bd`, **Integration Tests** run `40816274377` completed successfully, including the **Common Feed Targeted Regression** job. **Backend Tests** run `40816274408` completed with 2,254 passed, 1 failed, and 1 xpassed. The sole failure was `backend/tests/test_live_synthetic_stream.py::test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_bucket` (`assert 1 == 2`). Synthetic Future is explicitly out of scope, so this is not a Box Spread failure and Synthetic Future code/tests must not be changed under this scope. Nevertheless, the Backend Tests workflow is red and must not be reported as green.
 - The current audit base commit is `16711dd71bb0f372b0666e0898491791eefff0b4`, which aligns Box Spread WebSocket freshness to individual option-leg timestamps.
 
 ## Batch 0 exit checklist
@@ -55,7 +55,7 @@
 - [x] Complete and record the read-only Batch 0 audit deliverable.
 
 **Separate implementation gates (not audit-documentation tasks):**
-- [ ] Run and record relevant non-Backtesting checks; do not modify Backtesting to obtain a green result.
+- [x] Run and record scoped non-Backtesting checks: Integration Tests and Common Feed Targeted Regression passed; Backend Tests has one Synthetic Future out-of-scope failure. Do not modify Backtesting or Synthetic Future to obtain a green result.
 - [ ] Owner review/sign-off before any runtime code change.
 - [ ] Keep full-repository test status explicitly unverified unless a complete non-invasive run actually finishes.
 
