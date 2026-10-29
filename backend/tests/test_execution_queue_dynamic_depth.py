@@ -79,3 +79,20 @@ def test_dynamic_depth_does_not_reuse_unchanged_displayed_quantity():
         (10, 100.0, 200),
         (5, 100.0, 400),
     ]
+
+
+def test_same_timestamp_depth_snapshots_cannot_reuse_displayed_liquidity():
+    simulator = ExecutionSimulator()
+    order = _buy_order(quantity=15)
+    updates = (
+        (200, OrderBook(asks=(DepthLevel(100.0, 10),)), ()),
+        (200, OrderBook(asks=(DepthLevel(100.0, 10),)), ()),
+    )
+
+    result = simulator.execute_depth_updates(order, updates)
+
+    assert not result.rejected
+    assert result.remaining_quantity == 5
+    assert [(fill.quantity, fill.price, fill.filled_at_ns) for fill in result.fills] == [
+        (10, 100.0, 200),
+    ]
