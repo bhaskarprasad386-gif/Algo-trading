@@ -732,3 +732,35 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
     assert raised.value.status_code == 423
     assert claims == []
 
+
+
+@pytest.mark.parametrize("bad_price", [0, -1, float("nan"), float("inf"), None, "not-a-price"])
+def test_entry_quote_selector_rejects_invalid_prices_before_entry_claim(bad_price):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    row["low_call_ask"] = bad_price
+
+    with pytest.raises(HTTPException) as raised:
+        routes._reference_prices_for_direction(row, "LONG")
+
+    assert raised.value.status_code == 409
+    assert "fresh executable entry quote is unavailable for LOW_CE" in raised.value.detail
+
+
+def test_entry_quote_selector_rejects_missing_executable_quote():
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40,
+    }
+
+    with pytest.raises(HTTPException) as raised:
+        routes._reference_prices_for_direction(row, "LONG")
+
+    assert raised.value.status_code == 409
+    assert "fresh executable entry quote is unavailable for LOW_PE" in raised.value.detail
