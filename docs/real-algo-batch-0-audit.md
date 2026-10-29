@@ -39,6 +39,8 @@
 - The repository's `.github/workflows/build.yml` runs compilation and `pytest -x -vv`, and its trigger is `workflow_dispatch` only.
 - Earlier syntax and dashboard test-path fixes were test-only changes on PR #292; no production runtime code was changed by those fixes.
 - **Scope decision:** Do not change Backtesting or alter tests/workflows to hide its failure. For Batch 0, record the Backtesting result as excluded/out-of-scope and assess Box Spread/non-Backtesting checks separately. A full-repository green claim remains unavailable until a non-invasive, appropriately scoped verification can actually establish it.
+- On the documentation update commit `db1173949bddb26639d1b5d6e443c40094593a02`, GitHub Actions reported **Integration Tests: success** and **Common Feed Targeted Regression: success** (run `40816144328`). These are scoped green checks, not a full non-Backtesting suite result.
+- The separate **Backend Tests** workflow (run `40816144312`) was still in progress at the latest status check; its final result must be checked before marking that check complete.
 - The current audit base commit is `16711dd71bb0f372b0666e0898491791eefff0b4`, which aligns Box Spread WebSocket freshness to individual option-leg timestamps.
 
 ## Batch 0 exit checklist
