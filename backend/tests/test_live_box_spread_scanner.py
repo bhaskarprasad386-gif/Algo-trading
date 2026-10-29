@@ -110,3 +110,24 @@ def test_box_scanner_rejects_future_dated_epoch_timestamp(monkeypatch):
 
     assert scanner.observe(payload) == ()
     assert scanner.diagnostics_snapshot()["counts"]["future_timestamp"] == 1
+
+def test_box_scanner_rejects_malformed_timestamp_and_nonfinite_quotes():
+    scanner = LiveBoxSpreadScanner(atm_provider=lambda _s, _t: 100)
+    base = {
+        "underlying": "ABC",
+        "instrument_class": "STOCK",
+        "source_timestamp_ns": "not-a-timestamp",
+        "expiry": "30SEP2026",
+        "strike": 100,
+        "option_type": "CE",
+        "bid": 10,
+        "ask": 11,
+    }
+
+    assert scanner.observe(base) == ()
+    assert scanner.diagnostics_snapshot()["counts"]["invalid_identity_or_timestamp"] == 1
+
+    base["source_timestamp_ns"] = 1
+    base["bid"] = float("inf")
+    assert scanner.observe(base) == ()
+    assert scanner.diagnostics_snapshot()["counts"]["invalid_bid_quote"] == 1
