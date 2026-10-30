@@ -17,7 +17,7 @@ import hmac
 
 from app.core.config import settings
 from app.core.security import create_access_token, decode_access_token
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.database import SessionLocal
 from app.market_data.instruments import InstrumentMaster
