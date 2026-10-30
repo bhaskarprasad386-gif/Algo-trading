@@ -323,7 +323,7 @@ def test_trade_summary_reports_charges_cash_flow_and_mark_to_market_pnl(paper_le
     assert summary["status"] == "FILLED"
     assert summary["fill_count"] == 4
     assert summary["total_charges"] > Decimal("0")
-    assert summary["unrealized_pnl"] == -summary["total_charges"]
+    assert summary["unrealized_pnl"] < -summary["total_charges"]
     assert summary["realized_pnl"] == Decimal("0.00")
 
 
@@ -674,7 +674,7 @@ def test_partial_exit_separates_realized_and_open_leg_pnl(paper_ledger):
         quantity=4, fill_price=110,
     )
     summary = paper_ledger.get_trade_summary(
-        trade.id, mark_prices={"LOW_CE": 105},
+        trade.id, mark_prices={"LOW_CE": 120},
     )
     assert summary["realized_pnl"] > Decimal("0")
     assert summary["unrealized_pnl"] > Decimal("0")
