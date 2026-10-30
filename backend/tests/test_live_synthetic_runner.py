@@ -247,8 +247,7 @@ def test_atm_readiness_watch_scope_matches_actual_subscriptions():
         [
             SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026"),
             SyntheticLiveTarget("BANKNIFTY", "INDEX", 500.0, "29OCT2026"),
-        ],
-        allowed_stock_symbols=frozenset(),
+        ],        allowed_stock_symbols=frozenset(),
         instrument_master=_master(),
         atm_provider=lambda _symbol, _timestamp: 100.0,
     )
@@ -497,8 +496,7 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
 
     monkeypatch.setattr(runner, "_wait_for_live_atm", fake_wait)
     monkeypatch.setattr(
-        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",
-        staticmethod(lambda now=None: True),
+        "app.market_data.live_synthetic_runner.LiveSyntheticOptionFutureRecorder.market_open",        staticmethod(lambda now=None: True),
     )
     monkeypatch.setattr(runner._stop_requested, "wait", lambda _seconds: None)
     monkeypatch.setattr(
@@ -636,6 +634,12 @@ def test_runner_restarts_recorder_after_market_session_ends(monkeypatch):
             return
 
     runner.underlying_feed = FakeFeed()
+    # This test covers session lifecycle, not the date-sensitive instrument
+    # master. Supply a deterministic eligible subscription so the recorder
+    # restart assertion remains valid after the fixture expiry has passed.
+    from types import SimpleNamespace
+    runner.build_subscriptions = lambda: (SimpleNamespace(underlying="NIFTY"),)
+    runner._refresh_target_expiries = lambda: False
     recorder_calls = []
 
     class FakeRecorder:
@@ -747,7 +751,6 @@ def test_runner_joins_underlying_feed_thread_during_shutdown(monkeypatch):
 
     assert feed_thread_ref["thread"].is_alive() is False
     assert runner._active_underlying_feed is None
-
 
 def test_late_atm_callback_cannot_stop_replacement_recorder(monkeypatch):
     from threading import Event
@@ -997,8 +1000,7 @@ def test_delayed_tick_is_rejected_after_its_bucket_was_flushed():
     def record(timestamp_ns):
         return SimpleNamespace(
             timestamp_ns=timestamp_ns,
-            symbol="NIFTY",
-            instrument=SimpleNamespace(exchange="NFO", token="123"),
+            symbol="NIFTY",            instrument=SimpleNamespace(exchange="NFO", token="123"),
             as_dict=lambda: {"bid": 100.0, "ask": 101.0, "underlying": "NIFTY"},
         )
 
