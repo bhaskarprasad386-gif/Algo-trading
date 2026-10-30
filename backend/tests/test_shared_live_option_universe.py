@@ -51,7 +51,7 @@ def test_nifty_weekly_atm15_options_are_box_spread_only():
         {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX",
          "expiry": expiry, "strike": str(strike * 100),
          "symbol": f"NIFTY{strike}{suffix}", "token": f"{expiry}-{strike}{suffix}", "lotsize": "75"}
-        for expiry in ("22OCT2026", "05NOV2026")
+        for expiry in ("22OCT2026", "26NOV2026")
         for strike in range(100, 161) for suffix in ("CE", "PE")
     ]
     master = InstrumentMaster()
