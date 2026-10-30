@@ -64,6 +64,12 @@ def test_paper_quote_selector_uses_ask_for_buys_and_bid_for_sells():
         "high_call_bid": 20, "high_call_ask": 21,
         "high_put_bid": 30, "high_put_ask": 31,
         "low_put_bid": 40, "low_put_ask": 41,
+        # LTP values intentionally disagree with the executable quote sides.
+        # Entry pricing must never fall back to last-traded prices.
+        "low_call_price": 999, "high_call_price": 888,
+        "high_put_price": 777, "low_put_price": 666,
+        "low_call_ltp": 555, "high_call_ltp": 444,
+        "high_put_ltp": 333, "low_put_ltp": 222,
     }
     assert routes._reference_prices_for_direction(row, "LONG") == {
         "LOW_CE": 11, "HIGH_CE": 20, "HIGH_PE": 31, "LOW_PE": 40,
