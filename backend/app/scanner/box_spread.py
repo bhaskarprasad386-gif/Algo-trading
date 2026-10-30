@@ -58,7 +58,8 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
                       instrument_class: str, config: BoxSpreadScanConfig | None = None,
                       policy: ScanPolicy | None = None,
                       diagnostics: dict[str, int] | None = None,
-                      include_nonpositive: bool = False) -> tuple[BoxSpreadScanResult, ...]:
+                      include_nonpositive: bool = False,
+                      include_all_strike_pairs: bool = False) -> tuple[BoxSpreadScanResult, ...]:
     """Scan a snapshot; optionally fill per-snapshot rejection counters for live diagnostics."""
     stats = diagnostics if diagnostics is not None else {}
     for key in ("quotes", "pairs_considered", "liquidity_rejected_pairs", "timestamp_skew_rejected_pairs",
@@ -84,9 +85,17 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
     if len(by_strike) != len(quotes):
         raise ValueError("duplicate box strike")
 
-    pairs = enumerate_box_pairs(
-        by_strike.keys(), atm_strike=float(atm_strike), instrument_class=cls, policy=policy
-    )
+    if include_all_strike_pairs:
+        ordered = ordered_strikes_around_atm(by_strike.keys(), atm_strike=float(atm_strike))
+        pairs = tuple(
+            (low_strike, high_strike, high_index - low_index)
+            for low_index, low_strike in enumerate(ordered)
+            for high_index, high_strike in enumerate(ordered[low_index + 1:], start=low_index + 1)
+        )
+    else:
+        pairs = enumerate_box_pairs(
+            by_strike.keys(), atm_strike=float(atm_strike), instrument_class=cls, policy=policy
+        )
     liquid = {strike for strike, quote in by_strike.items() if _liquid_quote(quote, config)}
     results = []
     for low_strike, high_strike, distance in pairs:
