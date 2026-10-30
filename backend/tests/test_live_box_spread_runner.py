@@ -7,7 +7,7 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
     class Master:
         instruments = [
             {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"30SEP2026"},
-            {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"29OCT2026"},
+            {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"26NOV2026"},
         ]
         def download(self): pass
 
@@ -35,7 +35,7 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
         runner._run_session()
     except RuntimeError:
         pass
-    assert captured == ["29OCT2026"]
+    assert captured == ["26NOV2026"]
 
 
 def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
@@ -57,7 +57,7 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
     captured = []
     def select(*args, **kwargs):
         captured.append(kwargs["underlying"])
-        return BoxContractSelection((object(),), "29OCT2026", 100.0)
+        return BoxContractSelection((object(),), "26NOV2026", 100.0)
 
     monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"READY": (100.0, 110.0), "WAITING": (100.0, 110.0)})
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
@@ -104,7 +104,7 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
     class Master:
         instruments = [
             {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "22OCT2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "0"},
-            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "29OCT2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "1"},
+            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "26NOV2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "1"},
             {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "05NOV2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "2"},
         ]
         def download(self): pass
@@ -143,5 +143,5 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
         runner._run_session()
     except RuntimeError as exc:
         assert str(exc) == "stop-after-selection"
-    assert seeded == ["29OCT2026"]
-    assert selected_expiries == ["29OCT2026"]
+    assert seeded == ["05NOV2026"]
+    assert selected_expiries == ["05NOV2026"]
