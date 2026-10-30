@@ -104,6 +104,9 @@ export default function BoxSpreadPaperTrading() {
   const [entryMode, setEntryMode] = useState<"MANUAL" | "ALGO">("MANUAL");
   const [entryExpiryType, setEntryExpiryType] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
   const [entrySymbols, setEntrySymbols] = useState<string[]>(["NIFTY","SENSEX"]);
+  const [manualEntryOpportunity, setManualEntryOpportunity] = useState<LiveOpportunity | null>(null);
+  const [manualEntryTradeId, setManualEntryTradeId] = useState<number | null>(null);
+  const [manualEntryLimits, setManualEntryLimits] = useState<Record<Role, string>>({LOW_CE:"",HIGH_CE:"",HIGH_PE:"",LOW_PE:""});
   const [positionSearch, setPositionSearch] = useState("");
   const [positionDirection, setPositionDirection] = useState("ALL");
   const [positionSort, setPositionSort] = useState("LATEST");
@@ -251,38 +254,59 @@ export default function BoxSpreadPaperTrading() {
     } finally { setControlBusy(false); }
   }
 
-  async function paperTradeOpportunity(opportunity: LiveOpportunity) {
+  function openManualEntryPreview(opportunity: LiveOpportunity) {
+    const actionByRole: Record<Role, "BUY"|"SELL"> = opportunity.direction === "LONG"
+      ? {LOW_CE:"BUY",HIGH_CE:"SELL",HIGH_PE:"BUY",LOW_PE:"SELL"}
+      : {LOW_CE:"SELL",HIGH_CE:"BUY",HIGH_PE:"SELL",LOW_PE:"BUY"};
+    const quotes: Record<Role, {bid:number|null|undefined;ask:number|null|undefined}> = {
+      LOW_CE:{bid:opportunity.low_call_bid,ask:opportunity.low_call_ask},
+      HIGH_CE:{bid:opportunity.high_call_bid,ask:opportunity.high_call_ask},
+      HIGH_PE:{bid:opportunity.high_put_bid,ask:opportunity.high_put_ask},
+      LOW_PE:{bid:opportunity.low_put_bid,ask:opportunity.low_put_ask},
+    };
+    const defaults = {} as Record<Role,string>;
+    for (const role of roles) {
+      const executable = actionByRole[role] === "BUY" ? quotes[role].ask : quotes[role].bid;
+      if (executable == null || !Number.isFinite(Number(executable)) || Number(executable) <= 0) {
+        setError("Fresh executable quote is missing for " + role + "; all four entry legs are blocked.");
+        return;
+      }
+      defaults[role] = String(executable);
+    }
+    setError(null); setMessage(null); setManualEntryTradeId(null);
+    setManualEntryLimits(defaults); setManualEntryOpportunity(opportunity);
+  }
+
+  async function confirmManualEntry(event: FormEvent) {
+    event.preventDefault();
+    if (!manualEntryOpportunity) return;
     setBusy(true); setError(null); setMessage(null); setLedger(null);
     try {
-      const create = await request("/trades", {
-        method: "POST",
-        body: JSON.stringify({
-          underlying: opportunity.symbol, instrument_class: opportunity.instrument_class,
-          expiry: opportunity.expiry, low_strike: opportunity.low_strike,
-          high_strike: opportunity.high_strike, direction: opportunity.direction,
-          lots, account_key: account, entry_spot_price: opportunity.spot_price ?? undefined,
-          idempotency_key: "box-paper-" + crypto.randomUUID(),
-        }),
-      });
-      const tradeId = Number(create.trade_id);
-      setSelectedTrade(tradeId);
+      let tradeId = manualEntryTradeId;
+      if (tradeId == null) {
+        const create = await request("/trades", {
+          method: "POST",
+          body: JSON.stringify({
+            underlying: manualEntryOpportunity.symbol, instrument_class: manualEntryOpportunity.instrument_class,
+            expiry: manualEntryOpportunity.expiry, low_strike: manualEntryOpportunity.low_strike,
+            high_strike: manualEntryOpportunity.high_strike, direction: manualEntryOpportunity.direction,
+            lots, account_key: account, entry_spot_price: manualEntryOpportunity.spot_price ?? undefined,
+            idempotency_key: "box-paper-" + crypto.randomUUID(),
+          }),
+        });
+        tradeId = Number(create.trade_id);
+        setManualEntryTradeId(tradeId);
+      }
+      const limits = Object.fromEntries(roles.map(role=>[role,Number(manualEntryLimits[role])]));
       const result = await request("/trades/" + tradeId + "/simulate-entry", {
         method: "POST",
-        body: JSON.stringify({
-          account_key: account,
-          reference_prices: {
-            LOW_CE: opportunity.low_call_price,
-            HIGH_CE: opportunity.high_call_price,
-            HIGH_PE: opportunity.high_put_price,
-            LOW_PE: opportunity.low_put_price,
-          },
-        }),
+        body: JSON.stringify({account_key:account,order_type:"LIMIT",limit_prices:limits}),
       });
-      setLedger(result);
-      setMessage("Live scanner opportunity paper-traded as #" + tradeId + ". Quotes were taken from the backend row; simulated fills include latency, slippage and charges. No broker order was sent.");
+      setSelectedTrade(tradeId); setLedger(result); setManualEntryOpportunity(null); setManualEntryTradeId(null);
+      setMessage("All four paper entry legs were persisted atomically as #" + tradeId + ". The server rechecked fresh quotes and each LIMIT before recording fills. No broker order was sent.");
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to paper-trade opportunity");
+      setError(e instanceof Error ? e.message : "Four-leg entry was rejected");
       await refresh();
     } finally { setBusy(false); }
   }
@@ -495,6 +519,18 @@ export default function BoxSpreadPaperTrading() {
         {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} selection={{expiryType:entryExpiryType,symbols:entrySymbols,lots}} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
       </section>
 
+      {manualEntryOpportunity && <form onSubmit={confirmManualEntry} className="space-y-3 rounded-xl border-2 border-cyan-500/60 p-3">
+        <div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold theme-text">Manual 4-leg LIMIT entry preview</h3><p className="text-xs theme-muted">{manualEntryOpportunity.symbol} · {manualEntryOpportunity.expiry} · {manualEntryOpportunity.direction} BOX · {lots} lots × each leg</p></div><button type="button" onClick={()=>{setManualEntryOpportunity(null);setManualEntryTradeId(null);}} className="rounded-lg border theme-border px-3 py-1 text-xs">Cancel</button></div>
+        <p className="text-xs theme-muted">Default limits use BUY = Ask and SELL = Bid. You may enter more aggressive limits. The backend takes a fresh four-leg snapshot again at submit; if any one limit is not executable, all four paper legs are rejected.</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {roles.map(role=>{
+            const action = (manualEntryOpportunity.direction==="LONG" ? {LOW_CE:"BUY",HIGH_CE:"SELL",HIGH_PE:"BUY",LOW_PE:"SELL"} : {LOW_CE:"SELL",HIGH_CE:"BUY",HIGH_PE:"SELL",LOW_PE:"BUY"})[role];
+            const quote = role==="LOW_CE" ? [manualEntryOpportunity.low_call_bid,manualEntryOpportunity.low_call_ask] : role==="HIGH_CE" ? [manualEntryOpportunity.high_call_bid,manualEntryOpportunity.high_call_ask] : role==="HIGH_PE" ? [manualEntryOpportunity.high_put_bid,manualEntryOpportunity.high_put_ask] : [manualEntryOpportunity.low_put_bid,manualEntryOpportunity.low_put_ask];
+            return <label key={role} className="rounded-lg border theme-border p-2 text-xs theme-muted"><span className="font-semibold theme-text">{role.replace("_"," ")} · {action}</span><span className="mt-1 block">Bid ₹{quote[0] ?? "—"} · Ask ₹{quote[1] ?? "—"}</span><span className="mt-2 block">Limit price (Qty {manualEntryOpportunity.lot_size*lots})</span><input required type="number" min="0.01" step="0.05" value={manualEntryLimits[role]} onChange={e=>setManualEntryLimits(current=>({...current,[role]:e.target.value}))} className="mt-1 w-full rounded-md border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>;
+          })}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs theme-muted">Paper simulation only · no real broker order</span><button type="submit" disabled={busy || !executionEnabled || roles.some(role=>!Number.isFinite(Number(manualEntryLimits[role])) || Number(manualEntryLimits[role])<=0)} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Validating all four legs…":"Confirm 4-leg LIMIT entry"}</button></div>
+      </form>}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm theme-muted">Paper account key
           <input value={account} onChange={e => setAccount(e.target.value)} maxLength={128} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" />
@@ -617,7 +653,7 @@ export default function BoxSpreadPaperTrading() {
         </div>
         <div className="overflow-x-auto"><table className="w-full min-w-[1250px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Underlying","Spot Price","Expiry","Expiry Type","Weekly Opportunity","Strikes","Direction","Edge","4 leg ref prices","Bid (qty) / Ask (qty) — 4 legs","Paper trade"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead><tbody>
           {selectedEntryOpportunities.map((op, index)=><tr key={op.symbol + op.expiry + op.low_strike + op.high_strike + index} className="border-t theme-border">
-            <td className="px-2 py-2 theme-text">{op.symbol}</td><td className="px-2 py-2 theme-text">{op.spot_price == null ? "—" : Number(op.spot_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}{op.spot_age_seconds == null ? "" : " (" + Number(op.spot_age_seconds).toFixed(2) + "s)"}</td><td className="px-2 py-2 theme-text">{op.expiry}</td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "bg-violet-500/15 text-violet-600" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "UNKNOWN").toUpperCase()}</span></td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "theme-surface-2 theme-muted" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "YES" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "NO" : "UNKNOWN"}</span></td><td className="px-2 py-2 theme-text">{op.low_strike} / {op.high_strike}</td><td className="px-2 py-2 theme-text">{op.direction}</td><td className="px-2 py-2 theme-text">{Number(op.executable_edge).toFixed(4)}</td><td className="px-2 py-2 theme-muted">LC {op.low_call_price} · HC {op.high_call_price}<br/>HP {op.high_put_price} · LP {op.low_put_price}</td><td className="px-2 py-2 theme-muted whitespace-nowrap">LC Bid ₹{op.low_call_bid ?? "—"} ({op.low_call_bid_qty ?? "—"}) · Ask ₹{op.low_call_ask ?? "—"} ({op.low_call_ask_qty ?? "—"})<br/>LP Bid ₹{op.low_put_bid ?? "—"} ({op.low_put_bid_qty ?? "—"}) · Ask ₹{op.low_put_ask ?? "—"} ({op.low_put_ask_qty ?? "—"})<br/>HC Bid ₹{op.high_call_bid ?? "—"} ({op.high_call_bid_qty ?? "—"}) · Ask ₹{op.high_call_ask ?? "—"} ({op.high_call_ask_qty ?? "—"})<br/>HP Bid ₹{op.high_put_bid ?? "—"} ({op.high_put_bid_qty ?? "—"}) · Ask ₹{op.high_put_ask ?? "—"} ({op.high_put_ask_qty ?? "—"})</td><td className="px-2 py-2">{entryMode==="MANUAL" ? <button type="button" disabled={busy || !executionEnabled} onClick={() => void paperTradeOpportunity(op)} className="rounded-md bg-cyan-500 px-3 py-2 font-bold text-slate-950 disabled:opacity-50">Manual 4-leg paper entry</button> : <span className="theme-muted">Algo rule monitors this market</span>}</td>
+            <td className="px-2 py-2 theme-text">{op.symbol}</td><td className="px-2 py-2 theme-text">{op.spot_price == null ? "—" : Number(op.spot_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}{op.spot_age_seconds == null ? "" : " (" + Number(op.spot_age_seconds).toFixed(2) + "s)"}</td><td className="px-2 py-2 theme-text">{op.expiry}</td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "bg-violet-500/15 text-violet-600" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "UNKNOWN").toUpperCase()}</span></td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "theme-surface-2 theme-muted" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "YES" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "NO" : "UNKNOWN"}</span></td><td className="px-2 py-2 theme-text">{op.low_strike} / {op.high_strike}</td><td className="px-2 py-2 theme-text">{op.direction}</td><td className="px-2 py-2 theme-text">{Number(op.executable_edge).toFixed(4)}</td><td className="px-2 py-2 theme-muted">LC {op.low_call_price} · HC {op.high_call_price}<br/>HP {op.high_put_price} · LP {op.low_put_price}</td><td className="px-2 py-2 theme-muted whitespace-nowrap">LC Bid ₹{op.low_call_bid ?? "—"} ({op.low_call_bid_qty ?? "—"}) · Ask ₹{op.low_call_ask ?? "—"} ({op.low_call_ask_qty ?? "—"})<br/>LP Bid ₹{op.low_put_bid ?? "—"} ({op.low_put_bid_qty ?? "—"}) · Ask ₹{op.low_put_ask ?? "—"} ({op.low_put_ask_qty ?? "—"})<br/>HC Bid ₹{op.high_call_bid ?? "—"} ({op.high_call_bid_qty ?? "—"}) · Ask ₹{op.high_call_ask ?? "—"} ({op.high_call_ask_qty ?? "—"})<br/>HP Bid ₹{op.high_put_bid ?? "—"} ({op.high_put_bid_qty ?? "—"}) · Ask ₹{op.high_put_ask ?? "—"} ({op.high_put_ask_qty ?? "—"})</td><td className="px-2 py-2">{entryMode==="MANUAL" ? <button type="button" disabled={busy || !executionEnabled} onClick={() => openManualEntryPreview(op)} className="rounded-md bg-cyan-500 px-3 py-2 font-bold text-slate-950 disabled:opacity-50">Manual 4-leg paper entry</button> : <span className="theme-muted">Algo rule monitors this market</span>}</td>
           </tr>)}
           {selectedEntryOpportunities.length === 0 && <tr><td colSpan={11} className="px-3 py-5 text-center theme-muted">{opportunityStatus === "ERROR" ? "Live scanner request failed. See the diagnostic message above; zero rows do not mean there are no opportunities." : opportunityStatus === "CHECKING" ? "Checking the backend for fresh executable four-leg quotes…" : "No fresh "+entryExpiryType.toLowerCase()+" opportunities for the selected indices. No sample rows are shown."}</td></tr>}
         </tbody></table></div>
