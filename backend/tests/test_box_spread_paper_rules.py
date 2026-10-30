@@ -97,3 +97,22 @@ def test_exit_order_type_rejects_unsupported_values(order_type):
     with pytest.raises(ValueError, match="exit.order_type"):
         validate_rule_config(raw)
 
+
+def test_position_net_pnl_exit_threshold_uses_server_calculated_override():
+    raw = base_config()
+    raw["exit"] = {
+        "metric": "position_net_pnl", "operator": ">=",
+        "threshold": 500, "hold_to_expiry": False,
+    }
+    config = validate_rule_config(raw)
+    assert config["exit"]["metric"] == "position_net_pnl"
+    assert exit_matches({}, config, metric_override=500.01) == (
+        True, "exit_threshold_met", 500.01,
+    )
+    assert exit_matches({}, config, metric_override=499.99) == (
+        False, "exit_threshold_not_met", 499.99,
+    )
+    assert exit_matches({}, config) == (
+        False, "exit_metric_unavailable", None,
+    )
+
