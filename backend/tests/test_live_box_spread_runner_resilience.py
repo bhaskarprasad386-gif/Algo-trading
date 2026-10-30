@@ -36,7 +36,7 @@ def test_box_session_failure_cleans_up_without_disabling_supervisor(monkeypatch)
         def __init__(self, *args, **kwargs):
             pass
 
-        def atm(self, symbol, now_ns):
+        def atm(self, symbol, now_ns, **kwargs):
             return 100.0
 
     feeds = []

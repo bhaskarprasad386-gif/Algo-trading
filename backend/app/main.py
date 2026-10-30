@@ -117,7 +117,7 @@ configure_live_box_spread_websocket(lambda: live_box_spread_latest_results)
 def _live_box_spread_spot_snapshot(symbol: str):
     runner = live_box_spread_runner
     tracker = None if runner is None else runner.tracker
-    return None if tracker is None else tracker.spot_snapshot(symbol)
+    return None if tracker is None else tracker.spot_snapshot(symbol, max_age_seconds=10.0)
 
 configure_live_box_spread_spot(_live_box_spread_spot_snapshot)
 configure_live_box_spread_websocket_spot(_live_box_spread_spot_snapshot)
