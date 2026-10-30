@@ -101,6 +101,9 @@ export default function BoxSpreadPaperTrading() {
     LOW_CE: "", HIGH_CE: "", HIGH_PE: "", LOW_PE: "",
   });
   const [lots, setLots] = useState(1);
+  const [entryMode, setEntryMode] = useState<"MANUAL" | "ALGO">("MANUAL");
+  const [entryExpiryType, setEntryExpiryType] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
+  const [entrySymbols, setEntrySymbols] = useState<string[]>(["NIFTY","SENSEX"]);
   const [positionSearch, setPositionSearch] = useState("");
   const [positionDirection, setPositionDirection] = useState("ALL");
   const [positionSort, setPositionSort] = useState("LATEST");
@@ -327,6 +330,13 @@ export default function BoxSpreadPaperTrading() {
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
 
+  const allowedEntrySymbols = entryExpiryType === "WEEKLY"
+    ? ["NIFTY", "SENSEX"]
+    : ["BANKNIFTY", "NIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"];
+  const selectedEntryOpportunities = opportunities.filter(op =>
+    String(op.expiry_type || "").toUpperCase() === entryExpiryType &&
+    entrySymbols.includes(String(op.symbol || "").toUpperCase())
+  );
   const searchTerm = positionSearch.trim().toUpperCase();
   const filteredTrades = trades.filter(trade =>
     (!searchTerm || trade.underlying.toUpperCase().includes(searchTerm) || String(trade.trade_id).includes(searchTerm)) &&
@@ -471,7 +481,19 @@ export default function BoxSpreadPaperTrading() {
         </button>
       </div>
 
-      <BoxSpreadPaperRuleControls api={api} token={token} account={account} />
+      <section className="space-y-3 rounded-xl border border-cyan-500/40 p-3">
+        <div><p className="text-xs font-semibold uppercase tracking-wider theme-accent">Entry configuration</p><h3 className="text-lg font-semibold theme-text">Choose entry mode and market</h3><p className="text-xs theme-muted">Same expiry, index and quantity selection applies to Manual and Algo entry.</p></div>
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={()=>setEntryMode("MANUAL")} className={"rounded-lg border p-3 text-sm font-bold "+(entryMode==="MANUAL"?"border-cyan-500 bg-cyan-500/10 theme-text":"theme-border theme-muted")}>Manual Entry</button>
+          <button type="button" onClick={()=>setEntryMode("ALGO")} className={"rounded-lg border p-3 text-sm font-bold "+(entryMode==="ALGO"?"border-cyan-500 bg-cyan-500/10 theme-text":"theme-border theme-muted")}>Algo Entry</button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-sm theme-muted">Expiry type<select value={entryExpiryType} onChange={e=>{const v=e.target.value as "WEEKLY"|"MONTHLY";setEntryExpiryType(v);setEntrySymbols(v==="WEEKLY"?["NIFTY","SENSEX"]:["BANKNIFTY","NIFTY","SENSEX","BANKEX","MIDCPNIFTY"]);}} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text"><option value="WEEKLY">Weekly expiry</option><option value="MONTHLY">Monthly expiry</option></select></label>
+          <label className="text-sm theme-muted">Same quantity per leg<select value={lots} onChange={e=>setLots(Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text">{[1,2,3,4,5,10,15,20].map(value=><option key={value} value={value}>{value} {value===1?"lot":"lots"} · all four legs</option>)}</select></label>
+        </div>
+        <div className="text-xs theme-muted"><div className="mb-2 font-semibold theme-text">Index selection</div><div className="flex flex-wrap gap-3">{allowedEntrySymbols.map(symbol=><label key={symbol} className="flex items-center gap-1.5"><input type="checkbox" checked={entrySymbols.includes(symbol)} onChange={e=>setEntrySymbols(current=>e.target.checked?[...current,symbol]:current.filter(x=>x!==symbol))}/>{symbol}</label>)}<label className="flex items-center gap-1.5 font-semibold"><input type="checkbox" checked={allowedEntrySymbols.every(x=>entrySymbols.includes(x))} onChange={e=>setEntrySymbols(e.target.checked?[...allowedEntrySymbols]:[])}/>ALL</label></div></div>
+        {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
+      </section>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm theme-muted">Paper account key
@@ -594,10 +616,10 @@ export default function BoxSpreadPaperTrading() {
           {!scannerDiagnostics && <p className="mt-1 theme-muted">Detailed scanner diagnostics are temporarily unavailable; opportunity API status is shown separately.</p>}
         </div>
         <div className="overflow-x-auto"><table className="w-full min-w-[1250px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Underlying","Spot Price","Expiry","Expiry Type","Weekly Opportunity","Strikes","Direction","Edge","4 leg ref prices","Bid (qty) / Ask (qty) — 4 legs","Paper trade"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead><tbody>
-          {opportunities.map((op, index)=><tr key={op.symbol + op.expiry + op.low_strike + op.high_strike + index} className="border-t theme-border">
+          {selectedEntryOpportunities.map((op, index)=><tr key={op.symbol + op.expiry + op.low_strike + op.high_strike + index} className="border-t theme-border">
             <td className="px-2 py-2 theme-text">{op.symbol}</td><td className="px-2 py-2 theme-text">{op.spot_price == null ? "—" : Number(op.spot_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}{op.spot_age_seconds == null ? "" : " (" + Number(op.spot_age_seconds).toFixed(2) + "s)"}</td><td className="px-2 py-2 theme-text">{op.expiry}</td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "bg-violet-500/15 text-violet-600" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "UNKNOWN").toUpperCase()}</span></td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "theme-surface-2 theme-muted" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "YES" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "NO" : "UNKNOWN"}</span></td><td className="px-2 py-2 theme-text">{op.low_strike} / {op.high_strike}</td><td className="px-2 py-2 theme-text">{op.direction}</td><td className="px-2 py-2 theme-text">{Number(op.executable_edge).toFixed(4)}</td><td className="px-2 py-2 theme-muted">LC {op.low_call_price} · HC {op.high_call_price}<br/>HP {op.high_put_price} · LP {op.low_put_price}</td><td className="px-2 py-2 theme-muted whitespace-nowrap">LC Bid ₹{op.low_call_bid ?? "—"} ({op.low_call_bid_qty ?? "—"}) · Ask ₹{op.low_call_ask ?? "—"} ({op.low_call_ask_qty ?? "—"})<br/>LP Bid ₹{op.low_put_bid ?? "—"} ({op.low_put_bid_qty ?? "—"}) · Ask ₹{op.low_put_ask ?? "—"} ({op.low_put_ask_qty ?? "—"})<br/>HC Bid ₹{op.high_call_bid ?? "—"} ({op.high_call_bid_qty ?? "—"}) · Ask ₹{op.high_call_ask ?? "—"} ({op.high_call_ask_qty ?? "—"})<br/>HP Bid ₹{op.high_put_bid ?? "—"} ({op.high_put_bid_qty ?? "—"}) · Ask ₹{op.high_put_ask ?? "—"} ({op.high_put_ask_qty ?? "—"})</td><td className="px-2 py-2"><button type="button" disabled={busy} onClick={() => void paperTradeOpportunity(op)} className="rounded-md bg-cyan-500 px-3 py-2 font-bold text-slate-950 disabled:opacity-50">Paper trade</button></td>
           </tr>)}
-          {opportunities.length === 0 && <tr><td colSpan={11} className="px-3 py-5 text-center theme-muted">{opportunityStatus === "ERROR" ? "Live scanner request failed. See the diagnostic message above; zero rows do not mean there are no opportunities." : opportunityStatus === "CHECKING" ? "Checking the backend for fresh executable four-leg quotes…" : "No fresh executable live opportunities returned by the backend. No sample rows are shown."}</td></tr>}
+          {selectedEntryOpportunities.length === 0 && <tr><td colSpan={11} className="px-3 py-5 text-center theme-muted">{opportunityStatus === "ERROR" ? "Live scanner request failed. See the diagnostic message above; zero rows do not mean there are no opportunities." : opportunityStatus === "CHECKING" ? "Checking the backend for fresh executable four-leg quotes…" : "No fresh "+entryExpiryType.toLowerCase()+" opportunities for the selected indices. No sample rows are shown."}</td></tr>}
         </tbody></table></div>
       </div>
 
