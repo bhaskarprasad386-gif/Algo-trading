@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { appConfig } from "@/lib/config";
+import BoxSpreadPaperRuleControls from "@/components/BoxSpreadPaperRuleControls";
 
 type LiveOpportunity = {
   symbol: string; instrument_class: string; expiry: string; expiry_type?: string; low_strike: number;
@@ -421,6 +422,8 @@ export default function BoxSpreadPaperTrading() {
           {controlBusy ? "Updating…" : executionEnabled ? "Turn OFF" : "Manually Turn ON"}
         </button>
       </div>
+
+      <BoxSpreadPaperRuleControls api={api} token={token} account={account} />
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm theme-muted">Paper account key
