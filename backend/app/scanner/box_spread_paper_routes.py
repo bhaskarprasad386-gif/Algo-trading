@@ -181,6 +181,7 @@ class CreatePaperTrade(BaseModel):
     lots: int = Field(ge=1, le=100)
     idempotency_key: str = Field(min_length=1, max_length=100)
     account_key: str = Field(default="default", min_length=1, max_length=128)
+    entry_spot_price: float | None = Field(default=None, gt=0)
 
 
 class SimulateEntry(BaseModel):
@@ -418,7 +419,7 @@ def create_trade(payload: CreatePaperTrade):
             instrument_class=contracts.instrument_class, expiry=contracts.expiry,
             low_strike=contracts.low_strike, high_strike=contracts.high_strike,
             direction=contracts.direction, lots=payload.lots, lot_size=contracts.lot_size,
-            account_key=payload.account_key,
+            account_key=payload.account_key, entry_spot_price=payload.entry_spot_price,
         )
         return {
             "mode": "PAPER_ONLY", "broker_orders_enabled": False,
