@@ -6,11 +6,12 @@ import json
 import time
 import uuid
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from app.core.database import SessionLocal
 from app.scanner.box_spread_paper_routes import require_paper_access
@@ -208,7 +209,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 expiry_date = date.fromisoformat(paper._canonical_expiry(trade.expiry))
             except ValueError:
                 expiry_date = None
-            if expiry_date is None or date.today() < expiry_date:
+            if expiry_date is None or datetime.now(ZoneInfo("Asia/Kolkata")).date() < expiry_date:
                 _record(rule_id, account_key, "EXIT_CHECK", "HOLD_TO_EXPIRY",
                         "hold_to_expiry_rule_active", trade.id)
                 continue
