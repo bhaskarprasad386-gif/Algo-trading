@@ -1,7 +1,16 @@
-import pytest
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from threading import Barrier
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.core.database import Base
+from app.scanner import box_spread_paper_rule_routes as rule_routes
 from app.scanner.box_spread_paper_rules import (
-    validate_rule_config, entry_matches, exit_matches, compare,
+    BoxSpreadPaperEntryQuotaReservation,
+    validate_rule_config, entry_matches, exit_matches, compare, select_entry_candidates,
 )
 
 
@@ -27,6 +36,80 @@ def test_custom_rule_accepts_entry_20_and_exit_at_1_with_20_second_monitor():
     assert config["entry"]["lots"] == 5
     assert config["exit"]["threshold"] == 1
     assert config["monitor"]["interval_seconds"] == 20
+
+
+def test_range_entry_quota_defaults_to_two_trades_per_fifteen_minute_window():
+    config = validate_rule_config(base_config())
+    assert config["entry"]["max_trades_per_interval"] == 2
+    assert config["monitor"]["entry_window_minutes"] == 15
+
+
+def test_range_entry_quota_is_customizable():
+    raw = base_config()
+    raw["entry"]["max_trades_per_interval"] = 4
+    raw["monitor"]["entry_window_minutes"] = 30
+    config = validate_rule_config(raw)
+    assert config["entry"]["max_trades_per_interval"] == 4
+    assert config["monitor"]["entry_window_minutes"] == 30
+
+
+@pytest.mark.parametrize("limit", [0, 21, -1])
+def test_range_entry_quota_rejects_invalid_trade_limits(limit):
+    raw = base_config()
+    raw["entry"]["max_trades_per_interval"] = limit
+    with pytest.raises(ValueError, match="max_trades_per_interval"):
+        validate_rule_config(raw)
+
+
+@pytest.mark.parametrize("minutes", [0, 241, -1])
+def test_entry_window_rejects_invalid_durations(minutes):
+    raw = base_config()
+    raw["monitor"]["entry_window_minutes"] = minutes
+    with pytest.raises(ValueError, match="entry_window_minutes"):
+        validate_rule_config(raw)
+
+
+def test_entry_range_inclusively_matches_min_and_max_for_edge_and_gross_profit():
+    raw = base_config()
+    raw["entry"].update({"range_enabled": True, "range_min": 20, "range_max": 25})
+    config = validate_rule_config(raw)
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY",
+        "direction": "LONG", "executable_edge": 20, "gross_pnl": 24.99,
+    }
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["executable_edge"] = 25
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["executable_edge"] = 25.01
+    assert entry_matches(row, config) == (False, "entry_outside_selected_range")
+
+    raw["entry"].update({"metric": "gross_pnl", "range_min": 100, "range_max": 250})
+    config = validate_rule_config(raw)
+    row["gross_pnl"] = 100
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["gross_pnl"] = 250
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["gross_pnl"] = 99.99
+    assert entry_matches(row, config) == (False, "entry_outside_selected_range")
+
+
+@pytest.mark.parametrize(("minimum", "maximum"), [(10, 9), (float("nan"), 10), (0, float("inf"))])
+def test_entry_range_rejects_invalid_bounds(minimum, maximum):
+    raw = base_config()
+    raw["entry"].update({"range_enabled": True, "range_min": minimum, "range_max": maximum})
+    with pytest.raises(ValueError, match="entry range"):
+        validate_rule_config(raw)
+
+
+def test_entry_selection_rejects_empty_or_expiry_incompatible_indices():
+    raw = base_config()
+    raw["entry"]["symbols"] = []
+    with pytest.raises(ValueError, match="at least one index"):
+        validate_rule_config(raw)
+    raw = base_config()
+    raw["entry"]["symbols"] = ["BANKNIFTY"]
+    with pytest.raises(ValueError, match="not supported for the selected expiry"):
+        validate_rule_config(raw)
 
 
 def test_custom_rule_entry_filters_symbol_direction_and_edge():
@@ -116,3 +199,134 @@ def test_position_net_pnl_exit_threshold_uses_server_calculated_override():
         False, "exit_metric_unavailable", None,
     )
 
+
+
+def test_range_entry_selects_only_two_highest_edge_candidates():
+    raw = base_config()
+    raw["entry"].update({"range_enabled": True, "range_min": 20, "range_max": 40})
+    config = validate_rule_config(raw)
+    rows = [
+        {"symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY", "direction": "LONG", "executable_edge": value, "low_strike": i, "high_strike": i + 100}
+        for i, value in enumerate((21, 39, 35, 30), start=1)
+    ]
+    selected, skipped = select_entry_candidates(rows, config)
+    assert [row["executable_edge"] for row in selected] == [39, 35]
+    assert [reason for _, reason in skipped] == ["range_trade_limit_reached", "range_trade_limit_reached"]
+
+
+def test_range_entry_selects_only_two_highest_gross_profit_candidates():
+    raw = base_config()
+    raw["entry"].update({"metric": "gross_pnl", "range_enabled": True, "range_min": 100, "range_max": 500})
+    config = validate_rule_config(raw)
+    rows = [
+        {"symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY", "direction": "LONG", "gross_pnl": value, "low_strike": i, "high_strike": i + 100}
+        for i, value in enumerate((110, 480, 350, 250), start=1)
+    ]
+    selected, skipped = select_entry_candidates(rows, config)
+    assert [row["gross_pnl"] for row in selected] == [480, 350]
+    assert len(skipped) == 2
+    assert all(reason == "range_trade_limit_reached" for _, reason in skipped)
+
+
+def test_non_range_entry_keeps_all_matching_candidates():
+    config = validate_rule_config(base_config())
+    rows = [
+        {"symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY", "direction": "LONG", "executable_edge": value}
+        for value in (21, 25, 30)
+    ]
+    selected, skipped = select_entry_candidates(rows, config)
+    assert len(selected) == 3
+    assert skipped == []
+
+
+
+def test_interval_quota_reservations_are_atomic_across_workers(tmp_path, monkeypatch):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'box-paper-quota.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperEntryQuotaReservation.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(rule_routes, "SessionLocal", factory)
+    start = datetime(2026, 10, 30, 4, 30, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=15)
+    barrier = Barrier(2)
+
+    def reserve(candidate):
+        barrier.wait(timeout=5)
+        return rule_routes._reserve_rule_entry_quota_slot(
+            7, "default", start, end, 1, candidate,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(reserve, ("candidate-a", "candidate-b")))
+        assert sorted(value is not None for value in results) == [False, True]
+        with factory() as session:
+            reservations = session.query(BoxSpreadPaperEntryQuotaReservation).all()
+        assert len(reservations) == 1
+        assert reservations[0].slot == 1
+    finally:
+        engine.dispose()
+
+
+def test_quota_reservation_blocks_same_candidate_in_later_window(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'box-paper-quota-idempotency.db'}")
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperEntryQuotaReservation.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(rule_routes, "SessionLocal", factory)
+    start = datetime(2026, 10, 30, 4, 30, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=15)
+    next_start = end
+    next_end = next_start + timedelta(minutes=15)
+
+    try:
+        first = rule_routes._reserve_rule_entry_quota_slot(
+            7, "default", start, end, 2, "same-candidate",
+        )
+        replay = rule_routes._reserve_rule_entry_quota_slot(
+            7, "default", next_start, next_end, 2, "same-candidate",
+        )
+        assert first == 1
+        assert replay is None
+        with factory() as session:
+            assert session.query(BoxSpreadPaperEntryQuotaReservation).count() == 1
+    finally:
+        engine.dispose()
+
+
+
+def test_interval_quota_never_reserves_more_than_configured_slots(tmp_path, monkeypatch):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'box-paper-quota-multi-slot.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperEntryQuotaReservation.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(rule_routes, "SessionLocal", factory)
+    start = datetime(2026, 10, 30, 4, 30, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=15)
+    barrier = Barrier(4)
+
+    def reserve(candidate):
+        barrier.wait(timeout=5)
+        return rule_routes._reserve_rule_entry_quota_slot(
+            9, "default", start, end, 2, candidate,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(reserve, ("candidate-a", "candidate-b", "candidate-c", "candidate-d")))
+        assert sum(value is not None for value in results) == 2
+        with factory() as session:
+            reservations = session.query(BoxSpreadPaperEntryQuotaReservation).all()
+        assert len(reservations) == 2
+        assert {item.slot for item in reservations} == {1, 2}
+    finally:
+        engine.dispose()

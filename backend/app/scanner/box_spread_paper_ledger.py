@@ -339,6 +339,118 @@ class BoxSpreadPaperLedger:
                     "status": claim.status, "claimed_at": _utc_iso(claim.claimed_at),
                     "completed_at": _utc_iso(claim.completed_at) if claim.completed_at else None}
 
+    def record_entry_basket(
+        self,
+        *,
+        trade_id: int,
+        legs: dict[str, dict[str, object]],
+        account_key: str = "default",
+    ) -> list[BoxSpreadPaperFillReceipt]:
+        """Atomically persist the four simulated entry fills or persist none."""
+        key = self._account_key(account_key)
+        roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        if not isinstance(legs, dict) or set(legs) != set(roles):
+            raise ValueError("entry basket requires exactly LOW_CE, HIGH_CE, HIGH_PE and LOW_PE")
+        normalized: dict[str, tuple[str, str, int, Decimal]] = {}
+        for role in roles:
+            item = legs[role]
+            if not isinstance(item, dict):
+                raise ValueError(f"entry basket data is invalid for {role}")
+            fill_id = str(item.get("fill_id") or "").strip()
+            action = str(item.get("action") or "").upper()
+            if not fill_id or len(fill_id) > 128 or fill_id.upper().startswith(("EXIT:", "SETTLE:")):
+                raise ValueError(f"invalid entry fill_id for {role}")
+            if action not in {"BUY", "SELL"}:
+                raise ValueError(f"invalid entry action for {role}")
+            qty = _positive_quantity(item.get("quantity"))
+            price = _money(item.get("fill_price"), field=f"{role} entry price")
+            if price <= 0:
+                raise ValueError(f"{role} entry price must be positive")
+            normalized[role] = (fill_id, action, qty, price)
+        if len({item[2] for item in normalized.values()}) != 1:
+            raise ValueError("four-leg entry requires equal quantity on all legs")
+        self.ensure_account(key)
+        with self._session_factory() as session, session.begin():
+            account = self._lock_account_for_write(session, key)
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            if any(item[2] != trade.quantity for item in normalized.values()):
+                raise ValueError("entry basket quantity must equal the selected quantity on all four legs")
+            expected_actions = (
+                {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+                if trade.direction == "LONG"
+                else {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+            )
+            for role in roles:
+                if normalized[role][1] != expected_actions[role]:
+                    raise ValueError(f"entry action does not match trade direction for {role}")
+            existing = {}
+            for role in roles:
+                fill_id = normalized[role][0]
+                existing[role] = session.scalar(select(BoxSpreadPaperLedgerEntry).where(
+                    BoxSpreadPaperLedgerEntry.account_key == key,
+                    BoxSpreadPaperLedgerEntry.entry_key == f"{trade_id}:{fill_id}",
+                ))
+            count = sum(row is not None for row in existing.values())
+            if count:
+                if count != 4:
+                    raise ValueError("incomplete prior entry basket requires manual review; no retry allowed")
+                receipts = []
+                for role in roles:
+                    row = existing[role]
+                    _, action, qty, price = normalized[role]
+                    if (row.role, row.action, row.quantity, Decimal(row.fill_price)) != (role, action, qty, price):
+                        raise ValueError("entry basket fill_id reused with different fill data")
+                    receipts.append(self._receipt(row, Decimal(account.virtual_balance)))
+                return receipts
+            if trade.status in {"CLOSED", "CANCELLED", "FILLED", "PARTIALLY_FILLED"}:
+                raise ValueError("trade is not eligible for a new entry basket")
+            prior = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                BoxSpreadPaperLedgerEntry.account_key == key,
+                BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+            )).all()
+            if any(not row.fill_id.startswith(("EXIT:", "SETTLE:")) for row in prior):
+                raise ValueError("prior entry fills exist; basket retry is blocked for manual review")
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is None:
+                raise ValueError("durable entry claim is required before basket persistence")
+            if claim.status not in {"CLAIMED", "COMPLETED"}:
+                raise ValueError("entry claim is not in a persistable state")
+            balance = Decimal(account.virtual_balance)
+            pending = []
+            for role in roles:
+                fill_id, action, qty, price = normalized[role]
+                notional = (price * qty).quantize(CENT, rounding=ROUND_HALF_UP)
+                charges = self.fee_schedule.calculate(action=action, notional=notional)
+                cash_delta = (-notional if action == "BUY" else notional) - charges
+                pending.append((role, fill_id, action, qty, price, notional, charges, cash_delta))
+            total_delta = sum((item[7] for item in pending), Decimal("0.00"))
+            if balance + total_delta < 0:
+                raise ValueError("insufficient virtual balance for the complete four-leg entry basket")
+            receipts = []
+            for role, fill_id, action, qty, price, notional, charges, cash_delta in pending:
+                entry = BoxSpreadPaperLedgerEntry(
+                    account_key=key, trade_id=trade.id,
+                    entry_key=f"{trade_id}:{fill_id}", fill_id=fill_id, role=role,
+                    action=action, quantity=qty, fill_price=price, notional=notional,
+                    charges=charges, cash_delta=cash_delta,
+                    fee_schedule_version=self.fee_schedule.version,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(entry)
+                balance += cash_delta
+                session.flush()
+                receipts.append(self._receipt(entry, balance))
+            account.virtual_balance = balance
+            trade.status = "FILLED"
+            claim.status = "COMPLETED"
+            claim.completed_at = datetime.now(timezone.utc)
+            return receipts
+
     def record_fill(
         self,
         *,

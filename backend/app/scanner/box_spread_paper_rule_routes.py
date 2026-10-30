@@ -5,7 +5,7 @@ import asyncio
 import json
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -13,13 +13,17 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import SessionLocal
 from app.scanner.box_spread_paper_routes import require_paper_access
-from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
+from app.scanner.box_spread_paper_ledger import (
+    BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry, BoxSpreadPaperEntryClaim,
+)
 from app.scanner.box_spread_paper_rules import (
-    BoxSpreadPaperRule, BoxSpreadPaperRuleEvaluation, decode_rule_config,
-    validate_rule_config, utc_now, entry_matches, exit_matches, metric_value,
+    BoxSpreadPaperRule, BoxSpreadPaperRuleEvaluation, BoxSpreadPaperEntryQuotaReservation,
+    decode_rule_config, validate_rule_config, utc_now, entry_matches, exit_matches,
+    metric_value, select_entry_candidates,
 )
 
 router = APIRouter(
@@ -136,6 +140,82 @@ def _open_rule_trades(rule_id: int, account_key: str):
         ).all()
 
 
+def _entry_window_bounds_utc(window_minutes: int) -> tuple[datetime, datetime]:
+    """Return the current fixed IST wall-clock entry window as UTC bounds."""
+    local_now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed_minutes = local_now.hour * 60 + local_now.minute
+    bucket_start = (elapsed_minutes // window_minutes) * window_minutes
+    start_local = midnight + timedelta(minutes=bucket_start)
+    end_local = start_local + timedelta(minutes=window_minutes)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _claimed_rule_entry_window_count(
+    rule_id: int, account_key: str, start_utc: datetime, end_utc: datetime,
+) -> int:
+    """Count durable entry attempts claimed inside this rule's current IST window."""
+    with SessionLocal() as session:
+        claim_ids = session.scalars(
+            select(BoxSpreadPaperEntryClaim.id)
+            .join(BoxSpreadPaperTradeRecord, BoxSpreadPaperEntryClaim.trade_id == BoxSpreadPaperTradeRecord.id)
+            .where(BoxSpreadPaperTradeRecord.account_key == account_key,
+                   BoxSpreadPaperTradeRecord.idempotency_key.like(f"rule-{rule_id}-%"),
+                   BoxSpreadPaperEntryClaim.account_key == account_key,
+                   BoxSpreadPaperEntryClaim.claimed_at >= start_utc,
+                   BoxSpreadPaperEntryClaim.claimed_at < end_utc)
+        ).all()
+    return len(claim_ids)
+
+
+def _reserve_rule_entry_quota_slot(
+    rule_id: int, account_key: str, window_start: datetime, window_end: datetime,
+    max_per_window: int, candidate_key: str,
+) -> int | None:
+    """Atomically reserve a unique durable slot before a paper entry attempt.
+
+    Unique database constraints serialize workers; reservations are never released,
+    because a crash or ambiguous attempt must continue consuming the interval quota.
+    """
+    for slot in range(1, max_per_window + 1):
+        try:
+            with SessionLocal() as session, session.begin():
+                reservation = BoxSpreadPaperEntryQuotaReservation(
+                    account_key=account_key, rule_id=rule_id,
+                    window_start_utc=window_start, window_end_utc=window_end,
+                    slot=slot, candidate_key=candidate_key, reserved_at=utc_now(),
+                )
+                session.add(reservation)
+                session.flush()
+                return slot
+        except IntegrityError:
+            # A competing worker may have taken this slot, or this exact candidate
+            # may already be reserved. The latter is a lifetime one-shot block.
+            with SessionLocal() as session:
+                existing_candidate = session.scalar(select(BoxSpreadPaperEntryQuotaReservation.id).where(
+                    BoxSpreadPaperEntryQuotaReservation.account_key == account_key,
+                    BoxSpreadPaperEntryQuotaReservation.rule_id == rule_id,
+                    BoxSpreadPaperEntryQuotaReservation.candidate_key == candidate_key,
+                ))
+            if existing_candidate is not None:
+                return None
+    return None
+
+
+def _claimed_rule_entry_keys(rule_id: int, account_key: str) -> set[str]:
+    """Return durable one-shot entry attempts already consumed by this rule."""
+    prefix = f"rule-{rule_id}-%"
+    with SessionLocal() as session:
+        keys = session.scalars(
+            select(BoxSpreadPaperTradeRecord.idempotency_key)
+            .join(BoxSpreadPaperEntryClaim, BoxSpreadPaperEntryClaim.trade_id == BoxSpreadPaperTradeRecord.id)
+            .where(BoxSpreadPaperTradeRecord.account_key == account_key,
+                   BoxSpreadPaperTradeRecord.idempotency_key.like(prefix),
+                   BoxSpreadPaperEntryClaim.account_key == account_key)
+        ).all()
+    return set(keys)
+
+
 def _signed_open_quantities(trade_id: int, account_key: str) -> dict[str, int]:
     with SessionLocal() as session:
         entries = session.scalars(
@@ -185,10 +265,33 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     from app.scanner.live_box_spread_routes import monitor_snapshot as monitor_opportunities
 
     snapshot = await asyncio.to_thread(monitor_opportunities, max_age_seconds=5.0)
-    rows = snapshot.get("data", []) if isinstance(snapshot, dict) else []
+    if not isinstance(snapshot, dict):
+        snapshot = {"fresh": False, "data": [], "entry_data": []}
+    rows = snapshot.get("data", [])
     entry_rows = snapshot.get("entry_data", []) if isinstance(snapshot, dict) else []
     if not isinstance(rows, list):
         rows = []
+    if not isinstance(entry_rows, list):
+        entry_rows = []
+
+    # Emit one durable monitor diagnostic for every cycle in which entry
+    # scanning cannot proceed. This makes OFF/stale/no-candidate states visible
+    # instead of silently returning from the background monitor.
+    if not snapshot.get("fresh", False):
+        _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
+                "scanner_snapshot_stale_or_unavailable;fresh_four_leg_data_required")
+    elif not rule_enabled:
+        _record(rule_id, account_key, "ENTRY_SCAN", "DISABLED",
+                f"algo_rule_disabled;scanner_candidates={len(entry_rows)}")
+    else:
+        with paper._paper_execution_state_lock:
+            entry_switch_enabled = paper._paper_execution_enabled
+        if not entry_switch_enabled:
+            _record(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
+                    f"paper_execution_switch_OFF;scanner_candidates={len(entry_rows)}")
+        elif not entry_rows:
+            _record(rule_id, account_key, "ENTRY_SCAN", "NO_CANDIDATES",
+                    "fresh_snapshot_has_no_entry_candidates;check_scanner_eligibility_and_feed")
 
     # Exit monitoring is independent of the new-entry kill switch. Turning OFF
     # blocks new entries but must not strand already-open paper positions.
@@ -283,21 +386,81 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     # five-second four-leg quote, idempotency, claim and ledger protections.
     with paper._paper_execution_state_lock:
         execution_enabled = paper._paper_execution_enabled
-    if not rule_enabled or not execution_enabled:
+    if not rule_enabled or not execution_enabled or not snapshot.get("fresh", False):
         return
 
     open_count = len(await asyncio.to_thread(_open_rule_trades, rule_id, account_key))
     max_open_positions = config["entry"]["max_open_positions"]
     if open_count >= max_open_positions:
+        _record(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
+                f"max_open_positions_reached;open={open_count};maximum={max_open_positions}")
         return
-    for row in entry_rows:
+
+    # The per-window quota applies to every configured entry rule, not only
+    # rules using a numeric range. Filter lifetime attempts, then rank eligible
+    # candidates so the strongest opportunities are considered first.
+    claimed_keys = await asyncio.to_thread(_claimed_rule_entry_keys, rule_id, account_key)
+    window_minutes = config["monitor"]["entry_window_minutes"]
+    window_start, window_end = _entry_window_bounds_utc(window_minutes)
+    max_per_window = config["entry"]["max_trades_per_interval"]
+    unclaimed_rows = []
+    previously_claimed_rows = []
+    for candidate in entry_rows:
+        expiry_value = candidate.get("expiry_date") or candidate.get("expiry")
+        try:
+            candidate_key = "rule-{}-{}-{}-{}-{}-{}".format(
+                rule_id, str(candidate.get("symbol", "")).upper(),
+                paper._canonical_expiry(expiry_value), candidate.get("low_strike"),
+                candidate.get("high_strike"), str(candidate.get("direction", "")).upper(),
+            )
+        except (TypeError, ValueError):
+            unclaimed_rows.append(candidate)
+            continue
+        (previously_claimed_rows if candidate_key in claimed_keys else unclaimed_rows).append(candidate)
+    selected_entry_rows, skipped_rows = select_entry_candidates(
+        unclaimed_rows, config, range_limit=len(unclaimed_rows),
+    )
+    selected_entry_rows.sort(key=lambda row: (
+        -(metric_value(row, config["entry"]["metric"]) if metric_value(row, config["entry"]["metric"]) is not None else float("-inf")),
+        str(row.get("symbol", "")).upper(),
+        str(row.get("expiry_date") or row.get("expiry") or ""),
+        str(row.get("low_strike", "")), str(row.get("high_strike", "")),
+        str(row.get("direction", "")).upper(),
+    ))
+    skipped_rows.extend((candidate, "candidate_already_attempted") for candidate in previously_claimed_rows)
+    skipped_count = len(skipped_rows)
+    skipped_reasons: dict[str, int] = {}
+    evaluated_count = len(entry_rows)
+    for skipped_row, reason in skipped_rows:
+        skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+        if sum(skipped_reasons.values()) <= 20:
+            observed = metric_value(skipped_row, config["entry"]["metric"])
+            _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
+                    f"candidate={str(skipped_row.get('symbol','')).upper()} "
+                    f"expiry={skipped_row.get('expiry_date') or skipped_row.get('expiry')} "
+                    f"direction={skipped_row.get('direction')};reason={reason}",
+                    metric=config["entry"]["metric"], observed=observed,
+                    threshold=config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
+
+    for row in selected_entry_rows:
         if open_count >= max_open_positions:
             break
-        matched, reason = entry_matches(row, config)
-        if not matched:
-            continue
+        expiry = row.get("expiry_date") or row.get("expiry")
+        candidate_audit = json.dumps({
+            "symbol": str(row.get("symbol", "")).upper(),
+            "expiry": str(expiry),
+            "low_strike": row.get("low_strike"),
+            "high_strike": row.get("high_strike"),
+            "direction": str(row.get("direction", "")).upper(),
+            "lots": config["entry"]["lots"],
+            "metric": config["entry"]["metric"],
+            "observed": metric_value(row, config["entry"]["metric"]),
+            "range_min": config["entry"].get("range_min"),
+            "range_max": config["entry"].get("range_max"),
+        }, separators=(",", ":"), default=str)
+        trade = None
+        entry_started = time.perf_counter()
         try:
-            expiry = row.get("expiry_date") or row.get("expiry")
             idempotency_key = "rule-{}-{}-{}-{}-{}-{}".format(
                 rule_id, str(row.get("symbol", "")).upper(), paper._canonical_expiry(expiry),
                 row.get("low_strike"), row.get("high_strike"), str(row.get("direction", "")).upper(),
@@ -311,8 +474,16 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 entry_spot_price=row.get("spot_price"),
             )
             contracts = await asyncio.to_thread(paper._resolve, request)
-            # Validate all four executable prices before creating a durable trade.
+            # Validate all four executable prices before consuming a quota slot.
             paper._reference_prices_for_direction(row, contracts.direction)
+            quota_slot = await asyncio.to_thread(
+                _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
+                max_per_window, idempotency_key,
+            )
+            if quota_slot is None:
+                _record(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
+                        f"{candidate_audit};interval_quota_full_or_candidate_already_reserved")
+                continue
             trade = await asyncio.to_thread(
                 paper._ledger.create_trade,
                 idempotency_key=idempotency_key, underlying=contracts.underlying,
@@ -335,16 +506,43 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             result = await paper._simulate_entry_locked(
                 trade.id, paper.SimulateEntry(account_key=account_key),
             )
+            leg_audit = [
+                {
+                    "role": fill.get("role"), "action": fill.get("action"),
+                    "quote_side": "ASK" if fill.get("action") == "BUY" else "BID",
+                    "qty": fill.get("quantity"), "reference": fill.get("reference_price"),
+                    "limit": fill.get("reference_price"), "fill": fill.get("fill_price"),
+                }
+                for fill in result.get("fills", [])
+            ]
+            execution_audit = json.dumps({
+                "candidate": json.loads(candidate_audit),
+                "order_type": "LIMIT",
+                "elapsed_s": round(time.perf_counter() - entry_started, 4),
+                "engine_latency_s": result.get("latency_seconds"),
+                "legs": leg_audit,
+            }, separators=(",", ":"), default=str)
             _record(rule_id, account_key, "ENTRY_CHECK", "ENTRY_RECORDED",
-                    "entry_conditions_met_and_four_leg_paper_fill_saved", trade.id,
+                    execution_audit, trade.id,
                     config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
-                    config["entry"]["threshold"])
+                    config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
         except HTTPException as exc:
             _record(rule_id, account_key, "ENTRY_CHECK", "BLOCKED",
-                    f"paper_entry_blocked:{exc.status_code}:{exc.detail}")
+                    f"{candidate_audit};paper_entry_blocked:{exc.status_code}:{exc.detail}",
+                    trade.id if trade is not None else None,
+                    config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
+                    config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
         except Exception as exc:
             _record(rule_id, account_key, "ENTRY_CHECK", "ERROR",
-                    f"paper_entry_error:{type(exc).__name__}:{exc}")
+                    f"{candidate_audit};paper_entry_error:{type(exc).__name__}:{exc}",
+                    trade.id if trade is not None else None,
+                    config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
+                    config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
+
+    if skipped_count > 20:
+        _record(rule_id, account_key, "ENTRY_SCAN", "SUMMARY",
+                f"evaluated={evaluated_count};skipped={skipped_count};"
+                f"remaining_skips_aggregated={max(0, skipped_count - 20)};reasons={json.dumps(skipped_reasons, sort_keys=True)}")
 
 
 async def paper_rule_monitor_loop():

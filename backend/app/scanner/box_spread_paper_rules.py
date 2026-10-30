@@ -10,7 +10,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base, SessionLocal
@@ -57,6 +57,32 @@ class BoxSpreadPaperRuleEvaluation(Base):
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class BoxSpreadPaperEntryQuotaReservation(Base):
+    """Durable, cross-worker reservation of one rule/window entry quota slot."""
+    __tablename__ = "box_spread_paper_entry_quota_reservations"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_key", "rule_id", "window_start_utc", "slot",
+            name="uq_box_paper_rule_window_slot",
+        ),
+        UniqueConstraint(
+            "account_key", "rule_id", "candidate_key",
+            name="uq_box_paper_rule_candidate_reservation",
+        ),
+        Index("ix_box_paper_rule_quota_window", "account_key", "rule_id", "window_start_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    rule_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    window_start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    slot: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -85,6 +111,13 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(symbols, list) or len(symbols) > 100:
         raise ValueError("entry.symbols must be a list of at most 100 symbols")
     symbols = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+    if not symbols:
+        raise ValueError("entry.symbols must select at least one index")
+    allowed_symbols = {"NIFTY", "SENSEX"} if expiry_type == "WEEKLY" else {
+        "BANKNIFTY", "NIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"
+    } if expiry_type == "MONTHLY" else None
+    if allowed_symbols is not None and not set(symbols).issubset(allowed_symbols):
+        raise ValueError("entry.symbols contains an index not supported for the selected expiry type")
     if any(len(symbol) > 64 for symbol in symbols):
         raise ValueError("entry symbols must be at most 64 characters")
 
@@ -95,6 +128,13 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
     entry_threshold = float(entry.get("threshold", 0))
     if not math.isfinite(entry_threshold):
         raise ValueError("entry threshold must be finite")
+    range_enabled_raw = entry.get("range_enabled", False)
+    if not isinstance(range_enabled_raw, bool):
+        raise ValueError("entry.range_enabled must be a boolean")
+    range_min = float(entry.get("range_min", entry_threshold))
+    range_max = float(entry.get("range_max", entry_threshold))
+    if not math.isfinite(range_min) or not math.isfinite(range_max) or range_min > range_max:
+        raise ValueError("entry range must contain finite values with minimum <= maximum")
 
     exit_metric = str(exit_rule.get("metric", "executable_edge"))
     exit_operator = str(exit_rule.get("operator", "<="))
@@ -133,6 +173,20 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
     if max_open_positions < 1 or max_open_positions > 20:
         raise ValueError("entry.max_open_positions must be between 1 and 20")
 
+    entry_window_raw = entry.get("max_trades_per_interval", 2)
+    if isinstance(entry_window_raw, bool) or not isinstance(entry_window_raw, (int, float)) or not float(entry_window_raw).is_integer():
+        raise ValueError("entry.max_trades_per_interval must be an integer")
+    max_trades_per_interval = int(entry_window_raw)
+    if max_trades_per_interval < 1 or max_trades_per_interval > 20:
+        raise ValueError("entry.max_trades_per_interval must be between 1 and 20")
+
+    entry_window_minutes_raw = monitor.get("entry_window_minutes", 15)
+    if isinstance(entry_window_minutes_raw, bool) or not isinstance(entry_window_minutes_raw, (int, float)) or not float(entry_window_minutes_raw).is_integer():
+        raise ValueError("monitor.entry_window_minutes must be an integer")
+    entry_window_minutes = int(entry_window_minutes_raw)
+    if entry_window_minutes < 1 or entry_window_minutes > 240:
+        raise ValueError("monitor.entry_window_minutes must be between 1 and 240 minutes")
+
     return {
         "entry": {
             "symbols": symbols,
@@ -142,8 +196,12 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "metric": entry_metric,
             "operator": entry_operator,
             "threshold": entry_threshold,
+            "range_enabled": range_enabled_raw,
+            "range_min": range_min,
+            "range_max": range_max,
             "lots": lots,
             "max_open_positions": max_open_positions,
+            "max_trades_per_interval": max_trades_per_interval,
         },
         "exit": {
             "metric": exit_metric,
@@ -152,7 +210,7 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "hold_to_expiry": hold_to_expiry,
             "order_type": exit_order_type,
         },
-        "monitor": {"interval_seconds": interval},
+        "monitor": {"interval_seconds": interval, "entry_window_minutes": entry_window_minutes},
     }
 
 
@@ -181,7 +239,7 @@ def compare(value: float, operator: str, threshold: float) -> bool:
 def entry_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, str]:
     entry = config["entry"]
     symbol = str(row.get("symbol", "")).strip().upper()
-    if entry["symbols"] and symbol not in entry["symbols"]:
+    if not entry["symbols"] or symbol not in entry["symbols"]:
         return False, "symbol_not_selected"
     if entry["direction"] != "ALL" and str(row.get("direction", "")).upper() != entry["direction"]:
         return False, "direction_mismatch"
@@ -192,10 +250,41 @@ def entry_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, st
     value = metric_value(row, entry["metric"])
     if value is None:
         return False, "entry_metric_unavailable"
-    return compare(value, entry["operator"], entry["threshold"]), (
-        "entry_conditions_met" if compare(value, entry["operator"], entry["threshold"])
-        else "entry_threshold_not_met"
-    )
+    if entry.get("range_enabled", False):
+        matched = entry["range_min"] <= value <= entry["range_max"]
+        return matched, "entry_range_met" if matched else "entry_outside_selected_range"
+    matched = compare(value, entry["operator"], entry["threshold"])
+    return matched, "entry_conditions_met" if matched else "entry_threshold_not_met"
+
+
+def select_entry_candidates(
+    rows: list[dict[str, Any]], config: dict[str, Any], *, range_limit: int = 2,
+) -> tuple[list[dict[str, Any]], list[tuple[dict[str, Any], str]]]:
+    """Return eligible candidates and skips; range mode keeps the top two values."""
+    eligible: list[tuple[float, dict[str, Any]]] = []
+    skipped: list[tuple[dict[str, Any], str]] = []
+    for row in rows:
+        matched, reason = entry_matches(row, config)
+        if not matched:
+            skipped.append((row, reason))
+            continue
+        value = metric_value(row, config["entry"]["metric"])
+        if value is None:
+            skipped.append((row, "entry_metric_unavailable"))
+            continue
+        eligible.append((value, row))
+    if not config["entry"].get("range_enabled", False):
+        return [row for _, row in eligible], skipped
+    # Highest metric wins; stable tie-breaks avoid dependence on scanner row order.
+    eligible.sort(key=lambda item: (
+        -item[0], str(item[1].get("symbol", "")).upper(),
+        str(item[1].get("expiry_date") or item[1].get("expiry") or ""),
+        str(item[1].get("low_strike", "")), str(item[1].get("high_strike", "")),
+        str(item[1].get("direction", "")).upper(),
+    ))
+    selected = eligible[:range_limit]
+    skipped.extend((row, "range_trade_limit_reached") for _, row in eligible[range_limit:])
+    return [row for _, row in selected], skipped
 
 
 def exit_matches(

@@ -54,6 +54,59 @@ def _trade(ledger, *, account_key="default", idempotency_key="paper-1", lots=1):
     )
 
 
+
+
+
+def _entry_basket():
+    return {
+        "LOW_CE": {"fill_id": "ENTRY:atomic:LOW_CE", "action": "BUY", "quantity": 25, "fill_price": "100"},
+        "HIGH_CE": {"fill_id": "ENTRY:atomic:HIGH_CE", "action": "SELL", "quantity": 25, "fill_price": "60"},
+        "HIGH_PE": {"fill_id": "ENTRY:atomic:HIGH_PE", "action": "BUY", "quantity": 25, "fill_price": "70"},
+        "LOW_PE": {"fill_id": "ENTRY:atomic:LOW_PE", "action": "SELL", "quantity": 25, "fill_price": "30"},
+    }
+
+
+def test_four_leg_entry_basket_commits_all_legs_atomically_and_is_idempotent(paper_ledger):
+    trade = _trade(paper_ledger)
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    before = paper_ledger.ensure_account()
+    legs = _entry_basket()
+    first = paper_ledger.record_entry_basket(trade_id=trade.id, legs=legs)
+    second = paper_ledger.record_entry_basket(trade_id=trade.id, legs=legs)
+    assert [item.role for item in first] == ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"]
+    assert len(second) == 4
+    assert paper_ledger.get_account_summary()["fill_count"] == 4
+    assert paper_ledger.ensure_account() == first[-1].virtual_balance
+    assert first[-1].virtual_balance < before
+    assert paper_ledger.get_entry_claim(trade_id=trade.id)["status"] == "COMPLETED"
+    assert paper_ledger.list_open_trades()[0]["status"] == "FILLED"
+
+
+@pytest.mark.parametrize("mutation, message", [
+    ("missing", "exactly LOW_CE"),
+    ("unequal", "equal quantity"),
+    ("wrong_action", "does not match trade direction"),
+    ("wrong_qty", "selected quantity"),
+])
+def test_four_leg_entry_basket_rejects_invalid_basket_without_any_fill(paper_ledger, mutation, message):
+    trade = _trade(paper_ledger)
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    legs = _entry_basket()
+    if mutation == "missing":
+        legs.pop("LOW_PE")
+    elif mutation == "unequal":
+        legs["LOW_PE"]["quantity"] = 24
+    elif mutation == "wrong_action":
+        legs["HIGH_CE"]["action"] = "BUY"
+    elif mutation == "wrong_qty":
+        for leg in legs.values():
+            leg["quantity"] = 24
+    with pytest.raises(ValueError, match=message):
+        paper_ledger.record_entry_basket(trade_id=trade.id, legs=legs)
+    assert paper_ledger.get_account_summary()["fill_count"] == 0
+    assert paper_ledger.ensure_account() == paper_ledger.get_account_summary()["starting_balance"]
+
+
 @pytest.mark.parametrize("expiry", ["29-Oct-2026", "20261029", "2026-W44-4"])
 def test_paper_trade_creation_rejects_non_iso_expiry(paper_ledger, expiry):
     with pytest.raises(ValueError, match="expiry must be an ISO date"):

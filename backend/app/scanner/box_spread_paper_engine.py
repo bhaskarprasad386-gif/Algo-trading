@@ -237,6 +237,7 @@ class BoxSpreadPaperEngine:
         *,
         idempotency_key: str,
         reference_prices: dict[str, object],
+        limit_prices: dict[str, object] | None = None,
     ) -> BoxSpreadPaperExecution:
         """Simulate a full four-leg fill with async latency and adverse slippage.
 
@@ -270,7 +271,28 @@ class BoxSpreadPaperEngine:
             if not price.is_finite() or price <= 0:
                 raise BoxSpreadPaperEngineError(f"{role} reference price must be positive")
             prices[role] = price
-        price_fingerprint = tuple((role, prices[role]) for role in _REQUIRED_LEG_ROLES)
+        limits: dict[str, Decimal] | None = None
+        if limit_prices is not None:
+            if set(limit_prices) != set(_REQUIRED_LEG_ROLES):
+                raise BoxSpreadPaperEngineError("limit_prices must contain exactly the four required leg roles")
+            limits = {}
+            intent_actions = {leg.role: leg.action for leg in intent.legs}
+            for role in _REQUIRED_LEG_ROLES:
+                try:
+                    limit = Decimal(str(limit_prices[role]))
+                except (InvalidOperation, TypeError, ValueError):
+                    raise BoxSpreadPaperEngineError(f"{role} limit price must be positive") from None
+                if not limit.is_finite() or limit <= 0:
+                    raise BoxSpreadPaperEngineError(f"{role} limit price must be positive")
+                if intent_actions[role] == "BUY" and limit < prices[role]:
+                    raise BoxSpreadPaperEngineError(f"{role} BUY limit is below the current ask")
+                if intent_actions[role] == "SELL" and limit > prices[role]:
+                    raise BoxSpreadPaperEngineError(f"{role} SELL limit is above the current bid")
+                limits[role] = limit
+        price_fingerprint = tuple(
+            (role, prices[role], limits[role] if limits is not None else Decimal("0"))
+            for role in _REQUIRED_LEG_ROLES
+        )
 
         if existing is not None:
             if self._execution_fingerprints[key] != price_fingerprint:
@@ -295,9 +317,11 @@ class BoxSpreadPaperEngine:
             for leg in intent.legs:
                 reference = prices[leg.role]
                 if leg.action == "BUY":
-                    fill_price = reference * (Decimal("1") + self.adverse_slippage_rate)
+                    simulated_price = reference * (Decimal("1") + self.adverse_slippage_rate)
+                    fill_price = min(simulated_price, limits[leg.role]) if limits is not None else simulated_price
                 else:
-                    fill_price = reference * (Decimal("1") - self.adverse_slippage_rate)
+                    simulated_price = reference * (Decimal("1") - self.adverse_slippage_rate)
+                    fill_price = max(simulated_price, limits[leg.role]) if limits is not None else simulated_price
                 slippage = abs(fill_price - reference)
                 fills.append(
                     BoxSpreadPaperLegFill(

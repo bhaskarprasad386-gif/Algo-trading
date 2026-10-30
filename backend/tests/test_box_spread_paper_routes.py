@@ -64,6 +64,12 @@ def test_paper_quote_selector_uses_ask_for_buys_and_bid_for_sells():
         "high_call_bid": 20, "high_call_ask": 21,
         "high_put_bid": 30, "high_put_ask": 31,
         "low_put_bid": 40, "low_put_ask": 41,
+        # LTP values intentionally disagree with the executable quote sides.
+        # Entry pricing must never fall back to last-traded prices.
+        "low_call_price": 999, "high_call_price": 888,
+        "high_put_price": 777, "low_put_price": 666,
+        "low_call_ltp": 555, "high_call_ltp": 444,
+        "high_put_ltp": 333, "low_put_ltp": 222,
     }
     assert routes._reference_prices_for_direction(row, "LONG") == {
         "LOW_CE": 11, "HIGH_CE": 20, "HIGH_PE": 31, "LOW_PE": 40,
@@ -247,17 +253,33 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "FILLED"})
 
-    async def create_intent(**kwargs):
-        return None
-
     captured = {}
+
+    fills = [
+        SimpleNamespace(role=role, action=action, quantity=25, fill_price=price,
+                         reference_price=price, slippage=0, notional=price * 25, charges=0)
+        for role, action, price in (
+            ("LOW_CE", "BUY", 11), ("HIGH_CE", "SELL", 20),
+            ("HIGH_PE", "BUY", 31), ("LOW_PE", "SELL", 40),
+        )
+    ]
 
     async def execute_intent(**kwargs):
         captured.update(kwargs["reference_prices"])
-        return SimpleNamespace(fills=[], latency_seconds=0.2, slippage_rate=0.0005)
+        return SimpleNamespace(fills=fills, latency_seconds=0.2, slippage_rate=0.0005)
+
+    async def create_intent(**kwargs):
+        return None
 
     monkeypatch.setattr(routes._engine, "create_intent", create_intent)
     monkeypatch.setattr(routes._engine, "execute_intent", execute_intent)
+    persisted = {}
+
+    def record_entry_basket(**kwargs):
+        persisted.update(kwargs["legs"])
+        return [SimpleNamespace(charges=0, virtual_balance=100000) for _ in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")]
+
+    monkeypatch.setattr(routes._ledger, "record_entry_basket", record_entry_basket)
 
     result = asyncio.run(routes.simulate_entry(
         123,
@@ -268,6 +290,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     ))
 
     assert captured == {"LOW_CE": 11, "HIGH_CE": 20, "HIGH_PE": 31, "LOW_PE": 40}
+    assert {role: item["fill_price"] for role, item in persisted.items()} == captured
     assert result["broker_orders_enabled"] is False
 
 
@@ -801,7 +824,7 @@ def test_simulate_entry_serializes_concurrent_requests_for_same_trade(monkeypatc
     assert maximum_active == 1
 
 
-def test_simulation_partial_durable_fill_blocks_replay_after_write_failure(monkeypatch):
+def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fills(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
         low_strike=25000, high_strike=25100, direction="LONG", lots=1,
@@ -820,12 +843,18 @@ def test_simulation_partial_durable_fill_blocks_replay_after_write_failure(monke
         "low_put_bid": 40, "low_put_ask": 41,
     }
     durable_fills = []
-    writes = 0
+    claim_state = {"claimed": False}
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
-    monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
-    monkeypatch.setattr(routes._ledger, "claim_entry_attempt", lambda **kwargs: {"created": True, "status": "CLAIMED"})
+    monkeypatch.setattr(
+        routes._ledger, "get_entry_claim",
+        lambda **kwargs: {"status": "CLAIMED"} if claim_state["claimed"] else None,
+    )
+    monkeypatch.setattr(
+        routes._ledger, "claim_entry_attempt",
+        lambda **kwargs: claim_state.update(claimed=True) or {"created": True, "status": "CLAIMED"},
+    )
     monkeypatch.setattr(
         routes._ledger, "list_fills",
         lambda trade_id, account_key="default": list(durable_fills),
@@ -849,25 +878,22 @@ def test_simulation_partial_durable_fill_blocks_replay_after_write_failure(monke
     monkeypatch.setattr(routes._engine, "create_intent", create_intent)
     monkeypatch.setattr(routes._engine, "execute_intent", execute_intent)
 
-    def record_fill(**kwargs):
-        nonlocal writes
-        writes += 1
-        if writes == 2:
-            raise RuntimeError("simulated database write failure after first durable fill")
-        durable_fills.append(SimpleNamespace(fill_id=kwargs["fill_id"]))
-        return SimpleNamespace(charges=0, virtual_balance=100000)
+    def record_entry_basket(**kwargs):
+        # The ledger uses one database transaction for all four legs. A failed
+        # basket write must leave no durable partial fills behind.
+        raise RuntimeError("simulated database failure during atomic four-leg basket write")
 
-    monkeypatch.setattr(routes._ledger, "record_fill", record_fill)
+    monkeypatch.setattr(routes._ledger, "record_entry_basket", record_entry_basket)
 
     with pytest.raises(HTTPException):
         asyncio.run(routes.simulate_entry(
             456, routes.SimulateEntry(account_key="partial-write-test"),
         ))
 
-    assert len(durable_fills) == 1
+    assert durable_fills == []
 
     async def forbidden_execution(**kwargs):
-        pytest.fail("entry replay must be blocked after any durable partial fill")
+        pytest.fail("entry replay must be blocked after a durable entry claim, even when atomic write left no fills")
 
     monkeypatch.setattr(routes._engine, "create_intent", forbidden_execution)
     with pytest.raises(HTTPException) as raised:
@@ -875,7 +901,7 @@ def test_simulation_partial_durable_fill_blocks_replay_after_write_failure(monke
             456, routes.SimulateEntry(account_key="partial-write-test"),
         ))
     assert raised.value.status_code == 409
-    assert "durable fills" in raised.value.detail
+    assert "durably claimed" in raised.value.detail
 
 
 

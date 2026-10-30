@@ -125,6 +125,45 @@ def test_paper_execution_applies_200ms_async_latency_and_adverse_slippage():
     asyncio.run(scenario())
 
 
+
+
+
+def test_limit_entry_caps_all_four_simulated_fills_at_submitted_limits():
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="limit-basket")
+        engine.execution_latency_seconds = 0
+        execution = await engine.execute_intent(
+            idempotency_key="limit-basket",
+            reference_prices={"LOW_CE":100,"HIGH_CE":50,"HIGH_PE":55,"LOW_PE":95},
+            limit_prices={"LOW_CE":100.02,"HIGH_CE":49.99,"HIGH_PE":55.02,"LOW_PE":94.99},
+        )
+        assert [fill.fill_price for fill in execution.fills] == [
+            Decimal("100.020000"), Decimal("49.990000"),
+            Decimal("55.020000"), Decimal("94.990000"),
+        ]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limits, message", [
+    ({"LOW_CE":99.99,"HIGH_CE":50,"HIGH_PE":55,"LOW_PE":95}, "BUY limit is below"),
+    ({"LOW_CE":100,"HIGH_CE":50.01,"HIGH_PE":55,"LOW_PE":95}, "SELL limit is above"),
+])
+def test_limit_entry_rejects_one_non_marketable_leg_before_execution(limits, message):
+    async def scenario():
+        engine = BoxSpreadPaperEngine()
+        await engine.create_intent(contracts=_contracts(), lots=1, idempotency_key="limit-reject")
+        engine.execution_latency_seconds = 0
+        with pytest.raises(BoxSpreadPaperEngineError, match=message):
+            await engine.execute_intent(
+                idempotency_key="limit-reject",
+                reference_prices={"LOW_CE":100,"HIGH_CE":50,"HIGH_PE":55,"LOW_PE":95},
+                limit_prices=limits,
+            )
+        assert await engine.get_execution("limit-reject") is None
+    asyncio.run(scenario())
+
+
 def test_paper_execution_is_idempotent_and_rejects_changed_prices():
     async def scenario():
         engine = BoxSpreadPaperEngine()

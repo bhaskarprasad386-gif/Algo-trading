@@ -185,9 +185,11 @@ class CreatePaperTrade(BaseModel):
 
 
 class SimulateEntry(BaseModel):
-    # Accepted for client compatibility, but never trusted as the execution price source.
+    # Browser reference prices are never trusted; the server reloads a fresh scanner snapshot.
     reference_prices: dict[str, float] | None = None
     account_key: str = Field(default="default", min_length=1, max_length=128)
+    order_type: Literal["LIMIT", "MARKET"] = "LIMIT"
+    limit_prices: dict[str, float] | None = None
 
 
 class ExpirySettlement(BaseModel):
@@ -817,6 +819,30 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
         # Map executable bid/ask sides by each paper leg action. Never feed a
         # sell-side quote into a simulated BUY (or vice versa).
         reference_prices = _reference_prices_for_direction(current_row, contracts.direction)
+        limit_prices = None
+        if payload.order_type == "LIMIT":
+            limit_prices = payload.limit_prices or dict(reference_prices)
+            if set(limit_prices) != {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}:
+                raise HTTPException(status_code=422, detail="LIMIT entry requires exactly four leg limit prices")
+            actions = (
+                {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+                if contracts.direction == "LONG"
+                else {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+            )
+            for role, raw_limit in limit_prices.items():
+                try:
+                    limit = float(raw_limit)
+                except (TypeError, ValueError, OverflowError):
+                    raise HTTPException(status_code=422, detail=f"{role} limit price must be a positive finite number") from None
+                if not math.isfinite(limit) or limit <= 0:
+                    raise HTTPException(status_code=422, detail=f"{role} limit price must be a positive finite number")
+                executable = reference_prices[role]
+                if actions[role] == "BUY" and limit < executable:
+                    raise HTTPException(status_code=409, detail=f"{role} BUY limit is below current ask; all four entry legs rejected")
+                if actions[role] == "SELL" and limit > executable:
+                    raise HTTPException(status_code=409, detail=f"{role} SELL limit is above current bid; all four entry legs rejected")
+        elif payload.limit_prices is not None:
+            raise HTTPException(status_code=422, detail="MARKET entry must not include limit_prices")
         # Recheck immediately before the durable claim: OFF pressed while quotes
         # and contracts were being prepared must prevent this entry from starting.
         # Once the claim is created, the four-leg attempt is in flight; OFF does
@@ -847,17 +873,19 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
         )
         execution = await _engine.execute_intent(
             idempotency_key=engine_key, reference_prices=reference_prices,
+            limit_prices=limit_prices,
         )
-        receipts = []
-        for fill in execution.fills:
-            receipts.append(await asyncio.to_thread(
-                _ledger.record_fill,
-                trade_id=trade_id, fill_id=_ledger_fill_id(request.idempotency_key, fill.role),
-                role=fill.role, action=fill.action, quantity=fill.quantity,
-                fill_price=fill.fill_price, account_key=payload.account_key,
-            ))
-        await asyncio.to_thread(
-            _ledger.complete_entry_attempt, trade_id=trade_id, account_key=payload.account_key
+        basket_legs = {
+            fill.role: {
+                "fill_id": _ledger_fill_id(request.idempotency_key, fill.role),
+                "action": fill.action, "quantity": fill.quantity,
+                "fill_price": fill.fill_price,
+            }
+            for fill in execution.fills
+        }
+        receipts = await asyncio.to_thread(
+            _ledger.record_entry_basket,
+            trade_id=trade_id, legs=basket_legs, account_key=payload.account_key,
         )
         summary = await asyncio.to_thread(
             _ledger.get_trade_summary, trade_id, account_key=payload.account_key
