@@ -115,59 +115,72 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
     return {"strategy":"box-spread","mode":"paper-safe","count":len(rows),"opportunity_count":sum(float(r.executable_edge or 0)>0 for r in rows),"data":[{"symbol":r.low.underlying,"instrument_class":r.low.instrument_class,"expiry":r.low.expiry,"expiry_date":_expiry_date(r.low.expiry),"expiry_type":_expiry_types.get((str(r.low.underlying).strip().upper(), _expiry_key(r.low.expiry)), "UNKNOWN"),"low_strike":r.low.strike,"high_strike":r.high.strike,**_spot_fields(r.low.underlying),"direction":r.direction,"timestamp_ns":r.low.timestamp_ns,"high_timestamp_ns":r.high.timestamp_ns,"last_update_timestamp_ns":max(_leg_timestamps(r)),"quote_age_seconds":round(max(0.0,(now_ns-min(_leg_timestamps(r)))/1_000_000_000),3),"freshness":"LIVE","timestamp_skew_ms":round((max(int(getattr(r.low,"call_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.low,"put_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.high,"call_timestamp_ns",None) or r.high.timestamp_ns),int(getattr(r.high,"put_timestamp_ns",None) or r.high.timestamp_ns))-min(int(getattr(r.low,"call_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.low,"put_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.high,"call_timestamp_ns",None) or r.high.timestamp_ns),int(getattr(r.high,"put_timestamp_ns",None) or r.high.timestamp_ns)))/1_000_000,3),"low_call_ltp":getattr(r.low,"call_ltp",None),"low_call_bid":r.low.call_bid,"low_call_bid_qty":getattr(r.low,"call_bid_qty",None),"low_call_ask":r.low.call_ask,"low_call_ask_qty":getattr(r.low,"call_ask_qty",None),"low_put_ltp":getattr(r.low,"put_ltp",None),"low_put_bid":r.low.put_bid,"low_put_bid_qty":getattr(r.low,"put_bid_qty",None),"low_put_ask":r.low.put_ask,"low_put_ask_qty":getattr(r.low,"put_ask_qty",None),"high_call_ltp":getattr(r.high,"call_ltp",None),"high_call_bid":r.high.call_bid,"high_call_bid_qty":getattr(r.high,"call_bid_qty",None),"high_call_ask":r.high.call_ask,"high_call_ask_qty":getattr(r.high,"call_ask_qty",None),"high_put_ltp":getattr(r.high,"put_ltp",None),"high_put_bid":r.high.put_bid,"high_put_bid_qty":getattr(r.high,"put_bid_qty",None),"high_put_ask":r.high.put_ask,"high_put_ask_qty":getattr(r.high,"put_ask_qty",None),"executable_edge":r.executable_edge,"edge_per_lot":r.edge_per_lot,"gross_pnl":r.gross_pnl,"lot_size":r.low.lot_size,"strike_distance":r.strike_distance,"liquidity_qty":min(r.low.volume,r.high.volume),"low_call_price":r.low.call_ask if r.direction=="LONG" else r.low.call_bid,"low_put_price":r.low.put_ask if r.direction=="LONG" else r.low.put_bid,"high_call_price":r.high.call_bid if r.direction=="LONG" else r.high.call_ask,"high_put_price":r.high.put_bid if r.direction=="LONG" else r.high.put_ask} for r in rows]}
 
 
+def _serialize_monitor_result(result, *, now_ns: int, max_age_ns: int, freshness: str):
+    from math import isfinite
+    low, high = result.low, result.high
+    stamps = _leg_timestamps(SimpleNamespace(low=low, high=high))
+    if not all(now_ns - max_age_ns <= stamp <= now_ns for stamp in stamps):
+        return None
+    if max(stamps) - min(stamps) > min(max_age_ns, MAX_LEG_TIMESTAMP_SKEW_NS):
+        return None
+    edge = float(result.executable_edge)
+    if not isfinite(edge):
+        return None
+    return {
+        "symbol": low.underlying, "instrument_class": low.instrument_class,
+        "expiry": low.expiry, "expiry_date": _expiry_date(low.expiry),
+        "expiry_type": classify_expiry_type(low.underlying, low.expiry),
+        "low_strike": low.strike, "high_strike": high.strike,
+        "direction": result.direction, **_spot_fields(low.underlying),
+        "timestamp_ns": low.timestamp_ns, "high_timestamp_ns": high.timestamp_ns,
+        "last_update_timestamp_ns": max(stamps),
+        "quote_age_seconds": round(max(0.0, (now_ns - min(stamps)) / 1_000_000_000), 3),
+        "freshness": freshness,
+        "low_call_bid": low.call_bid, "low_call_ask": low.call_ask,
+        "low_put_bid": low.put_bid, "low_put_ask": low.put_ask,
+        "high_call_bid": high.call_bid, "high_call_ask": high.call_ask,
+        "high_put_bid": high.put_bid, "high_put_ask": high.put_ask,
+        "low_call_bid_qty": getattr(low, "call_bid_qty", None),
+        "low_call_ask_qty": getattr(low, "call_ask_qty", None),
+        "low_put_bid_qty": getattr(low, "put_bid_qty", None),
+        "low_put_ask_qty": getattr(low, "put_ask_qty", None),
+        "high_call_bid_qty": getattr(high, "call_bid_qty", None),
+        "high_call_ask_qty": getattr(high, "call_ask_qty", None),
+        "high_put_bid_qty": getattr(high, "put_bid_qty", None),
+        "high_put_ask_qty": getattr(high, "put_ask_qty", None),
+        "executable_edge": edge, "edge_per_lot": result.edge_per_lot,
+        "gross_pnl": result.gross_pnl, "lot_size": low.lot_size,
+        "low_call_price": low.call_ask if result.direction == "LONG" else low.call_bid,
+        "low_put_price": low.put_ask if result.direction == "LONG" else low.put_bid,
+        "high_call_price": high.call_bid if result.direction == "LONG" else high.call_ask,
+        "high_put_price": high.put_bid if result.direction == "LONG" else high.put_ask,
+    }
+
+
 @router.get("/monitor")
 def monitor_snapshot(max_age_seconds: Annotated[float, Query(gt=0,le=60)] = 5.0):
-    """Return synchronized four-leg rows without the normal entry-edge threshold."""
-    from math import isfinite
+    """Return fresh raw position marks and entry candidates below global edge threshold."""
     snapshot = _monitor_getter() if callable(_monitor_getter) else None
     if not isinstance(snapshot, dict):
-        return {"strategy": "box-spread", "fresh": False, "count": 0, "data": []}
+        return {"strategy": "box-spread", "fresh": False, "count": 0, "data": [], "entry_count": 0, "entry_data": []}
     now_ns = time.time_ns()
     updated_at_ns = int(snapshot.get("updated_at_ns") or 0)
     max_age_ns = int(max_age_seconds * 1_000_000_000)
     if updated_at_ns <= 0 or now_ns - updated_at_ns > max_age_ns or updated_at_ns > now_ns + 1_000_000_000:
-        return {"strategy": "box-spread", "fresh": False, "count": 0, "data": []}
-    data = []
-    for result in snapshot.get("data", ()):
-        low, high = result.low, result.high
-        stamps = _leg_timestamps(SimpleNamespace(low=low, high=high))
-        if not all(now_ns - max_age_ns <= stamp <= now_ns for stamp in stamps):
-            continue
-        if max(stamps) - min(stamps) > min(max_age_ns, MAX_LEG_TIMESTAMP_SKEW_NS):
-            continue
-        edge = float(result.executable_edge)
-        if not isfinite(edge):
-            continue
-        data.append({
-            "symbol": low.underlying, "instrument_class": low.instrument_class,
-            "expiry": low.expiry, "expiry_date": _expiry_date(low.expiry),
-            "expiry_type": classify_expiry_type(low.underlying, low.expiry),
-            "low_strike": low.strike, "high_strike": high.strike,
-            "direction": result.direction, **_spot_fields(low.underlying),
-            "timestamp_ns": low.timestamp_ns, "high_timestamp_ns": high.timestamp_ns,
-            "last_update_timestamp_ns": max(stamps),
-            "quote_age_seconds": round(max(0.0, (now_ns - min(stamps)) / 1_000_000_000), 3),
-            "freshness": "LIVE_MONITOR",
-            "low_call_bid": low.call_bid, "low_call_ask": low.call_ask,
-            "low_put_bid": low.put_bid, "low_put_ask": low.put_ask,
-            "high_call_bid": high.call_bid, "high_call_ask": high.call_ask,
-            "high_put_bid": high.put_bid, "high_put_ask": high.put_ask,
-            "low_call_bid_qty": getattr(low, "call_bid_qty", None),
-            "low_call_ask_qty": getattr(low, "call_ask_qty", None),
-            "low_put_bid_qty": getattr(low, "put_bid_qty", None),
-            "low_put_ask_qty": getattr(low, "put_ask_qty", None),
-            "high_call_bid_qty": getattr(high, "call_bid_qty", None),
-            "high_call_ask_qty": getattr(high, "call_ask_qty", None),
-            "high_put_bid_qty": getattr(high, "put_bid_qty", None),
-            "high_put_ask_qty": getattr(high, "put_ask_qty", None),
-            "executable_edge": edge, "edge_per_lot": result.edge_per_lot,
-            "gross_pnl": result.gross_pnl, "lot_size": low.lot_size,
-            "low_call_price": low.call_ask if result.direction == "LONG" else low.call_bid,
-            "low_put_price": low.put_ask if result.direction == "LONG" else low.put_bid,
-            "high_call_price": high.call_bid if result.direction == "LONG" else high.call_ask,
-            "high_put_price": high.put_bid if result.direction == "LONG" else high.put_ask,
-        })
-    return {"strategy": "box-spread", "fresh": True, "count": len(data), "data": data}
+        return {"strategy": "box-spread", "fresh": False, "count": 0, "data": [], "entry_count": 0, "entry_data": []}
+    data = [
+        item for result in snapshot.get("data", ())
+        if (item := _serialize_monitor_result(result, now_ns=now_ns, max_age_ns=max_age_ns, freshness="LIVE_MONITOR")) is not None
+    ]
+    entry_data = [
+        item for result in snapshot.get("entry_data", ())
+        if (item := _serialize_monitor_result(result, now_ns=now_ns, max_age_ns=max_age_ns, freshness="LIVE_RULE_CANDIDATE")) is not None
+    ]
+    return {
+        "strategy": "box-spread", "fresh": True,
+        "count": len(data), "data": data,
+        "entry_count": len(entry_data), "entry_data": entry_data,
+    }
 
 @router.get("/snapshots")
 def snapshots(
