@@ -443,7 +443,7 @@ export default function BoxSpreadPaperTrading() {
           <label className="text-xs theme-muted">Direction
             <select value={positionDirection} onChange={event=>setPositionDirection(event.target.value)} className="mt-1 min-h-9 w-full rounded-lg border theme-border theme-surface-2 px-3 text-sm theme-text"><option value="ALL">All directions</option><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select>
           </label>
-          <label className="text-xs theme-muted">Sort positions
+          <label className="text-xs theme-muted">Sort current page
             <select value={positionSort} onChange={event=>setPositionSort(event.target.value)} className="mt-1 min-h-9 w-full rounded-lg border theme-border theme-surface-2 px-3 text-sm theme-text"><option value="LATEST">Newest first</option><option value="PNL_HIGH">Highest P&amp;L first</option><option value="PNL_LOW">Lowest P&amp;L first</option></select>
           </label>
         </div>
@@ -479,7 +479,7 @@ export default function BoxSpreadPaperTrading() {
             <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Net P&L</div><div className="mt-1 text-lg font-bold theme-text">{totalNetPnl == null ? "—" : money(totalNetPnl)}</div></div>
             <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Total charges</div><div className="mt-1 text-lg font-bold theme-text">{money(portfolioSummary?.total_charges)}</div></div>
           </div>
-          <p className="mt-2 text-[11px] theme-muted">Net P&L is shown only when every open position has a fresh backend mark. If any leg quote is stale/missing, unrealized and combined P&L remain unavailable rather than using stale prices. Historical trades created before entry-spot capture will show —.</p>
+          <p className="mt-2 text-[11px] theme-muted">Portfolio P&L and charges cover the entire account, not only the visible pages. Unrealized and net P&L are shown only when every open position has a fresh backend mark; stale or missing quotes make them unavailable. Position sorting applies within each loaded page. Historical trades created before entry-spot capture show —.</p>
         </div>
       </section>
 
