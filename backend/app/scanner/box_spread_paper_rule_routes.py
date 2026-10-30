@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal
 from app.scanner.box_spread_paper_routes import require_paper_access
@@ -163,6 +163,19 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
             threshold=None if threshold is None else str(threshold),
             reason=reason[:512], evaluated_at=utc_now(),
         ))
+        session.flush()
+        # Keep evaluation history bounded: retain the newest 1,000 rows per rule.
+        stale_ids = session.scalars(
+            select(BoxSpreadPaperRuleEvaluation.id)
+            .where(BoxSpreadPaperRuleEvaluation.rule_id == rule_id)
+            .order_by(BoxSpreadPaperRuleEvaluation.evaluated_at.desc(),
+                      BoxSpreadPaperRuleEvaluation.id.desc())
+            .offset(1000)
+        ).all()
+        if stale_ids:
+            session.execute(delete(BoxSpreadPaperRuleEvaluation).where(
+                BoxSpreadPaperRuleEvaluation.id.in_(stale_ids)
+            ))
         session.commit()
 
 
