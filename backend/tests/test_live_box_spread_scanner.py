@@ -225,3 +225,33 @@ def test_normal_opportunity_scan_still_excludes_nonpositive_edges():
         policy=ScanPolicy(stock_box_distances=(1,)),
     )
     assert results == ()
+
+
+
+def test_position_monitor_includes_far_strike_pairs_outside_normal_scan_policy():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    quotes = []
+    for strike in (100, 110, 120):
+        quotes.append(OptionQuote(
+            1, "ABC", 20261231, strike, 10, 10.1, 10, 10.1,
+            10, "STOCK", 100, 100,
+        ))
+    config = BoxSpreadScanConfig(
+        min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+        max_option_spread_pct=100,
+    )
+    policy = ScanPolicy(stock_box_distances=(1,))
+    normal = scan_box_snapshot(
+        quotes, atm_strike=100, instrument_class="STOCK",
+        config=config, policy=policy, include_nonpositive=True,
+    )
+    monitor = scan_box_snapshot(
+        quotes, atm_strike=100, instrument_class="STOCK",
+        config=config, policy=policy, include_nonpositive=True,
+        include_all_strike_pairs=True,
+    )
+    assert (100, 120) not in {(int(row.low.strike), int(row.high.strike)) for row in normal}
+    assert (100, 120) in {(int(row.low.strike), int(row.high.strike)) for row in monitor}
