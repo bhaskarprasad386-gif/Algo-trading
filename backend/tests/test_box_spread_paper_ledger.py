@@ -99,8 +99,8 @@ def test_four_leg_entry_basket_rejects_invalid_basket_without_any_fill(paper_led
     elif mutation == "wrong_action":
         legs["HIGH_CE"]["action"] = "BUY"
     elif mutation == "wrong_qty":
-        legs["LOW_PE"]["quantity"] = 24
-        legs["HIGH_PE"]["quantity"] = 24
+        for leg in legs.values():
+            leg["quantity"] = 24
     with pytest.raises(ValueError, match=message):
         paper_ledger.record_entry_basket(trade_id=trade.id, legs=legs)
     assert paper_ledger.get_account_summary()["fill_count"] == 0
