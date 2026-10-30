@@ -394,6 +394,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             leg_audit = [
                 {
                     "role": fill.get("role"), "action": fill.get("action"),
+                    "quote_side": "ASK" if fill.get("action") == "BUY" else "BID",
                     "qty": fill.get("quantity"), "reference": fill.get("reference_price"),
                     "limit": fill.get("reference_price"), "fill": fill.get("fill_price"),
                 }
