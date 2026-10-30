@@ -104,8 +104,8 @@ def test_selection_keeps_only_matching_expiry_and_real_tokens():
         {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"26NOV2026","token":"11","symbol":"ABCFUT2","lotsize":"10"},
         {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"26NOV2026","token":"20","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
         {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"26NOV2026","token":"21","symbol":"ABC100PE","strike":"10000","lotsize":"10"},
-        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"26NOV2026","token":"30","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
-        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"26NOV2026","token":"31","symbol":"ABC100PE","strike":"10000","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"24DEC2026","token":"30","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"24DEC2026","token":"31","symbol":"ABC100PE","strike":"10000","lotsize":"10"},
     ]
     selected=select_synthetic_contracts(
         _master(items), underlying="ABC", instrument_class="STOCK", atm_strike=100,
