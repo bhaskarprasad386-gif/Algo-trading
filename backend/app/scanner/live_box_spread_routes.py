@@ -138,11 +138,16 @@ def snapshots(
             except (TypeError, ValueError):
                 continue
             item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            # Prefer the current instrument-master classification, but preserve the
-            # classification captured with the snapshot if the mapping is unavailable.
+            # A snapshot's saved classification is historical evidence and must
+            # not be overwritten by a later instrument-master refresh. Use the
+            # current map only for older snapshots that lack a valid saved value.
+            saved_type = str(item.get("expiry_type") or "").strip().upper()
             current_type = classify_expiry_type(row.symbol, row.expiry)
-            saved_type = str(item.get("expiry_type") or "UNKNOWN").strip().upper()
-            item["expiry_type"] = current_type if current_type != "UNKNOWN" else saved_type
+            item["expiry_type"] = (
+                saved_type if saved_type in {"WEEKLY", "MONTHLY"}
+                else current_type if current_type in {"WEEKLY", "MONTHLY"}
+                else "UNKNOWN"
+            )
             item["freshness"] = "SAVED SNAPSHOT"
             data.append(item)
         return {
@@ -292,6 +297,6 @@ def alerts(days:int=Query(30,ge=1,le=30),limit:int=Query(500,ge=1,le=5000)):
     cutoff=datetime.utcnow()-timedelta(days=days)
     with SessionLocal() as db:
         rows=db.query(LiveBoxSpreadAlertHistory).filter(LiveBoxSpreadAlertHistory.observed_at>=cutoff).order_by(LiveBoxSpreadAlertHistory.observed_at.desc()).limit(limit).all()
-        return {"strategy":"box-spread","days":days,"count":len(rows),"data":[{"symbol":r.symbol,"instrument_class":r.instrument_class,"expiry":r.expiry,"low_strike":r.low_strike,"high_strike":r.high_strike,"direction":r.direction,"timestamp_ns":r.timestamp_ns,"low_call_bid":r.low_call_bid,"low_call_bid_qty":getattr(r,"low_call_bid_qty",None),"low_call_ask":r.low_call_ask,"low_call_ask_qty":getattr(r,"low_call_ask_qty",None),"low_put_bid":r.low_put_bid,"low_put_bid_qty":getattr(r,"low_put_bid_qty",None),"low_put_ask":r.low_put_ask,"low_put_ask_qty":getattr(r,"low_put_ask_qty",None),"high_call_bid":r.high_call_bid,"high_call_bid_qty":getattr(r,"high_call_bid_qty",None),"high_call_ask":r.high_call_ask,"high_call_ask_qty":getattr(r,"high_call_ask_qty",None),"high_put_bid":r.high_put_bid,"high_put_bid_qty":getattr(r,"high_put_bid_qty",None),"high_put_ask":r.high_put_ask,"high_put_ask_qty":getattr(r,"high_put_ask_qty",None),"executable_edge":r.executable_edge,"edge_per_lot":r.edge_per_lot,"gross_pnl":r.gross_pnl,"lot_size":r.lot_size} for r in rows]}
+        return {"strategy":"box-spread","days":days,"count":len(rows),"data":[{"symbol":r.symbol,"instrument_class":r.instrument_class,"expiry":r.expiry,"expiry_type":(str(getattr(r,"expiry_type",None) or "").strip().upper() if str(getattr(r,"expiry_type",None) or "").strip().upper() in {"WEEKLY","MONTHLY"} else classify_expiry_type(r.symbol,r.expiry)),"low_strike":r.low_strike,"high_strike":r.high_strike,"direction":r.direction,"timestamp_ns":r.timestamp_ns,"low_call_bid":r.low_call_bid,"low_call_bid_qty":getattr(r,"low_call_bid_qty",None),"low_call_ask":r.low_call_ask,"low_call_ask_qty":getattr(r,"low_call_ask_qty",None),"low_put_bid":r.low_put_bid,"low_put_bid_qty":getattr(r,"low_put_bid_qty",None),"low_put_ask":r.low_put_ask,"low_put_ask_qty":getattr(r,"low_put_ask_qty",None),"high_call_bid":r.high_call_bid,"high_call_bid_qty":getattr(r,"high_call_bid_qty",None),"high_call_ask":r.high_call_ask,"high_call_ask_qty":getattr(r,"high_call_ask_qty",None),"high_put_bid":r.high_put_bid,"high_put_bid_qty":getattr(r,"high_put_bid_qty",None),"high_put_ask":r.high_put_ask,"high_put_ask_qty":getattr(r,"high_put_ask_qty",None),"executable_edge":r.executable_edge,"edge_per_lot":r.edge_per_lot,"gross_pnl":r.gross_pnl,"lot_size":r.lot_size} for r in rows]}
 
 __all__=["router","configure"]
