@@ -478,8 +478,6 @@ def test_runner_exposes_supervisor_stop_event_alias():
 
 
 def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
-    from threading import Event
-
     runner = LiveSyntheticRunner(
         ":memory:",
         [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "26NOV2026")],
@@ -506,14 +504,11 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
         lambda seconds: None,
     )
     class FakeFeed:
-        def __init__(self):
-            self.stop_event = Event()
-
         def run_forever(self):
-            self.stop_event.wait()
+            return
 
         def stop(self):
-            self.stop_event.set()
+            return
 
     monkeypatch.setattr(runner, "_ensure_underlying_feed", lambda: FakeFeed())
 
