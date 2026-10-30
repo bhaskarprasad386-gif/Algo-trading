@@ -744,17 +744,34 @@ class BoxSpreadPaperLedger:
         *,
         account_key: str = "default",
         mark_prices: dict[str, object] | None = None,
+        trade_record: BoxSpreadPaperTradeRecord | None = None,
+        entries: list[BoxSpreadPaperLedgerEntry] | None = None,
     ) -> dict[str, Decimal | int | str | None]:
-        """Return durable cash/fee totals and optional open-position mark-to-market P&L."""
+        """Return durable cash/fee totals and optional open-position mark-to-market P&L.
+
+        Callers that already loaded a trade and its fills may pass them here to
+        avoid one database round-trip per position in portfolio reads.
+        """
         key = self._account_key(account_key)
-        with self._session_factory() as session:
-            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
-            if trade is None or trade.account_key != key:
-                raise ValueError("paper trade not found for account")
-            entries = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
-                BoxSpreadPaperLedgerEntry.trade_id == trade_id,
-                BoxSpreadPaperLedgerEntry.account_key == key,
-            )).all()
+        if trade_record is None or entries is None:
+            with self._session_factory() as session:
+                if trade_record is None:
+                    trade_record = session.get(BoxSpreadPaperTradeRecord, trade_id)
+                if trade_record is None or trade_record.account_key != key:
+                    raise ValueError("paper trade not found for account")
+                if entries is None:
+                    entries = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                        BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+                        BoxSpreadPaperLedgerEntry.account_key == key,
+                    ).order_by(
+                        BoxSpreadPaperLedgerEntry.created_at,
+                        BoxSpreadPaperLedgerEntry.id,
+                    )).all()
+        if trade_record is None or trade_record.account_key != key:
+            raise ValueError("paper trade not found for account")
+        if trade_record.id != trade_id:
+            raise ValueError("paper trade record does not match trade_id")
+        assert entries is not None
 
         net_cash_flow = sum((Decimal(row.cash_delta) for row in entries), Decimal("0.00"))
         total_charges = sum((Decimal(row.charges) for row in entries), Decimal("0.00"))
@@ -833,9 +850,9 @@ class BoxSpreadPaperLedger:
             unrealized_pnl = Decimal("0.00")
 
         return {
-            "trade_id": trade.id,
-            "status": trade.status,
-            "quantity": trade.quantity,
+            "trade_id": trade_record.id,
+            "status": trade_record.status,
+            "quantity": trade_record.quantity,
             "fill_count": len(entries),
             "buy_notional": buy_notional,
             "sell_notional": sell_notional,
@@ -843,7 +860,7 @@ class BoxSpreadPaperLedger:
             "net_cash_flow": net_cash_flow,
             "unrealized_pnl": unrealized_pnl,
             "realized_pnl": realized_pnl.quantize(CENT, rounding=ROUND_HALF_UP),
-            "fee_schedule_version": trade.fee_schedule_version,
+            "fee_schedule_version": trade_record.fee_schedule_version,
         }
 
     def list_fills(self, trade_id: int, account_key: str = "default") -> list[BoxSpreadPaperFillReceipt]:

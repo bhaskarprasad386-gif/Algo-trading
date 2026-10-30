@@ -936,3 +936,58 @@ def test_mark_price_rejects_invalid_two_sided_quote():
     with pytest.raises(HTTPException) as raised:
         routes._exit_reference_price(row, "LONG", "LOW_CE")
     assert raised.value.status_code == 409
+
+
+
+def test_matching_live_row_reuses_supplied_snapshot_without_scanner_request(monkeypatch):
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    matching = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+    }
+
+    def forbidden_scanner_call(**kwargs):
+        pytest.fail("portfolio must reuse its single shared live snapshot")
+
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden_scanner_call)
+    assert routes._matching_live_row(
+        contracts, snapshot={"data": [matching]},
+    ) is matching
+
+
+def test_fresh_marks_can_use_preloaded_trade_and_snapshot(monkeypatch):
+    trade = SimpleNamespace(
+        id=456, account_key="portfolio-test", underlying="NIFTY",
+        instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG",
+        lots=1, entry_spot_price=25050,
+    )
+    matching = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    monkeypatch.setattr(
+        routes, "_load_trade_request",
+        lambda *args, **kwargs: pytest.fail("preloaded trade should avoid another DB read"),
+    )
+    monkeypatch.setattr(
+        routes, "_resolve",
+        lambda request: SimpleNamespace(
+            underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+            low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        ),
+    )
+    marks = routes._fresh_mark_prices_for_trade(
+        456, "portfolio-test", trade_record=trade,
+        live_snapshot={"data": [matching]},
+    )
+    assert marks == {
+        "LOW_CE": 10, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 41,
+    }

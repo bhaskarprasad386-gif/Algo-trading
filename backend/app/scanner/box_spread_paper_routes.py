@@ -301,11 +301,33 @@ def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> flo
     return bid if sell_to_close else ask
 
 
-def _fresh_mark_prices_for_trade(trade_id: int, account_key: str) -> dict[str, float] | None:
-    """Return executable close-side marks only from a matching fresh backend row."""
-    request = _load_trade_request(trade_id, account_key)
+def _fresh_mark_prices_for_trade(
+    trade_id: int,
+    account_key: str,
+    *,
+    trade_record: BoxSpreadPaperTradeRecord | None = None,
+    live_snapshot: dict[str, Any] | None = None,
+) -> dict[str, float] | None:
+    """Return executable close-side marks from one shared fresh backend snapshot."""
+    if trade_record is None:
+        request = _load_trade_request(trade_id, account_key)
+    else:
+        if trade_record.id != trade_id or trade_record.account_key != account_key:
+            raise ValueError("paper trade not found for account")
+        request = CreatePaperTrade(
+            underlying=trade_record.underlying,
+            instrument_class=trade_record.instrument_class,
+            expiry=trade_record.expiry,
+            low_strike=float(trade_record.low_strike),
+            high_strike=float(trade_record.high_strike),
+            direction=trade_record.direction,
+            lots=trade_record.lots,
+            account_key=account_key,
+            idempotency_key=f"portfolio-mark-{trade_id}",
+            entry_spot_price=float(trade_record.entry_spot_price) if trade_record.entry_spot_price is not None else None,
+        )
     contracts = _resolve(request)
-    row = _matching_live_row(contracts)
+    row = _matching_live_row(contracts, snapshot=live_snapshot)
     if row is None:
         return None
     return {
@@ -323,8 +345,13 @@ def _strike_matches(raw_value: Any, expected: float) -> bool:
     return math.isfinite(value) and abs(value - expected) < 0.0001
 
 
-def _matching_live_row(contracts) -> dict[str, Any] | None:
-    snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
+def _matching_live_row(
+    contracts,
+    *,
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if snapshot is None:
+        snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
     return next((
         row for row in snapshot.get("data", [])
         if str(row.get("symbol", "")).strip().upper() == contracts.underlying
@@ -397,6 +424,29 @@ def trades(account_key: str = "default", limit: int = 100, include_ledger: bool 
                 .order_by(BoxSpreadPaperTradeRecord.created_at.desc())
                 .limit(limit)).all()
             data = []
+            ledger_entries_by_trade: dict[int, list[BoxSpreadPaperLedgerEntry]] = {
+                row.id: [] for row in rows
+            }
+            if include_ledger and rows:
+                # Load all fills in one bounded query instead of issuing a query
+                # for every trade in the portfolio.
+                fill_rows = session.scalars(
+                    select(BoxSpreadPaperLedgerEntry)
+                    .where(
+                        BoxSpreadPaperLedgerEntry.account_key == account_key,
+                        BoxSpreadPaperLedgerEntry.trade_id.in_(list(ledger_entries_by_trade)),
+                    )
+                    .order_by(
+                        BoxSpreadPaperLedgerEntry.trade_id,
+                        BoxSpreadPaperLedgerEntry.created_at,
+                        BoxSpreadPaperLedgerEntry.id,
+                    )
+                ).all()
+                for fill in fill_rows:
+                    ledger_entries_by_trade[fill.trade_id].append(fill)
+
+            mark_snapshot: dict[str, Any] | None = None
+            mark_snapshot_loaded = False
             for row in rows:
                 item = {
                     "trade_id": row.id, "underlying": row.underlying,
@@ -409,22 +459,36 @@ def trades(account_key: str = "default", limit: int = 100, include_ledger: bool 
                     "fee_schedule_version": row.fee_schedule_version,
                 }
                 if include_ledger:
-                    entries = session.scalars(select(BoxSpreadPaperLedgerEntry)
-                        .where(BoxSpreadPaperLedgerEntry.trade_id == row.id,
-                               BoxSpreadPaperLedgerEntry.account_key == account_key)
-                        .order_by(BoxSpreadPaperLedgerEntry.created_at, BoxSpreadPaperLedgerEntry.id)).all()
+                    entries = ledger_entries_by_trade[row.id]
                     entry_rows = [entry for entry in entries if not entry.fill_id.startswith(("EXIT:", "SETTLE:"))]
                     exit_rows = [entry for entry in entries if entry.fill_id.startswith(("EXIT:", "SETTLE:"))]
                     mark_prices = None
                     mark_status = "UNAVAILABLE_STALE_OR_MISSING_QUOTES"
                     if entries and row.status not in {"CLOSED", "CANCELLED"}:
                         try:
-                            mark_prices = _fresh_mark_prices_for_trade(row.id, account_key)
+                            if not mark_snapshot_loaded:
+                                mark_snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
+                                mark_snapshot_loaded = True
+                            mark_prices = _fresh_mark_prices_for_trade(
+                                row.id,
+                                account_key,
+                                trade_record=row,
+                                live_snapshot=mark_snapshot,
+                            )
                             if mark_prices is not None:
                                 mark_status = "FRESH_BACKEND_QUOTES"
                         except (HTTPException, ValueError, LookupError, BoxSpreadContractResolutionError):
+                            # A failed or stale snapshot must never become an estimated MTM.
+                            mark_snapshot = {"data": []}
+                            mark_snapshot_loaded = True
                             mark_prices = None
-                    summary = _ledger.get_trade_summary(row.id, account_key=account_key, mark_prices=mark_prices)
+                    summary = _ledger.get_trade_summary(
+                        row.id,
+                        account_key=account_key,
+                        mark_prices=mark_prices,
+                        trade_record=row,
+                        entries=entries,
+                    )
                     legs = []
                     for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
                         role_entries = [entry for entry in entries if entry.role == role]

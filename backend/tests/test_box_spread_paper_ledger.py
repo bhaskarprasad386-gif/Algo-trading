@@ -339,6 +339,46 @@ def test_trade_summary_rejects_missing_or_invalid_mark_prices(paper_ledger):
         paper_ledger.get_trade_summary(trade.id, mark_prices={"LOW_CE": 0})
 
 
+
+def test_partial_exit_fifo_realized_pnl_reconciles_to_cash_flow_after_restart(paper_ledger):
+    trade = _trade(paper_ledger)
+    starting_balance = paper_ledger.ensure_account()
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="entry-first", role="LOW_CE", action="BUY",
+        quantity=5, fill_price=100,
+    )
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="entry-second", role="LOW_CE", action="BUY",
+        quantity=5, fill_price=110,
+    )
+
+    paper_ledger.record_exit_fill(
+        trade_id=trade.id, fill_id="exit-partial", role="LOW_CE",
+        quantity=4, fill_price=120,
+    )
+    partial = paper_ledger.get_trade_summary(trade.id)
+    assert partial["realized_pnl"] > Decimal("0.00")
+    assert partial["unrealized_pnl"] is None
+
+    paper_ledger.record_exit_fill(
+        trade_id=trade.id, fill_id="exit-final", role="LOW_CE",
+        quantity=6, fill_price=115,
+    )
+
+    # Re-read from the database without preloaded entries, as a restarted
+    # process or the per-trade ledger endpoint would do.
+    summary = paper_ledger.get_trade_summary(trade.id)
+    account = paper_ledger.get_account_summary()
+    assert summary["status"] == "CLOSED"
+    assert summary["unrealized_pnl"] == Decimal("0.00")
+    assert summary["realized_pnl"] == summary["net_cash_flow"]
+    assert summary["realized_pnl"] == (
+        account["virtual_balance"] - starting_balance
+    )
+    assert summary["total_charges"] == account["total_charges"]
+    assert summary["fill_count"] == 4
+
+
 def _fill_all_legs(ledger, trade):
     for role, action, price in [
         ("LOW_CE", "BUY", 100),
