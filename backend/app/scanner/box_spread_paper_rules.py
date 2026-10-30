@@ -95,6 +95,13 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
     entry_threshold = float(entry.get("threshold", 0))
     if not math.isfinite(entry_threshold):
         raise ValueError("entry threshold must be finite")
+    range_enabled_raw = entry.get("range_enabled", False)
+    if not isinstance(range_enabled_raw, bool):
+        raise ValueError("entry.range_enabled must be a boolean")
+    range_min = float(entry.get("range_min", entry_threshold))
+    range_max = float(entry.get("range_max", entry_threshold))
+    if not math.isfinite(range_min) or not math.isfinite(range_max) or range_min > range_max:
+        raise ValueError("entry range must contain finite values with minimum <= maximum")
 
     exit_metric = str(exit_rule.get("metric", "executable_edge"))
     exit_operator = str(exit_rule.get("operator", "<="))
@@ -142,6 +149,9 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "metric": entry_metric,
             "operator": entry_operator,
             "threshold": entry_threshold,
+            "range_enabled": range_enabled_raw,
+            "range_min": range_min,
+            "range_max": range_max,
             "lots": lots,
             "max_open_positions": max_open_positions,
         },
@@ -192,10 +202,11 @@ def entry_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, st
     value = metric_value(row, entry["metric"])
     if value is None:
         return False, "entry_metric_unavailable"
-    return compare(value, entry["operator"], entry["threshold"]), (
-        "entry_conditions_met" if compare(value, entry["operator"], entry["threshold"])
-        else "entry_threshold_not_met"
-    )
+    if entry.get("range_enabled", False):
+        matched = entry["range_min"] <= value <= entry["range_max"]
+        return matched, "entry_range_met" if matched else "entry_outside_selected_range"
+    matched = compare(value, entry["operator"], entry["threshold"])
+    return matched, "entry_conditions_met" if matched else "entry_threshold_not_met"
 
 
 def exit_matches(
