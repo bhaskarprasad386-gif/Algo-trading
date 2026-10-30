@@ -413,6 +413,117 @@ def account(account_key: str = "default"):
         _error(exc)
 
 
+@router.get("/portfolio-summary", dependencies=[Depends(require_paper_access)])
+def portfolio_summary(account_key: str = "default"):
+    """Account-wide paper P&L, independent of any positions page or page size."""
+    try:
+        with SessionLocal() as session:
+            trade_rows = session.scalars(
+                select(BoxSpreadPaperTradeRecord)
+                .where(BoxSpreadPaperTradeRecord.account_key == account_key)
+                .order_by(BoxSpreadPaperTradeRecord.created_at, BoxSpreadPaperTradeRecord.id)
+            ).all()
+            if not trade_rows:
+                return {
+                    "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+                    "account_key": account_key, "trade_count": 0,
+                    "open_position_count": 0, "closed_position_count": 0,
+                    "realized_pnl": "0.00", "unrealized_pnl": "0.00",
+                    "net_pnl": "0.00", "total_charges": "0.00",
+                    "unrealized_status": "FRESH_OR_NO_OPEN_POSITIONS",
+                }
+            trade_by_id = {row.id: row for row in trade_rows}
+            all_entries = session.scalars(
+                select(BoxSpreadPaperLedgerEntry)
+                .where(BoxSpreadPaperLedgerEntry.account_key == account_key)
+                .where(BoxSpreadPaperLedgerEntry.trade_id.in_(list(trade_by_id)))
+                .order_by(BoxSpreadPaperLedgerEntry.created_at, BoxSpreadPaperLedgerEntry.id)
+            ).all()
+            entries_by_trade: dict[int, list[BoxSpreadPaperLedgerEntry]] = {
+                trade_id: [] for trade_id in trade_by_id
+            }
+            for entry in all_entries:
+                entries_by_trade[entry.trade_id].append(entry)
+
+        open_rows = []
+        closed_count = 0
+        for row in trade_rows:
+            entries = entries_by_trade[row.id]
+            signed_by_role: dict[str, int] = {}
+            for entry in entries:
+                signed_by_role[entry.role] = signed_by_role.get(entry.role, 0) + (
+                    entry.quantity if entry.action == "BUY" else -entry.quantity
+                )
+            has_exposure = any(quantity != 0 for quantity in signed_by_role.values())
+            if row.status == "CLOSED" or (
+                row.status not in {"CANCELLED"} and entries and not has_exposure
+            ):
+                closed_count += 1
+            elif row.status not in {"CLOSED", "CANCELLED"}:
+                open_rows.append(row)
+
+        mark_snapshot = None
+        mark_snapshot_loaded = False
+        realized_total = Decimal("0.00")
+        charges_total = Decimal("0.00")
+        unrealized_total = Decimal("0.00")
+        unrealized_available = True
+        for row in trade_rows:
+            entries = entries_by_trade[row.id]
+            signed_by_role: dict[str, int] = {}
+            for entry in entries:
+                signed_by_role[entry.role] = signed_by_role.get(entry.role, 0) + (
+                    entry.quantity if entry.action == "BUY" else -entry.quantity
+                )
+            has_exposure = any(quantity != 0 for quantity in signed_by_role.values())
+            if row.status in {"CLOSED", "CANCELLED"} or (entries and not has_exposure):
+                marks = None
+            elif not entries:
+                marks = None
+                unrealized_available = False
+            else:
+                try:
+                    if not mark_snapshot_loaded:
+                        mark_snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
+                        mark_snapshot_loaded = True
+                    marks = _fresh_mark_prices_for_trade(
+                        row.id, account_key, trade_record=row,
+                        live_snapshot=mark_snapshot,
+                    )
+                except (HTTPException, ValueError, LookupError, BoxSpreadContractResolutionError):
+                    mark_snapshot = {"data": []}
+                    mark_snapshot_loaded = True
+                    marks = None
+                if marks is None:
+                    unrealized_available = False
+            summary = _ledger.get_trade_summary(
+                row.id, account_key=account_key, mark_prices=marks,
+                trade_record=row, entries=entries,
+            )
+            realized_total += Decimal(str(summary.get("realized_pnl") or 0))
+            charges_total += Decimal(str(summary.get("total_charges") or 0))
+            if row in open_rows:
+                if summary.get("unrealized_pnl") is None:
+                    unrealized_available = False
+                else:
+                    unrealized_total += Decimal(str(summary["unrealized_pnl"]))
+
+        unrealized_value = unrealized_total.quantize(Decimal("0.01")) if unrealized_available else None
+        net_value = (realized_total + unrealized_value).quantize(Decimal("0.01")) if unrealized_value is not None else None
+        return {
+            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+            "account_key": account_key, "trade_count": len(trade_rows),
+            "open_position_count": len(open_rows), "closed_position_count": closed_count,
+            "realized_pnl": str(realized_total.quantize(Decimal("0.01"))),
+            "unrealized_pnl": str(unrealized_value) if unrealized_value is not None else None,
+            "net_pnl": str(net_value) if net_value is not None else None,
+            "total_charges": str(charges_total.quantize(Decimal("0.01"))),
+            "unrealized_status": "FRESH_OR_NO_OPEN_POSITIONS" if unrealized_available else "UNAVAILABLE_STALE_OR_MISSING_QUOTES",
+        }
+    except Exception as exc:
+        _error(exc)
+
+
 @router.get("/trades", dependencies=[Depends(require_paper_access)])
 def trades(
     account_key: str = "default",
