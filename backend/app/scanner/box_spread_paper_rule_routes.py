@@ -296,8 +296,22 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         matched, reason = entry_matches(row, config)
         if not matched:
             continue
+        expiry = row.get("expiry_date") or row.get("expiry")
+        candidate_audit = json.dumps({
+            "symbol": str(row.get("symbol", "")).upper(),
+            "expiry": str(expiry),
+            "low_strike": row.get("low_strike"),
+            "high_strike": row.get("high_strike"),
+            "direction": str(row.get("direction", "")).upper(),
+            "lots": config["entry"]["lots"],
+            "metric": config["entry"]["metric"],
+            "observed": metric_value(row, config["entry"]["metric"]),
+            "range_min": config["entry"].get("range_min"),
+            "range_max": config["entry"].get("range_max"),
+        }, separators=(",", ":"), default=str)
+        trade = None
+        entry_started = time.perf_counter()
         try:
-            expiry = row.get("expiry_date") or row.get("expiry")
             idempotency_key = "rule-{}-{}-{}-{}-{}-{}".format(
                 rule_id, str(row.get("symbol", "")).upper(), paper._canonical_expiry(expiry),
                 row.get("low_strike"), row.get("high_strike"), str(row.get("direction", "")).upper(),
@@ -335,16 +349,37 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             result = await paper._simulate_entry_locked(
                 trade.id, paper.SimulateEntry(account_key=account_key),
             )
+            leg_audit = [
+                {
+                    "role": fill.get("role"), "action": fill.get("action"),
+                    "qty": fill.get("quantity"), "reference": fill.get("reference_price"),
+                    "fill": fill.get("fill_price"),
+                }
+                for fill in result.get("fills", [])
+            ]
+            execution_audit = json.dumps({
+                "candidate": json.loads(candidate_audit),
+                "order_type": "LIMIT",
+                "elapsed_s": round(time.perf_counter() - entry_started, 4),
+                "engine_latency_s": result.get("latency_seconds"),
+                "legs": leg_audit,
+            }, separators=(",", ":"), default=str)
             _record(rule_id, account_key, "ENTRY_CHECK", "ENTRY_RECORDED",
-                    "entry_conditions_met_and_four_leg_paper_fill_saved", trade.id,
+                    execution_audit, trade.id,
                     config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
-                    config["entry"]["threshold"])
+                    config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
         except HTTPException as exc:
             _record(rule_id, account_key, "ENTRY_CHECK", "BLOCKED",
-                    f"paper_entry_blocked:{exc.status_code}:{exc.detail}")
+                    f"{candidate_audit};paper_entry_blocked:{exc.status_code}:{exc.detail}",
+                    trade.id if trade is not None else None,
+                    config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
+                    config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
         except Exception as exc:
             _record(rule_id, account_key, "ENTRY_CHECK", "ERROR",
-                    f"paper_entry_error:{type(exc).__name__}:{exc}")
+                    f"{candidate_audit};paper_entry_error:{type(exc).__name__}:{exc}",
+                    trade.id if trade is not None else None,
+                    config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
+                    config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
 
 
 async def paper_rule_monitor_loop():
