@@ -192,6 +192,8 @@ def run_schema_migrations() -> None:
             ):
                 if name not in box_alert_columns:
                     connection.execute(text(f"ALTER TABLE live_box_spread_alert_history ADD COLUMN {name} INTEGER"))
+            if "expiry_type" not in box_alert_columns:
+                connection.execute(text("ALTER TABLE live_box_spread_alert_history ADD COLUMN expiry_type VARCHAR(8)"))
         if "live_cash_future_alert_history" in account_tables:
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_cf_alert_identity ON live_cash_future_alert_history (symbol, contract_month, timestamp_ns, event)"))
         if "live_synthetic_alert_history" not in account_tables:
