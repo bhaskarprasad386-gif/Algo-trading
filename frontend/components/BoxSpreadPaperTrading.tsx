@@ -427,7 +427,7 @@ export default function BoxSpreadPaperTrading() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] theme-muted">{closed ? "Realized result from persisted exit fills." : "Open quantity and marks are based on persisted fills and fresh backend quotes only."}</p>
         <div className="flex flex-wrap gap-2">
-          {!closed && <button type="button" onClick={() => { const firstOpen = trade.legs?.find(leg => leg.open_quantity > 0); setSelectedTrade(trade.trade_id); if (firstOpen) { setExitRole(firstOpen.role); setExitQuantity(String(firstOpen.open_quantity)); } }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600">Manage position</button>}
+          {!closed && <button type="button" onClick={() => { setSelectedTrade(trade.trade_id); setExitPreview(null); }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600">Manage position</button>}
           <button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Full fill ledger</button>
         </div>
       </div>
