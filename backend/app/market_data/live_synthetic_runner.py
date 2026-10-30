@@ -754,6 +754,12 @@ class LiveSyntheticRunner:
                 # hours, so the next trading day can rebuild subscriptions.
                 # A fatal worker exit must not leave the scanner waiting forever
                 # on the old ATM tracker; reap it before creating a replacement.
+                # Gate on market hours before trying to restart a feed worker.
+                # At session close the underlying worker may exit normally; rebuilding
+                # it while the market is closed creates a tight restart loop.
+                if not LiveSyntheticOptionFutureRecorder.market_open():
+                    self._stop_requested.wait(30.0)
+                    continue
                 if feed_thread is not None and not feed_thread.is_alive():
                     app_logger.error(
                         "Synthetic underlying feed worker exited during scanning; rebuilding feed"
@@ -761,25 +767,21 @@ class LiveSyntheticRunner:
                     if not stop_underlying_feed():
                         self._stop_requested.wait(1.0)
                         continue
-                    if LiveSyntheticOptionFutureRecorder.market_open():
-                        feed = self._ensure_underlying_feed()
-                        if feed is not None:
-                            self._active_underlying_feed = feed
-                            feed_thread = Thread(
-                                target=feed.run_forever,
-                                daemon=True,
-                                name="synthetic-underlying-feed",
-                            )
-                            feed_thread.start()
-                            try:
-                                self._wait_for_live_atm(atm_provider)
-                            except TimeoutError as exc:
-                                app_logger.warning("Synthetic ATM still unavailable after feed recovery: %s", exc)
-                                self._stop_requested.wait(5.0)
-                                continue
-                if not LiveSyntheticOptionFutureRecorder.market_open():
-                    self._stop_requested.wait(30.0)
-                    continue
+                    feed = self._ensure_underlying_feed()
+                    if feed is not None:
+                        self._active_underlying_feed = feed
+                        feed_thread = Thread(
+                            target=feed.run_forever,
+                            daemon=True,
+                            name="synthetic-underlying-feed",
+                        )
+                        feed_thread.start()
+                        try:
+                            self._wait_for_live_atm(atm_provider)
+                        except TimeoutError as exc:
+                            app_logger.warning("Synthetic ATM still unavailable after feed recovery: %s", exc)
+                            self._stop_requested.wait(5.0)
+                            continue
                 # This loop remains active across trading sessions; the earlier
                 # underlying-feed loop is not re-entered after a recorder exits.
                 # Refresh expiries here too, and rebuild the ATM strike map/feed
