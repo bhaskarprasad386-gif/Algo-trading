@@ -149,3 +149,34 @@ def test_box_spread_diagnostics_endpoint_returns_scanner_snapshot(monkeypatch):
     assert payload["status"] == "available"
     assert payload["counts"]["missing_bid_quote"] == 2
     assert payload["last_scan"]["outcome"] == "waiting_for_complete_executable_call_put_pairs"
+
+
+def test_alert_history_includes_instrument_master_expiry_type(monkeypatch):
+    row = SimpleNamespace(
+        symbol="NIFTY", instrument_class="INDEX", expiry=20261123,
+        low_strike=22000, high_strike=22100, direction="LONG", timestamp_ns=1,
+        low_call_bid=1, low_call_bid_qty=10, low_call_ask=2, low_call_ask_qty=11,
+        low_put_bid=3, low_put_bid_qty=12, low_put_ask=4, low_put_ask_qty=13,
+        high_call_bid=5, high_call_bid_qty=14, high_call_ask=6, high_call_ask_qty=15,
+        high_put_bid=7, high_put_bid_qty=16, high_put_ask=8, high_put_ask_qty=17,
+        executable_edge=1, edge_per_lot=10, gross_pnl=10, lot_size=25,
+    )
+
+    class Query:
+        def filter(self, *args): return self
+        def order_by(self, *args): return self
+        def limit(self, *args): return self
+        def all(self): return [row]
+
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def query(self, *args): return Query()
+
+    monkeypatch.setattr(routes, "SessionLocal", lambda: Session())
+    monkeypatch.setattr(routes, "_expiry_types", {})
+    routes.set_expiry_types({("NIFTY", "23NOV2026"): "WEEKLY"})
+
+    payload = routes.alerts()
+    assert payload["data"][0]["expiry_type"] == "WEEKLY"
+    assert payload["data"][0]["expiry_date"] == "2026-11-23"
