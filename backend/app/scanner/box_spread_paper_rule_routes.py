@@ -195,19 +195,15 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     for trade in await asyncio.to_thread(_open_rule_trades, rule_id, account_key):
         request = await asyncio.to_thread(paper._load_trade_request, trade.id, account_key)
         contracts = await asyncio.to_thread(paper._resolve, request)
-        live_row = paper._matching_live_row(contracts, snapshot=snapshot)
-        if live_row is None:
-            _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
-                    "matching_fresh_four_leg_snapshot_unavailable", trade.id)
-            continue
-
         exit_config = config["exit"]
         if exit_config["hold_to_expiry"]:
             try:
                 expiry_date = date.fromisoformat(paper._canonical_expiry(trade.expiry))
             except ValueError:
                 expiry_date = None
-            if expiry_date is None or datetime.now(ZoneInfo("Asia/Kolkata")).date() < expiry_date:
+            # Hold through the complete expiry date in IST. Settlement becomes
+            # a manual reconciliation item only after that date has passed.
+            if expiry_date is None or datetime.now(ZoneInfo("Asia/Kolkata")).date() <= expiry_date:
                 _record(rule_id, account_key, "EXIT_CHECK", "HOLD_TO_EXPIRY",
                         "hold_to_expiry_rule_active", trade.id)
                 continue
@@ -216,6 +212,12 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             _record(rule_id, account_key, "EXIT_CHECK", "MANUAL_SETTLEMENT_REQUIRED",
                     "expiry_reached_but_verified_server_settlement_source_is_not_configured",
                     trade.id)
+            continue
+
+        live_row = paper._matching_live_row(contracts, snapshot=snapshot)
+        if live_row is None:
+            _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+                    "matching_fresh_four_leg_snapshot_unavailable", trade.id)
             continue
 
         matched, reason, observed = exit_matches(live_row, config)
