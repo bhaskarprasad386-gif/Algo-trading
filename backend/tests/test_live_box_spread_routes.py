@@ -212,11 +212,12 @@ def test_alert_history_falls_back_to_current_instrument_master_classification(mo
 
 def test_snapshot_history_prefers_saved_expiry_type_over_changed_master(monkeypatch):
     from datetime import datetime, timezone
+    import json as json_module
 
     row = SimpleNamespace(
         id=1, symbol="BANKNIFTY", expiry=20261123,
         observed_at=datetime(2026, 10, 29, tzinfo=timezone.utc).replace(tzinfo=None),
-        payload_json=json.dumps({"expiry_type": "WEEKLY", "symbol": "BANKNIFTY"}),
+        payload_json=json_module.dumps({"expiry_type": "WEEKLY", "symbol": "BANKNIFTY"}),
     )
 
     class Query:
@@ -232,7 +233,6 @@ def test_snapshot_history_prefers_saved_expiry_type_over_changed_master(monkeypa
         def __exit__(self, *args): return False
         def query(self, *args): return Query()
 
-    import json as json_module
     monkeypatch.setattr(routes, "SessionLocal", Session)
     monkeypatch.setattr(
         routes, "_expiry_types",
