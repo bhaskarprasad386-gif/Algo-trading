@@ -90,3 +90,16 @@ def test_box_subscription_does_not_require_any_live_future_contract():
     )
     assert len(selected.subscriptions) == 4
     assert {item.instrument_class for item in selected.subscriptions} == {"STOCK"}
+
+
+
+def test_box_subscription_keeps_exact_held_strikes_outside_rolling_atm_window():
+    selected = select_box_contracts(
+        WideIndexMaster(), underlying="NIFTY", instrument_class="INDEX",
+        atm_strike=130.0, expiry="22OCT2026",
+        required_strikes=(100.0, 160.0),
+    )
+    strikes = {item.strike for item in selected.subscriptions}
+    assert 100.0 in strikes
+    assert 160.0 in strikes
+    assert len(selected.subscriptions) == 35 * 2
