@@ -516,6 +516,118 @@ class BoxSpreadPaperLedger:
             trade.status = "CLOSED" if all(position == 0 for position in positions.values()) else "EXITING"
             return self._receipt(entry, Decimal(account.virtual_balance))
 
+    def record_exit_basket(
+        self,
+        *,
+        trade_id: int,
+        fill_id: str,
+        legs: dict[str, dict[str, object]],
+        account_key: str = "default",
+    ) -> list[BoxSpreadPaperFillReceipt]:
+        """Atomically close all four equally-sized open Box Spread legs.
+
+        This is a paper-ledger atomicity guarantee: either all four exit fills
+        and cash movements commit, or none do. It does not claim an exchange
+        can atomically fill four independent option contracts.
+        """
+        key = self._account_key(account_key)
+        raw_id = str(fill_id or "").strip()
+        roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        if not raw_id or len(raw_id) > 96:
+            raise ValueError("basket exit fill_id is required and must be at most 96 characters")
+        if not isinstance(legs, dict) or set(legs) != set(roles):
+            raise ValueError("basket exit requires exactly LOW_CE, HIGH_CE, HIGH_PE and LOW_PE")
+
+        normalized: dict[str, tuple[int, Decimal]] = {}
+        for role in roles:
+            item = legs[role]
+            if not isinstance(item, dict):
+                raise ValueError(f"basket exit data is invalid for {role}")
+            qty = _positive_quantity(item.get("quantity"))
+            price = _money(item.get("fill_price"), field=f"{role} exit price")
+            if price <= 0:
+                raise ValueError(f"{role} exit price must be positive")
+            normalized[role] = (qty, price)
+
+        quantities = {qty for qty, _ in normalized.values()}
+        if len(quantities) != 1:
+            raise ValueError("four-leg basket exit requires equal open quantity on all four legs")
+        qty = next(iter(quantities))
+        self.ensure_account(key)
+
+        with self._session_factory() as session, session.begin():
+            account = self._lock_account_for_write(session, key)
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            existing_by_role = {}
+            for role in roles:
+                stored_id = f"EXIT:BASKET:{raw_id}:{role}"
+                entry_key = f"{trade_id}:{stored_id}"
+                existing_by_role[role] = session.scalar(select(BoxSpreadPaperLedgerEntry).where(
+                    BoxSpreadPaperLedgerEntry.account_key == key,
+                    BoxSpreadPaperLedgerEntry.entry_key == entry_key,
+                ))
+
+            existing_count = sum(row is not None for row in existing_by_role.values())
+            if existing_count:
+                if existing_count != 4:
+                    raise ValueError("incomplete prior basket exit record requires manual review")
+                receipts = []
+                for role in roles:
+                    row = existing_by_role[role]
+                    expected_qty, expected_price = normalized[role]
+                    if (row.quantity, Decimal(row.fill_price)) != (expected_qty, expected_price):
+                        raise ValueError("basket exit fill_id reused with different fill data")
+                    receipts.append(self._receipt(row, Decimal(account.virtual_balance)))
+                return receipts
+
+            if trade.status in {"CLOSED", "CANCELLED"}:
+                raise ValueError("paper trade is already closed or cancelled")
+
+            positions: dict[str, int] = {}
+            for role in roles:
+                rows = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
+                    BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+                    BoxSpreadPaperLedgerEntry.account_key == key,
+                    BoxSpreadPaperLedgerEntry.role == role,
+                )).all()
+                positions[role] = sum(
+                    row.quantity * (1 if row.action == "BUY" else -1) for row in rows
+                )
+            if any(position == 0 for position in positions.values()):
+                raise ValueError("basket exit requires an open position in all four legs")
+            if len({abs(position) for position in positions.values()}) != 1:
+                raise ValueError("basket exit requires equal open quantity on all four legs")
+            if any(abs(position) != qty for position in positions.values()):
+                raise ValueError("basket exit quantity must exactly match all four open leg quantities")
+
+            receipts = []
+            balance = Decimal(account.virtual_balance)
+            for role in roles:
+                _, price = normalized[role]
+                action = "SELL" if positions[role] > 0 else "BUY"
+                notional = (price * qty).quantize(CENT, rounding=ROUND_HALF_UP)
+                charges = self.fee_schedule.calculate(action=action, notional=notional)
+                cash_delta = (-notional if action == "BUY" else notional) - charges
+                stored_id = f"EXIT:BASKET:{raw_id}:{role}"
+                entry = BoxSpreadPaperLedgerEntry(
+                    account_key=key, trade_id=trade.id,
+                    entry_key=f"{trade_id}:{stored_id}", fill_id=stored_id,
+                    role=role, action=action, quantity=qty, fill_price=price,
+                    notional=notional, charges=charges, cash_delta=cash_delta,
+                    fee_schedule_version=self.fee_schedule.version,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(entry)
+                balance += cash_delta
+                session.flush()
+                receipts.append(self._receipt(entry, balance))
+
+            account.virtual_balance = balance
+            trade.status = "CLOSED"
+            return receipts
+
     def settle_expiry(
         self,
         *,

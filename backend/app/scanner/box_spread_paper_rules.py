@@ -17,7 +17,7 @@ from app.core.database import Base, SessionLocal
 
 
 ENTRY_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl"})
-EXIT_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl"})
+EXIT_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl", "position_net_pnl"})
 OPERATORS = frozenset({"<", "<=", "==", ">=", ">"})
 DIRECTIONS = frozenset({"ALL", "LONG", "SHORT"})
 INSTRUMENT_CLASSES = frozenset({"ALL", "INDEX", "STOCK"})
@@ -103,6 +103,9 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("unsupported exit metric or operator")
     if not math.isfinite(exit_threshold):
         raise ValueError("exit threshold must be finite")
+    exit_order_type = str(exit_rule.get("order_type", "LIMIT")).upper()
+    if exit_order_type not in {"LIMIT", "MARKET"}:
+        raise ValueError("exit.order_type must be LIMIT or MARKET")
     hold_raw = exit_rule.get("hold_to_expiry", False)
     if not isinstance(hold_raw, bool):
         raise ValueError("exit.hold_to_expiry must be a boolean")
@@ -147,6 +150,7 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "operator": exit_operator,
             "threshold": exit_threshold,
             "hold_to_expiry": hold_to_expiry,
+            "order_type": exit_order_type,
         },
         "monitor": {"interval_seconds": interval},
     }
@@ -194,9 +198,20 @@ def entry_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, st
     )
 
 
-def exit_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, str, float | None]:
+def exit_matches(
+    row: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    metric_override: float | None = None,
+) -> tuple[bool, str, float | None]:
     exit_rule = config["exit"]
-    value = metric_value(row, exit_rule["metric"])
+    if exit_rule["metric"] == "position_net_pnl":
+        value = metric_override
+        if value is None or not math.isfinite(float(value)):
+            return False, "exit_metric_unavailable", None
+        value = float(value)
+    else:
+        value = metric_value(row, exit_rule["metric"])
     if value is None:
         return False, "exit_metric_unavailable", None
     matched = compare(value, exit_rule["operator"], exit_rule["threshold"])

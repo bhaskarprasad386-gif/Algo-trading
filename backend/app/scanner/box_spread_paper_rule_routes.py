@@ -6,6 +6,7 @@ import json
 import time
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -219,29 +220,63 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                     "matching_fresh_four_leg_snapshot_unavailable", trade.id)
             continue
 
-        matched, reason, observed = exit_matches(live_row, config)
+        roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        signed = None
+        observed_override = None
+        if exit_config["metric"] == "position_net_pnl":
+            signed = await asyncio.to_thread(_signed_open_quantities, trade.id, account_key)
+            quantities_for_pnl = {role: abs(int(signed.get(role, 0))) for role in roles}
+            if any(quantity <= 0 for quantity in quantities_for_pnl.values()) or len(set(quantities_for_pnl.values())) != 1:
+                _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+                        "position_net_pnl_unavailable_for_incomplete_or_unequal_four_leg_exposure",
+                        trade.id, exit_config["metric"], None, exit_config["threshold"])
+                continue
+            close_marks = {
+                role: paper._exit_reference_price(live_row, contracts.direction, role)
+                for role in roles
+            }
+            pnl_summary = await asyncio.to_thread(
+                paper._ledger.get_trade_summary,
+                trade.id, account_key=account_key, mark_prices=close_marks,
+            )
+            observed_override = float(
+                Decimal(pnl_summary["realized_pnl"]) +
+                Decimal(pnl_summary["unrealized_pnl"] or 0)
+            )
+
+        matched, reason, observed = exit_matches(
+            live_row, config, metric_override=observed_override,
+        )
         if not matched:
             _record(rule_id, account_key, "EXIT_CHECK", "NO_ACTION", reason,
                     trade.id, exit_config["metric"], observed, exit_config["threshold"])
             continue
 
-        signed = await asyncio.to_thread(_signed_open_quantities, trade.id, account_key)
-        closed_any = False
-        for role, signed_quantity in signed.items():
-            if signed_quantity == 0:
-                continue
-            price = paper._exit_reference_price(live_row, contracts.direction, role)
-            receipt = await asyncio.to_thread(
-                paper._ledger.record_exit_fill,
-                trade_id=trade.id,
-                fill_id=f"rule-exit-{rule_id}-{trade.id}-{role}-{uuid.uuid4().hex}",
-                role=role, quantity=abs(signed_quantity), fill_price=price,
-                account_key=account_key,
-            )
-            closed_any = True
-        _record(rule_id, account_key, "EXIT_CHECK",
-                "EXIT_RECORDED" if closed_any else "ALREADY_FLAT",
-                reason if closed_any else "no_open_leg_quantities",
+        if signed is None:
+            signed = await asyncio.to_thread(_signed_open_quantities, trade.id, account_key)
+        open_quantities = {role: abs(int(signed.get(role, 0))) for role in roles}
+        if any(quantity <= 0 for quantity in open_quantities.values()) or len(set(open_quantities.values())) != 1:
+            _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+                    "four_leg_open_quantities_not_equal_or_missing; position left unchanged",
+                    trade.id, exit_config["metric"], observed, exit_config["threshold"])
+            continue
+
+        basket_legs = {
+            role: {
+                "quantity": open_quantities[role],
+                "fill_price": paper._exit_reference_price(live_row, contracts.direction, role),
+            }
+            for role in roles
+        }
+        await asyncio.to_thread(
+            paper._ledger.record_exit_basket,
+            trade_id=trade.id,
+            fill_id=f"rule-exit-{rule_id}-{trade.id}-{uuid.uuid4().hex}",
+            legs=basket_legs,
+            account_key=account_key,
+        )
+        _record(rule_id, account_key, "EXIT_CHECK", "EXIT_RECORDED",
+                f"{reason}; {exit_config['order_type']} four-leg paper basket",
                 trade.id, exit_config["metric"], observed, exit_config["threshold"])
 
     # Entry remains subject to the global paper execution switch and all existing
