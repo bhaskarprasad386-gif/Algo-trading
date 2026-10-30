@@ -147,6 +147,20 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
     if max_open_positions < 1 or max_open_positions > 20:
         raise ValueError("entry.max_open_positions must be between 1 and 20")
 
+    entry_window_raw = entry.get("max_trades_per_interval", 2)
+    if isinstance(entry_window_raw, bool) or not isinstance(entry_window_raw, (int, float)) or not float(entry_window_raw).is_integer():
+        raise ValueError("entry.max_trades_per_interval must be an integer")
+    max_trades_per_interval = int(entry_window_raw)
+    if max_trades_per_interval < 1 or max_trades_per_interval > 20:
+        raise ValueError("entry.max_trades_per_interval must be between 1 and 20")
+
+    entry_window_minutes_raw = monitor.get("entry_window_minutes", 15)
+    if isinstance(entry_window_minutes_raw, bool) or not isinstance(entry_window_minutes_raw, (int, float)) or not float(entry_window_minutes_raw).is_integer():
+        raise ValueError("monitor.entry_window_minutes must be an integer")
+    entry_window_minutes = int(entry_window_minutes_raw)
+    if entry_window_minutes < 1 or entry_window_minutes > 240:
+        raise ValueError("monitor.entry_window_minutes must be between 1 and 240 minutes")
+
     return {
         "entry": {
             "symbols": symbols,
@@ -161,6 +175,7 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "range_max": range_max,
             "lots": lots,
             "max_open_positions": max_open_positions,
+            "max_trades_per_interval": max_trades_per_interval,
         },
         "exit": {
             "metric": exit_metric,
@@ -169,7 +184,7 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "hold_to_expiry": hold_to_expiry,
             "order_type": exit_order_type,
         },
-        "monitor": {"interval_seconds": interval},
+        "monitor": {"interval_seconds": interval, "entry_window_minutes": entry_window_minutes},
     }
 
 
