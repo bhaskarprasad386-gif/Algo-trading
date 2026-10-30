@@ -40,8 +40,8 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
             db.commit()
 
         monkeypatch.setattr(routes, "SessionLocal", Session)
-        first = routes.snapshots(days=1, limit=2, offset=0)
-        second = routes.snapshots(days=1, limit=2, offset=2)
+        first = routes.snapshots(days=1, limit=2, offset=0, expiry_type=None)
+        second = routes.snapshots(days=1, limit=2, offset=2, expiry_type=None)
 
         assert first["total_count"] == 3
         assert first["count"] == 2
