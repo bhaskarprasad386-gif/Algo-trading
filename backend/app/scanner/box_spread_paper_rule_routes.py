@@ -463,14 +463,6 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 rule_id, str(row.get("symbol", "")).upper(), paper._canonical_expiry(expiry),
                 row.get("low_strike"), row.get("high_strike"), str(row.get("direction", "")).upper(),
             )
-            quota_slot = await asyncio.to_thread(
-                _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
-                max_per_window, idempotency_key,
-            )
-            if quota_slot is None:
-                _record(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
-                        f"{candidate_audit};interval_quota_full_or_candidate_already_reserved")
-                continue
             request = paper.CreatePaperTrade(
                 underlying=str(row["symbol"]), instrument_class=str(row["instrument_class"]),
                 expiry=str(expiry), low_strike=float(row["low_strike"]),
@@ -480,8 +472,17 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 entry_spot_price=row.get("spot_price"),
             )
             contracts = await asyncio.to_thread(paper._resolve, request)
-            # Validate all four executable prices before creating a durable trade.
+            # Validate all four executable prices before consuming a quota slot.
             paper._reference_prices_for_direction(row, contracts.direction)
+            if config["entry"].get("range_enabled", False):
+                quota_slot = await asyncio.to_thread(
+                    _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
+                    max_per_window, idempotency_key,
+                )
+                if quota_slot is None:
+                    _record(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
+                            f"{candidate_audit};interval_quota_full_or_candidate_already_reserved")
+                    continue
             trade = await asyncio.to_thread(
                 paper._ledger.create_trade,
                 idempotency_key=idempotency_key, underlying=contracts.underlying,
