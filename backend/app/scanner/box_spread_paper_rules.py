@@ -103,17 +103,32 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("unsupported exit metric or operator")
     if not math.isfinite(exit_threshold):
         raise ValueError("exit threshold must be finite")
-    hold_to_expiry = bool(exit_rule.get("hold_to_expiry", False))
+    hold_raw = exit_rule.get("hold_to_expiry", False)
+    if not isinstance(hold_raw, bool):
+        raise ValueError("exit.hold_to_expiry must be a boolean")
+    hold_to_expiry = hold_raw
     if not hold_to_expiry and "threshold" not in exit_rule:
         raise ValueError("exit.threshold is required unless hold_to_expiry is enabled")
 
-    interval = int(monitor.get("interval_seconds", 20))
+    interval_raw = monitor.get("interval_seconds", 20)
+    if isinstance(interval_raw, bool) or not isinstance(interval_raw, (int, float)) or not float(interval_raw).is_integer():
+        raise ValueError("monitor.interval_seconds must be an integer")
+    interval = int(interval_raw)
     if interval < 5 or interval > 3600:
         raise ValueError("monitor.interval_seconds must be between 5 and 3600 seconds")
 
-    lots = int(entry.get("lots", 1))
+    lots_raw = entry.get("lots", 1)
+    if isinstance(lots_raw, bool) or not isinstance(lots_raw, (int, float)) or not float(lots_raw).is_integer():
+        raise ValueError("entry.lots must be an integer")
+    lots = int(lots_raw)
     if lots < 1 or lots > 100:
         raise ValueError("entry.lots must be between 1 and 100")
+    max_open_raw = entry.get("max_open_positions", 1)
+    if isinstance(max_open_raw, bool) or not isinstance(max_open_raw, (int, float)) or not float(max_open_raw).is_integer():
+        raise ValueError("entry.max_open_positions must be an integer")
+    max_open_positions = int(max_open_raw)
+    if max_open_positions < 1 or max_open_positions > 20:
+        raise ValueError("entry.max_open_positions must be between 1 and 20")
 
     return {
         "entry": {
@@ -125,6 +140,7 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "operator": entry_operator,
             "threshold": entry_threshold,
             "lots": lots,
+            "max_open_positions": max_open_positions,
         },
         "exit": {
             "metric": exit_metric,
