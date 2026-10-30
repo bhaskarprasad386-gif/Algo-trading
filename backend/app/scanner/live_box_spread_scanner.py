@@ -2,6 +2,7 @@
 from __future__ import annotations
 from threading import Lock
 from datetime import datetime
+from dataclasses import replace
 from collections import Counter
 from app.backtesting.arbitrage_backtester import OptionQuote
 from app.core.config import settings
@@ -16,6 +17,8 @@ class LiveBoxSpreadScanner:
         self._lock=Lock(); self._buckets={}
         self._diagnostic_counts=Counter()
         self._last_diagnostics={}
+        self._monitor_results=()
+        self._monitor_updated_ns=0
 
     @staticmethod
     def _price(v):
@@ -154,8 +157,25 @@ class LiveBoxSpreadScanner:
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"}
                 self._prune(ts); return ()
             scan_stats={}
+            scan_config = self.config_provider(symbol)
             results=scan_box_snapshot(grouped,atm_strike=float(atm),instrument_class=cls,
-                                      config=self.config_provider(symbol),policy=self.policy,diagnostics=scan_stats)
+                                      config=scan_config,policy=self.policy,diagnostics=scan_stats)
+            # Preserve all edge values separately for open-position exits. This does
+            # not alter the normal scanner's configured entry threshold.
+            monitor_config = replace(scan_config, min_executable_edge=-1_000_000_000.0)
+            monitor_results = scan_box_snapshot(
+                grouped, atm_strike=float(atm), instrument_class=cls,
+                config=monitor_config, policy=self.policy,
+            )
+            self._monitor_results = monitor_results
+            self._monitor_updated_ns = max(
+                stamp for result in monitor_results for stamp in (
+                    result.low.call_timestamp_ns or result.low.timestamp_ns,
+                    result.low.put_timestamp_ns or result.low.timestamp_ns,
+                    result.high.call_timestamp_ns or result.high.timestamp_ns,
+                    result.high.put_timestamp_ns or result.high.timestamp_ns,
+                )
+            ) if monitor_results else 0
             self._diagnostic_counts["snapshots_scanned"] += 1
             for name,value in scan_stats.items():
                 self._diagnostic_counts["scan_"+name] += int(value)
@@ -167,6 +187,11 @@ class LiveBoxSpreadScanner:
             self._prune(ts)
         if results and self.on_result is not None:self.on_result(results)
         return results
+
+    def monitor_snapshot(self):
+        """Return latest all-edge results for independent open-position evaluation."""
+        with self._lock:
+            return {"updated_at_ns": self._monitor_updated_ns, "data": tuple(self._monitor_results)}
 
     TIMESTAMP_TOLERANCE_NS=3_000_000_000
 
