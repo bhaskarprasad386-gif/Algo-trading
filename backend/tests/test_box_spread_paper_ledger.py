@@ -703,6 +703,66 @@ def test_exit_is_never_blocked_by_low_virtual_balance():
     engine.dispose()
 
 
+def test_four_leg_basket_exit_commits_all_legs_atomically_and_is_idempotent(paper_ledger):
+    trade = _trade(paper_ledger)
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL",
+        "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    for role, action in entry_actions.items():
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id=f"basket-entry-{role}", role=role,
+            action=action, quantity=trade.quantity, fill_price=100,
+        )
+
+    legs = {
+        "LOW_CE": {"quantity": trade.quantity, "fill_price": 110},
+        "HIGH_CE": {"quantity": trade.quantity, "fill_price": 90},
+        "HIGH_PE": {"quantity": trade.quantity, "fill_price": 115},
+        "LOW_PE": {"quantity": trade.quantity, "fill_price": 85},
+    }
+    receipts = paper_ledger.record_exit_basket(
+        trade_id=trade.id, fill_id="manual-basket-001", legs=legs,
+    )
+    assert {receipt.role for receipt in receipts} == set(entry_actions)
+    assert len(paper_ledger.list_fills(trade.id)) == 8
+    summary = paper_ledger.get_trade_summary(trade.id)
+    assert summary["status"] == "CLOSED"
+    assert summary["unrealized_pnl"] == Decimal("0.00")
+
+    replay = paper_ledger.record_exit_basket(
+        trade_id=trade.id, fill_id="manual-basket-001", legs=legs,
+    )
+    assert len(replay) == 4
+    assert len(paper_ledger.list_fills(trade.id)) == 8
+
+
+def test_four_leg_basket_exit_rejects_unequal_open_quantities_without_partial_writes(paper_ledger):
+    trade = _trade(paper_ledger)
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL",
+        "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    for role, action in entry_actions.items():
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id=f"unequal-entry-{role}", role=role,
+            action=action, quantity=trade.quantity if role != "LOW_PE" else trade.quantity - 1,
+            fill_price=100,
+        )
+
+    legs = {
+        role: {"quantity": trade.quantity, "fill_price": 100}
+        for role in entry_actions
+    }
+    before = len(paper_ledger.list_fills(trade.id))
+    with pytest.raises(ValueError, match="equal open quantity"):
+        paper_ledger.record_exit_basket(
+            trade_id=trade.id, fill_id="unequal-basket", legs=legs,
+        )
+    assert len(paper_ledger.list_fills(trade.id)) == before
+    assert paper_ledger.get_trade_summary(trade.id)["status"] != "CLOSED"
+
+
 def test_partial_exit_separates_realized_and_open_leg_pnl(paper_ledger):
     trade = _trade(paper_ledger)
     paper_ledger.record_fill(
