@@ -14,6 +14,17 @@ type LiveOpportunity = {
   low_call_bid_qty?: number | null; low_call_ask_qty?: number | null; low_put_bid_qty?: number | null; low_put_ask_qty?: number | null;
   high_call_bid_qty?: number | null; high_call_ask_qty?: number | null; high_put_bid_qty?: number | null; high_put_ask_qty?: number | null;
 };
+type ScannerDiagnostics = {
+  status?: string;
+  active_buckets?: number;
+  counts?: Record<string, number>;
+  last_scan?: {
+    symbol?: string; expiry?: string | number; outcome?: string;
+    grouped_strikes?: number; result_count?: number; min_executable_edge?: number;
+  };
+};
+type OpportunityStatus = "CHECKING" | "LIVE" | "EMPTY" | "ERROR";
+
 type PaperTrade = {
   trade_id: number; underlying: string; instrument_class: string; expiry: string;
   low_strike: number; high_strike: number; direction: string; lots: number;
@@ -48,6 +59,10 @@ export default function BoxSpreadPaperTrading() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [recoveryTrades, setRecoveryTrades] = useState<RecoveryTrade[]>([]);
   const [opportunities, setOpportunities] = useState<LiveOpportunity[]>([]);
+  const [opportunityStatus, setOpportunityStatus] = useState<OpportunityStatus>("CHECKING");
+  const [opportunityError, setOpportunityError] = useState<string | null>(null);
+  const [scannerDiagnostics, setScannerDiagnostics] = useState<ScannerDiagnostics | null>(null);
+  const [lastOpportunityCheck, setLastOpportunityCheck] = useState<number | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,19 +121,54 @@ export default function BoxSpreadPaperTrading() {
   }, [account, request]);
 
   const loadOpportunities = useCallback(async () => {
-    try {
-      const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread/live?limit=30&max_age_seconds=5", {
+    setOpportunityStatus("CHECKING");
+    const base = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread";
+    const [liveResult, diagnosticsResult] = await Promise.allSettled([
+      fetch(base + "/live?limit=30&max_age_seconds=5", {
         cache: "no-store", signal: AbortSignal.timeout(5000),
-      });
-      if (!response.ok) throw new Error("live Box Spread scanner HTTP " + response.status);
-      const body = await response.json();
-      setOpportunities(Array.isArray(body.data) ? body.data.filter((row: LiveOpportunity) =>
-        [row.low_call_price, row.high_call_price, row.high_put_price, row.low_put_price].every(value => Number.isFinite(Number(value)) && Number(value) > 0)
-      ) : []);
-    } catch {
-      // Keep the live scanner's own status independent; never fabricate rows on API failure.
-      setOpportunities([]);
+      }).then(async response => {
+        if (!response.ok) throw new Error("Live scanner HTTP " + response.status);
+        return response.json();
+      }),
+      fetch(base + "/diagnostics", {
+        cache: "no-store", signal: AbortSignal.timeout(5000),
+      }).then(async response => {
+        if (!response.ok) throw new Error("Scanner diagnostics HTTP " + response.status);
+        return response.json();
+      }),
+    ]);
+
+    setLastOpportunityCheck(Date.now());
+    if (diagnosticsResult.status === "fulfilled") {
+      setScannerDiagnostics(diagnosticsResult.value as ScannerDiagnostics);
+    } else {
+      setScannerDiagnostics(null);
     }
+
+    if (liveResult.status === "rejected") {
+      setOpportunities([]);
+      setOpportunityStatus("ERROR");
+      setOpportunityError(liveResult.reason instanceof Error
+        ? liveResult.reason.message : "Unable to reach the live Box Spread scanner");
+      return;
+    }
+
+    const body = liveResult.value;
+    if (!Array.isArray(body?.data)) {
+      setOpportunities([]);
+      setOpportunityStatus("ERROR");
+      setOpportunityError("Live scanner returned an invalid response; expected a data array");
+      return;
+    }
+
+    const rows = body.data.filter((row: LiveOpportunity) =>
+      [row.low_call_price, row.high_call_price, row.high_put_price, row.low_put_price].every(value =>
+        Number.isFinite(Number(value)) && Number(value) > 0
+      )
+    );
+    setOpportunities(rows);
+    setOpportunityError(null);
+    setOpportunityStatus(rows.length > 0 ? "LIVE" : "EMPTY");
   }, []);
 
   useEffect(() => { setToken(window.sessionStorage.getItem("box-spread-paper-token")); }, []);
@@ -283,11 +333,47 @@ export default function BoxSpreadPaperTrading() {
 
       <div className="space-y-2 rounded-xl border theme-border p-3">
         <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold theme-text">Live scanner opportunities</h3><p className="text-xs theme-muted">Backend opportunities only · executable four-leg quotes · rows older than five seconds excluded.</p></div><button type="button" onClick={() => void loadOpportunities()} disabled={busy} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Refresh opportunities</button></div>
+        <div className="rounded-lg border theme-border theme-surface-2 p-3 text-xs" role="status">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <strong className={opportunityStatus === "LIVE" ? "text-emerald-500" : opportunityStatus === "ERROR" ? "text-red-500" : "theme-text"}>
+              {opportunityStatus === "LIVE" ? "LIVE · FRESH OPPORTUNITIES FOUND" : opportunityStatus === "EMPTY" ? "API OK · NO CURRENT QUALIFYING OPPORTUNITY" : opportunityStatus === "ERROR" ? "LIVE SCANNER API ERROR" : "CHECKING LIVE SCANNER…"}
+            </strong>
+            <span className="theme-muted">{lastOpportunityCheck == null ? "Not checked yet" : "Checked " + new Date(lastOpportunityCheck).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"}</span>
+          </div>
+          {opportunityError && <p className="mt-1 text-red-500">{opportunityError}</p>}
+          {opportunityStatus === "EMPTY" && <p className="mt-1 theme-muted">The backend responded successfully, but no row passed the current five-second four-leg freshness and executable-price filters. No sample opportunities are generated.</p>}
+          {scannerDiagnostics?.last_scan && <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div className="theme-muted">Last scan: <strong className="theme-text">{scannerDiagnostics.last_scan.symbol ?? "—"} · {String(scannerDiagnostics.last_scan.expiry ?? "—")}</strong></div>
+            <div className="theme-muted">Outcome: <strong className="theme-text">{scannerDiagnostics.last_scan.outcome ?? "—"}</strong></div>
+            <div className="theme-muted">Grouped strikes: <strong className="theme-text">{scannerDiagnostics.last_scan.grouped_strikes ?? "—"}</strong></div>
+            <div className="theme-muted">Active quote buckets: <strong className="theme-text">{scannerDiagnostics.active_buckets ?? "—"}</strong></div>
+          </div>}
+          {scannerDiagnostics?.counts && <details className="mt-2">
+            <summary className="cursor-pointer font-semibold theme-text">Scanner rejection diagnostics</summary>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                ["Accepted ticks", "ticks_accepted_for_assembly"],
+                ["Snapshots scanned", "snapshots_scanned"],
+                ["Incomplete CE/PE pairs", "missing_or_non_executable_strike_pairs"],
+                ["Stale ticks rejected", "stale_timestamp"],
+                ["Timestamp-skew rejects", "scan_timestamp_skew_rejected_pairs"],
+                ["Liquidity rejects", "scan_liquidity_rejected_pairs"],
+                ["Edge rejects", "scan_edge_rejected_directions"],
+                ["Strategy rejects", "scan_backtest_rejected_directions"],
+                ["Qualified directions", "scan_qualified_directions"],
+              ].map(([label, key]) => <div key={key} className="rounded-md border theme-border p-2">
+                <div className="theme-muted">{label}</div>
+                <strong className="theme-text">{(scannerDiagnostics.counts?.[key] ?? 0).toLocaleString("en-IN")}</strong>
+              </div>)}
+            </div>
+          </details>}
+          {!scannerDiagnostics && <p className="mt-1 theme-muted">Detailed scanner diagnostics are temporarily unavailable; opportunity API status is shown separately.</p>}
+        </div>
         <div className="overflow-x-auto"><table className="w-full min-w-[1250px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Underlying","Spot Price","Expiry","Expiry Type","Weekly Opportunity","Strikes","Direction","Edge","4 leg ref prices","Bid (qty) / Ask (qty) — 4 legs","Paper trade"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead><tbody>
           {opportunities.map((op, index)=><tr key={op.symbol + op.expiry + op.low_strike + op.high_strike + index} className="border-t theme-border">
             <td className="px-2 py-2 theme-text">{op.symbol}</td><td className="px-2 py-2 theme-text">{op.spot_price == null ? "—" : Number(op.spot_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}{op.spot_age_seconds == null ? "" : " (" + Number(op.spot_age_seconds).toFixed(2) + "s)"}</td><td className="px-2 py-2 theme-text">{op.expiry}</td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "bg-violet-500/15 text-violet-600" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "UNKNOWN").toUpperCase()}</span></td><td className="px-2 py-2 theme-text"><span className={"inline-flex rounded-full px-2 py-1 text-[10px] font-bold " + (String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "bg-cyan-500/15 text-cyan-600" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "theme-surface-2 theme-muted" : "theme-surface-2 theme-muted")}>{String(op.expiry_type || "").toUpperCase() === "WEEKLY" ? "YES" : String(op.expiry_type || "").toUpperCase() === "MONTHLY" ? "NO" : "UNKNOWN"}</span></td><td className="px-2 py-2 theme-text">{op.low_strike} / {op.high_strike}</td><td className="px-2 py-2 theme-text">{op.direction}</td><td className="px-2 py-2 theme-text">{Number(op.executable_edge).toFixed(4)}</td><td className="px-2 py-2 theme-muted">LC {op.low_call_price} · HC {op.high_call_price}<br/>HP {op.high_put_price} · LP {op.low_put_price}</td><td className="px-2 py-2 theme-muted whitespace-nowrap">LC Bid ₹{op.low_call_bid ?? "—"} ({op.low_call_bid_qty ?? "—"}) · Ask ₹{op.low_call_ask ?? "—"} ({op.low_call_ask_qty ?? "—"})<br/>LP Bid ₹{op.low_put_bid ?? "—"} ({op.low_put_bid_qty ?? "—"}) · Ask ₹{op.low_put_ask ?? "—"} ({op.low_put_ask_qty ?? "—"})<br/>HC Bid ₹{op.high_call_bid ?? "—"} ({op.high_call_bid_qty ?? "—"}) · Ask ₹{op.high_call_ask ?? "—"} ({op.high_call_ask_qty ?? "—"})<br/>HP Bid ₹{op.high_put_bid ?? "—"} ({op.high_put_bid_qty ?? "—"}) · Ask ₹{op.high_put_ask ?? "—"} ({op.high_put_ask_qty ?? "—"})</td><td className="px-2 py-2"><button type="button" disabled={busy} onClick={() => void paperTradeOpportunity(op)} className="rounded-md bg-cyan-500 px-3 py-2 font-bold text-slate-950 disabled:opacity-50">Paper trade</button></td>
           </tr>)}
-          {opportunities.length === 0 && <tr><td colSpan={11} className="px-3 py-5 text-center theme-muted">No fresh executable live opportunities returned by the backend. No sample rows are shown.</td></tr>}
+          {opportunities.length === 0 && <tr><td colSpan={11} className="px-3 py-5 text-center theme-muted">{opportunityStatus === "ERROR" ? "Live scanner request failed. See the diagnostic message above; zero rows do not mean there are no opportunities." : opportunityStatus === "CHECKING" ? "Checking the backend for fresh executable four-leg quotes…" : "No fresh executable live opportunities returned by the backend. No sample rows are shown."}</td></tr>}
         </tbody></table></div>
       </div>
 
