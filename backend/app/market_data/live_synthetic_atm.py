@@ -134,7 +134,7 @@ class LiveSyntheticAtmTracker:
         # NSE spot and NFO derivative exchange timestamps can diverge while
         # both feeds are still live. Allow a bounded 5s lead for the spot tick
         # when evaluating a derivative snapshot; stale spot data is still
-        # rejected by the configured freshness window in the other direction.
+        # rejected by this same 5s freshness window in the other direction.
         # This avoids dropping every scan for a symbol solely because its
         # latest spot timestamp is newer than the option/future snapshot.
         max_future_skew_ns = 5_000_000_000
@@ -149,7 +149,7 @@ class LiveSyntheticAtmTracker:
         return lower if price - lower <= upper - price else upper
 
     def spot_snapshot(
-        self, symbol: str, now_ns: int | None = None, *, max_age_seconds: float = 10.0
+        self, symbol: str, now_ns: int | None = None, *, max_age_seconds: float = 5.0
     ) -> dict | None:
         """Return the source-backed underlying spot only while its tick is fresh."""
         key = str(symbol).strip().upper()
