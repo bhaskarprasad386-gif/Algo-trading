@@ -367,7 +367,23 @@ export default function BoxSpreadPaperTrading() {
         <div><div className="theme-muted">Spot at entry</div><div className="mt-1 theme-text">{money(trade.entry_spot_price)}</div></div>
         <div><div className="theme-muted">{closed ? "Closed at" : "Opened at"}</div><div className="mt-1 theme-text">{closed ? istDateTime(trade.closed_at) : trade.entry_at ? istDateTime(trade.entry_at) : "Entry pending / review"}</div></div>
       </div>
-      <div className="overflow-x-auto rounded-lg border theme-border">
+      <div className="space-y-2 sm:hidden">
+        {(trade.legs ?? []).map(leg => {
+          const mtm = legMtm(leg);
+          return <div key={leg.role} className="rounded-lg border theme-border theme-surface p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div><p className="font-semibold theme-text">{leg.role.replace("_", " ")}</p><p className="text-[11px] theme-muted">{leg.entry_action ?? "—"} · Filled {leg.entry_quantity.toLocaleString("en-IN")}</p></div>
+              <span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (leg.open_quantity > 0 ? "bg-emerald-500/15 text-emerald-600" : "theme-surface-2 theme-muted")}>{leg.open_quantity > 0 ? "OPEN " + leg.open_quantity : "FLAT"}</span>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+              <div><p className="theme-muted">Entry average</p><p className="font-semibold theme-text">{money(leg.entry_average_price)}</p></div>
+              <div><p className="theme-muted">{closed ? "Exit average" : "Exit-side mark"}</p><p className="font-semibold theme-text">{closed ? money(leg.exit_average_price) : money(leg.mark_price)}</p></div>
+              {!closed && <div className="col-span-2"><p className="theme-muted">Open leg MTM</p><p className={"font-bold " + (mtm == null ? "theme-muted" : mtm >= 0 ? "text-emerald-600" : "text-red-500")}>{mtm == null ? "—" : money(mtm)}</p></div>}
+            </div>
+          </div>;
+        })}
+      </div>
+      <div className="hidden overflow-x-auto rounded-lg border theme-border sm:block">
         <table className="w-full min-w-[610px] text-left text-xs">
           <thead className="theme-surface theme-muted"><tr>{["Leg","Entry side","Entry avg","Filled qty","Open qty","Exit-side mark", ...(!closed ? ["Open MTM"] : [])].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
           <tbody>{(trade.legs ?? []).map(leg=><tr key={leg.role} className="border-t theme-border">
