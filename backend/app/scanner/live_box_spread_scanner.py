@@ -159,6 +159,14 @@ class LiveBoxSpreadScanner:
             scan_config = self.config_provider(symbol)
             results=scan_box_snapshot(grouped,atm_strike=float(atm),instrument_class=cls,
                                       config=scan_config,policy=self.policy,diagnostics=scan_stats)
+            # Rule entries can use a custom threshold below the global UI scanner
+            # threshold, while retaining the scanner's original liquidity and
+            # strike-distance policy. The normal /live result is unchanged.
+            entry_config = replace(scan_config, min_executable_edge=-1_000_000_000.0)
+            entry_results = scan_box_snapshot(
+                grouped, atm_strike=float(atm), instrument_class=cls,
+                config=entry_config, policy=self.policy,
+            )
             # Preserve all edge values separately for open-position exits. This does
             # not alter the normal scanner's configured entry threshold.
             monitor_config = replace(
@@ -188,6 +196,7 @@ class LiveBoxSpreadScanner:
             self._monitor_snapshots[(symbol, expiry)] = {
                 "updated_at_ns": monitor_updated_ns,
                 "data": tuple(monitor_results),
+                "entry_data": tuple(entry_results),
             }
             self._diagnostic_counts["snapshots_scanned"] += 1
             for name,value in scan_stats.items():
@@ -208,6 +217,7 @@ class LiveBoxSpreadScanner:
             return {
                 "updated_at_ns": max((item["updated_at_ns"] for item in snapshots), default=0),
                 "data": tuple(result for item in snapshots for result in item["data"]),
+                "entry_data": tuple(result for item in snapshots for result in item.get("entry_data", ())),
             }
 
     TIMESTAMP_TOLERANCE_NS=3_000_000_000
