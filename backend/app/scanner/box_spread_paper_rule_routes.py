@@ -326,12 +326,12 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
         signed = None
         observed_override = None
-        if exit_config["metric"] == "position_net_pnl":
+        if exit_config["metric"] in {"position_net_pnl", "gross_profit_per_lot", "net_profit_per_lot"}:
             signed = await asyncio.to_thread(_signed_open_quantities, trade.id, account_key)
             quantities_for_pnl = {role: abs(int(signed.get(role, 0))) for role in roles}
             if any(quantity <= 0 for quantity in quantities_for_pnl.values()) or len(set(quantities_for_pnl.values())) != 1:
                 _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
-                        "position_net_pnl_unavailable_for_incomplete_or_unequal_four_leg_exposure",
+                        "position_pnl_unavailable_for_incomplete_or_unequal_four_leg_exposure",
                         trade.id, exit_config["metric"], None, exit_config["threshold"])
                 continue
             close_marks = {
@@ -342,10 +342,15 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 paper._ledger.get_trade_summary,
                 trade.id, account_key=account_key, mark_prices=close_marks,
             )
-            observed_override = float(
-                Decimal(pnl_summary["realized_pnl"]) +
-                Decimal(pnl_summary["unrealized_pnl"] or 0)
-            )
+            if exit_config["metric"] == "gross_profit_per_lot":
+                gross_total = Decimal(pnl_summary["gross_realized_pnl"]) + Decimal(pnl_summary["gross_unrealized_pnl"] or 0)
+                observed_override = float(gross_total / Decimal(max(1, trade.lots)))
+            else:
+                net_total = Decimal(pnl_summary["realized_pnl"]) + Decimal(pnl_summary["unrealized_pnl"] or 0)
+                if exit_config["metric"] == "net_profit_per_lot":
+                    observed_override = float(net_total / Decimal(max(1, trade.lots)))
+                else:
+                    observed_override = float(net_total)
 
         matched, reason, observed = exit_matches(
             live_row, config, metric_override=observed_override,
