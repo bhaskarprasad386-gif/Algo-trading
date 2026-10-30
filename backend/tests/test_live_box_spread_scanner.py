@@ -181,3 +181,47 @@ def test_box_scanner_preserves_top_of_book_bid_ask_quantities():
     assert low.put_bid_qty == 130 and low.put_ask_qty == 140
     assert high.call_bid_qty == 120 and high.call_ask_qty == 130
     assert high.put_bid_qty == 140 and high.put_ask_qty == 150
+
+
+
+def test_monitor_scan_retains_zero_and_negative_edges_for_existing_positions():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(
+        1, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100,
+    )
+    high = OptionQuote(
+        1, "ABC", 20261231, 110, 5, 6, 9, 10, 10, "STOCK", 100, 100,
+    )
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+        include_nonpositive=True,
+    )
+    by_direction = {row.direction: row.executable_edge for row in results}
+    assert by_direction["LONG"] == 0
+    assert by_direction["SHORT"] == -4
+
+
+def test_normal_opportunity_scan_still_excludes_nonpositive_edges():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(1, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100)
+    high = OptionQuote(1, "ABC", 20261231, 110, 5, 6, 9, 10, 10, "STOCK", 100, 100)
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    assert results == ()
