@@ -115,6 +115,7 @@ class LiveBoxSpreadRunner:
                     atm_strike=(float(trade.low_strike) + float(trade.high_strike)) / 2.0,
                     expiry=trade.expiry, allowed_stock_symbols=self.allowed_stock_symbols,
                     policy=self.policy,
+                    required_strikes=(float(trade.low_strike), float(trade.high_strike)),
                 )
                 subscriptions.extend(selection.subscriptions)
             except (LookupError, ValueError) as exc:
