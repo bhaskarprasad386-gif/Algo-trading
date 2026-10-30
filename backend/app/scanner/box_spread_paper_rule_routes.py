@@ -249,7 +249,8 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             account_key=account_key,
         )
         _record(rule_id, account_key, "EXIT_CHECK", "EXIT_RECORDED",
-                reason, trade.id, exit_config["metric"], observed, exit_config["threshold"])
+                f"{reason}; {exit_config['order_type']} four-leg paper basket",
+                trade.id, exit_config["metric"], observed, exit_config["threshold"])
 
     # Entry remains subject to the global paper execution switch and all existing
     # five-second four-leg quote, idempotency, claim and ledger protections.
