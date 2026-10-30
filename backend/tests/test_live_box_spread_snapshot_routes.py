@@ -40,8 +40,8 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
             db.commit()
 
         monkeypatch.setattr(routes, "SessionLocal", Session)
-        first = routes.snapshots(days=1, limit=2, offset=0)
-        second = routes.snapshots(days=1, limit=2, offset=2)
+        first = routes.snapshots(days=1, limit=2, offset=0, expiry_type=None)
+        second = routes.snapshots(days=1, limit=2, offset=2, expiry_type=None)
 
         assert first["total_count"] == 3
         assert first["count"] == 2
@@ -53,6 +53,14 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
         assert second["has_more"] is False
         assert [item["sequence"] for item in first["data"] + second["data"]] == [0, 1, 2]
         assert first["data"][0]["expiry_type"] == "WEEKLY"
+        assert first["expiry_counts"] == {"WEEKLY": 1, "MONTHLY": 0, "UNKNOWN": 2}
+
+        weekly = routes.snapshots(days=1, limit=2, offset=0, expiry_type="WEEKLY")
+        unknown = routes.snapshots(days=1, limit=2, offset=0, expiry_type="UNKNOWN")
+        assert weekly["total_count"] == 1
+        assert [item["sequence"] for item in weekly["data"]] == [0]
+        assert unknown["total_count"] == 2
+        assert [item["sequence"] for item in unknown["data"]] == [1, 2]
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()

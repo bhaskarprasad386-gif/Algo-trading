@@ -112,55 +112,64 @@ def snapshots(
     days: int = Query(1, ge=1, le=30),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
+    expiry_type: str | None = Query(None, pattern="^(WEEKLY|MONTHLY|UNKNOWN)$"),
 ):
-    """Paginated persisted observations; total_count always reports the full window."""
+    """Return expiry-filtered persisted observations with counts for every class."""
+    from collections import Counter
     from datetime import datetime, timedelta, timezone
+
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    page = []
+    selected_count = 0
+    expiry_counts = Counter()
     with SessionLocal() as db:
-        base_query = db.query(LiveBoxSpreadSnapshot).filter(
-            LiveBoxSpreadSnapshot.observed_at >= cutoff
-        )
-        total_count = base_query.count()
         rows = (
-            base_query
+            db.query(LiveBoxSpreadSnapshot)
+            .filter(LiveBoxSpreadSnapshot.observed_at >= cutoff)
             .order_by(
                 LiveBoxSpreadSnapshot.observed_at.desc(),
                 LiveBoxSpreadSnapshot.id.desc(),
             )
-            .offset(offset)
-            .limit(limit)
-            .all()
+            .yield_per(1000)
         )
-        data = []
         for row in rows:
             try:
                 item = json.loads(row.payload_json)
             except (TypeError, ValueError):
                 continue
-            item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            # A snapshot's saved classification is historical evidence and must
-            # not be overwritten by a later instrument-master refresh. Use the
-            # current map only for older snapshots that lack a valid saved value.
             saved_type = str(item.get("expiry_type") or "").strip().upper()
             current_type = classify_expiry_type(row.symbol, row.expiry)
-            item["expiry_type"] = (
+            kind = (
                 saved_type if saved_type in {"WEEKLY", "MONTHLY"}
                 else current_type if current_type in {"WEEKLY", "MONTHLY"}
                 else "UNKNOWN"
             )
-            item["freshness"] = "SAVED SNAPSHOT"
-            data.append(item)
-        return {
-            "strategy": "box-spread",
-            "days": days,
-            "count": len(data),
-            "total_count": total_count,
-            "offset": offset,
-            "limit": limit,
-            "has_more": offset + len(rows) < total_count,
-            "data": data,
-        }
+            expiry_counts[kind] += 1
+            if expiry_type is not None and kind != expiry_type:
+                continue
+            if offset <= selected_count < offset + limit:
+                item["expiry_type"] = kind
+                item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                item["freshness"] = "SAVED SNAPSHOT"
+                page.append(item)
+            selected_count += 1
 
+    return {
+        "strategy": "box-spread",
+        "days": days,
+        "expiry_type": expiry_type,
+        "count": len(page),
+        "total_count": selected_count,
+        "expiry_counts": {
+            "WEEKLY": expiry_counts["WEEKLY"],
+            "MONTHLY": expiry_counts["MONTHLY"],
+            "UNKNOWN": expiry_counts["UNKNOWN"],
+        },
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(page) < selected_count,
+        "data": page,
+    }
 
 
 @router.get("/analysis")
