@@ -530,7 +530,11 @@ def trades(
     limit: int = 100,
     offset: int = 0,
     include_ledger: bool = False,
+    position_state: str = "ALL",
 ):
+    position_state = str(position_state or "ALL").strip().upper()
+    if position_state not in {"ALL", "OPEN", "CLOSED"}:
+        raise HTTPException(status_code=422, detail="position_state must be ALL, OPEN or CLOSED")
     if not 1 <= limit <= 500:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
     if not 0 <= offset <= 1_000_000:
@@ -538,11 +542,45 @@ def trades(
     try:
         with SessionLocal() as session:
             trade_filter = BoxSpreadPaperTradeRecord.account_key == account_key
+            if position_state != "ALL":
+                # Classify from durable signed quantities, not the trade status
+                # alone: partial exits can leave exposure after some exit fills.
+                state_rows = session.execute(
+                    select(BoxSpreadPaperTradeRecord.id, BoxSpreadPaperTradeRecord.status)
+                    .where(trade_filter)
+                ).all()
+                state_entries = session.scalars(
+                    select(BoxSpreadPaperLedgerEntry)
+                    .where(BoxSpreadPaperLedgerEntry.account_key == account_key)
+                ).all()
+                by_trade: dict[int, list[BoxSpreadPaperLedgerEntry]] = {}
+                for entry in state_entries:
+                    by_trade.setdefault(entry.trade_id, []).append(entry)
+                matching_ids = []
+                for trade_id, status in state_rows:
+                    entries_for_trade = by_trade.get(trade_id, [])
+                    signed: dict[str, int] = {}
+                    for entry in entries_for_trade:
+                        signed[entry.role] = signed.get(entry.role, 0) + (
+                            entry.quantity if entry.action == "BUY" else -entry.quantity
+                        )
+                    has_exposure = any(quantity != 0 for quantity in signed.values())
+                    is_closed = status == "CLOSED" or (
+                        status != "CANCELLED" and bool(entries_for_trade) and not has_exposure
+                    )
+                    is_open = status not in {"CLOSED", "CANCELLED"} and (
+                        not entries_for_trade or has_exposure
+                    )
+                    if (position_state == "OPEN" and is_open) or (position_state == "CLOSED" and is_closed):
+                        matching_ids.append(trade_id)
+                trade_filter = (trade_filter, BoxSpreadPaperTradeRecord.id.in_(matching_ids))
             total_count = session.scalar(
-                select(func.count(BoxSpreadPaperTradeRecord.id)).where(trade_filter)
+                select(func.count(BoxSpreadPaperTradeRecord.id)).where(*(
+                    trade_filter if isinstance(trade_filter, tuple) else (trade_filter,)
+                ))
             ) or 0
             rows = session.scalars(select(BoxSpreadPaperTradeRecord)
-                .where(trade_filter)
+                .where(*(trade_filter if isinstance(trade_filter, tuple) else (trade_filter,)))
                 .order_by(BoxSpreadPaperTradeRecord.created_at.desc(), BoxSpreadPaperTradeRecord.id.desc())
                 .offset(offset)
                 .limit(limit)).all()
@@ -657,6 +695,7 @@ def trades(
                 "limit": limit,
                 "offset": offset,
                 "has_more": offset + len(data) < total_count,
+                "position_state": position_state,
                 "data": data,
             }
     except Exception as exc:
