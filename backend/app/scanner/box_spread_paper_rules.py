@@ -10,7 +10,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base, SessionLocal
@@ -55,6 +55,31 @@ class BoxSpreadPaperRuleEvaluation(Base):
     threshold: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reason: Mapped[str] = mapped_column(String(512), nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+class BoxSpreadPaperEntryQuotaReservation(Base):
+    """Durable, cross-worker reservation of one rule/window entry quota slot."""
+    __tablename__ = "box_spread_paper_entry_quota_reservations"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_key", "rule_id", "window_start_utc", "slot",
+            name="uq_box_paper_rule_window_slot",
+        ),
+        __import__("sqlalchemy").UniqueConstraint(
+            "account_key", "rule_id", "candidate_key",
+            name="uq_box_paper_rule_candidate_reservation",
+        ),
+        Index("ix_box_paper_rule_quota_window", "account_key", "rule_id", "window_start_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    rule_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    window_start_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    slot: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
 
 
 def utc_now() -> datetime:
