@@ -396,36 +396,38 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 f"max_open_positions_reached;open={open_count};maximum={max_open_positions}")
         return
 
-    if config["entry"].get("range_enabled", False):
-        # The quota resets at each fixed IST entry window. Durable claims count
-        # failed/ambiguous attempts too, while lifetime idempotency still blocks
-        # replaying an identical candidate in a later window.
-        claimed_keys = await asyncio.to_thread(_claimed_rule_entry_keys, rule_id, account_key)
-        window_minutes = config["monitor"]["entry_window_minutes"]
-        window_start, window_end = _entry_window_bounds_utc(window_minutes)
-        max_per_window = config["entry"]["max_trades_per_interval"]
-        unclaimed_rows = []
-        previously_claimed_rows = []
-        for candidate in entry_rows:
-            expiry_value = candidate.get("expiry_date") or candidate.get("expiry")
-            try:
-                candidate_key = "rule-{}-{}-{}-{}-{}-{}".format(
-                    rule_id, str(candidate.get("symbol", "")).upper(),
-                    paper._canonical_expiry(expiry_value), candidate.get("low_strike"),
-                    candidate.get("high_strike"), str(candidate.get("direction", "")).upper(),
-                )
-            except (TypeError, ValueError):
-                unclaimed_rows.append(candidate)
-                continue
-            (previously_claimed_rows if candidate_key in claimed_keys else unclaimed_rows).append(candidate)
-        # Rank all eligible candidates; the DB reservation below decides which
-        # workers actually own the remaining slots, avoiding stale count snapshots.
-        selected_entry_rows, skipped_rows = select_entry_candidates(
-            unclaimed_rows, config, range_limit=len(unclaimed_rows),
-        )
-        skipped_rows.extend((candidate, "candidate_already_attempted") for candidate in previously_claimed_rows)
-    else:
-        selected_entry_rows, skipped_rows = select_entry_candidates(entry_rows, config)
+    # The per-window quota applies to every configured entry rule, not only
+    # rules using a numeric range. Filter lifetime attempts, then rank eligible
+    # candidates so the strongest opportunities are considered first.
+    claimed_keys = await asyncio.to_thread(_claimed_rule_entry_keys, rule_id, account_key)
+    window_minutes = config["monitor"]["entry_window_minutes"]
+    window_start, window_end = _entry_window_bounds_utc(window_minutes)
+    max_per_window = config["entry"]["max_trades_per_interval"]
+    unclaimed_rows = []
+    previously_claimed_rows = []
+    for candidate in entry_rows:
+        expiry_value = candidate.get("expiry_date") or candidate.get("expiry")
+        try:
+            candidate_key = "rule-{}-{}-{}-{}-{}-{}".format(
+                rule_id, str(candidate.get("symbol", "")).upper(),
+                paper._canonical_expiry(expiry_value), candidate.get("low_strike"),
+                candidate.get("high_strike"), str(candidate.get("direction", "")).upper(),
+            )
+        except (TypeError, ValueError):
+            unclaimed_rows.append(candidate)
+            continue
+        (previously_claimed_rows if candidate_key in claimed_keys else unclaimed_rows).append(candidate)
+    selected_entry_rows, skipped_rows = select_entry_candidates(
+        unclaimed_rows, config, range_limit=len(unclaimed_rows),
+    )
+    selected_entry_rows.sort(key=lambda row: (
+        -(metric_value(row, config["entry"]["metric"]) or float("-inf")),
+        str(row.get("symbol", "")).upper(),
+        str(row.get("expiry_date") or row.get("expiry") or ""),
+        str(row.get("low_strike", "")), str(row.get("high_strike", "")),
+        str(row.get("direction", "")).upper(),
+    ))
+    skipped_rows.extend((candidate, "candidate_already_attempted") for candidate in previously_claimed_rows)
     skipped_count = len(skipped_rows)
     skipped_reasons: dict[str, int] = {}
     evaluated_count = len(entry_rows)
@@ -474,15 +476,14 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             contracts = await asyncio.to_thread(paper._resolve, request)
             # Validate all four executable prices before consuming a quota slot.
             paper._reference_prices_for_direction(row, contracts.direction)
-            if config["entry"].get("range_enabled", False):
-                quota_slot = await asyncio.to_thread(
-                    _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
-                    max_per_window, idempotency_key,
-                )
-                if quota_slot is None:
-                    _record(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
-                            f"{candidate_audit};interval_quota_full_or_candidate_already_reserved")
-                    continue
+            quota_slot = await asyncio.to_thread(
+                _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
+                max_per_window, idempotency_key,
+            )
+            if quota_slot is None:
+                _record(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
+                        f"{candidate_audit};interval_quota_full_or_candidate_already_reserved")
+                continue
             trade = await asyncio.to_thread(
                 paper._ledger.create_trade,
                 idempotency_key=idempotency_key, underlying=contracts.underlying,
