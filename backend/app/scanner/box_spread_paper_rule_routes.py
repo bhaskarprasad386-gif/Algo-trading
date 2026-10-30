@@ -119,9 +119,7 @@ def rule_evaluations(rule_id: int, account_key: str = "default", limit: int = 10
 
 def _account_rules() -> list[tuple[int, str, bool, dict[str, Any]]]:
     with SessionLocal() as session:
-        rows = session.scalars(
-            select(BoxSpreadPaperRule).where(BoxSpreadPaperRule.enabled.is_(True))
-        ).all()
+        rows = session.scalars(select(BoxSpreadPaperRule)).all()
         return [(row.id, row.account_key, row.enabled, decode_rule_config(row)) for row in rows]
 
 
@@ -180,7 +178,7 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
         session.commit()
 
 
-async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]):
+async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any], rule_enabled: bool):
     # Imports are delayed to keep the router and the paper route module acyclic.
     from app.scanner import box_spread_paper_routes as paper
     from app.scanner.live_box_spread_routes import live as live_opportunities, monitor_snapshot as monitor_opportunities
@@ -320,13 +318,13 @@ async def paper_rule_monitor_loop():
         try:
             rules = await asyncio.to_thread(_account_rules)
             now = time.monotonic()
-            for rule_id, account_key, _enabled, config in rules:
+            for rule_id, account_key, enabled, config in rules:
                 interval = config["monitor"]["interval_seconds"]
                 if now - last_run.get(rule_id, 0.0) < interval:
                     continue
                 last_run[rule_id] = now
                 try:
-                    await _run_rule_cycle(rule_id, account_key, config)
+                    await _run_rule_cycle(rule_id, account_key, config, enabled)
                 except Exception as exc:
                     _record(rule_id, account_key, "MONITOR", "ERROR",
                             f"monitor_cycle_error:{type(exc).__name__}:{exc}")
