@@ -297,3 +297,36 @@ def test_quota_reservation_blocks_same_candidate_in_later_window(tmp_path, monke
             assert session.query(BoxSpreadPaperEntryQuotaReservation).count() == 1
     finally:
         engine.dispose()
+
+
+
+def test_interval_quota_never_reserves_more_than_configured_slots(tmp_path, monkeypatch):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'box-paper-quota-multi-slot.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperEntryQuotaReservation.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(rule_routes, "SessionLocal", factory)
+    start = datetime(2026, 10, 30, 4, 30, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=15)
+    barrier = Barrier(4)
+
+    def reserve(candidate):
+        barrier.wait(timeout=5)
+        return rule_routes._reserve_rule_entry_quota_slot(
+            9, "default", start, end, 2, candidate,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(reserve, ("candidate-a", "candidate-b", "candidate-c", "candidate-d")))
+        assert sum(value is not None for value in results) == 2
+        with factory() as session:
+            reservations = session.query(BoxSpreadPaperEntryQuotaReservation).all()
+        assert len(reservations) == 2
+        assert {item.slot for item in reservations} == {1, 2}
+    finally:
+        engine.dispose()
