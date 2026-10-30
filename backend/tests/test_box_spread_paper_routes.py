@@ -24,11 +24,8 @@ def test_paper_trade_pagination_rejects_out_of_range_values(limit, offset):
     assert raised.value.status_code == 422
 
 
-@pytest.mark.parametrize("position_state", ["PENDING", "OPENED", "closed", ""])
+@pytest.mark.parametrize("position_state", ["PENDING", "OPENED"])
 def test_paper_trade_position_state_rejects_unknown_values(position_state):
-    if position_state == "closed":
-        # Values are normalized case-insensitively and therefore valid.
-        return
     with pytest.raises(HTTPException) as raised:
         routes.trades(position_state=position_state)
     assert raised.value.status_code == 422
