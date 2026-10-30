@@ -195,12 +195,15 @@ def edge_timing_analysis():
     with SessionLocal() as db:
         # No date filter or row limit: analyze the complete retained snapshot history.
         # Stream rows and keep only compact bucket aggregates to avoid loading full history into memory.
-        rows = db.query(LiveBoxSpreadSnapshot).order_by(
-            LiveBoxSpreadSnapshot.observed_at.asc(), LiveBoxSpreadSnapshot.id.asc()
+        rows = db.query(
+            LiveBoxSpreadSnapshot.observed_at,
+            LiveBoxSpreadSnapshot.payload_json,
+        ).order_by(
+            LiveBoxSpreadSnapshot.observed_at.asc(),
+            LiveBoxSpreadSnapshot.id.asc(),
         ).yield_per(1000)
-        for row in rows:
+        for observed, payload_json in rows:
             total_rows += 1
-            observed = row.observed_at
             if observed is None:
                 continue
             if observed.tzinfo is None:
@@ -210,7 +213,7 @@ def edge_timing_analysis():
             if latest_observed is None or observed > latest_observed:
                 latest_observed = observed
             try:
-                payload = json.loads(row.payload_json or "{}")
+                payload = json.loads(payload_json or "{}")
                 edge = float(payload.get("executable_edge"))
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
