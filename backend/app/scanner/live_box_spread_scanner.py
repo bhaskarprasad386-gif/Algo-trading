@@ -17,8 +17,7 @@ class LiveBoxSpreadScanner:
         self._lock=Lock(); self._buckets={}
         self._diagnostic_counts=Counter()
         self._last_diagnostics={}
-        self._monitor_results=()
-        self._monitor_updated_ns=0
+        self._monitor_snapshots={}
 
     @staticmethod
     def _price(v):
@@ -167,8 +166,7 @@ class LiveBoxSpreadScanner:
                 grouped, atm_strike=float(atm), instrument_class=cls,
                 config=monitor_config, policy=self.policy,
             )
-            self._monitor_results = monitor_results
-            self._monitor_updated_ns = max(
+            monitor_updated_ns = max(
                 stamp for result in monitor_results for stamp in (
                     result.low.call_timestamp_ns or result.low.timestamp_ns,
                     result.low.put_timestamp_ns or result.low.timestamp_ns,
@@ -176,6 +174,13 @@ class LiveBoxSpreadScanner:
                     result.high.put_timestamp_ns or result.high.timestamp_ns,
                 )
             ) if monitor_results else 0
+            # Scanner.observe handles one symbol/expiry bucket at a time. Keep
+            # independent latest snapshots so a NIFTY tick cannot erase SENSEX
+            # or another expiry's open-position monitor data.
+            self._monitor_snapshots[(symbol, expiry)] = {
+                "updated_at_ns": monitor_updated_ns,
+                "data": tuple(monitor_results),
+            }
             self._diagnostic_counts["snapshots_scanned"] += 1
             for name,value in scan_stats.items():
                 self._diagnostic_counts["scan_"+name] += int(value)
@@ -191,7 +196,11 @@ class LiveBoxSpreadScanner:
     def monitor_snapshot(self):
         """Return latest all-edge results for independent open-position evaluation."""
         with self._lock:
-            return {"updated_at_ns": self._monitor_updated_ns, "data": tuple(self._monitor_results)}
+            snapshots = tuple(self._monitor_snapshots.values())
+            return {
+                "updated_at_ns": max((item["updated_at_ns"] for item in snapshots), default=0),
+                "data": tuple(result for item in snapshots for result in item["data"]),
+            }
 
     TIMESTAMP_TOLERANCE_NS=3_000_000_000
 
