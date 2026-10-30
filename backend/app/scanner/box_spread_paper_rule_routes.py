@@ -119,7 +119,9 @@ def rule_evaluations(rule_id: int, account_key: str = "default", limit: int = 10
 
 def _account_rules() -> list[tuple[int, str, bool, dict[str, Any]]]:
     with SessionLocal() as session:
-        rows = session.scalars(select(BoxSpreadPaperRule)).all()
+        rows = session.scalars(
+            select(BoxSpreadPaperRule).where(BoxSpreadPaperRule.enabled.is_(True))
+        ).all()
         return [(row.id, row.account_key, row.enabled, decode_rule_config(row)) for row in rows]
 
 
@@ -178,7 +180,7 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
         session.commit()
 
 
-async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any], rule_enabled: bool):
+async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]):
     # Imports are delayed to keep the router and the paper route module acyclic.
     from app.scanner import box_spread_paper_routes as paper
     from app.scanner.live_box_spread_routes import live as live_opportunities, monitor_snapshot as monitor_opportunities
@@ -324,7 +326,7 @@ async def paper_rule_monitor_loop():
                     continue
                 last_run[rule_id] = now
                 try:
-                    await _run_rule_cycle(rule_id, account_key, config, enabled)
+                    await _run_rule_cycle(rule_id, account_key, config)
                 except Exception as exc:
                     _record(rule_id, account_key, "MONITOR", "ERROR",
                             f"monitor_cycle_error:{type(exc).__name__}:{exc}")
