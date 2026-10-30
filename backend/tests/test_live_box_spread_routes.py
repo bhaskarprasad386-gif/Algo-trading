@@ -283,12 +283,14 @@ def test_raw_monitor_route_returns_fresh_edge_even_when_normal_entry_threshold_w
     result = _result()
     result.executable_edge = 0.5
     now_ns = max(result.low.timestamp_ns, result.high.timestamp_ns)
-    monkeypatch.setattr(routes, "_monitor_getter", lambda: {"updated_at_ns": now_ns, "data": (result,)})
+    monkeypatch.setattr(routes, "_monitor_getter", lambda: {"updated_at_ns": now_ns, "data": (result,), "entry_data": (result,)})
     payload = routes.monitor_snapshot(max_age_seconds=5)
     assert payload["fresh"] is True
     assert payload["count"] == 1
     assert payload["data"][0]["executable_edge"] == 0.5
     assert payload["data"][0]["freshness"] == "LIVE_MONITOR"
+    assert payload["entry_count"] == 1
+    assert payload["entry_data"][0]["freshness"] == "LIVE_RULE_CANDIDATE"
     assert payload["data"][0]["low_call_bid"] == 10
     assert payload["data"][0]["high_put_ask"] == 3
 
