@@ -1,6 +1,15 @@
-import pytest
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from threading import Barrier
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.core.database import Base
+from app.scanner import box_spread_paper_rule_routes as rule_routes
 from app.scanner.box_spread_paper_rules import (
+    BoxSpreadPaperEntryQuotaReservation,
     validate_rule_config, entry_matches, exit_matches, compare, select_entry_candidates,
 )
 
@@ -228,3 +237,63 @@ def test_non_range_entry_keeps_all_matching_candidates():
     selected, skipped = select_entry_candidates(rows, config)
     assert len(selected) == 3
     assert skipped == []
+
+
+
+def test_interval_quota_reservations_are_atomic_across_workers(tmp_path, monkeypatch):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'box-paper-quota.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperEntryQuotaReservation.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(rule_routes, "SessionLocal", factory)
+    start = datetime(2026, 10, 30, 4, 30, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=15)
+    barrier = Barrier(2)
+
+    def reserve(candidate):
+        barrier.wait(timeout=5)
+        return rule_routes._reserve_rule_entry_quota_slot(
+            7, "default", start, end, 1, candidate,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(reserve, ("candidate-a", "candidate-b")))
+        assert sorted(value is not None for value in results) == [False, True]
+        with factory() as session:
+            reservations = session.query(BoxSpreadPaperEntryQuotaReservation).all()
+        assert len(reservations) == 1
+        assert reservations[0].slot == 1
+    finally:
+        engine.dispose()
+
+
+def test_quota_reservation_blocks_same_candidate_in_later_window(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'box-paper-quota-idempotency.db'}")
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperEntryQuotaReservation.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(rule_routes, "SessionLocal", factory)
+    start = datetime(2026, 10, 30, 4, 30, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=15)
+    next_start = end
+    next_end = next_start + timedelta(minutes=15)
+
+    try:
+        first = rule_routes._reserve_rule_entry_quota_slot(
+            7, "default", start, end, 2, "same-candidate",
+        )
+        replay = rule_routes._reserve_rule_entry_quota_slot(
+            7, "default", next_start, next_end, 2, "same-candidate",
+        )
+        assert first == 1
+        assert replay is None
+        with factory() as session:
+            assert session.query(BoxSpreadPaperEntryQuotaReservation).count() == 1
+    finally:
+        engine.dispose()
