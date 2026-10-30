@@ -86,6 +86,9 @@ export default function BoxSpreadPaperTrading() {
   const [exitRole, setExitRole] = useState<Role>("LOW_CE");
   const [exitQuantity, setExitQuantity] = useState("1");
   const [lots, setLots] = useState(1);
+  const [positionSearch, setPositionSearch] = useState("");
+  const [positionDirection, setPositionDirection] = useState("ALL");
+  const [positionSort, setPositionSort] = useState("LATEST");
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(api + path, {
@@ -119,7 +122,7 @@ export default function BoxSpreadPaperTrading() {
     try {
       const [accountBody, tradesBody, controlBody] = await Promise.all([
         request("/account?account_key=" + encodeURIComponent(account)),
-        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=100&include_ledger=true"),
+        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=500&include_ledger=true"),
         request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
@@ -279,14 +282,29 @@ export default function BoxSpreadPaperTrading() {
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
 
-  const openTrades = trades.filter(trade =>
+  const searchTerm = positionSearch.trim().toUpperCase();
+  const filteredTrades = trades.filter(trade =>
+    (!searchTerm || trade.underlying.toUpperCase().includes(searchTerm) || String(trade.trade_id).includes(searchTerm)) &&
+    (positionDirection === "ALL" || trade.direction === positionDirection)
+  );
+  const sortPositions = (items: PaperTrade[], closed: boolean) => [...items].sort((a, b) => {
+    if (positionSort !== "LATEST") {
+      const pnlA = Number(a.summary?.realized_pnl ?? 0) + Number(a.summary?.unrealized_pnl ?? 0);
+      const pnlB = Number(b.summary?.realized_pnl ?? 0) + Number(b.summary?.unrealized_pnl ?? 0);
+      if (pnlA !== pnlB) return positionSort === "PNL_HIGH" ? pnlB - pnlA : pnlA - pnlB;
+    }
+    const timeA = Date.parse((closed ? a.closed_at : a.entry_at) || a.created_at) || 0;
+    const timeB = Date.parse((closed ? b.closed_at : b.entry_at) || b.created_at) || 0;
+    return timeB - timeA;
+  });
+  const openTrades = sortPositions(filteredTrades.filter(trade =>
     !["CLOSED", "CANCELLED"].includes(trade.status) &&
     (!trade.legs?.some(leg => leg.entry_quantity > 0) || trade.legs.some(leg => leg.open_quantity > 0))
-  ).sort((a, b) => Date.parse(b.entry_at || b.created_at) - Date.parse(a.entry_at || a.created_at));
-  const closedTrades = trades.filter(trade =>
+  ), false);
+  const closedTrades = sortPositions(filteredTrades.filter(trade =>
     trade.status === "CLOSED" ||
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
-  ).sort((a, b) => Date.parse(b.closed_at || b.created_at) - Date.parse(a.closed_at || a.created_at));
+  ), true);
   const totalRealizedPnl = trades.reduce((sum, trade) => sum + Number(trade.summary?.realized_pnl ?? 0), 0);
   const allOpenMarked = openTrades.length > 0 && openTrades.every(trade =>
     trade.legs?.every(leg => leg.open_quantity === 0 || leg.mark_price != null) &&
@@ -400,6 +418,17 @@ export default function BoxSpreadPaperTrading() {
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div><p className="text-xs font-semibold uppercase tracking-wider theme-accent">Portfolio book</p><h3 className="text-lg font-semibold theme-text">Open & Closed Positions</h3><p className="text-xs theme-muted">Each executed trade, four leg fills, entry timestamp, expiry, entry spot, fees and P&L. All amounts are from the paper ledger.</p></div>
           <span className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">{openTrades.length} open · {closedTrades.length} closed</span>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <label className="text-xs theme-muted">Search underlying / trade ID
+            <input value={positionSearch} onChange={event=>setPositionSearch(event.target.value)} placeholder="NIFTY, SENSEX, #trade…" className="mt-1 min-h-9 w-full rounded-lg border theme-border theme-surface-2 px-3 text-sm theme-text"/>
+          </label>
+          <label className="text-xs theme-muted">Direction
+            <select value={positionDirection} onChange={event=>setPositionDirection(event.target.value)} className="mt-1 min-h-9 w-full rounded-lg border theme-border theme-surface-2 px-3 text-sm theme-text"><option value="ALL">All directions</option><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select>
+          </label>
+          <label className="text-xs theme-muted">Sort positions
+            <select value={positionSort} onChange={event=>setPositionSort(event.target.value)} className="mt-1 min-h-9 w-full rounded-lg border theme-border theme-surface-2 px-3 text-sm theme-text"><option value="LATEST">Newest first</option><option value="PNL_HIGH">Highest P&amp;L first</option><option value="PNL_LOW">Lowest P&amp;L first</option></select>
+          </label>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
