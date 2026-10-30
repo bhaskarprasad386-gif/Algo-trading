@@ -41,6 +41,11 @@ def test_startup_create_all_adds_paper_tables_without_touching_existing_rows(tmp
                 "box_spread_paper_ledger_entries",
             }.issubset(tables)
 
+            paper_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(box_spread_paper_trades)"))
+            }
+            assert "entry_spot_price" in paper_columns
+
             row = connection.execute(
                 text("SELECT id, value FROM existing_business_data WHERE id = 1")
             ).one()
