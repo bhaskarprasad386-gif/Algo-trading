@@ -329,12 +329,23 @@ export default function BoxSpreadPaperTrading() {
     trade.status === "CLOSED" ||
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
+  const selectedTradeData = [...openTrades, ...closedTrades].find(trade => trade.trade_id === selectedTrade) ?? null;
+  const selectedExitLeg = selectedTradeData?.legs?.find(leg => leg.role === exitRole) ?? null;
   const totalRealizedPnl = Number(portfolioSummary?.realized_pnl ?? 0);
   const totalUnrealizedPnl = portfolioSummary?.unrealized_pnl == null ? null : Number(portfolioSummary.unrealized_pnl);
   const totalNetPnl = portfolioSummary?.net_pnl == null ? null : Number(portfolioSummary.net_pnl);
   const money = (value: string | number | null | undefined) =>
     value == null || !Number.isFinite(Number(value)) ? "—" :
       "₹" + Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // mark_price is the executable close-side mark supplied by the backend, not a
+  // browser quote. Use it only for display; the exit API independently revalidates.
+  const legMtm = (leg: PaperLegPosition) => {
+    if (leg.mark_price == null || leg.entry_average_price == null || leg.open_quantity <= 0) return null;
+    const mark = Number(leg.mark_price);
+    const entry = Number(leg.entry_average_price);
+    if (!Number.isFinite(mark) || !Number.isFinite(entry)) return null;
+    return (leg.open_action === "BUY" ? mark - entry : entry - mark) * leg.open_quantity;
+  };
   const istDateTime = (value?: string | null) => {
     if (!value) return "—";
     const date = new Date(value);
@@ -358,7 +369,7 @@ export default function BoxSpreadPaperTrading() {
       </div>
       <div className="overflow-x-auto rounded-lg border theme-border">
         <table className="w-full min-w-[610px] text-left text-xs">
-          <thead className="theme-surface theme-muted"><tr>{["Leg","Entry side","Entry avg","Filled qty","Open qty","Mark / Exit avg"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
+          <thead className="theme-surface theme-muted"><tr>{["Leg","Entry side","Entry avg","Filled qty","Open qty","Exit-side mark", ...(!closed ? ["Open MTM"] : [])].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
           <tbody>{(trade.legs ?? []).map(leg=><tr key={leg.role} className="border-t theme-border">
             <td className="px-2 py-2 font-semibold theme-text">{leg.role}</td>
             <td className="px-2 py-2 theme-text">{leg.entry_action ?? "—"}</td>
@@ -366,6 +377,7 @@ export default function BoxSpreadPaperTrading() {
             <td className="px-2 py-2 theme-text">{leg.entry_quantity.toLocaleString("en-IN")}</td>
             <td className="px-2 py-2 theme-text">{leg.open_quantity.toLocaleString("en-IN")}</td>
             <td className="px-2 py-2 theme-text">{closed ? money(leg.exit_average_price) : money(leg.mark_price)}</td>
+            {!closed && <td className={"px-2 py-2 font-semibold " + ((legMtm(leg) ?? 0) >= 0 ? "text-emerald-600" : "text-red-500")}>{legMtm(leg) == null ? "—" : money(legMtm(leg))}</td>}
           </tr>)}</tbody>
         </table>
       </div>
@@ -379,7 +391,7 @@ export default function BoxSpreadPaperTrading() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] theme-muted">{closed ? "Realized result from persisted exit fills." : "Open quantity and marks are based on persisted fills and fresh backend quotes only."}</p>
         <div className="flex flex-wrap gap-2">
-          {!closed && <button type="button" onClick={() => { setSelectedTrade(trade.trade_id); setExitQuantity(String(Math.max(1, trade.legs?.find(leg => leg.open_quantity > 0)?.open_quantity ?? 1))); }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600">Manage / exit</button>}
+          {!closed && <button type="button" onClick={() => { const firstOpen = trade.legs?.find(leg => leg.open_quantity > 0); setSelectedTrade(trade.trade_id); if (firstOpen) { setExitRole(firstOpen.role); setExitQuantity(String(firstOpen.open_quantity)); } }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600">Manage position</button>}
           <button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Full fill ledger</button>
         </div>
       </div>
@@ -553,25 +565,63 @@ export default function BoxSpreadPaperTrading() {
         </tbody></table></div>
       </div>
 
-      {selectedTrade != null && <div className="grid gap-3 md:grid-cols-2">
-        <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-xl border theme-border p-3">
-          <h3 className="font-semibold theme-text">Close one paper leg</h3>
-          <p className="text-xs theme-muted">The backend records the fresh executable quote from the live scanner; no browser-entered price is used. Closing is not blocked by low virtual balance.</p>
-          <label className="block text-xs theme-muted">Leg
-            <select value={exitRole} onChange={e => setExitRole(e.target.value as Role)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text">{roles.map(role=><option key={role}>{role}</option>)}</select>
-          </label>
-          <div className="grid grid-cols-1 gap-2">
-            <label className="text-xs theme-muted">Quantity
-              <input required type="number" min="1" step="1" value={exitQuantity} onChange={e => setExitQuantity(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/>
-            </label>
+      {selectedTrade != null && <section className="space-y-3 rounded-xl border border-cyan-500/40 theme-surface-2 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] theme-accent">Position terminal · selected trade</p>
+            <h3 className="mt-1 text-lg font-bold theme-text">{selectedTradeData ? "#" + selectedTradeData.trade_id + " · " + selectedTradeData.underlying + " · " + selectedTradeData.direction + " BOX" : "Trade #" + selectedTrade}</h3>
+            <p className="text-xs theme-muted">{selectedTradeData ? selectedTradeData.instrument_class + " · " + selectedTradeData.low_strike.toLocaleString("en-IN") + " / " + selectedTradeData.high_strike.toLocaleString("en-IN") + " · " + selectedTradeData.expiry + " · " + selectedTradeData.lots + " lot(s)" : "Selected position is not on the currently loaded page. Refresh or navigate to its page."}</p>
           </div>
-          <button disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Record paper exit</button>
-        </form>
-        <div className="space-y-2 rounded-xl border border-amber-500/50 p-3" role="status">
-          <h3 className="font-semibold theme-text">Expiry settlement disabled</h3>
-          <p className="text-xs theme-muted">Disabled until the backend verifies official underlying settlement data and calculates each option leg's intrinsic value. User-entered leg prices are not accepted as official settlement values.</p>
+          <div className="flex items-center gap-2">
+            <span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (selectedTradeData?.mark_status === "FRESH_BACKEND_QUOTES" ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600")}>{selectedTradeData?.mark_status === "FRESH_BACKEND_QUOTES" ? "FRESH MARKS" : "MARKS UNAVAILABLE"}</span>
+            <button type="button" onClick={() => setSelectedTrade(null)} className="rounded-md border theme-border px-3 py-1.5 text-xs theme-text">Close panel</button>
+          </div>
         </div>
-      </div>}
+        {selectedTradeData && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Realized P&amp;L</div><div className="mt-1 font-bold theme-text">{money(selectedTradeData.summary?.realized_pnl)}</div></div>
+          <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Open MTM</div><div className={"mt-1 font-bold " + (Number(selectedTradeData.summary?.unrealized_pnl ?? 0) >= 0 ? "text-emerald-600" : "text-red-500")}>{money(selectedTradeData.summary?.unrealized_pnl)}</div></div>
+          <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Charges to date</div><div className="mt-1 font-bold theme-text">{money(selectedTradeData.summary?.total_charges)}</div></div>
+          <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Net cash flow</div><div className="mt-1 font-bold theme-text">{money(selectedTradeData.summary?.net_cash_flow)}</div></div>
+        </div>}
+        {selectedTradeData && <div className="overflow-x-auto rounded-lg border theme-border">
+          <table className="w-full min-w-[760px] text-left text-xs">
+            <thead className="theme-surface theme-muted"><tr>{["Leg","Position","Entry avg","Exit-side mark","Open qty","Open entry value","Close value","Open MTM","Action"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
+            <tbody>{(selectedTradeData.legs ?? []).map(leg => {
+              const mtm = legMtm(leg);
+              const entryValue = leg.entry_average_price == null ? null : Number(leg.entry_average_price) * leg.open_quantity;
+              const closeValue = leg.mark_price == null ? null : Number(leg.mark_price) * leg.open_quantity;
+              return <tr key={leg.role} className="border-t theme-border">
+                <td className="px-2 py-2 font-semibold theme-text">{leg.role}</td>
+                <td className="px-2 py-2 theme-text">{leg.open_action}</td>
+                <td className="px-2 py-2 theme-text">{money(leg.entry_average_price)}</td>
+                <td className="px-2 py-2 theme-text">{money(leg.mark_price)}</td>
+                <td className="px-2 py-2 theme-text">{leg.open_quantity.toLocaleString("en-IN")}</td>
+                <td className="px-2 py-2 theme-text">{entryValue == null ? "—" : money(entryValue)}</td>
+                <td className="px-2 py-2 theme-text">{closeValue == null ? "—" : money(closeValue)}</td>
+                <td className={"px-2 py-2 font-bold " + (mtm == null ? "theme-muted" : mtm >= 0 ? "text-emerald-600" : "text-red-500")}>{mtm == null ? "—" : money(mtm)}</td>
+                <td className="px-2 py-2"><button type="button" disabled={leg.open_quantity <= 0} onClick={() => { setExitRole(leg.role); setExitQuantity(String(leg.open_quantity)); }} className="rounded-md border theme-border px-2 py-1 font-semibold theme-text disabled:opacity-40">Select exit</button></td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>}
+        <div className="grid gap-3 md:grid-cols-2">
+          <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-lg border theme-border p-3">
+            <div><h4 className="font-semibold theme-text">Exit selected leg</h4><p className="mt-1 text-xs theme-muted">Selected: {exitRole} · open quantity {selectedExitLeg?.open_quantity ?? 0}. Backend independently checks fresh executable bid/ask and quantity; no browser price is submitted.</p></div>
+            <label className="block text-xs theme-muted">Leg
+              <select value={exitRole} onChange={e => { const role = e.target.value as Role; setExitRole(role); setExitQuantity(String(selectedTradeData?.legs?.find(leg => leg.role === role)?.open_quantity ?? 0)); }} className="mt-1 w-full rounded-lg border theme-border theme-surface px-3 py-2 text-sm theme-text">{roles.map(role => { const leg = selectedTradeData?.legs?.find(item => item.role === role); return <option key={role} value={role} disabled={!leg || leg.open_quantity <= 0}>{role} · open {leg?.open_quantity ?? 0}</option>; })}</select>
+            </label>
+            <label className="block text-xs theme-muted">Exit quantity (max {selectedExitLeg?.open_quantity ?? 0})
+              <input required type="number" min="1" max={selectedExitLeg?.open_quantity ?? 0} step="1" value={exitQuantity} onChange={e => setExitQuantity(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface px-3 py-2 text-sm theme-text"/>
+            </label>
+            <button disabled={busy || !selectedTradeData || !selectedExitLeg || selectedExitLeg.open_quantity <= 0 || Number(exitQuantity) < 1 || Number(exitQuantity) > selectedExitLeg.open_quantity} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">Simulate exit at fresh backend quote</button>
+          </form>
+          <div className="space-y-2 rounded-lg border border-amber-500/50 p-3" role="status">
+            <h4 className="font-semibold theme-text">Expiry settlement · locked</h4>
+            <p className="text-xs theme-muted">Settlement remains locked until the backend verifies official underlying settlement data and calculates each option leg's intrinsic value. User-entered prices are never accepted as official settlement values.</p>
+            <p className="text-xs theme-muted">Partial exits are tracked per leg. The remaining exposure stays open and visible until every leg is flat.</p>
+          </div>
+        </div>
+      </section>}
 
       {ledger && <div className="space-y-2 rounded-xl border theme-border p-3">
         <div className="flex items-center justify-between gap-2"><h3 className="font-semibold theme-text">Paper ledger details</h3><button type="button" onClick={() => setLedger(null)} className="rounded-md border theme-border px-2 py-1 text-xs theme-text">Close</button></div>
