@@ -24,6 +24,12 @@ type ScannerDiagnostics = {
   };
 };
 type OpportunityStatus = "CHECKING" | "LIVE" | "EMPTY" | "ERROR";
+type PortfolioSummary = {
+  trade_count: number; open_position_count: number; closed_position_count: number;
+  realized_pnl: string; unrealized_pnl: string | null; net_pnl: string | null;
+  total_charges: string; unrealized_status: string;
+};
+type PositionPage = { total_count: number; has_more: boolean; limit: number; offset: number };
 
 type PaperLegPosition = {
   role: Role; entry_action: string | null; entry_quantity: number;
@@ -72,6 +78,11 @@ export default function BoxSpreadPaperTrading() {
   const [executionEnabled, setExecutionEnabled] = useState(false);
   const [controlBusy, setControlBusy] = useState(false);
   const [trades, setTrades] = useState<PaperTrade[]>([]);
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
+  const [openPage, setOpenPage] = useState(0);
+  const [closedPage, setClosedPage] = useState(0);
+  const [openPageInfo, setOpenPageInfo] = useState<PositionPage>({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+  const [closedPageInfo, setClosedPageInfo] = useState<PositionPage>({ total_count: 0, has_more: false, limit: 10, offset: 0 });
   const [recoveryTrades, setRecoveryTrades] = useState<RecoveryTrade[]>([]);
   const [opportunities, setOpportunities] = useState<LiveOpportunity[]>([]);
   const [opportunityStatus, setOpportunityStatus] = useState<OpportunityStatus>("CHECKING");
@@ -120,14 +131,21 @@ export default function BoxSpreadPaperTrading() {
 
   const refresh = useCallback(async () => {
     try {
-      const [accountBody, tradesBody, controlBody] = await Promise.all([
+      const query = "&search=" + encodeURIComponent(positionSearch.trim()) + "&direction=" + encodeURIComponent(positionDirection);
+      const pageSize = 10;
+      const [accountBody, openBody, closedBody, summaryBody, controlBody] = await Promise.all([
         request("/account?account_key=" + encodeURIComponent(account)),
-        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=500&include_ledger=true"),
+        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=" + pageSize + "&offset=" + (openPage * pageSize) + "&position_state=OPEN&include_ledger=true" + query),
+        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=" + pageSize + "&offset=" + (closedPage * pageSize) + "&position_state=CLOSED&include_ledger=true" + query),
+        request("/portfolio-summary?account_key=" + encodeURIComponent(account)),
         request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
       setExecutionEnabled(controlBody.enabled === true);
-      setTrades(Array.isArray(tradesBody.data) ? tradesBody.data : []);
+      setTrades([...(Array.isArray(openBody.data) ? openBody.data : []), ...(Array.isArray(closedBody.data) ? closedBody.data : [])]);
+      setPortfolioSummary(summaryBody as PortfolioSummary);
+      setOpenPageInfo({ total_count: Number(openBody.total_count ?? 0), has_more: openBody.has_more === true, limit: pageSize, offset: openPage * pageSize });
+      setClosedPageInfo({ total_count: Number(closedBody.total_count ?? 0), has_more: closedBody.has_more === true, limit: pageSize, offset: closedPage * pageSize });
       setError(null);
       // Recovery is a separate read-only request so its failure never blocks the normal ledger.
       void request("/recovery?account_key=" + encodeURIComponent(account))
@@ -136,7 +154,7 @@ export default function BoxSpreadPaperTrading() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load paper ledger");
     }
-  }, [account, request]);
+  }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
 
   const loadOpportunities = useCallback(async () => {
     setOpportunityStatus("CHECKING");
@@ -305,19 +323,9 @@ export default function BoxSpreadPaperTrading() {
     trade.status === "CLOSED" ||
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
-  const allOpenTrades = trades.filter(trade =>
-    !["CLOSED", "CANCELLED"].includes(trade.status) &&
-    (!trade.legs?.some(leg => leg.entry_quantity > 0) || trade.legs.some(leg => leg.open_quantity > 0))
-  );
-  const totalRealizedPnl = trades.reduce((sum, trade) => sum + Number(trade.summary?.realized_pnl ?? 0), 0);
-  const allOpenMarked = allOpenTrades.length === 0 || allOpenTrades.every(trade =>
-    trade.legs?.every(leg => leg.open_quantity === 0 || leg.mark_price != null) &&
-    trade.summary?.unrealized_pnl != null
-  );
-  const totalUnrealizedPnl = allOpenMarked
-    ? allOpenTrades.reduce((sum, trade) => sum + Number(trade.summary?.unrealized_pnl ?? 0), 0)
-    : null;
-  const totalNetPnl = totalUnrealizedPnl == null ? null : totalRealizedPnl + totalUnrealizedPnl;
+  const totalRealizedPnl = Number(portfolioSummary?.realized_pnl ?? 0);
+  const totalUnrealizedPnl = portfolioSummary?.unrealized_pnl == null ? null : Number(portfolioSummary.unrealized_pnl);
+  const totalNetPnl = portfolioSummary?.net_pnl == null ? null : Number(portfolioSummary.net_pnl);
   const money = (value: string | number | null | undefined) =>
     value == null || !Number.isFinite(Number(value)) ? "—" :
       "₹" + Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -421,7 +429,7 @@ export default function BoxSpreadPaperTrading() {
       <section className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div><p className="text-xs font-semibold uppercase tracking-wider theme-accent">Portfolio book</p><h3 className="text-lg font-semibold theme-text">Open & Closed Positions</h3><p className="text-xs theme-muted">Each executed trade, four leg fills, entry timestamp, expiry, entry spot, fees and P&L. All amounts are from the paper ledger.</p></div>
-          <span className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">{openTrades.length} open · {closedTrades.length} closed</span>
+          <span className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">{portfolioSummary?.open_position_count ?? openPageInfo.total_count} open · {portfolioSummary?.closed_position_count ?? closedPageInfo.total_count} closed</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           <label className="text-xs theme-muted">Search underlying / trade ID
@@ -436,12 +444,31 @@ export default function BoxSpreadPaperTrading() {
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
-            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Open Positions</h4><span className="text-xs text-emerald-600">{openTrades.length} active</span></div>
+            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Open Positions</h4><span className="text-xs text-emerald-600">{openPageInfo.total_count} active</span></div>
             {openTrades.length ? openTrades.map(trade=>renderPositionCard(trade,false)) : <p className="rounded-lg border theme-border p-4 text-sm theme-muted">No open paper positions for this account.</p>}
           </div>
           <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
-            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Closed Positions</h4><span className="text-xs theme-muted">{closedTrades.length} completed</span></div>
+            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Closed Positions</h4><span className="text-xs theme-muted">{closedPageInfo.total_count} completed</span></div>
             {closedTrades.length ? closedTrades.map(trade=>renderPositionCard(trade,true)) : <p className="rounded-lg border theme-border p-4 text-sm theme-muted">No closed paper positions for this account.</p>}
+          </div>
+            <div className="flex items-center justify-between gap-2 pt-1 text-xs theme-muted">
+              <span>Page {openPage + 1} · showing {openTrades.length} of {openPageInfo.total_count}</span>
+              <div className="flex gap-2">
+                <button type="button" disabled={openPage === 0} onClick={() => setOpenPage(page => Math.max(0, page - 1))} className="rounded-md border theme-border px-3 py-1 disabled:opacity-40">Previous</button>
+                <button type="button" disabled={!openPageInfo.has_more} onClick={() => setOpenPage(page => page + 1)} className="rounded-md border theme-border px-3 py-1 disabled:opacity-40">Next</button>
+              </div>
+            </div>
+          </div>
+          <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
+            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Closed Positions</h4><span className="text-xs theme-muted">{closedPageInfo.total_count} completed</span></div>
+            {closedTrades.length ? closedTrades.map(trade=>renderPositionCard(trade,true)) : <p className="rounded-lg border theme-border p-4 text-sm theme-muted">No closed paper positions for this account.</p>}
+            <div className="flex items-center justify-between gap-2 pt-1 text-xs theme-muted">
+              <span>Page {closedPage + 1} · showing {closedTrades.length} of {closedPageInfo.total_count}</span>
+              <div className="flex gap-2">
+                <button type="button" disabled={closedPage === 0} onClick={() => setClosedPage(page => Math.max(0, page - 1))} className="rounded-md border theme-border px-3 py-1 disabled:opacity-40">Previous</button>
+                <button type="button" disabled={!closedPageInfo.has_more} onClick={() => setClosedPage(page => page + 1)} className="rounded-md border theme-border px-3 py-1 disabled:opacity-40">Next</button>
+              </div>
+            </div>
           </div>
         </div>
         <div className="rounded-xl border theme-border p-3">
@@ -450,7 +477,7 @@ export default function BoxSpreadPaperTrading() {
             <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Realized P&L</div><div className={"mt-1 text-lg font-bold " + (totalRealizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{money(totalRealizedPnl)}</div></div>
             <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Open unrealized P&L</div><div className="mt-1 text-lg font-bold theme-text">{totalUnrealizedPnl == null ? "Unavailable" : money(totalUnrealizedPnl)}</div></div>
             <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Net P&L</div><div className="mt-1 text-lg font-bold theme-text">{totalNetPnl == null ? "—" : money(totalNetPnl)}</div></div>
-            <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Total charges</div><div className="mt-1 text-lg font-bold theme-text">{money(trades.reduce((sum,trade)=>sum+Number(trade.summary?.total_charges??0),0))}</div></div>
+            <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Total charges</div><div className="mt-1 text-lg font-bold theme-text">{money(portfolioSummary?.total_charges)}</div></div>
           </div>
           <p className="mt-2 text-[11px] theme-muted">Net P&L is shown only when every open position has a fresh backend mark. If any leg quote is stale/missing, unrealized and combined P&L remain unavailable rather than using stale prices. Historical trades created before entry-spot capture will show —.</p>
         </div>
