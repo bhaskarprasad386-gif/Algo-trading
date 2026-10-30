@@ -149,3 +149,62 @@ def test_box_spread_diagnostics_endpoint_returns_scanner_snapshot(monkeypatch):
     assert payload["status"] == "available"
     assert payload["counts"]["missing_bid_quote"] == 2
     assert payload["last_scan"]["outcome"] == "waiting_for_complete_executable_call_put_pairs"
+
+
+
+def test_alert_history_includes_saved_expiry_type(monkeypatch):
+    row = SimpleNamespace(
+        symbol="NIFTY", instrument_class="INDEX", expiry=20261123,
+        expiry_type="WEEKLY", low_strike=22000, high_strike=22100,
+        direction="LONG", timestamp_ns=123,
+        low_call_bid=1, low_call_bid_qty=None, low_call_ask=2, low_call_ask_qty=None,
+        low_put_bid=3, low_put_bid_qty=None, low_put_ask=4, low_put_ask_qty=None,
+        high_call_bid=5, high_call_bid_qty=None, high_call_ask=6, high_call_ask_qty=None,
+        high_put_bid=7, high_put_bid_qty=None, high_put_ask=8, high_put_ask_qty=None,
+        executable_edge=1, edge_per_lot=10, gross_pnl=10, lot_size=25,
+    )
+
+    class Query:
+        def filter(self, *args): return self
+        def order_by(self, *args): return self
+        def limit(self, *args): return self
+        def all(self): return [row]
+
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def query(self, *args): return Query()
+
+    monkeypatch.setattr(routes, "SessionLocal", Session)
+    payload = routes.alerts(days=30, limit=500)
+    assert payload["count"] == 1
+    assert payload["data"][0]["expiry_type"] == "WEEKLY"
+
+
+def test_alert_history_falls_back_to_current_instrument_master_classification(monkeypatch):
+    row = SimpleNamespace(
+        symbol="NIFTY", instrument_class="INDEX", expiry=20261123,
+        expiry_type=None, low_strike=22000, high_strike=22100,
+        direction="LONG", timestamp_ns=123,
+        low_call_bid=1, low_call_bid_qty=None, low_call_ask=2, low_call_ask_qty=None,
+        low_put_bid=3, low_put_bid_qty=None, low_put_ask=4, low_put_ask_qty=None,
+        high_call_bid=5, high_call_bid_qty=None, high_call_ask=6, high_call_ask_qty=None,
+        high_put_bid=7, high_put_bid_qty=None, high_put_ask=8, high_put_ask_qty=None,
+        executable_edge=1, edge_per_lot=10, gross_pnl=10, lot_size=25,
+    )
+
+    class Query:
+        def filter(self, *args): return self
+        def order_by(self, *args): return self
+        def limit(self, *args): return self
+        def all(self): return [row]
+
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def query(self, *args): return Query()
+
+    monkeypatch.setattr(routes, "SessionLocal", Session)
+    monkeypatch.setattr(routes, "_expiry_types", {("NIFTY", routes._expiry_key(20261123)): "MONTHLY"})
+    payload = routes.alerts(days=30, limit=500)
+    assert payload["data"][0]["expiry_type"] == "MONTHLY"
