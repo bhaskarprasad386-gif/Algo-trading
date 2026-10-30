@@ -536,7 +536,7 @@ def trades(
 ):
     position_state = str(position_state or "ALL").strip().upper()
     direction = str(direction or "ALL").strip().upper()
-    search = str(search or "").strip()
+    search = str(search or "").strip().lstrip("#").strip()
     if position_state not in {"ALL", "OPEN", "CLOSED"}:
         raise HTTPException(status_code=422, detail="position_state must be ALL, OPEN or CLOSED")
     if direction not in {"ALL", "LONG", "SHORT"}:
@@ -563,7 +563,7 @@ def trades(
                 # alone: partial exits can leave exposure after some exit fills.
                 state_rows = session.execute(
                     select(BoxSpreadPaperTradeRecord.id, BoxSpreadPaperTradeRecord.status)
-                    .where(trade_filter)
+                    .where(*(trade_filter if isinstance(trade_filter, tuple) else (trade_filter,)))
                 ).all()
                 state_entries = session.scalars(
                     select(BoxSpreadPaperLedgerEntry)
