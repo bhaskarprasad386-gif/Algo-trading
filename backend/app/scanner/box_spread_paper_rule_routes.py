@@ -16,7 +16,7 @@ from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal
 from app.scanner.box_spread_paper_routes import require_paper_access
-from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
+from app.scanner.box_spread_paper_ledger import (\n    BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry, BoxSpreadPaperEntryClaim,\n)
 from app.scanner.box_spread_paper_rules import (
     BoxSpreadPaperRule, BoxSpreadPaperRuleEvaluation, decode_rule_config,
     validate_rule_config, utc_now, entry_matches, exit_matches, metric_value,
@@ -135,6 +135,20 @@ def _open_rule_trades(rule_id: int, account_key: str):
                    BoxSpreadPaperTradeRecord.status.notin_(("CREATED", "CLOSED", "CANCELLED")))
             .order_by(BoxSpreadPaperTradeRecord.created_at, BoxSpreadPaperTradeRecord.id)
         ).all()
+
+
+def _claimed_rule_entry_keys(rule_id: int, account_key: str) -> set[str]:
+    """Return durable one-shot entry attempts already consumed by this rule."""
+    prefix = f"rule-{rule_id}-%"
+    with SessionLocal() as session:
+        keys = session.scalars(
+            select(BoxSpreadPaperTradeRecord.idempotency_key)
+            .join(BoxSpreadPaperEntryClaim, BoxSpreadPaperEntryClaim.trade_id == BoxSpreadPaperTradeRecord.id)
+            .where(BoxSpreadPaperTradeRecord.account_key == account_key,
+                   BoxSpreadPaperTradeRecord.idempotency_key.like(prefix),
+                   BoxSpreadPaperEntryClaim.account_key == account_key)
+        ).all()
+    return set(keys)
 
 
 def _signed_open_quantities(trade_id: int, account_key: str) -> dict[str, int]:
@@ -317,7 +331,32 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 f"max_open_positions_reached;open={open_count};maximum={max_open_positions}")
         return
 
-    selected_entry_rows, skipped_rows = select_entry_candidates(entry_rows, config, range_limit=2)
+    if config["entry"].get("range_enabled", False):
+        # The two-trade ceiling is cumulative for this saved rule, not reset on
+        # every polling cycle. Durable claims count as consumed attempts because
+        # an interrupted four-leg attempt must never be silently replayed.
+        claimed_keys = await asyncio.to_thread(_claimed_rule_entry_keys, rule_id, account_key)
+        remaining_range_slots = max(0, 2 - len(claimed_keys))
+        unclaimed_rows = []
+        previously_claimed_rows = []
+        for candidate in entry_rows:
+            expiry_value = candidate.get("expiry_date") or candidate.get("expiry")
+            try:
+                candidate_key = "rule-{}-{}-{}-{}-{}-{}".format(
+                    rule_id, str(candidate.get("symbol", "")).upper(),
+                    paper._canonical_expiry(expiry_value), candidate.get("low_strike"),
+                    candidate.get("high_strike"), str(candidate.get("direction", "")).upper(),
+                )
+            except (TypeError, ValueError):
+                unclaimed_rows.append(candidate)
+                continue
+            (previously_claimed_rows if candidate_key in claimed_keys else unclaimed_rows).append(candidate)
+        selected_entry_rows, skipped_rows = select_entry_candidates(
+            unclaimed_rows, config, range_limit=remaining_range_slots,
+        )
+        skipped_rows.extend((candidate, "range_trade_limit_reached") for candidate in previously_claimed_rows)
+    else:
+        selected_entry_rows, skipped_rows = select_entry_candidates(entry_rows, config)
     skipped_count = len(skipped_rows)
     skipped_reasons: dict[str, int] = {}
     evaluated_count = len(entry_rows)
