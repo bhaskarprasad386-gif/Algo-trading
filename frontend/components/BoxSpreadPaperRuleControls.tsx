@@ -4,14 +4,14 @@ import type { FormEvent } from "react";
 
 type Config = {
   entry: { symbols: string[]; direction: "ALL"|"LONG"|"SHORT"; instrument_class: "ALL"|"INDEX"|"STOCK"; expiry_type: "ALL"|"WEEKLY"|"MONTHLY"|"UNKNOWN"; metric: "executable_edge"|"edge_per_lot"|"gross_pnl"; operator: ">="|">"|"<="|"<"|"=="; threshold: number; lots: number; max_open_positions: number };
-  exit: { metric: "executable_edge"|"edge_per_lot"|"gross_pnl"; operator: "<="|"<"|">="|">"|"=="; threshold: number; hold_to_expiry: boolean };
+  exit: { metric: "executable_edge"|"edge_per_lot"|"gross_pnl"; operator: "<="|"<"|">="|">"|"=="; threshold: number; hold_to_expiry: boolean; order_type: "LIMIT"|"MARKET" };
   monitor: { interval_seconds: number };
 };
 type Rule = { rule_id: number; name: string; enabled: boolean; config: Config };
 type Evaluation = { evaluation_id: number; event: string; outcome: string; reason: string; evaluated_at: string; metric: string|null; observed_value: string|null; threshold: string|null; trade_id: number|null };
 const defaults: Config = {
   entry: { symbols: ["NIFTY","SENSEX"], direction: "LONG", instrument_class: "INDEX", expiry_type: "WEEKLY", metric: "executable_edge", operator: ">=", threshold: 20, lots: 5, max_open_positions: 1 },
-  exit: { metric: "executable_edge", operator: "<=", threshold: 1, hold_to_expiry: false },
+  exit: { metric: "executable_edge", operator: "<=", threshold: 1, hold_to_expiry: false, order_type: "LIMIT" },
   monitor: { interval_seconds: 20 },
 };
 
@@ -63,7 +63,7 @@ export default function BoxSpreadPaperRuleControls({ api, token, account }: { ap
     <div className="space-y-2">
       <div className="flex items-center justify-between"><h4 className="font-semibold theme-text">Saved rules</h4><button type="button" onClick={newRule} className="rounded-lg border theme-border px-3 py-2 text-xs">New rule</button></div>
       {rules.length?rules.map(rule=><div key={rule.rule_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border theme-border theme-surface-2 p-3">
-        <div><div className="text-sm font-semibold theme-text"># {rule.rule_id} · {rule.name}</div><div className="text-xs theme-muted">Entry {rule.config.entry.metric} {rule.config.entry.operator} {rule.config.entry.threshold} · Exit {rule.config.exit.hold_to_expiry ? "Hold to expiry" : rule.config.exit.metric + " " + rule.config.exit.operator + " " + rule.config.exit.threshold} · {rule.config.monitor.interval_seconds}s monitor</div><div className={"mt-1 text-[11px] font-bold "+(rule.enabled?"text-emerald-600":"text-amber-600")}>{rule.enabled?"RULE ENABLED":"RULE DISABLED"}</div></div>
+        <div><div className="text-sm font-semibold theme-text"># {rule.rule_id} · {rule.name}</div><div className="text-xs theme-muted">Entry {rule.config.entry.metric} {rule.config.entry.operator} {rule.config.entry.threshold} · Exit {rule.config.exit.hold_to_expiry ? "Hold to expiry" : rule.config.exit.metric + " " + rule.config.exit.operator + " " + rule.config.exit.threshold} · Exit order: {rule.config.exit.order_type} · {rule.config.monitor.interval_seconds}s monitor</div><div className={"mt-1 text-[11px] font-bold "+(rule.enabled?"text-emerald-600":"text-amber-600")}>{rule.enabled?"RULE ENABLED":"RULE DISABLED"}</div></div>
         <div className="flex gap-2"><button type="button" onClick={()=>edit(rule)} className="rounded-md border theme-border px-3 py-2 text-xs">Edit</button><button type="button" onClick={()=>void history(rule.rule_id)} className="rounded-md border theme-border px-3 py-2 text-xs">History</button></div>
       </div>):<p className="rounded-lg border theme-border p-3 text-xs theme-muted">No custom rules saved.</p>}
     </div>
@@ -82,14 +82,15 @@ export default function BoxSpreadPaperRuleControls({ api, token, account }: { ap
         <label className="text-xs theme-muted">Maximum open positions per rule (1–20)<input type="number" min={1} max={20} value={config.entry.max_open_positions} onChange={e=>entry("max_open_positions",Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>
       </div></div>
       <div className="rounded-lg theme-surface-2 p-3"><h5 className="text-sm font-semibold theme-text">Exit conditions</h5><label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={config.exit.hold_to_expiry} onChange={e=>exit("hold_to_expiry",e.target.checked)}/>Hold until expiry (no early exit)</label>
-        {!config.exit.hold_to_expiry&&<div className="mt-2 grid gap-2 sm:grid-cols-3">
+        {!config.exit.hold_to_expiry&&<div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-xs theme-muted">Exit metric<select value={config.exit.metric} onChange={e=>exit("metric",e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"><option value="executable_edge">Executable edge (points)</option><option value="edge_per_lot">Edge per lot (₹)</option><option value="gross_pnl">Gross P&amp;L (₹)</option></select></label>
           <label className="text-xs theme-muted">Exit comparison<select value={config.exit.operator} onChange={e=>exit("operator",e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"><option value="<=">≤</option><option value="<">&lt;</option><option value=">=">≥</option><option value=">">&gt;</option><option value="==">=</option></select></label>
           <label className="text-xs theme-muted">Exit threshold<input type="number" step="any" value={config.exit.threshold} onChange={e=>exit("threshold",Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>
+          <label className="text-xs theme-muted">Exit order type<select value={config.exit.order_type} onChange={e=>exit("order_type",e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"><option value="LIMIT">Limit (default)</option><option value="MARKET">Market</option></select></label>
         </div>}
       </div>
       <label className="block text-xs theme-muted">Position monitor interval (seconds; 5–3600)<input type="number" min={5} max={3600} value={config.monitor.interval_seconds} onChange={e=>setConfig(c=>({...c,monitor:{interval_seconds:Number(e.target.value)}}))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/></label>
-      <p className="text-[11px] theme-muted">Example: enter at executable edge ≥20; exit when edge ≤1 or ≤0; or hold until expiry. Expiry-day settlement remains manual until official server-verified settlement data is available.</p>
+      <p className="text-[11px] theme-muted">Example: enter at executable edge ≥20; exit when edge ≤1 or when gross P&L reaches your chosen threshold; choose Limit by default or Market, or hold until expiry. Expiry-day settlement remains manual until official server-verified settlement data is available.</p>
       <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Saving…":"Save rule"}</button>{editingId!==null&&<button type="button" onClick={newRule} className="rounded-lg border theme-border px-4 py-2 text-sm">Cancel edit</button>}</div>
     </form>
     {notice&&<p className="text-xs text-emerald-600">{notice}</p>}{error&&<p role="alert" className="text-xs text-red-500">{error}</p>}
