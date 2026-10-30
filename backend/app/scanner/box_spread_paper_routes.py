@@ -17,7 +17,7 @@ import hmac
 
 from app.core.config import settings
 from app.core.security import create_access_token, decode_access_token
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.core.database import SessionLocal
 from app.market_data.instruments import InstrumentMaster
@@ -531,10 +531,18 @@ def trades(
     offset: int = 0,
     include_ledger: bool = False,
     position_state: str = "ALL",
+    search: str = "",
+    direction: str = "ALL",
 ):
     position_state = str(position_state or "ALL").strip().upper()
+    direction = str(direction or "ALL").strip().upper()
+    search = str(search or "").strip()
     if position_state not in {"ALL", "OPEN", "CLOSED"}:
         raise HTTPException(status_code=422, detail="position_state must be ALL, OPEN or CLOSED")
+    if direction not in {"ALL", "LONG", "SHORT"}:
+        raise HTTPException(status_code=422, detail="direction must be ALL, LONG or SHORT")
+    if len(search) > 128:
+        raise HTTPException(status_code=422, detail="search must be at most 128 characters")
     if not 1 <= limit <= 500:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
     if not 0 <= offset <= 1_000_000:
@@ -542,6 +550,14 @@ def trades(
     try:
         with SessionLocal() as session:
             trade_filter = BoxSpreadPaperTradeRecord.account_key == account_key
+            if direction != "ALL":
+                trade_filter = (trade_filter, BoxSpreadPaperTradeRecord.direction == direction)
+            if search:
+                search_term = search.lstrip("#").strip()
+                search_clause = func.lower(BoxSpreadPaperTradeRecord.underlying).contains(search_term.lower())
+                if search_term.isdigit():
+                    search_clause = or_(search_clause, BoxSpreadPaperTradeRecord.id == int(search_term))
+                trade_filter = (trade_filter, search_clause)
             if position_state != "ALL":
                 # Classify from durable signed quantities, not the trade status
                 # alone: partial exits can leave exposure after some exit fills.
