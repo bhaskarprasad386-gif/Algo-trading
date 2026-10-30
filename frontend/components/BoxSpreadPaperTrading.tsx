@@ -55,6 +55,7 @@ export default function BoxSpreadPaperTrading() {
   const [ledger, setLedger] = useState<any | null>(null);
   const [exitRole, setExitRole] = useState<Role>("LOW_CE");
   const [exitQuantity, setExitQuantity] = useState("1");
+  const [lots, setLots] = useState(1);
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(api + path, {
@@ -161,7 +162,7 @@ export default function BoxSpreadPaperTrading() {
           underlying: opportunity.symbol, instrument_class: opportunity.instrument_class,
           expiry: opportunity.expiry, low_strike: opportunity.low_strike,
           high_strike: opportunity.high_strike, direction: opportunity.direction,
-          lots: 1, account_key: account,
+          lots, account_key: account,
           idempotency_key: "box-paper-" + crypto.randomUUID(),
         }),
       });
@@ -253,6 +254,11 @@ export default function BoxSpreadPaperTrading() {
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm theme-muted">Paper account key
           <input value={account} onChange={e => setAccount(e.target.value)} maxLength={128} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" />
+        </label>
+        <label className="text-sm theme-muted">Lots per paper trade
+          <select value={lots} onChange={e => setLots(Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text">
+            {[1, 2, 5].map(value => <option key={value} value={value}>{value} {value === 1 ? "lot" : "lots"}</option>)}
+          </select>
         </label>
         <div className="flex items-end"><button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Refresh ledger</button></div>
       </div>
