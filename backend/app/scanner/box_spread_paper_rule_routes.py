@@ -238,7 +238,13 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     if not execution_enabled:
         return
 
+    open_count = len(await asyncio.to_thread(_open_rule_trades, rule_id, account_key))
+    max_open_positions = config["entry"]["max_open_positions"]
+    if open_count >= max_open_positions:
+        return
     for row in entry_rows:
+        if open_count >= max_open_positions:
+            break
         matched, reason = entry_matches(row, config)
         if not matched:
             continue
@@ -268,6 +274,15 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 account_key=account_key, entry_spot_price=request.entry_spot_price,
             )
             if trade.status != "CREATED":
+                continue
+            open_count += 1
+            existing_claim = await asyncio.to_thread(
+                paper._ledger.get_entry_claim, trade_id=trade.id, account_key=account_key
+            )
+            existing_fills = await asyncio.to_thread(
+                paper._ledger.list_fills, trade.id, account_key=account_key
+            )
+            if existing_claim is not None or existing_fills:
                 continue
             result = await paper._simulate_entry_locked(
                 trade.id, paper.SimulateEntry(account_key=account_key),
