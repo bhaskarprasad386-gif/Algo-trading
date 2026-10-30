@@ -240,7 +240,7 @@ def test_snapshot_history_prefers_saved_expiry_type_over_changed_master(monkeypa
         routes, "_expiry_types",
         {("BANKNIFTY", routes._expiry_key(20261123)): "MONTHLY"},
     )
-    payload = routes.snapshots(days=30, limit=500, offset=0)
+    payload = routes.snapshots(days=30, limit=500, offset=0, expiry_type=None)
     assert payload["data"][0]["expiry_type"] == "WEEKLY"
 
 
