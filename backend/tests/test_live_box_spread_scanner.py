@@ -190,10 +190,10 @@ def test_monitor_scan_retains_zero_and_negative_edges_for_existing_positions():
     from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
 
     low = OptionQuote(
-        1, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100,
+        1, "ABC", 20261231, 100, 9, 10, 6, 7, 10, "STOCK", 100, 100,
     )
     high = OptionQuote(
-        1, "ABC", 20261231, 110, 5, 6, 9, 11, 10, "STOCK", 100, 100,
+        1, "ABC", 20261231, 110, 5, 6, 10, 11, 10, "STOCK", 100, 100,
     )
     results = scan_box_snapshot(
         (low, high), atm_strike=100, instrument_class="STOCK",
