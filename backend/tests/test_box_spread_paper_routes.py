@@ -253,9 +253,6 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "FILLED"})
 
-    async def create_intent(**kwargs):
-        return None
-
     captured = {}
 
     fills = [
