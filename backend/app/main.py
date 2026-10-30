@@ -50,8 +50,9 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_spot_provider as configure_live_box_spread_spot, set_expiry_types as set_live_box_expiry_types
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, set_expiry_types as set_live_box_expiry_types
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
+from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
@@ -110,6 +111,7 @@ configure_live_synthetic(lambda: live_synthetic_latest_results)
 configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
 configure_live_synthetic_pairs(lambda: None if live_synthetic_runner is None else live_synthetic_runner.pair_monitor_snapshot())
 configure_live_box_spread(lambda: live_box_spread_latest_results)
+configure_live_box_spread_monitor(lambda: None if live_box_spread_runner is None or live_box_spread_runner.scanner is None else live_box_spread_runner.scanner.monitor_snapshot())
 configure_live_box_spread_diagnostics(
     lambda: None if live_box_spread_runner is None else live_box_spread_runner.snapshot().get("scanner_diagnostics")
 )
@@ -149,12 +151,14 @@ async def lifespan(app: FastAPI):
         _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
     if settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
+    paper_rule_task = asyncio.create_task(paper_rule_monitor_loop())
     try:
         yield
     finally:
         # Signal blocking worker threads before cancelling their asyncio wrappers.
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
+        paper_rule_task.cancel()
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task):
             if task is not None:
                 task.cancel()
@@ -168,6 +172,7 @@ async def lifespan(app: FastAPI):
                 _live_synthetic_task,
                 _live_box_spread_task,
                 _weekly_swing_refresh_task,
+                paper_rule_task,
             )
             if task is not None
         )
@@ -220,6 +225,7 @@ app.include_router(live_synthetic_router)
 app.include_router(live_synthetic_trace_router)
 app.include_router(live_box_spread_router)
 app.include_router(box_spread_paper_router)
+app.include_router(box_spread_paper_rule_router)
 app.include_router(live_box_spread_websocket_router)
 app.include_router(intelligence_router)
 if settings.BACKTESTING_ENABLED:

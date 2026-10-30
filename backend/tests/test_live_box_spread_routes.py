@@ -276,3 +276,32 @@ def test_snapshot_history_uses_current_classification_only_when_saved_type_missi
     )
     payload = routes.snapshots(days=30, limit=500, offset=0, expiry_type=None)
     assert payload["data"][0]["expiry_type"] == "MONTHLY"
+
+
+
+def test_raw_monitor_route_returns_fresh_edge_even_when_normal_entry_threshold_would_hide_it(monkeypatch):
+    result = _result()
+    result.executable_edge = 0.5
+    now_ns = max(result.low.timestamp_ns, result.high.timestamp_ns)
+    monkeypatch.setattr(routes, "_monitor_getter", lambda: {"updated_at_ns": now_ns, "data": (result,), "entry_data": (result,)})
+    payload = routes.monitor_snapshot(max_age_seconds=5)
+    assert payload["fresh"] is True
+    assert payload["count"] == 1
+    assert payload["data"][0]["executable_edge"] == 0.5
+    assert payload["data"][0]["freshness"] == "LIVE_MONITOR"
+    assert payload["entry_count"] == 1
+    assert payload["entry_data"][0]["freshness"] == "LIVE_RULE_CANDIDATE"
+    assert payload["data"][0]["low_call_bid"] == 10
+    assert payload["data"][0]["high_put_ask"] == 3
+
+
+def test_raw_monitor_route_fails_closed_for_stale_snapshot(monkeypatch):
+    result = _result()
+    monkeypatch.setattr(
+        routes, "_monitor_getter",
+        lambda: {"updated_at_ns": time.time_ns() - 10_000_000_000, "data": (result,)},
+    )
+    payload = routes.monitor_snapshot(max_age_seconds=5)
+    assert payload["fresh"] is False
+    assert payload["count"] == 0
+    assert payload["data"] == []

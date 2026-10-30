@@ -26,7 +26,8 @@ class BoxContractSelection:
 def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrument_class: str,
                          atm_strike: float, expiry: str | None = None,
                          allowed_stock_symbols: frozenset[str] = frozenset(),
-                         policy: ScanPolicy | None = None) -> BoxContractSelection:
+                         policy: ScanPolicy | None = None,
+                         required_strikes: tuple[float, ...] = ()) -> BoxContractSelection:
     symbol, cls = underlying.strip().upper(), instrument_class.strip().upper()
     if cls not in {"STOCK", "INDEX"}: raise ValueError("instrument_class must be STOCK or INDEX")
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
@@ -64,6 +65,11 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
     atm_index = min(range(len(ordered)), key=lambda i: abs(ordered[i] - float(atm_strike)))
     radius = 7 if cls == "STOCK" else 15
     selected = set(ordered[max(0, atm_index - radius):atm_index + radius + 1])
+    required = {float(strike) for strike in required_strikes}
+    missing_required = required.difference(strikes)
+    if missing_required:
+        raise LookupError(f"held position strikes unavailable for {symbol} {target}: {sorted(missing_required)}")
+    selected.update(required)
     rows_by_key = {(str(x.get("symbol","")).strip()[-2:].upper(), _strike(x.get("strike"))): x for x in options}
     subscriptions = []
     for strike in sorted(selected):

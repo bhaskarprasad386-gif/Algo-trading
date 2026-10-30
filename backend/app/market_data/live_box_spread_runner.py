@@ -2,6 +2,7 @@
 from __future__ import annotations
 from threading import Thread, Event
 from time import time_ns, sleep, monotonic
+from sqlalchemy import select
 from app.algo.auth import AngelOneAuth
 from app.core.database import SessionLocal
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
@@ -11,6 +12,7 @@ from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecor
 from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
 from app.market_data.box_spread_subscriptions import select_box_contracts
+from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
 from app.scanner.box_spread import BoxSpreadScanConfig
@@ -81,6 +83,47 @@ class LiveBoxSpreadRunner:
                 retry_delay = min(max_retry_delay, retry_delay * 2.0)
         self.stop()
 
+    def _open_position_subscriptions(self):
+        """Keep option contracts for persisted open paper positions in the common feed."""
+        with SessionLocal() as session:
+            trades = session.scalars(
+                select(BoxSpreadPaperTradeRecord).where(
+                    BoxSpreadPaperTradeRecord.status.notin_(("CLOSED", "CANCELLED"))
+                )
+            ).all()
+            if not trades:
+                return []
+            entries = session.scalars(
+                select(BoxSpreadPaperLedgerEntry).where(
+                    BoxSpreadPaperLedgerEntry.trade_id.in_([trade.id for trade in trades])
+                )
+            ).all()
+        signed_by_trade = {}
+        for entry in entries:
+            role_map = signed_by_trade.setdefault(entry.trade_id, {})
+            role_map[entry.role] = role_map.get(entry.role, 0) + (
+                entry.quantity if entry.action == "BUY" else -entry.quantity
+            )
+        subscriptions = []
+        for trade in trades:
+            if not any(signed_by_trade.get(trade.id, {}).values()):
+                continue
+            try:
+                selection = select_box_contracts(
+                    self.master, underlying=trade.underlying,
+                    instrument_class=trade.instrument_class,
+                    atm_strike=(float(trade.low_strike) + float(trade.high_strike)) / 2.0,
+                    expiry=trade.expiry, allowed_stock_symbols=self.allowed_stock_symbols,
+                    policy=self.policy,
+                    required_strikes=(float(trade.low_strike), float(trade.high_strike)),
+                )
+                subscriptions.extend(selection.subscriptions)
+            except (LookupError, ValueError) as exc:
+                app_logger.warning(
+                    "Box Spread paper position quote subscription unavailable for trade {}: {}",
+                    trade.id, exc,
+                )
+        return subscriptions
     def _run_session(self):
         download_box_spread_instruments(self.master)
         symbols=tuple(dict.fromkeys(t.underlying for t in self.targets))
@@ -195,6 +238,8 @@ class LiveBoxSpreadRunner:
                     contract_expiries[target.underlying.strip().upper()] = str(sel.expiry)
                     subscription_counts[target.underlying.strip().upper()] = len(sel.subscriptions)
                     subs.extend(sel.subscriptions)
+                # Preserve held-position strikes when the ATM subscription window moves.
+                subs.extend(self._open_position_subscriptions())
                 self._readiness = {
                     "state": "ready" if subs else "waiting_for_contracts",
                     "ready_symbols": ready_symbols,

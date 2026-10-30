@@ -181,3 +181,139 @@ def test_box_scanner_preserves_top_of_book_bid_ask_quantities():
     assert low.put_bid_qty == 130 and low.put_ask_qty == 140
     assert high.call_bid_qty == 120 and high.call_ask_qty == 130
     assert high.put_bid_qty == 140 and high.put_ask_qty == 150
+
+
+
+def test_monitor_scan_retains_zero_and_negative_edges_for_existing_positions():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(
+        1, "ABC", 20261231, 100, 9, 10, 6, 7, 10, "STOCK", 100, 100,
+    )
+    high = OptionQuote(
+        1, "ABC", 20261231, 110, 5, 6, 10, 11, 10, "STOCK", 100, 100,
+    )
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+        include_nonpositive=True,
+    )
+    by_direction = {row.direction: row.executable_edge for row in results}
+    assert by_direction["LONG"] == 0
+    assert by_direction["SHORT"] == -4
+
+
+def test_normal_opportunity_scan_still_excludes_nonpositive_edges():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(1, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100)
+    high = OptionQuote(1, "ABC", 20261231, 110, 5, 6, 9, 10, 10, "STOCK", 100, 100)
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    assert results == ()
+
+
+
+def test_position_monitor_includes_far_strike_pairs_outside_normal_scan_policy():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    quotes = []
+    for strike in (100, 110, 120):
+        quotes.append(OptionQuote(
+            1, "ABC", 20261231, strike, 10, 10.1, 10, 10.1,
+            10, "STOCK", 100, 100,
+        ))
+    config = BoxSpreadScanConfig(
+        min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+        max_option_spread_pct=100,
+    )
+    policy = ScanPolicy(stock_box_distances=(1,))
+    normal = scan_box_snapshot(
+        quotes, atm_strike=100, instrument_class="STOCK",
+        config=config, policy=policy, include_nonpositive=True,
+    )
+    monitor = scan_box_snapshot(
+        quotes, atm_strike=100, instrument_class="STOCK",
+        config=config, policy=policy, include_nonpositive=True,
+        include_all_strike_pairs=True,
+    )
+    assert (100, 120) not in {(int(row.low.strike), int(row.high.strike)) for row in normal}
+    assert (100, 120) in {(int(row.low.strike), int(row.high.strike)) for row in monitor}
+
+
+
+def test_position_monitor_config_does_not_apply_entry_liquidity_filters():
+    from dataclasses import replace
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    # A held position still needs close-side marks when volume/OI disappear
+    # or the spread widens. These permissive settings are monitor-only.
+    base_config = BoxSpreadScanConfig(
+        min_executable_edge=0,
+        allowed_stock_symbols=frozenset({"ABC"}),
+        min_option_volume=1,
+        min_option_oi=1,
+        max_option_spread_pct=5,
+    )
+    monitor_config = replace(
+        base_config,
+        min_executable_edge=-1_000_000_000.0,
+        min_option_volume=0,
+        min_option_oi=0,
+        max_option_spread_pct=1_000_000_000.0,
+    )
+    low = OptionQuote(1, "ABC", 20261231, 100, 8, 12, 4, 8, 10, "STOCK", 0, 0)
+    high = OptionQuote(1, "ABC", 20261231, 110, 4, 8, 8, 12, 10, "STOCK", 0, 0)
+    result = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=monitor_config, policy=ScanPolicy(stock_box_distances=(1,)),
+        include_nonpositive=True,
+    )
+    assert result
+    assert {row.direction for row in result} == {"LONG", "SHORT"}
+
+
+
+def test_custom_entry_scan_can_see_positive_edge_below_global_scanner_threshold():
+    from dataclasses import replace
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(1, "ABC", 20261231, 100, 9, 10, 3, 8, 10, "STOCK", 100, 100)
+    high = OptionQuote(1, "ABC", 20261231, 110, 5, 6, 6, 7, 10, "STOCK", 100, 100)
+    config = BoxSpreadScanConfig(
+        min_executable_edge=5, allowed_stock_symbols=frozenset({"ABC"}),
+        max_option_spread_pct=200,
+    )
+    policy = ScanPolicy(stock_box_distances=(1,))
+    normal = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=config, policy=policy,
+    )
+    custom_candidates = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=replace(config, min_executable_edge=-1_000_000_000.0), policy=policy,
+    )
+    assert normal == ()
+    long_rows = [row for row in custom_candidates if row.direction == "LONG"]
+    assert len(long_rows) == 1
+    assert long_rows[0].executable_edge == 1

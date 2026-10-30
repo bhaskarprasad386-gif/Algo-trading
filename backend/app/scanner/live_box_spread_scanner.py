@@ -2,6 +2,7 @@
 from __future__ import annotations
 from threading import Lock
 from datetime import datetime
+from dataclasses import replace
 from collections import Counter
 from app.backtesting.arbitrage_backtester import OptionQuote
 from app.core.config import settings
@@ -16,6 +17,7 @@ class LiveBoxSpreadScanner:
         self._lock=Lock(); self._buckets={}
         self._diagnostic_counts=Counter()
         self._last_diagnostics={}
+        self._monitor_snapshots={}
 
     @staticmethod
     def _price(v):
@@ -154,8 +156,48 @@ class LiveBoxSpreadScanner:
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"}
                 self._prune(ts); return ()
             scan_stats={}
+            scan_config = self.config_provider(symbol)
             results=scan_box_snapshot(grouped,atm_strike=float(atm),instrument_class=cls,
-                                      config=self.config_provider(symbol),policy=self.policy,diagnostics=scan_stats)
+                                      config=scan_config,policy=self.policy,diagnostics=scan_stats)
+            # Rule entries can use a custom threshold below the global UI scanner
+            # threshold, while retaining the scanner's original liquidity and
+            # strike-distance policy. The normal /live result is unchanged.
+            entry_config = replace(scan_config, min_executable_edge=-1_000_000_000.0)
+            entry_results = scan_box_snapshot(
+                grouped, atm_strike=float(atm), instrument_class=cls,
+                config=entry_config, policy=self.policy,
+            )
+            # Preserve all edge values separately for open-position exits. This does
+            # not alter the normal scanner's configured entry threshold.
+            monitor_config = replace(
+                scan_config,
+                min_executable_edge=-1_000_000_000.0,
+                # Exit monitoring must continue when liquidity deteriorates.
+                # Entry scanner keeps its original volume/OI/spread requirements.
+                min_option_volume=0,
+                min_option_oi=0,
+                max_option_spread_pct=1_000_000_000.0,
+            )
+            monitor_results = scan_box_snapshot(
+                grouped, atm_strike=float(atm), instrument_class=cls,
+                config=monitor_config, policy=self.policy, include_nonpositive=True, include_all_strike_pairs=True,
+            )
+            monitor_updated_ns = max(
+                stamp for result in monitor_results for stamp in (
+                    result.low.call_timestamp_ns or result.low.timestamp_ns,
+                    result.low.put_timestamp_ns or result.low.timestamp_ns,
+                    result.high.call_timestamp_ns or result.high.timestamp_ns,
+                    result.high.put_timestamp_ns or result.high.timestamp_ns,
+                )
+            ) if monitor_results else 0
+            # Scanner.observe handles one symbol/expiry bucket at a time. Keep
+            # independent latest snapshots so a NIFTY tick cannot erase SENSEX
+            # or another expiry's open-position monitor data.
+            self._monitor_snapshots[(symbol, expiry)] = {
+                "updated_at_ns": monitor_updated_ns,
+                "data": tuple(monitor_results),
+                "entry_data": tuple(entry_results),
+            }
             self._diagnostic_counts["snapshots_scanned"] += 1
             for name,value in scan_stats.items():
                 self._diagnostic_counts["scan_"+name] += int(value)
@@ -167,6 +209,16 @@ class LiveBoxSpreadScanner:
             self._prune(ts)
         if results and self.on_result is not None:self.on_result(results)
         return results
+
+    def monitor_snapshot(self):
+        """Return latest all-edge results for independent open-position evaluation."""
+        with self._lock:
+            snapshots = tuple(self._monitor_snapshots.values())
+            return {
+                "updated_at_ns": max((item["updated_at_ns"] for item in snapshots), default=0),
+                "data": tuple(result for item in snapshots for result in item["data"]),
+                "entry_data": tuple(result for item in snapshots for result in item.get("entry_data", ())),
+            }
 
     TIMESTAMP_TOLERANCE_NS=3_000_000_000
 
@@ -186,5 +238,10 @@ class LiveBoxSpreadScanner:
         if pruned:
             self._diagnostic_counts["pruned_buckets"] += pruned
         self._buckets=retained
+        active_monitor_keys = {(key[0], key[2]) for key in retained}
+        self._monitor_snapshots = {
+            key: value for key, value in self._monitor_snapshots.items()
+            if key in active_monitor_keys
+        }
 
 __all__=["LiveBoxSpreadScanner"]
