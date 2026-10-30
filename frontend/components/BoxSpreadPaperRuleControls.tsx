@@ -17,7 +17,7 @@ function parseEntryAudit(reason: string): EntryAudit | null {
   } catch { return null; }
 }
 const defaults: Config = {
-  entry: { symbols: ["NIFTY","SENSEX"], direction: "LONG", instrument_class: "INDEX", expiry_type: "WEEKLY", metric: "executable_edge", operator: ">=", threshold: 20, range_enabled: true, range_min: 20, range_max: 100000, lots: 5, max_open_positions: 1 },
+  entry: { symbols: ["NIFTY","SENSEX"], direction: "LONG", instrument_class: "INDEX", expiry_type: "WEEKLY", metric: "executable_edge", operator: ">=", threshold: 20, range_enabled: true, range_min: 20, range_max: 100000, lots: 5, max_open_positions: 2 },
   exit: { metric: "executable_edge", operator: "<=", threshold: 1, hold_to_expiry: false, order_type: "LIMIT" },
   monitor: { interval_seconds: 20 },
 };
@@ -98,7 +98,7 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
         </div>}
       </div>
       <label className="block text-xs theme-muted">Position monitor interval (seconds; 5–3600)<input type="number" min={5} max={3600} value={config.monitor.interval_seconds} onChange={e=>setConfig(c=>({...c,monitor:{interval_seconds:Number(e.target.value)}}))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 text-sm theme-text"/></label>
-      <p className="text-[11px] theme-muted">Algo entry scans only the selected expiry and indices. Use an inclusive minimum-to-maximum edge or gross-profit range; in range mode the backend selects only the two highest-value eligible opportunities per scan cycle. It validates all four executable quotes before paper entry. Exit can use edge, gross P&amp;L, net position P&amp;L, or hold-to-expiry. Expiry-day settlement remains manual until official server-verified settlement data is available.</p>
+      <p className="text-[11px] theme-muted">Algo entry scans only the selected expiry and indices. Use an inclusive minimum-to-maximum edge or gross-profit range; in range mode the backend executes at most two highest-value eligible opportunities for the saved rule; durable entry claims prevent later polling cycles from exceeding the cap. It validates all four executable quotes before paper entry. Exit can use edge, gross P&amp;L, net position P&amp;L, or hold-to-expiry. Expiry-day settlement remains manual until official server-verified settlement data is available.</p>
       <div className="flex flex-wrap gap-2"><button type="submit" disabled={busy || config.entry.symbols.length===0 || (config.entry.range_enabled===true && Number(config.entry.range_min)>Number(config.entry.range_max))} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Saving…":"Save rule"}</button>{editingId!==null&&<button type="button" onClick={newRule} className="rounded-lg border theme-border px-4 py-2 text-sm">Cancel edit</button>}</div>
     </form>
     {notice&&<p className="text-xs text-emerald-600">{notice}</p>}{error&&<p role="alert" className="text-xs text-red-500">{error}</p>}
