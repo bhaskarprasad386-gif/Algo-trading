@@ -141,7 +141,7 @@ class LiveBoxSpreadRunner:
         Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed").start()
         try:
             while not self.stop_event.is_set():
-                atms = {symbol: self.tracker.atm(symbol, time_ns()) for symbol in symbols}
+                atms = {symbol: self.tracker.atm(symbol, time_ns(), max_age_seconds=10.0) for symbol in symbols}
                 ready_targets = tuple(target for target in self.targets if atms.get(target.underlying) is not None)
                 ready_symbols = sorted({target.underlying for target in ready_targets})
                 waiting_symbols = sorted(set(symbols) - set(ready_symbols))
