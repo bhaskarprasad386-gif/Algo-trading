@@ -296,7 +296,7 @@ class LiveSyntheticUnderlyingFeed:
                 if source_timestamp_ns > 0 else None
             )
             # A frame arriving now is not fresh if its exchange timestamp is
-            # old. ATM tracking rejects source timestamps older than its configured freshness window.
+            # old. ATM tracking rejects source timestamps older than 5s and
             # future-skewed timestamps; diagnostics must agree instead of
             # reporting LIVE solely from a recent receive time.
             if receive_age_seconds is None:
