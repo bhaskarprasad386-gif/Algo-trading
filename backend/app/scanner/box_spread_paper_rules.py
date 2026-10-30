@@ -216,6 +216,36 @@ def entry_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, st
     return matched, "entry_conditions_met" if matched else "entry_threshold_not_met"
 
 
+def select_entry_candidates(
+    rows: list[dict[str, Any]], config: dict[str, Any], *, range_limit: int = 2,
+) -> tuple[list[dict[str, Any]], list[tuple[dict[str, Any], str]]]:
+    """Return eligible candidates and skips; range mode keeps the top two values."""
+    eligible: list[tuple[float, dict[str, Any]]] = []
+    skipped: list[tuple[dict[str, Any], str]] = []
+    for row in rows:
+        matched, reason = entry_matches(row, config)
+        if not matched:
+            skipped.append((row, reason))
+            continue
+        value = metric_value(row, config["entry"]["metric"])
+        if value is None:
+            skipped.append((row, "entry_metric_unavailable"))
+            continue
+        eligible.append((value, row))
+    if not config["entry"].get("range_enabled", False):
+        return [row for _, row in eligible], skipped
+    # Highest metric wins; stable tie-breaks avoid dependence on scanner row order.
+    eligible.sort(key=lambda item: (
+        -item[0], str(item[1].get("symbol", "")).upper(),
+        str(item[1].get("expiry_date") or item[1].get("expiry") or ""),
+        str(item[1].get("low_strike", "")), str(item[1].get("high_strike", "")),
+        str(item[1].get("direction", "")).upper(),
+    ))
+    selected = eligible[:range_limit]
+    skipped.extend((row, "range_trade_limit_reached") for _, row in eligible[range_limit:])
+    return [row for _, row in selected], skipped
+
+
 def exit_matches(
     row: dict[str, Any],
     config: dict[str, Any],
