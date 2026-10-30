@@ -138,11 +138,16 @@ def snapshots(
             except (TypeError, ValueError):
                 continue
             item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            # Prefer the current instrument-master classification, but preserve the
-            # classification captured with the snapshot if the mapping is unavailable.
+            # A snapshot's saved classification is historical evidence and must
+            # not be overwritten by a later instrument-master refresh. Use the
+            # current map only for older snapshots that lack a valid saved value.
+            saved_type = str(item.get("expiry_type") or "").strip().upper()
             current_type = classify_expiry_type(row.symbol, row.expiry)
-            saved_type = str(item.get("expiry_type") or "UNKNOWN").strip().upper()
-            item["expiry_type"] = current_type if current_type != "UNKNOWN" else saved_type
+            item["expiry_type"] = (
+                saved_type if saved_type in {"WEEKLY", "MONTHLY"}
+                else current_type if current_type in {"WEEKLY", "MONTHLY"}
+                else "UNKNOWN"
+            )
             item["freshness"] = "SAVED SNAPSHOT"
             data.append(item)
         return {
