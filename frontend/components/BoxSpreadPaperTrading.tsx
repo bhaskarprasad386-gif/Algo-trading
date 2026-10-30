@@ -599,27 +599,53 @@ export default function BoxSpreadPaperTrading() {
           <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Charges to date</div><div className="mt-1 font-bold theme-text">{money(selectedTradeData.summary?.total_charges)}</div></div>
           <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Net cash flow</div><div className="mt-1 font-bold theme-text">{money(selectedTradeData.summary?.net_cash_flow)}</div></div>
         </div>}
-        {selectedTradeData && <div className="overflow-x-auto rounded-lg border theme-border">
-          <table className="w-full min-w-[760px] text-left text-xs">
-            <thead className="theme-surface theme-muted"><tr>{["Leg","Position","Entry avg","Exit-side mark","Open qty","Open entry value","Close value","Open MTM","Action"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
-            <tbody>{(selectedTradeData.legs ?? []).map(leg => {
+        {selectedTradeData && <>
+          <div className="space-y-2 sm:hidden">
+            {(selectedTradeData.legs ?? []).map(leg => {
               const mtm = legMtm(leg);
               const entryValue = leg.entry_average_price == null ? null : Number(leg.entry_average_price) * leg.open_quantity;
               const closeValue = leg.mark_price == null ? null : Number(leg.mark_price) * leg.open_quantity;
-              return <tr key={leg.role} className="border-t theme-border">
-                <td className="px-2 py-2 font-semibold theme-text">{leg.role}</td>
-                <td className="px-2 py-2 theme-text">{leg.open_action}</td>
-                <td className="px-2 py-2 theme-text">{money(leg.entry_average_price)}</td>
-                <td className="px-2 py-2 theme-text">{money(leg.mark_price)}</td>
-                <td className="px-2 py-2 theme-text">{leg.open_quantity.toLocaleString("en-IN")}</td>
-                <td className="px-2 py-2 theme-text">{entryValue == null ? "—" : money(entryValue)}</td>
-                <td className="px-2 py-2 theme-text">{closeValue == null ? "—" : money(closeValue)}</td>
-                <td className={"px-2 py-2 font-bold " + (mtm == null ? "theme-muted" : mtm >= 0 ? "text-emerald-600" : "text-red-500")}>{mtm == null ? "—" : money(mtm)}</td>
-                <td className="px-2 py-2"><button type="button" disabled={leg.open_quantity <= 0} onClick={() => { setExitRole(leg.role); setExitQuantity(String(leg.open_quantity)); }} className="rounded-md border theme-border px-2 py-1 font-semibold theme-text disabled:opacity-40">Select exit</button></td>
-              </tr>;
-            })}</tbody>
-          </table>
-        </div>}
+              const selected = exitRole === leg.role;
+              return <article key={leg.role} className={"space-y-3 rounded-lg border p-3 " + (selected ? "border-cyan-500/70 theme-surface" : "theme-border theme-surface")}>
+                <div className="flex items-center justify-between gap-2">
+                  <div><h4 className="font-bold theme-text">{leg.role.replace("_", " ")}</h4><p className="text-[11px] theme-muted">{leg.open_action} · Open qty {leg.open_quantity.toLocaleString("en-IN")}</p></div>
+                  <span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (leg.open_quantity > 0 ? "bg-emerald-500/15 text-emerald-600" : "theme-surface-2 theme-muted")}>{leg.open_quantity > 0 ? "OPEN" : "FLAT"}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                  <div><p className="theme-muted">Entry average</p><p className="mt-0.5 font-semibold theme-text">{money(leg.entry_average_price)}</p></div>
+                  <div><p className="theme-muted">Exit-side mark</p><p className="mt-0.5 font-semibold theme-text">{money(leg.mark_price)}</p></div>
+                  <div><p className="theme-muted">Open entry value</p><p className="mt-0.5 font-semibold theme-text">{entryValue == null ? "—" : money(entryValue)}</p></div>
+                  <div><p className="theme-muted">Close value</p><p className="mt-0.5 font-semibold theme-text">{closeValue == null ? "—" : money(closeValue)}</p></div>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t theme-border pt-2">
+                  <div><p className="text-[11px] theme-muted">Leg MTM</p><p className={"text-sm font-bold " + (mtm == null ? "theme-muted" : mtm >= 0 ? "text-emerald-600" : "text-red-500")}>{mtm == null ? "—" : money(mtm)}</p></div>
+                  <button type="button" disabled={leg.open_quantity <= 0} onClick={() => { setExitRole(leg.role); setExitQuantity(String(leg.open_quantity)); }} className="min-h-10 rounded-lg border border-cyan-600/50 px-3 py-2 text-xs font-bold theme-text disabled:opacity-40">{selected ? "Selected for exit" : "Select exit"}</button>
+                </div>
+              </article>;
+            })}
+          </div>
+          <div className="hidden overflow-x-auto rounded-lg border theme-border sm:block">
+            <table className="w-full min-w-[760px] text-left text-xs">
+              <thead className="theme-surface theme-muted"><tr>{["Leg","Position","Entry avg","Exit-side mark","Open qty","Open entry value","Close value","Open MTM","Action"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
+              <tbody>{(selectedTradeData.legs ?? []).map(leg => {
+                const mtm = legMtm(leg);
+                const entryValue = leg.entry_average_price == null ? null : Number(leg.entry_average_price) * leg.open_quantity;
+                const closeValue = leg.mark_price == null ? null : Number(leg.mark_price) * leg.open_quantity;
+                return <tr key={leg.role} className="border-t theme-border">
+                  <td className="px-2 py-2 font-semibold theme-text">{leg.role}</td>
+                  <td className="px-2 py-2 theme-text">{leg.open_action}</td>
+                  <td className="px-2 py-2 theme-text">{money(leg.entry_average_price)}</td>
+                  <td className="px-2 py-2 theme-text">{money(leg.mark_price)}</td>
+                  <td className="px-2 py-2 theme-text">{leg.open_quantity.toLocaleString("en-IN")}</td>
+                  <td className="px-2 py-2 theme-text">{entryValue == null ? "—" : money(entryValue)}</td>
+                  <td className="px-2 py-2 theme-text">{closeValue == null ? "—" : money(closeValue)}</td>
+                  <td className={"px-2 py-2 font-bold " + (mtm == null ? "theme-muted" : mtm >= 0 ? "text-emerald-600" : "text-red-500")}>{mtm == null ? "—" : money(mtm)}</td>
+                  <td className="px-2 py-2"><button type="button" disabled={leg.open_quantity <= 0} onClick={() => { setExitRole(leg.role); setExitQuantity(String(leg.open_quantity)); }} className="rounded-md border theme-border px-2 py-1 font-semibold theme-text disabled:opacity-40">Select exit</button></td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+        </>}
         <div className="grid gap-3 md:grid-cols-2">
           <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-lg border theme-border p-3">
             <div><h4 className="font-semibold theme-text">Exit selected leg</h4><p className="mt-1 text-xs theme-muted">Selected: {exitRole} · open quantity {selectedExitLeg?.open_quantity ?? 0}. Backend independently checks fresh executable bid/ask and quantity; no browser price is submitted.</p></div>
