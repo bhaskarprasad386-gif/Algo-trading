@@ -414,14 +414,26 @@ def account(account_key: str = "default"):
 
 
 @router.get("/trades", dependencies=[Depends(require_paper_access)])
-def trades(account_key: str = "default", limit: int = 100, include_ledger: bool = False):
+def trades(
+    account_key: str = "default",
+    limit: int = 100,
+    offset: int = 0,
+    include_ledger: bool = False,
+):
     if not 1 <= limit <= 500:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    if not 0 <= offset <= 1_000_000:
+        raise HTTPException(status_code=422, detail="offset must be between 0 and 1000000")
     try:
         with SessionLocal() as session:
+            trade_filter = BoxSpreadPaperTradeRecord.account_key == account_key
+            total_count = session.scalar(
+                select(func.count(BoxSpreadPaperTradeRecord.id)).where(trade_filter)
+            ) or 0
             rows = session.scalars(select(BoxSpreadPaperTradeRecord)
-                .where(BoxSpreadPaperTradeRecord.account_key == account_key)
-                .order_by(BoxSpreadPaperTradeRecord.created_at.desc())
+                .where(trade_filter)
+                .order_by(BoxSpreadPaperTradeRecord.created_at.desc(), BoxSpreadPaperTradeRecord.id.desc())
+                .offset(offset)
                 .limit(limit)).all()
             data = []
             ledger_entries_by_trade: dict[int, list[BoxSpreadPaperLedgerEntry]] = {
@@ -526,7 +538,16 @@ def trades(account_key: str = "default", limit: int = 100, include_ledger: bool 
                         "entries": data_entries,
                     })
                 data.append(item)
-            return {"mode": "PAPER_ONLY", "broker_orders_enabled": False, "count": len(data), "data": data}
+            return {
+                "mode": "PAPER_ONLY",
+                "broker_orders_enabled": False,
+                "count": len(data),
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + len(data) < total_count,
+                "data": data,
+            }
     except Exception as exc:
         _error(exc)
 
