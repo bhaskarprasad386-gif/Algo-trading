@@ -29,6 +29,37 @@ def test_custom_rule_accepts_entry_20_and_exit_at_1_with_20_second_monitor():
     assert config["monitor"]["interval_seconds"] == 20
 
 
+def test_range_entry_quota_defaults_to_two_trades_per_fifteen_minute_window():
+    config = validate_rule_config(base_config())
+    assert config["entry"]["max_trades_per_interval"] == 2
+    assert config["monitor"]["entry_window_minutes"] == 15
+
+
+def test_range_entry_quota_is_customizable():
+    raw = base_config()
+    raw["entry"]["max_trades_per_interval"] = 4
+    raw["monitor"]["entry_window_minutes"] = 30
+    config = validate_rule_config(raw)
+    assert config["entry"]["max_trades_per_interval"] == 4
+    assert config["monitor"]["entry_window_minutes"] == 30
+
+
+@pytest.mark.parametrize("limit", [0, 21, -1])
+def test_range_entry_quota_rejects_invalid_trade_limits(limit):
+    raw = base_config()
+    raw["entry"]["max_trades_per_interval"] = limit
+    with pytest.raises(ValueError, match="max_trades_per_interval"):
+        validate_rule_config(raw)
+
+
+@pytest.mark.parametrize("minutes", [0, 241, -1])
+def test_entry_window_rejects_invalid_durations(minutes):
+    raw = base_config()
+    raw["monitor"]["entry_window_minutes"] = minutes
+    with pytest.raises(ValueError, match="entry_window_minutes"):
+        validate_rule_config(raw)
+
+
 def test_entry_range_inclusively_matches_min_and_max_for_edge_and_gross_profit():
     raw = base_config()
     raw["entry"].update({"range_enabled": True, "range_min": 20, "range_max": 25})
