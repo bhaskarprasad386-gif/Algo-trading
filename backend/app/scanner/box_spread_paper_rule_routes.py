@@ -16,7 +16,9 @@ from sqlalchemy import delete, select
 
 from app.core.database import SessionLocal
 from app.scanner.box_spread_paper_routes import require_paper_access
-from app.scanner.box_spread_paper_ledger import (\n    BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry, BoxSpreadPaperEntryClaim,\n)
+from app.scanner.box_spread_paper_ledger import (
+    BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry, BoxSpreadPaperEntryClaim,
+)
 from app.scanner.box_spread_paper_rules import (
     BoxSpreadPaperRule, BoxSpreadPaperRuleEvaluation, decode_rule_config,
     validate_rule_config, utc_now, entry_matches, exit_matches, metric_value,
