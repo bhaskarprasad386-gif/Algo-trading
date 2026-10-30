@@ -20,6 +20,7 @@ from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSp
 from app.scanner.box_spread_paper_rules import (
     BoxSpreadPaperRule, BoxSpreadPaperRuleEvaluation, decode_rule_config,
     validate_rule_config, utc_now, entry_matches, exit_matches, metric_value,
+    select_entry_candidates,
 )
 
 router = APIRouter(
@@ -316,28 +317,24 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 f"max_open_positions_reached;open={open_count};maximum={max_open_positions}")
         return
 
-    skipped_count = 0
+    selected_entry_rows, skipped_rows = select_entry_candidates(entry_rows, config, range_limit=2)
+    skipped_count = len(skipped_rows)
     skipped_reasons: dict[str, int] = {}
-    evaluated_count = 0
-    for row in entry_rows:
+    evaluated_count = len(entry_rows)
+    for skipped_row, reason in skipped_rows:
+        skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+        if sum(skipped_reasons.values()) <= 20:
+            observed = metric_value(skipped_row, config["entry"]["metric"])
+            _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
+                    f"candidate={str(skipped_row.get('symbol','')).upper()} "
+                    f"expiry={skipped_row.get('expiry_date') or skipped_row.get('expiry')} "
+                    f"direction={skipped_row.get('direction')};reason={reason}",
+                    metric=config["entry"]["metric"], observed=observed,
+                    threshold=config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
+
+    for row in selected_entry_rows:
         if open_count >= max_open_positions:
             break
-        evaluated_count += 1
-        matched, reason = entry_matches(row, config)
-        if not matched:
-            skipped_count += 1
-            skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
-            # Keep the audit log useful without allowing a wide scanner universe
-            # to flood the bounded per-rule history on every polling cycle.
-            if skipped_count <= 20:
-                observed = metric_value(row, config["entry"]["metric"])
-                _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
-                        f"candidate={str(row.get('symbol','')).upper()} "
-                        f"expiry={row.get('expiry_date') or row.get('expiry')} "
-                        f"direction={row.get('direction')};reason={reason}",
-                        metric=config["entry"]["metric"], observed=observed,
-                        threshold=config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
-            continue
         expiry = row.get("expiry_date") or row.get("expiry")
         candidate_audit = json.dumps({
             "symbol": str(row.get("symbol", "")).upper(),
@@ -427,7 +424,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     if skipped_count > 20:
         _record(rule_id, account_key, "ENTRY_SCAN", "SUMMARY",
                 f"evaluated={evaluated_count};skipped={skipped_count};"
-                f"remaining_skips_aggregated={skipped_count - 20};reasons={json.dumps(skipped_reasons, sort_keys=True)}")
+                f"remaining_skips_aggregated={max(0, skipped_count - 20)};reasons={json.dumps(skipped_reasons, sort_keys=True)}")
 
 
 async def paper_rule_monitor_loop():
