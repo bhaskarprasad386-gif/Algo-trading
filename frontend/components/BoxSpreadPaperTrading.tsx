@@ -446,11 +446,6 @@ export default function BoxSpreadPaperTrading() {
           <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
             <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Open Positions</h4><span className="text-xs text-emerald-600">{openPageInfo.total_count} active</span></div>
             {openTrades.length ? openTrades.map(trade=>renderPositionCard(trade,false)) : <p className="rounded-lg border theme-border p-4 text-sm theme-muted">No open paper positions for this account.</p>}
-          </div>
-          <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
-            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Closed Positions</h4><span className="text-xs theme-muted">{closedPageInfo.total_count} completed</span></div>
-            {closedTrades.length ? closedTrades.map(trade=>renderPositionCard(trade,true)) : <p className="rounded-lg border theme-border p-4 text-sm theme-muted">No closed paper positions for this account.</p>}
-          </div>
             <div className="flex items-center justify-between gap-2 pt-1 text-xs theme-muted">
               <span>Page {openPage + 1} · showing {openTrades.length} of {openPageInfo.total_count}</span>
               <div className="flex gap-2">
