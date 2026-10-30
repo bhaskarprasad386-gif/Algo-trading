@@ -185,7 +185,9 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     from app.scanner.live_box_spread_routes import monitor_snapshot as monitor_opportunities
 
     snapshot = await asyncio.to_thread(monitor_opportunities, max_age_seconds=5.0)
-    rows = snapshot.get("data", []) if isinstance(snapshot, dict) else []
+    if not isinstance(snapshot, dict):
+        snapshot = {"fresh": False, "data": [], "entry_data": []}
+    rows = snapshot.get("data", [])
     entry_rows = snapshot.get("entry_data", []) if isinstance(snapshot, dict) else []
     if not isinstance(rows, list):
         rows = []
