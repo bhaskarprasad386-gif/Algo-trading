@@ -61,6 +61,17 @@ def test_entry_range_rejects_invalid_bounds(minimum, maximum):
         validate_rule_config(raw)
 
 
+def test_entry_selection_rejects_empty_or_expiry_incompatible_indices():
+    raw = base_config()
+    raw["entry"]["symbols"] = []
+    with pytest.raises(ValueError, match="at least one index"):
+        validate_rule_config(raw)
+    raw = base_config()
+    raw["entry"]["symbols"] = ["BANKNIFTY"]
+    with pytest.raises(ValueError, match="not supported for the selected expiry"):
+        validate_rule_config(raw)
+
+
 def test_custom_rule_entry_filters_symbol_direction_and_edge():
     config = validate_rule_config(base_config())
     row = {
