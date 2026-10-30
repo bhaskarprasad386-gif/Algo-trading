@@ -5,7 +5,7 @@ import asyncio
 import json
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -137,6 +137,34 @@ def _open_rule_trades(rule_id: int, account_key: str):
                    BoxSpreadPaperTradeRecord.status.notin_(("CREATED", "CLOSED", "CANCELLED")))
             .order_by(BoxSpreadPaperTradeRecord.created_at, BoxSpreadPaperTradeRecord.id)
         ).all()
+
+
+def _entry_window_bounds_utc(window_minutes: int) -> tuple[datetime, datetime]:
+    """Return the current fixed IST wall-clock entry window as UTC bounds."""
+    local_now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed_minutes = local_now.hour * 60 + local_now.minute
+    bucket_start = (elapsed_minutes // window_minutes) * window_minutes
+    start_local = midnight + timedelta(minutes=bucket_start)
+    end_local = start_local + timedelta(minutes=window_minutes)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _claimed_rule_entry_window_count(
+    rule_id: int, account_key: str, start_utc: datetime, end_utc: datetime,
+) -> int:
+    """Count durable entry attempts claimed inside this rule's current IST window."""
+    with SessionLocal() as session:
+        claim_ids = session.scalars(
+            select(BoxSpreadPaperEntryClaim.id)
+            .join(BoxSpreadPaperTradeRecord, BoxSpreadPaperEntryClaim.trade_id == BoxSpreadPaperTradeRecord.id)
+            .where(BoxSpreadPaperTradeRecord.account_key == account_key,
+                   BoxSpreadPaperTradeRecord.idempotency_key.like(f"rule-{rule_id}-%"),
+                   BoxSpreadPaperEntryClaim.account_key == account_key,
+                   BoxSpreadPaperEntryClaim.claimed_at >= start_utc,
+                   BoxSpreadPaperEntryClaim.claimed_at < end_utc)
+        ).all()
+    return len(claim_ids)
 
 
 def _claimed_rule_entry_keys(rule_id: int, account_key: str) -> set[str]:
@@ -334,11 +362,17 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         return
 
     if config["entry"].get("range_enabled", False):
-        # The two-trade ceiling is cumulative for this saved rule, not reset on
-        # every polling cycle. Durable claims count as consumed attempts because
-        # an interrupted four-leg attempt must never be silently replayed.
+        # The quota resets at each fixed IST entry window. Durable claims count
+        # failed/ambiguous attempts too, while lifetime idempotency still blocks
+        # replaying an identical candidate in a later window.
         claimed_keys = await asyncio.to_thread(_claimed_rule_entry_keys, rule_id, account_key)
-        remaining_range_slots = max(0, 2 - len(claimed_keys))
+        window_minutes = config["monitor"]["entry_window_minutes"]
+        window_start, window_end = _entry_window_bounds_utc(window_minutes)
+        window_claim_count = await asyncio.to_thread(
+            _claimed_rule_entry_window_count, rule_id, account_key, window_start, window_end,
+        )
+        max_per_window = config["entry"]["max_trades_per_interval"]
+        remaining_range_slots = max(0, max_per_window - window_claim_count)
         unclaimed_rows = []
         previously_claimed_rows = []
         for candidate in entry_rows:
@@ -356,7 +390,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         selected_entry_rows, skipped_rows = select_entry_candidates(
             unclaimed_rows, config, range_limit=remaining_range_slots,
         )
-        skipped_rows.extend((candidate, "range_trade_limit_reached") for candidate in previously_claimed_rows)
+        skipped_rows.extend((candidate, "candidate_already_attempted") for candidate in previously_claimed_rows)
     else:
         selected_entry_rows, skipped_rows = select_entry_candidates(entry_rows, config)
     skipped_count = len(skipped_rows)
