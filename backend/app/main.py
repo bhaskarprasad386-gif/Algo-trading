@@ -35,6 +35,7 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS
 from app.market_data.instruments import InstrumentMaster
+from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
@@ -860,14 +861,10 @@ async def _live_box_spread_loop() -> None:
                     if parsed is not None and parsed >= today:
                         found.setdefault(parsed, raw_expiry)
                 dates = sorted(found)
-                monthly_dates = {
-                    max((day for day in dates if day.year == year and day.month == month), default=None)
-                    for year, month in {(day.year, day.month) for day in dates}
-                }
-                monthly_dates.discard(None)
+                classifications = classify_index_expiry_dates(symbol, dates)
                 for day, raw_expiry in found.items():
-                    expiry_types[(symbol, raw_expiry.upper())] = "MONTHLY" if day in monthly_dates else "WEEKLY"
-                return [(day, found[day], "MONTHLY" if day in monthly_dates else "WEEKLY") for day in dates]
+                    expiry_types[(symbol, raw_expiry.upper())] = classifications[day]
+                return [(day, found[day], classifications[day]) for day in dates]
 
             # Index-only mode: stock option targets are intentionally disabled.
             # Keep option-master expiry discovery for supported indices only.
