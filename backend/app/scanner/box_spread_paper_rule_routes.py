@@ -130,7 +130,7 @@ def _open_rule_trades(rule_id: int, account_key: str):
             select(BoxSpreadPaperTradeRecord)
             .where(BoxSpreadPaperTradeRecord.account_key == account_key,
                    BoxSpreadPaperTradeRecord.idempotency_key.like(prefix),
-                   BoxSpreadPaperTradeRecord.status.notin_(( "CLOSED", "CANCELLED" )))
+                   BoxSpreadPaperTradeRecord.status.notin_(("CREATED", "CLOSED", "CANCELLED")))
             .order_by(BoxSpreadPaperTradeRecord.created_at, BoxSpreadPaperTradeRecord.id)
         ).all()
 
@@ -319,6 +319,8 @@ async def paper_rule_monitor_loop():
             rules = await asyncio.to_thread(_account_rules)
             now = time.monotonic()
             for rule_id, account_key, enabled, config in rules:
+                if not enabled and not await asyncio.to_thread(_open_rule_trades, rule_id, account_key):
+                    continue
                 interval = config["monitor"]["interval_seconds"]
                 if now - last_run.get(rule_id, 0.0) < interval:
                     continue
