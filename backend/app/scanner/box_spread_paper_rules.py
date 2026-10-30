@@ -17,7 +17,7 @@ from app.core.database import Base, SessionLocal
 
 
 ENTRY_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl"})
-EXIT_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl"})
+EXIT_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl", "position_net_pnl"})
 OPERATORS = frozenset({"<", "<=", "==", ">=", ">"})
 DIRECTIONS = frozenset({"ALL", "LONG", "SHORT"})
 INSTRUMENT_CLASSES = frozenset({"ALL", "INDEX", "STOCK"})
@@ -198,9 +198,20 @@ def entry_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, st
     )
 
 
-def exit_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, str, float | None]:
+def exit_matches(
+    row: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    metric_override: float | None = None,
+) -> tuple[bool, str, float | None]:
     exit_rule = config["exit"]
-    value = metric_value(row, exit_rule["metric"])
+    if exit_rule["metric"] == "position_net_pnl":
+        value = metric_override
+        if value is None or not math.isfinite(float(value)):
+            return False, "exit_metric_unavailable", None
+        value = float(value)
+    else:
+        value = metric_value(row, exit_rule["metric"])
     if value is None:
         return False, "exit_metric_unavailable", None
     matched = compare(value, exit_rule["operator"], exit_rule["threshold"])
