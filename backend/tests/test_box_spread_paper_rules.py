@@ -1,7 +1,7 @@
 import pytest
 
 from app.scanner.box_spread_paper_rules import (
-    validate_rule_config, entry_matches, exit_matches, compare,
+    validate_rule_config, entry_matches, exit_matches, compare, select_entry_candidates,
 )
 
 
@@ -159,3 +159,41 @@ def test_position_net_pnl_exit_threshold_uses_server_calculated_override():
         False, "exit_metric_unavailable", None,
     )
 
+
+
+def test_range_entry_selects_only_two_highest_edge_candidates():
+    raw = base_config()
+    raw["entry"].update({"range_enabled": True, "range_min": 20, "range_max": 40})
+    config = validate_rule_config(raw)
+    rows = [
+        {"symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY", "direction": "LONG", "executable_edge": value, "low_strike": i, "high_strike": i + 100}
+        for i, value in enumerate((21, 39, 35, 30), start=1)
+    ]
+    selected, skipped = select_entry_candidates(rows, config)
+    assert [row["executable_edge"] for row in selected] == [39, 35]
+    assert [reason for _, reason in skipped] == ["range_trade_limit_reached", "range_trade_limit_reached"]
+
+
+def test_range_entry_selects_only_two_highest_gross_profit_candidates():
+    raw = base_config()
+    raw["entry"].update({"metric": "gross_pnl", "range_enabled": True, "range_min": 100, "range_max": 500})
+    config = validate_rule_config(raw)
+    rows = [
+        {"symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY", "direction": "LONG", "gross_pnl": value, "low_strike": i, "high_strike": i + 100}
+        for i, value in enumerate((110, 480, 350, 250), start=1)
+    ]
+    selected, skipped = select_entry_candidates(rows, config)
+    assert [row["gross_pnl"] for row in selected] == [480, 350]
+    assert len(skipped) == 2
+    assert all(reason == "range_trade_limit_reached" for _, reason in skipped)
+
+
+def test_non_range_entry_keeps_all_matching_candidates():
+    config = validate_rule_config(base_config())
+    rows = [
+        {"symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY", "direction": "LONG", "executable_edge": value}
+        for value in (21, 25, 30)
+    ]
+    selected, skipped = select_entry_candidates(rows, config)
+    assert len(selected) == 3
+    assert skipped == []
