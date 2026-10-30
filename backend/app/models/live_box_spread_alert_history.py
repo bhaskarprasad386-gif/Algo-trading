@@ -12,6 +12,7 @@ class LiveBoxSpreadAlertHistory(Base):
     symbol:Mapped[str]=mapped_column(String(128),nullable=False,index=True)
     instrument_class:Mapped[str]=mapped_column(String(16),nullable=False)
     expiry:Mapped[int]=mapped_column(Integer,nullable=False)
+    expiry_type:Mapped[str|None]=mapped_column(String(8),nullable=True)
     low_strike:Mapped[float]=mapped_column(Float,nullable=False); high_strike:Mapped[float]=mapped_column(Float,nullable=False)
     direction:Mapped[str]=mapped_column(String(8),nullable=False)
     low_call_bid:Mapped[float]=mapped_column(Float,nullable=False); low_call_ask:Mapped[float]=mapped_column(Float,nullable=False)
