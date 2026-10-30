@@ -225,6 +225,8 @@ def test_snapshot_history_prefers_saved_expiry_type_over_changed_master(monkeypa
         def order_by(self, *args): return self
         def offset(self, *args): return self
         def limit(self, *args): return self
+        def yield_per(self, *args): return self
+        def __iter__(self): return iter([row])
         def count(self): return 1
         def all(self): return [row]
 
@@ -257,6 +259,8 @@ def test_snapshot_history_uses_current_classification_only_when_saved_type_missi
         def order_by(self, *args): return self
         def offset(self, *args): return self
         def limit(self, *args): return self
+        def yield_per(self, *args): return self
+        def __iter__(self): return iter([row])
         def count(self): return 1
         def all(self): return [row]
 
