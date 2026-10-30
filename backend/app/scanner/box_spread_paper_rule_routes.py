@@ -181,12 +181,11 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
 async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any], rule_enabled: bool):
     # Imports are delayed to keep the router and the paper route module acyclic.
     from app.scanner import box_spread_paper_routes as paper
-    from app.scanner.live_box_spread_routes import live as live_opportunities, monitor_snapshot as monitor_opportunities
+    from app.scanner.live_box_spread_routes import monitor_snapshot as monitor_opportunities
 
     snapshot = await asyncio.to_thread(monitor_opportunities, max_age_seconds=5.0)
-    entry_snapshot = await asyncio.to_thread(live_opportunities, limit=500, max_age_seconds=5.0)
     rows = snapshot.get("data", []) if isinstance(snapshot, dict) else []
-    entry_rows = entry_snapshot.get("data", []) if isinstance(entry_snapshot, dict) else []
+    entry_rows = snapshot.get("entry_data", []) if isinstance(snapshot, dict) else []
     if not isinstance(rows, list):
         rows = []
 
