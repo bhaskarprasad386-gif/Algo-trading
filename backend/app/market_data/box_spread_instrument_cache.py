@@ -8,11 +8,18 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import requests
 
 from app.core.logger import app_logger
 
 
 MAX_CACHE_AGE_SECONDS = 36 * 60 * 60
+ALTERNATE_MASTER_URL = (
+    "https://margincalculator.angelone.in/"
+    "OpenAPI_File/files/OpenAPIScripMaster.json"
+)
 
 
 def _cache_path() -> Path:
@@ -79,22 +86,58 @@ def _write_cache(rows):
                 pass
 
 
+def _load_alternate_master(master):
+    """Try Angel One's current public host without changing shared master behavior."""
+    response = requests.get(ALTERNATE_MASTER_URL, timeout=20)
+    response.raise_for_status()
+    rows = _validated_rows(response.json())
+    if rows is None:
+        raise ValueError("Angel One alternate instrument master returned invalid/empty rows")
+
+    master.instruments = rows
+    master._loaded = True
+    master._symbol_exchange_index = None
+
+    # Keep the process-wide snapshot coherent for other InstrumentMaster instances.
+    cls = master.__class__
+    cls._cached_instruments = rows
+    cls._cached_snapshot_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    _write_cache(rows)
+    app_logger.warning(
+        "Box Spread loaded instrument master from alternate Angel One host (rows={})",
+        len(rows),
+    )
+    return rows
+
+
 def download_box_spread_instruments(master):
-    """Refresh master normally; use only Box Spread's own recent cache on failure."""
+    """Refresh normally; then try the alternate official host, then a recent disk cache."""
     try:
         rows = master.download()
         _write_cache(rows)
         return rows
-    except Exception:
-        cached = _read_cache()
-        if cached is None:
-            raise
-        rows, fetched = cached
-        master.instruments = rows
-        master._loaded = True
-        master._symbol_exchange_index = None
-        app_logger.warning(
-            "Box Spread using its own validated instrument-master cache "
-            "(fetched_at={}, rows={})", fetched.isoformat(), len(rows)
-        )
-        return rows
+    except Exception as primary_error:
+        try:
+            return _load_alternate_master(master)
+        except Exception as alternate_error:
+            cached = _read_cache()
+            if cached is None:
+                app_logger.error(
+                    "Box Spread instrument master unavailable: primary host failed ({}); "
+                    "alternate host failed ({}); no valid recent cache exists",
+                    primary_error,
+                    alternate_error,
+                )
+                raise primary_error
+            rows, fetched = cached
+            master.instruments = rows
+            master._loaded = True
+            master._symbol_exchange_index = None
+            cls = master.__class__
+            cls._cached_instruments = rows
+            cls._cached_snapshot_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+            app_logger.warning(
+                "Box Spread using its own validated instrument-master cache "
+                "(fetched_at={}, rows={})", fetched.isoformat(), len(rows)
+            )
+            return rows
