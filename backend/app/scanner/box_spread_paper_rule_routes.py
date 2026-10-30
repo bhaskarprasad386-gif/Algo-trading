@@ -421,7 +421,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         unclaimed_rows, config, range_limit=len(unclaimed_rows),
     )
     selected_entry_rows.sort(key=lambda row: (
-        -(metric_value(row, config["entry"]["metric"]) or float("-inf")),
+        -(metric_value(row, config["entry"]["metric"]) if metric_value(row, config["entry"]["metric"]) is not None else float("-inf")),
         str(row.get("symbol", "")).upper(),
         str(row.get("expiry_date") or row.get("expiry") or ""),
         str(row.get("low_strike", "")), str(row.get("high_strike", "")),
