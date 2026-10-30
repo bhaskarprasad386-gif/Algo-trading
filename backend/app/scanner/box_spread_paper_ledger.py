@@ -560,9 +560,6 @@ class BoxSpreadPaperLedger:
             trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
             if trade is None or trade.account_key != key:
                 raise ValueError("paper trade not found for account")
-            if trade.status in {"CLOSED", "CANCELLED"}:
-                raise ValueError("paper trade is already closed or cancelled")
-
             existing_by_role = {}
             for role in roles:
                 stored_id = f"EXIT:BASKET:{raw_id}:{role}"
@@ -584,6 +581,9 @@ class BoxSpreadPaperLedger:
                         raise ValueError("basket exit fill_id reused with different fill data")
                     receipts.append(self._receipt(row, Decimal(account.virtual_balance)))
                 return receipts
+
+            if trade.status in {"CLOSED", "CANCELLED"}:
+                raise ValueError("paper trade is already closed or cancelled")
 
             positions: dict[str, int] = {}
             for role in roles:
