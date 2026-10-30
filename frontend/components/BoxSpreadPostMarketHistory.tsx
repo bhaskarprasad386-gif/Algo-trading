@@ -60,12 +60,12 @@ export default function BoxSpreadPostMarketHistory() {
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
 
-  const load = useCallback(async (append = false) => {
+  const load = useCallback(async (append = false, pageOffset = 0) => {
     if (append) setLoadingMore(true);
     else setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
-      const nextOffset = append ? offset : 0;
+      const nextOffset = append ? pageOffset : 0;
       const params = new URLSearchParams({
         days: String(days),
         limit: "500",
@@ -94,12 +94,12 @@ export default function BoxSpreadPostMarketHistory() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [days, expiryType, offset]);
+  }, [days, expiryType]);
 
   useEffect(() => {
     setOffset(0);
     void load(false);
-  }, [days, expiryType]); // Filter changes intentionally reset pagination.
+  }, [load]); // Filter changes intentionally reset pagination.
 
   const refresh = () => {
     setOffset(0);
@@ -174,7 +174,7 @@ export default function BoxSpreadPostMarketHistory() {
 
       {rows.length > 0 && <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs theme-muted">Showing {rows.length.toLocaleString("en-IN")} of {total.toLocaleString("en-IN")} matching saved snapshots · SAVED SNAPSHOT, not LIVE</p>
-        {hasMore && <button type="button" onClick={() => void load(true)} disabled={loadingMore} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
+        {hasMore && <button type="button" onClick={() => void load(true, offset)} disabled={loadingMore} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
           {loadingMore ? "Loading…" : "Load more"}
         </button>}
       </div>}
