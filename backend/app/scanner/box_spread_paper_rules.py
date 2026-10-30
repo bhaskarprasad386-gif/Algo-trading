@@ -85,6 +85,13 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(symbols, list) or len(symbols) > 100:
         raise ValueError("entry.symbols must be a list of at most 100 symbols")
     symbols = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+    if not symbols:
+        raise ValueError("entry.symbols must select at least one index")
+    allowed_symbols = {"NIFTY", "SENSEX"} if expiry_type == "WEEKLY" else {
+        "BANKNIFTY", "NIFTY", "SENSEX", "BANKEX", "MIDCPNIFTY"
+    } if expiry_type == "MONTHLY" else None
+    if allowed_symbols is not None and not set(symbols).issubset(allowed_symbols):
+        raise ValueError("entry.symbols contains an index not supported for the selected expiry type")
     if any(len(symbol) > 64 for symbol in symbols):
         raise ValueError("entry symbols must be at most 64 characters")
 
@@ -191,7 +198,7 @@ def compare(value: float, operator: str, threshold: float) -> bool:
 def entry_matches(row: dict[str, Any], config: dict[str, Any]) -> tuple[bool, str]:
     entry = config["entry"]
     symbol = str(row.get("symbol", "")).strip().upper()
-    if entry["symbols"] and symbol not in entry["symbols"]:
+    if not entry["symbols"] or symbol not in entry["symbols"]:
         return False, "symbol_not_selected"
     if entry["direction"] != "ALL" and str(row.get("direction", "")).upper() != entry["direction"]:
         return False, "direction_mismatch"
