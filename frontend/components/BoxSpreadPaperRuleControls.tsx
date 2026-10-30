@@ -3,14 +3,14 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 type Config = {
-  entry: { symbols: string[]; direction: "ALL"|"LONG"|"SHORT"; instrument_class: "ALL"|"INDEX"|"STOCK"; expiry_type: "ALL"|"WEEKLY"|"MONTHLY"|"UNKNOWN"; metric: "executable_edge"|"edge_per_lot"|"gross_pnl"; operator: ">="|">"|"<="|"<"|"=="; threshold: number; lots: number };
+  entry: { symbols: string[]; direction: "ALL"|"LONG"|"SHORT"; instrument_class: "ALL"|"INDEX"|"STOCK"; expiry_type: "ALL"|"WEEKLY"|"MONTHLY"|"UNKNOWN"; metric: "executable_edge"|"edge_per_lot"|"gross_pnl"; operator: ">="|">"|"<="|"<"|"=="; threshold: number; lots: number; max_open_positions: number };
   exit: { metric: "executable_edge"|"edge_per_lot"|"gross_pnl"; operator: "<="|"<"|">="|">"|"=="; threshold: number; hold_to_expiry: boolean };
   monitor: { interval_seconds: number };
 };
 type Rule = { rule_id: number; name: string; enabled: boolean; config: Config };
 type Evaluation = { evaluation_id: number; event: string; outcome: string; reason: string; evaluated_at: string; metric: string|null; observed_value: string|null; threshold: string|null; trade_id: number|null };
 const defaults: Config = {
-  entry: { symbols: ["NIFTY","SENSEX"], direction: "LONG", instrument_class: "INDEX", expiry_type: "WEEKLY", metric: "executable_edge", operator: ">=", threshold: 20, lots: 5 },
+  entry: { symbols: ["NIFTY","SENSEX"], direction: "LONG", instrument_class: "INDEX", expiry_type: "WEEKLY", metric: "executable_edge", operator: ">=", threshold: 20, lots: 5, max_open_positions: 1 },
   exit: { metric: "executable_edge", operator: "<=", threshold: 1, hold_to_expiry: false },
   monitor: { interval_seconds: 20 },
 };
@@ -79,6 +79,7 @@ export default function BoxSpreadPaperRuleControls({ api, token, account }: { ap
         <label className="text-xs theme-muted">Entry comparison<select value={config.entry.operator} onChange={e=>entry("operator",e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"><option value=">=">≥</option><option value=">">&gt;</option><option value="<=">≤</option><option value="<">&lt;</option><option value="==">=</option></select></label>
         <label className="text-xs theme-muted">Entry threshold<input type="number" step="any" value={config.entry.threshold} onChange={e=>entry("threshold",Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>
         <label className="text-xs theme-muted">Lots<input type="number" min={1} max={100} value={config.entry.lots} onChange={e=>entry("lots",Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>
+        <label className="text-xs theme-muted">Maximum open positions per rule (1–20)<input type="number" min={1} max={20} value={config.entry.max_open_positions} onChange={e=>entry("max_open_positions",Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>
       </div></div>
       <div className="rounded-lg theme-surface-2 p-3"><h5 className="text-sm font-semibold theme-text">Exit conditions</h5><label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={config.exit.hold_to_expiry} onChange={e=>exit("hold_to_expiry",e.target.checked)}/>Hold until expiry (no early exit)</label>
         {!config.exit.hold_to_expiry&&<div className="mt-2 grid gap-2 sm:grid-cols-3">
