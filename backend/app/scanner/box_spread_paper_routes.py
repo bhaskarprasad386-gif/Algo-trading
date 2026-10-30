@@ -300,6 +300,19 @@ def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> flo
     return bid if sell_to_close else ask
 
 
+def _fresh_mark_prices_for_trade(trade_id: int, account_key: str) -> dict[str, float] | None:
+    """Return executable close-side marks only from a matching fresh backend row."""
+    request = _load_trade_request(trade_id, account_key)
+    contracts = _resolve(request)
+    row = _matching_live_row(contracts)
+    if row is None:
+        return None
+    return {
+        role: _exit_reference_price(row, contracts.direction, role)
+        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    }
+
+
 def _strike_matches(raw_value: Any, expected: float) -> bool:
     """Treat malformed scanner strike data as a non-match, never as a route error."""
     try:
@@ -605,7 +618,20 @@ def settle_expiry(trade_id: int, payload: ExpirySettlement):
 @router.get("/trades/{trade_id}/ledger", dependencies=[Depends(require_paper_access)])
 def trade_ledger(trade_id: int, account_key: str = "default"):
     try:
-        summary = _ledger.get_trade_summary(trade_id, account_key=account_key)
+        # MTM is optional: if any quote is missing, invalid, or older than the
+        # scanner's five-second limit, return unrealized_pnl=null rather than
+        # marking against stale or browser-supplied prices.
+        mark_prices = None
+        mark_status = "UNAVAILABLE_STALE_OR_MISSING_QUOTES"
+        try:
+            mark_prices = _fresh_mark_prices_for_trade(trade_id, account_key)
+            if mark_prices is not None:
+                mark_status = "FRESH_BACKEND_QUOTES"
+        except (HTTPException, ValueError, LookupError, BoxSpreadContractResolutionError):
+            mark_prices = None
+        summary = _ledger.get_trade_summary(
+            trade_id, account_key=account_key, mark_prices=mark_prices,
+        )
         with SessionLocal() as session:
             rows = session.scalars(select(BoxSpreadPaperLedgerEntry)
                 .where(BoxSpreadPaperLedgerEntry.trade_id == trade_id,
@@ -619,6 +645,7 @@ def trade_ledger(trade_id: int, account_key: str = "default"):
             } for row in rows]
         return {"mode": "PAPER_ONLY", "broker_orders_enabled": False,
                 "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
+                "mark_status": mark_status,
                 "entries": entries}
     except Exception as exc:
         _error(exc)
