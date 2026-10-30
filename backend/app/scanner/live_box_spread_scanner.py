@@ -164,7 +164,7 @@ class LiveBoxSpreadScanner:
             monitor_config = replace(scan_config, min_executable_edge=-1_000_000_000.0)
             monitor_results = scan_box_snapshot(
                 grouped, atm_strike=float(atm), instrument_class=cls,
-                config=monitor_config, policy=self.policy,
+                config=monitor_config, policy=self.policy, include_nonpositive=True,
             )
             monitor_updated_ns = max(
                 stamp for result in monitor_results for stamp in (
@@ -220,5 +220,10 @@ class LiveBoxSpreadScanner:
         if pruned:
             self._diagnostic_counts["pruned_buckets"] += pruned
         self._buckets=retained
+        active_monitor_keys = {(key[0], key[2]) for key in retained}
+        self._monitor_snapshots = {
+            key: value for key, value in self._monitor_snapshots.items()
+            if key in active_monitor_keys
+        }
 
 __all__=["LiveBoxSpreadScanner"]
