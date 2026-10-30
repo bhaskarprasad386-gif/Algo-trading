@@ -56,6 +56,7 @@ class BoxSpreadPaperRuleEvaluation(Base):
     reason: Mapped[str] = mapped_column(String(512), nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
+
 class BoxSpreadPaperEntryQuotaReservation(Base):
     """Durable, cross-worker reservation of one rule/window entry quota slot."""
     __tablename__ = "box_spread_paper_entry_quota_reservations"
@@ -64,7 +65,7 @@ class BoxSpreadPaperEntryQuotaReservation(Base):
             "account_key", "rule_id", "window_start_utc", "slot",
             name="uq_box_paper_rule_window_slot",
         ),
-        __import__("sqlalchemy").UniqueConstraint(
+        UniqueConstraint(
             "account_key", "rule_id", "candidate_key",
             name="uq_box_paper_rule_candidate_reservation",
         ),
