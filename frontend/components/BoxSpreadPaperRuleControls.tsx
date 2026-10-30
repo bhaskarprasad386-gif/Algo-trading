@@ -15,7 +15,7 @@ const defaults: Config = {
   monitor: { interval_seconds: 20 },
 };
 
-export default function BoxSpreadPaperRuleControls({ api, token, account }: { api: string; token: string; account: string }) {
+export default function BoxSpreadPaperRuleControls({ api, token, account }: { api: string; token: string | null; account: string }) {
   const [rules,setRules]=useState<Rule[]>([]);
   const [config,setConfig]=useState<Config>(defaults);
   const [name,setName]=useState("NIFTY/SENSEX weekly edge rule");
@@ -27,7 +27,7 @@ export default function BoxSpreadPaperRuleControls({ api, token, account }: { ap
   const [notice,setNotice]=useState<string|null>(null);
 
   const request=useCallback(async(path:string,init?:RequestInit)=>{
-    const response=await fetch(api+path,{...init,cache:"no-store",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token,...(init?.headers??{})},signal:AbortSignal.timeout(12000)});
+    const response=await fetch(api+path,{...init,cache:"no-store",headers:{"Content-Type":"application/json",...(token ? { Authorization:"Bearer "+token } : {}),...(init?.headers??{})},signal:AbortSignal.timeout(12000)});
     const body=await response.json().catch(()=>({}));
     if(!response.ok) throw new Error(String(body?.detail??"Rule API request failed"));
     return body;
