@@ -161,7 +161,15 @@ class LiveBoxSpreadScanner:
                                       config=scan_config,policy=self.policy,diagnostics=scan_stats)
             # Preserve all edge values separately for open-position exits. This does
             # not alter the normal scanner's configured entry threshold.
-            monitor_config = replace(scan_config, min_executable_edge=-1_000_000_000.0)
+            monitor_config = replace(
+                scan_config,
+                min_executable_edge=-1_000_000_000.0,
+                # Exit monitoring must continue when liquidity deteriorates.
+                # Entry scanner keeps its original volume/OI/spread requirements.
+                min_option_volume=0,
+                min_option_oi=0,
+                max_option_spread_pct=1_000_000_000.0,
+            )
             monitor_results = scan_box_snapshot(
                 grouped, atm_strike=float(atm), instrument_class=cls,
                 config=monitor_config, policy=self.policy, include_nonpositive=True, include_all_strike_pairs=True,
