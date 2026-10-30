@@ -119,7 +119,7 @@ export default function BoxSpreadPaperTrading() {
     try {
       const [accountBody, tradesBody, controlBody] = await Promise.all([
         request("/account?account_key=" + encodeURIComponent(account)),
-        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=500&include_ledger=true"),
+        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=100&include_ledger=true"),
         request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
@@ -280,8 +280,8 @@ export default function BoxSpreadPaperTrading() {
   }
 
   const openTrades = trades.filter(trade =>
-    trade.legs?.some(leg => leg.open_quantity > 0) ||
-    (!trade.legs?.length && !["CLOSED", "CANCELLED"].includes(trade.status))
+    !["CLOSED", "CANCELLED"].includes(trade.status) &&
+    (!trade.legs?.some(leg => leg.entry_quantity > 0) || trade.legs.some(leg => leg.open_quantity > 0))
   ).sort((a, b) => Date.parse(b.entry_at || b.created_at) - Date.parse(a.entry_at || a.created_at));
   const closedTrades = trades.filter(trade =>
     trade.status === "CLOSED" ||
@@ -315,7 +315,7 @@ export default function BoxSpreadPaperTrading() {
         <span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (closed ? "bg-slate-500/15 theme-muted" : "bg-emerald-500/15 text-emerald-600")}>{closed ? "CLOSED" : trade.status}</span>
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <div><div className="theme-muted">Entry date / time</div><div className="mt-1 theme-text">{istDateTime(trade.entry_at || trade.created_at)}</div></div>
+        <div><div className="theme-muted">Entry date / time</div><div className="mt-1 theme-text">{trade.entry_at ? istDateTime(trade.entry_at) : "No fills yet · " + istDateTime(trade.created_at)}</div></div>
         <div><div className="theme-muted">Expiry</div><div className="mt-1 theme-text">{trade.expiry}</div></div>
         <div><div className="theme-muted">Spot at entry</div><div className="mt-1 theme-text">{money(trade.entry_spot_price)}</div></div>
         <div><div className="theme-muted">{closed ? "Closed at" : "Position age"}</div><div className="mt-1 theme-text">{closed ? istDateTime(trade.closed_at) : trade.entry_at ? istDateTime(trade.entry_at) : "Entry pending / review"}</div></div>
