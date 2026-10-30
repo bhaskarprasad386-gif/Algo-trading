@@ -168,3 +168,27 @@ def test_spot_only_symbol_can_update_spot_without_concrete_strikes():
     assert diagnostics["tracked_symbol_count"] == 1
     assert diagnostics["atm_ready_symbol_count"] == 0
     assert diagnostics["symbols_without_concrete_chain"] == ["BANKEX"]
+
+
+def test_all_supported_index_symbols_can_publish_spot_without_option_chain():
+    from time import time_ns
+    from app.market_data.nifty50_universe import OPTION_STRATEGY_INDEX_SYMBOLS
+
+    tracker = LiveSyntheticAtmTracker(
+        strikes_by_symbol={symbol: () for symbol in OPTION_STRATEGY_INDEX_SYMBOLS}
+    )
+    source_ns = time_ns()
+
+    for index, symbol in enumerate(sorted(OPTION_STRATEGY_INDEX_SYMBOLS), start=1):
+        price = 10000.0 + index
+        assert tracker.update(symbol, price, source_ns) is None
+        snapshot = tracker.spot_snapshot(symbol, now_ns=source_ns)
+        assert snapshot is not None
+        assert snapshot["spot_price"] == price
+        assert snapshot["spot_timestamp_ns"] == source_ns
+        assert snapshot["spot_age_seconds"] == 0.0
+
+    diagnostics = tracker.diagnostics_snapshot(source_ns)
+    assert diagnostics["tracked_symbol_count"] == len(OPTION_STRATEGY_INDEX_SYMBOLS)
+    assert diagnostics["atm_ready_symbol_count"] == 0
+    assert set(diagnostics["symbols_without_concrete_chain"]) == OPTION_STRATEGY_INDEX_SYMBOLS
