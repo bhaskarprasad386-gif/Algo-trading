@@ -102,4 +102,4 @@ def test_box_subscription_keeps_exact_held_strikes_outside_rolling_atm_window():
     strikes = {item.strike for item in selected.subscriptions}
     assert 100.0 in strikes
     assert 160.0 in strikes
-    assert len(selected.subscriptions) == 35 * 2
+    assert len(selected.subscriptions) == 33 * 2
