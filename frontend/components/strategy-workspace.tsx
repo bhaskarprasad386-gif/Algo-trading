@@ -58,7 +58,7 @@ const configs: Record<string, WorkspaceConfig> = {
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
     pairColumns: ["Time", "Underlying", "Spot Price", "Spot Quote Time / Age", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)", "Box Edge", "Lot Size", "Direction", "Freshness"],
-    historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=500",
+    historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=5000",
   },
   "custom-strategy": {
     slug: "custom-strategy",
@@ -775,7 +775,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     setHistoryLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + c.historyEndpoint, { cache: "no-store" });
+      const historyUrl = slug === "box-spread" ? c.historyEndpoint + "&expiry_type=" + encodeURIComponent(historyExpiryView) : c.historyEndpoint;
+      const response = await fetch(base + historyUrl, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
@@ -795,7 +796,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     void loadHistory();
     const timer = window.setInterval(() => void loadHistory(), 10000);
     return () => window.clearInterval(timer);
-  }, [isCustom, c.historyEndpoint]);
+  }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : ""]);
 
   useEffect(() => {
     if (isCustom || c.pairEndpoint) return;
