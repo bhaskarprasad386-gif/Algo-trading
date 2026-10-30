@@ -289,3 +289,31 @@ def test_position_monitor_config_does_not_apply_entry_liquidity_filters():
     )
     assert result
     assert {row.direction for row in result} == {"LONG", "SHORT"}
+
+
+
+def test_custom_entry_scan_can_see_positive_edge_below_global_scanner_threshold():
+    from dataclasses import replace
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(1, "ABC", 20261231, 100, 9, 10, 3, 8, 10, "STOCK", 100, 100)
+    high = OptionQuote(1, "ABC", 20261231, 110, 5, 6, 6, 7, 10, "STOCK", 100, 100)
+    config = BoxSpreadScanConfig(
+        min_executable_edge=5, allowed_stock_symbols=frozenset({"ABC"}),
+        max_option_spread_pct=200,
+    )
+    policy = ScanPolicy(stock_box_distances=(1,))
+    normal = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=config, policy=policy,
+    )
+    custom_candidates = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=replace(config, min_executable_edge=-1_000_000_000.0), policy=policy,
+    )
+    assert normal == ()
+    long_rows = [row for row in custom_candidates if row.direction == "LONG"]
+    assert len(long_rows) == 1
+    assert long_rows[0].executable_edge == 1
