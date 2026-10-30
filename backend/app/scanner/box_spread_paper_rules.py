@@ -103,6 +103,9 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("unsupported exit metric or operator")
     if not math.isfinite(exit_threshold):
         raise ValueError("exit threshold must be finite")
+    exit_order_type = str(exit_rule.get("order_type", "LIMIT")).upper()
+    if exit_order_type not in {"LIMIT", "MARKET"}:
+        raise ValueError("exit.order_type must be LIMIT or MARKET")
     hold_raw = exit_rule.get("hold_to_expiry", False)
     if not isinstance(hold_raw, bool):
         raise ValueError("exit.hold_to_expiry must be a boolean")
@@ -147,6 +150,7 @@ def validate_rule_config(config: dict[str, Any]) -> dict[str, Any]:
             "operator": exit_operator,
             "threshold": exit_threshold,
             "hold_to_expiry": hold_to_expiry,
+            "order_type": exit_order_type,
         },
         "monitor": {"interval_seconds": interval},
     }
