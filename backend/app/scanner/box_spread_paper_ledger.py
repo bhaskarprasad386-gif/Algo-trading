@@ -763,6 +763,9 @@ class BoxSpreadPaperLedger:
                     entries = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
                         BoxSpreadPaperLedgerEntry.trade_id == trade_id,
                         BoxSpreadPaperLedgerEntry.account_key == key,
+                    ).order_by(
+                        BoxSpreadPaperLedgerEntry.created_at,
+                        BoxSpreadPaperLedgerEntry.id,
                     )).all()
         if trade_record is None or trade_record.account_key != key:
             raise ValueError("paper trade not found for account")
