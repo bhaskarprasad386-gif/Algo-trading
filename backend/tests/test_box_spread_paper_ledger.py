@@ -885,6 +885,8 @@ def test_trade_summary_mtm_uses_executable_marks_and_estimates_exit_charges(pape
     exit_fee = paper_ledger.fee_schedule.calculate(action="SELL", notional=Decimal("2750.00"))
     assert summary["unrealized_pnl"] == gross - entry_fee - exit_fee
     assert summary["unrealized_pnl"] < gross
+    assert summary["gross_realized_pnl"] == Decimal("0.00")
+    assert summary["gross_unrealized_pnl"] == gross
 
 
 def test_trade_summary_requires_marks_for_every_open_role(paper_ledger):
