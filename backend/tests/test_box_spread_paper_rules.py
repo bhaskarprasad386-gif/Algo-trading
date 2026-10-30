@@ -29,6 +29,38 @@ def test_custom_rule_accepts_entry_20_and_exit_at_1_with_20_second_monitor():
     assert config["monitor"]["interval_seconds"] == 20
 
 
+def test_entry_range_inclusively_matches_min_and_max_for_edge_and_gross_profit():
+    raw = base_config()
+    raw["entry"].update({"range_enabled": True, "range_min": 20, "range_max": 25})
+    config = validate_rule_config(raw)
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry_type": "WEEKLY",
+        "direction": "LONG", "executable_edge": 20, "gross_pnl": 24.99,
+    }
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["executable_edge"] = 25
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["executable_edge"] = 25.01
+    assert entry_matches(row, config) == (False, "entry_outside_selected_range")
+
+    raw["entry"].update({"metric": "gross_pnl", "range_min": 100, "range_max": 250})
+    config = validate_rule_config(raw)
+    row["gross_pnl"] = 100
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["gross_pnl"] = 250
+    assert entry_matches(row, config) == (True, "entry_range_met")
+    row["gross_pnl"] = 99.99
+    assert entry_matches(row, config) == (False, "entry_outside_selected_range")
+
+
+@pytest.mark.parametrize(("minimum", "maximum"), [(10, 9), (float("nan"), 10), (0, float("inf"))])
+def test_entry_range_rejects_invalid_bounds(minimum, maximum):
+    raw = base_config()
+    raw["entry"].update({"range_enabled": True, "range_min": minimum, "range_max": maximum})
+    with pytest.raises(ValueError, match="entry range"):
+        validate_rule_config(raw)
+
+
 def test_custom_rule_entry_filters_symbol_direction_and_edge():
     config = validate_rule_config(base_config())
     row = {
