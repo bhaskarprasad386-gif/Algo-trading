@@ -14,6 +14,17 @@ def enable_paper_execution_for_existing_route_tests(monkeypatch):
     monkeypatch.setattr(routes, "_paper_execution_enabled", True)
 
 
+
+@pytest.mark.parametrize(("limit", "offset"), [
+    (0, 0), (501, 0), (10, -1), (10, 1_000_001),
+])
+def test_paper_trade_pagination_rejects_out_of_range_values(limit, offset):
+    with pytest.raises(HTTPException) as raised:
+        routes.trades(limit=limit, offset=offset)
+    assert raised.value.status_code == 422
+
+
+
 def test_paper_quote_selector_uses_ask_for_buys_and_bid_for_sells():
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
