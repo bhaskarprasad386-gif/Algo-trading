@@ -305,13 +305,17 @@ export default function BoxSpreadPaperTrading() {
     trade.status === "CLOSED" ||
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
+  const allOpenTrades = trades.filter(trade =>
+    !["CLOSED", "CANCELLED"].includes(trade.status) &&
+    (!trade.legs?.some(leg => leg.entry_quantity > 0) || trade.legs.some(leg => leg.open_quantity > 0))
+  );
   const totalRealizedPnl = trades.reduce((sum, trade) => sum + Number(trade.summary?.realized_pnl ?? 0), 0);
-  const allOpenMarked = openTrades.length > 0 && openTrades.every(trade =>
+  const allOpenMarked = allOpenTrades.length === 0 || allOpenTrades.every(trade =>
     trade.legs?.every(leg => leg.open_quantity === 0 || leg.mark_price != null) &&
     trade.summary?.unrealized_pnl != null
   );
   const totalUnrealizedPnl = allOpenMarked
-    ? openTrades.reduce((sum, trade) => sum + Number(trade.summary?.unrealized_pnl ?? 0), 0)
+    ? allOpenTrades.reduce((sum, trade) => sum + Number(trade.summary?.unrealized_pnl ?? 0), 0)
     : null;
   const totalNetPnl = totalUnrealizedPnl == null ? null : totalRealizedPnl + totalUnrealizedPnl;
   const money = (value: string | number | null | undefined) =>
