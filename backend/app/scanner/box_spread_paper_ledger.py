@@ -100,6 +100,7 @@ class BoxSpreadPaperTradeRecord(Base):
     expiry: Mapped[str] = mapped_column(String(32), nullable=False)
     low_strike: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     high_strike: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    entry_spot_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     direction: Mapped[str] = mapped_column(String(8), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     lots: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -204,6 +205,7 @@ class BoxSpreadPaperLedger:
         lots: int,
         lot_size: int,
         account_key: str = "default",
+        entry_spot_price: object | None = None,
     ) -> BoxSpreadPaperTradeRecord:
         account = self._account_key(account_key)
         key = str(idempotency_key or "").strip()
@@ -251,8 +253,9 @@ class BoxSpreadPaperLedger:
             trade = BoxSpreadPaperTradeRecord(
                 account_key=account, idempotency_key=key, underlying=str(underlying).upper(),
                 instrument_class=str(instrument_class).upper(), expiry=canonical_expiry,
-                low_strike=low, high_strike=high, direction=direction,
-                quantity=lots_value * lot_value, lots=lots_value, lot_size=lot_value,
+                low_strike=low, high_strike=high,
+                entry_spot_price=_money(entry_spot_price, field="entry spot price") if entry_spot_price is not None else None,
+                direction=direction, quantity=lots_value * lot_value, lots=lots_value, lot_size=lot_value,
                 status="CREATED", fee_schedule_version=self.fee_schedule.version,
                 created_at=datetime.now(timezone.utc),
             )

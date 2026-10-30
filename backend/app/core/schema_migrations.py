@@ -10,6 +10,12 @@ def run_schema_migrations() -> None:
     if "users" not in tables:
         return
 
+    if "box_spread_paper_trades" in tables:
+        paper_columns = {column["name"] for column in inspector.get_columns("box_spread_paper_trades")}
+        if "entry_spot_price" not in paper_columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE box_spread_paper_trades ADD COLUMN entry_spot_price NUMERIC(18, 4)"))
+
     columns = {column["name"] for column in inspector.get_columns("users")}
     user_columns = columns
     additions = {
