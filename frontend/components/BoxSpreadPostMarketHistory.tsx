@@ -64,7 +64,7 @@ export default function BoxSpreadPostMarketHistory() {
     if (append) setLoadingMore(true);
     else setLoading(true);
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const nextOffset = append ? pageOffset : 0;
       const params = new URLSearchParams({
         days: String(days),
