@@ -506,11 +506,14 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
         lambda seconds: None,
     )
     class FakeFeed:
+        def __init__(self):
+            self.stop_event = Event()
+
         def run_forever(self):
-            return
+            self.stop_event.wait()
 
         def stop(self):
-            return
+            self.stop_event.set()
 
     monkeypatch.setattr(runner, "_ensure_underlying_feed", lambda: FakeFeed())
 
