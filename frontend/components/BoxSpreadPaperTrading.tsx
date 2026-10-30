@@ -300,7 +300,7 @@ export default function BoxSpreadPaperTrading() {
   }
 
   async function loadLedger(tradeId: number) {
-    setSelectedTrade(tradeId); setError(null);
+    setError(null);
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
@@ -377,7 +377,10 @@ export default function BoxSpreadPaperTrading() {
       {!closed && trade.mark_status !== "FRESH_BACKEND_QUOTES" && <p className="text-[11px] text-amber-600">Live MTM unavailable: backend quotes are stale or incomplete. Unrealized P&L is not estimated from stale prices.</p>}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] theme-muted">{closed ? "Realized result from persisted exit fills." : "Open quantity and marks are based on persisted fills and fresh backend quotes only."}</p>
-        <button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Full fill ledger</button>
+        <div className="flex flex-wrap gap-2">
+          {!closed && <button type="button" onClick={() => { setSelectedTrade(trade.trade_id); setExitQuantity(String(Math.max(1, trade.legs?.find(leg => leg.open_quantity > 0)?.open_quantity ?? 1))); }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600">Manage / exit</button>}
+          <button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Full fill ledger</button>
+        </div>
       </div>
     </article>
   );
