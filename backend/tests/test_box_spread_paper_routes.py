@@ -909,3 +909,30 @@ def test_exit_quote_selector_rejects_invalid_two_sided_market(
 
     assert raised.value.status_code == 409
     assert "fresh executable exit quote is unavailable" in raised.value.detail
+
+@pytest.mark.parametrize(("direction", "role", "expected"), [
+    ("LONG", "LOW_CE", 10), ("LONG", "HIGH_CE", 21),
+    ("LONG", "HIGH_PE", 30), ("LONG", "LOW_PE", 41),
+    ("SHORT", "LOW_CE", 11), ("SHORT", "HIGH_CE", 20),
+    ("SHORT", "HIGH_PE", 31), ("SHORT", "LOW_PE", 40),
+])
+def test_mark_price_uses_executable_close_side_for_each_signed_leg(direction, role, expected):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    assert routes._exit_reference_price(row, direction, role) == expected
+
+
+def test_mark_price_rejects_invalid_two_sided_quote():
+    row = {
+        "low_call_bid": 12, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    with pytest.raises(HTTPException) as raised:
+        routes._exit_reference_price(row, "LONG", "LOW_CE")
+    assert raised.value.status_code == 409

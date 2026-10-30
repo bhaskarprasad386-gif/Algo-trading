@@ -806,10 +806,24 @@ class BoxSpreadPaperLedger:
                     raise ValueError(f"{role} mark price must be positive") from None
                 if not mark.is_finite() or mark <= 0:
                     raise ValueError(f"{role} mark price must be positive")
+                role_quantity = 0
+                role_notional = Decimal("0.00")
+                exit_action = "SELL"
                 for lot in open_lots[role]:
+                    quantity = int(lot["quantity"])
+                    direction = int(lot["direction"])
+                    role_quantity += quantity
+                    role_notional += (mark * quantity).quantize(CENT, rounding=ROUND_HALF_UP)
+                    exit_action = "SELL" if direction > 0 else "BUY"
                     unrealized_pnl += (
-                        (mark - Decimal(lot["price"])) * int(lot["direction"]) * int(lot["quantity"])
-                        - Decimal(lot["fee_per_unit"]) * int(lot["quantity"])
+                        (mark - Decimal(lot["price"])) * direction * quantity
+                        - Decimal(lot["fee_per_unit"]) * quantity
+                    )
+                # Include estimated charges for closing the remaining exposure.
+                # This is a conservative paper estimate, not a broker contract note.
+                if role_quantity:
+                    unrealized_pnl -= self.fee_schedule.calculate(
+                        action=exit_action, notional=role_notional,
                     )
             unrealized_pnl = unrealized_pnl.quantize(CENT, rounding=ROUND_HALF_UP)
         elif not open_roles:

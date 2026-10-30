@@ -30,7 +30,18 @@ def test_common_manager_receives_normalized_cash_future_pair():
     assert result.signal.gross_profit == 150
 
 
-def test_runner_contract_metadata_keeps_current_and_near_separate():
+def test_runner_contract_metadata_keeps_current_and_near_separate(monkeypatch):
+    # Keep this metadata-selection test independent of the calendar date.
+    from datetime import datetime as RealDateTime
+    import app.market_data.live_cash_future_common as runner_module
+
+    class TestDateTime(RealDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 15, tzinfo=tz)
+
+    monkeypatch.setattr(runner_module, "datetime", TestDateTime)
+
     class Master:
         def download(self):
             return [

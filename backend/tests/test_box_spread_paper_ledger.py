@@ -323,7 +323,7 @@ def test_trade_summary_reports_charges_cash_flow_and_mark_to_market_pnl(paper_le
     assert summary["status"] == "FILLED"
     assert summary["fill_count"] == 4
     assert summary["total_charges"] > Decimal("0")
-    assert summary["unrealized_pnl"] == -summary["total_charges"]
+    assert summary["unrealized_pnl"] < -summary["total_charges"]
     assert summary["realized_pnl"] == Decimal("0.00")
 
 
@@ -674,7 +674,7 @@ def test_partial_exit_separates_realized_and_open_leg_pnl(paper_ledger):
         quantity=4, fill_price=110,
     )
     summary = paper_ledger.get_trade_summary(
-        trade.id, mark_prices={"LOW_CE": 105},
+        trade.id, mark_prices={"LOW_CE": 120},
     )
     assert summary["realized_pnl"] > Decimal("0")
     assert summary["unrealized_pnl"] > Decimal("0")
@@ -717,3 +717,28 @@ def test_entry_claim_is_durable_and_one_shot_across_ledger_recreation(paper_ledg
     assert restored.get_entry_claim(
         trade_id=trade.id, account_key="claim-recovery",
     )["claimed_at"] == first["claimed_at"]
+
+def test_trade_summary_mtm_uses_executable_marks_and_estimates_exit_charges(paper_ledger):
+    trade = _trade(paper_ledger, lots=1)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="mtm-entry-low-ce", role="LOW_CE",
+        action="BUY", quantity=25, fill_price="100.00",
+    )
+    summary = paper_ledger.get_trade_summary(
+        trade.id, mark_prices={"LOW_CE": "110.00"},
+    )
+    gross = Decimal("250.00")
+    entry_fee = paper_ledger.fee_schedule.calculate(action="BUY", notional=Decimal("2500.00"))
+    exit_fee = paper_ledger.fee_schedule.calculate(action="SELL", notional=Decimal("2750.00"))
+    assert summary["unrealized_pnl"] == gross - entry_fee - exit_fee
+    assert summary["unrealized_pnl"] < gross
+
+
+def test_trade_summary_requires_marks_for_every_open_role(paper_ledger):
+    trade = _trade(paper_ledger, lots=1)
+    paper_ledger.record_fill(
+        trade_id=trade.id, fill_id="mtm-entry-low-ce-missing", role="LOW_CE",
+        action="BUY", quantity=25, fill_price="100.00",
+    )
+    with pytest.raises(ValueError, match="every open leg role"):
+        paper_ledger.get_trade_summary(trade.id, mark_prices={"HIGH_CE": 10})
