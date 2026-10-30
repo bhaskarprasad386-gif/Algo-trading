@@ -441,6 +441,11 @@ def test_paper_api_endpoints_are_mounted_in_application():
         ("POST", f"{prefix}/trades/{{trade_id}}/settle-expiry"),
         ("GET", f"{prefix}/trades/{{trade_id}}/ledger"),
         ("GET", f"{prefix}/recovery"),
+        ("GET", f"{prefix}/rules"),
+        ("POST", f"{prefix}/rules"),
+        ("PUT", f"{prefix}/rules/{{rule_id}}"),
+        ("GET", f"{prefix}/rules/{{rule_id}}/evaluations"),
+        ("GET", "/api/v1/scanner/box-spread/monitor"),
     }
     assert expected <= mounted
 
