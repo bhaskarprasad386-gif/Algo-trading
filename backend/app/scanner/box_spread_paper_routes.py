@@ -387,7 +387,7 @@ def account(account_key: str = "default"):
 
 
 @router.get("/trades", dependencies=[Depends(require_paper_access)])
-def trades(account_key: str = "default", limit: int = 100):
+def trades(account_key: str = "default", limit: int = 100, include_ledger: bool = False):
     if not 1 <= limit <= 500:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
     try:
@@ -396,16 +396,73 @@ def trades(account_key: str = "default", limit: int = 100):
                 .where(BoxSpreadPaperTradeRecord.account_key == account_key)
                 .order_by(BoxSpreadPaperTradeRecord.created_at.desc())
                 .limit(limit)).all()
-            return {"mode": "PAPER_ONLY", "broker_orders_enabled": False, "count": len(rows),
-                    "data": [{
-                        "trade_id": row.id, "underlying": row.underlying,
-                        "instrument_class": row.instrument_class, "expiry": row.expiry,
-                        "low_strike": float(row.low_strike), "high_strike": float(row.high_strike),
-                        "direction": row.direction, "lots": row.lots, "quantity": row.quantity,
-                        "lot_size": row.lot_size, "status": row.status,
-                        "created_at": row.created_at.isoformat(),
-                        "fee_schedule_version": row.fee_schedule_version,
-                    } for row in rows]}
+            data = []
+            for row in rows:
+                item = {
+                    "trade_id": row.id, "underlying": row.underlying,
+                    "instrument_class": row.instrument_class, "expiry": row.expiry,
+                    "low_strike": float(row.low_strike), "high_strike": float(row.high_strike),
+                    "direction": row.direction, "lots": row.lots, "quantity": row.quantity,
+                    "lot_size": row.lot_size, "status": row.status,
+                    "created_at": row.created_at.isoformat(),
+                    "entry_spot_price": float(row.entry_spot_price) if row.entry_spot_price is not None else None,
+                    "fee_schedule_version": row.fee_schedule_version,
+                }
+                if include_ledger:
+                    entries = session.scalars(select(BoxSpreadPaperLedgerEntry)
+                        .where(BoxSpreadPaperLedgerEntry.trade_id == row.id,
+                               BoxSpreadPaperLedgerEntry.account_key == account_key)
+                        .order_by(BoxSpreadPaperLedgerEntry.created_at, BoxSpreadPaperLedgerEntry.id)).all()
+                    entry_rows = [entry for entry in entries if not entry.fill_id.startswith(("EXIT:", "SETTLE:"))]
+                    exit_rows = [entry for entry in entries if entry.fill_id.startswith(("EXIT:", "SETTLE:"))]
+                    mark_prices = None
+                    mark_status = "UNAVAILABLE_STALE_OR_MISSING_QUOTES"
+                    if entries and row.status not in {"CLOSED", "CANCELLED"}:
+                        try:
+                            mark_prices = _fresh_mark_prices_for_trade(row.id, account_key)
+                            if mark_prices is not None:
+                                mark_status = "FRESH_BACKEND_QUOTES"
+                        except (HTTPException, ValueError, LookupError, BoxSpreadContractResolutionError):
+                            mark_prices = None
+                    summary = _ledger.get_trade_summary(row.id, account_key=account_key, mark_prices=mark_prices)
+                    legs = []
+                    for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
+                        role_entries = [entry for entry in entries if entry.role == role]
+                        role_entry_rows = [entry for entry in role_entries if not entry.fill_id.startswith(("EXIT:", "SETTLE:"))]
+                        role_exit_rows = [entry for entry in role_entries if entry.fill_id.startswith(("EXIT:", "SETTLE:"))]
+                        entry_quantity = sum(entry.quantity for entry in role_entry_rows)
+                        signed_open = sum(entry.quantity * (1 if entry.action == "BUY" else -1) for entry in role_entries)
+                        weighted_entry = sum((Decimal(entry.fill_price) * entry.quantity for entry in role_entry_rows), Decimal("0"))
+                        average_entry = weighted_entry / entry_quantity if entry_quantity else None
+                        exit_quantity = sum(entry.quantity for entry in role_exit_rows)
+                        weighted_exit = sum((Decimal(entry.fill_price) * entry.quantity for entry in role_exit_rows), Decimal("0"))
+                        legs.append({
+                            "role": role,
+                            "entry_action": role_entry_rows[0].action if role_entry_rows else None,
+                            "entry_quantity": entry_quantity,
+                            "entry_average_price": str(average_entry) if average_entry is not None else None,
+                            "open_quantity": abs(signed_open),
+                            "open_action": "BUY" if signed_open > 0 else "SELL" if signed_open < 0 else "FLAT",
+                            "mark_price": str(mark_prices[role]) if mark_prices and role in mark_prices else None,
+                            "exit_quantity": exit_quantity,
+                            "exit_average_price": str(weighted_exit / exit_quantity) if exit_quantity else None,
+                        })
+                    data_entries = [{
+                        "fill_id": entry.fill_id, "role": entry.role, "action": entry.action,
+                        "quantity": entry.quantity, "fill_price": str(entry.fill_price),
+                        "notional": str(entry.notional), "charges": str(entry.charges),
+                        "cash_delta": str(entry.cash_delta), "created_at": entry.created_at.isoformat(),
+                    } for entry in entries]
+                    item.update({
+                        "entry_at": min((entry.created_at for entry in entry_rows), default=None).isoformat() if entry_rows else None,
+                        "closed_at": max((entry.created_at for entry in exit_rows), default=None).isoformat() if exit_rows and summary.get("status") == "CLOSED" else None,
+                        "mark_status": mark_status,
+                        "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
+                        "legs": legs,
+                        "entries": data_entries,
+                    })
+                data.append(item)
+            return {"mode": "PAPER_ONLY", "broker_orders_enabled": False, "count": len(data), "data": data}
     except Exception as exc:
         _error(exc)
 
