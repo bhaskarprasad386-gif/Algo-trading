@@ -79,3 +79,21 @@ def test_compare_supports_inclusive_and_strict_thresholds():
     assert not compare(1.0, "<", 1.0)
     assert compare(20.0, ">=", 20.0)
     assert not compare(20.0, ">", 20.0)
+
+def test_exit_order_type_defaults_to_limit_and_market_is_supported():
+    config = validate_rule_config(base_config())
+    assert config["exit"]["order_type"] == "LIMIT"
+
+    raw = base_config()
+    raw["exit"]["order_type"] = "market"
+    config = validate_rule_config(raw)
+    assert config["exit"]["order_type"] == "MARKET"
+
+
+@pytest.mark.parametrize("order_type", ["STOP", "IOC", ""])
+def test_exit_order_type_rejects_unsupported_values(order_type):
+    raw = base_config()
+    raw["exit"]["order_type"] = order_type
+    with pytest.raises(ValueError, match="exit.order_type"):
+        validate_rule_config(raw)
+
