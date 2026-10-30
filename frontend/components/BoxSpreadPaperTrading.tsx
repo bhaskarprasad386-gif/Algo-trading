@@ -156,6 +156,11 @@ export default function BoxSpreadPaperTrading() {
     }
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
 
+  useEffect(() => {
+    setOpenPage(0);
+    setClosedPage(0);
+  }, [account, positionSearch, positionDirection]);
+
   const loadOpportunities = useCallback(async () => {
     setOpportunityStatus("CHECKING");
     const base = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread";
