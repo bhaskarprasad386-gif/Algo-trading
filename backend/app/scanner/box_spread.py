@@ -57,7 +57,8 @@ def _liquid_box_pairs(quotes: dict[float, OptionQuote], *, atm_strike: float,
 def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float,
                       instrument_class: str, config: BoxSpreadScanConfig | None = None,
                       policy: ScanPolicy | None = None,
-                      diagnostics: dict[str, int] | None = None) -> tuple[BoxSpreadScanResult, ...]:
+                      diagnostics: dict[str, int] | None = None,
+                      include_nonpositive: bool = False) -> tuple[BoxSpreadScanResult, ...]:
     """Scan a snapshot; optionally fill per-snapshot rejection counters for live diagnostics."""
     stats = diagnostics if diagnostics is not None else {}
     for key in ("quotes", "pairs_considered", "liquidity_rejected_pairs", "timestamp_skew_rejected_pairs",
@@ -109,7 +110,25 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
         for direction in ("LONG", "SHORT"):
             opp = BoxSpreadBacktester.evaluate(eval_low, eval_high, direction=direction, fees_per_unit=config.fees_per_unit)
             if opp is None:
-                stats["backtest_rejected_directions"] += 1
+                # Position exits need the actual edge at zero/negative values too:
+                # BoxSpreadBacktester intentionally omits non-positive opportunities.
+                if not include_nonpositive:
+                    stats["backtest_rejected_directions"] += 1
+                    continue
+                width = high_strike - low_strike
+                if direction == "LONG":
+                    debit = (low.call_ask - high.call_bid) + (high.put_ask - low.put_bid)
+                    edge = width - debit - config.fees_per_unit
+                else:
+                    credit = (low.call_bid - high.call_ask) + (high.put_bid - low.put_ask)
+                    edge = credit - width - config.fees_per_unit
+                if edge < config.min_executable_edge:
+                    stats["edge_rejected_directions"] += 1
+                    continue
+                edge_per_lot = edge * low.lot_size
+                results.append(BoxSpreadScanResult(
+                    low, high, direction, edge, edge_per_lot, edge_per_lot, distance
+                ))
                 continue
             if opp.executable_edge < config.min_executable_edge:
                 stats["edge_rejected_directions"] += 1
