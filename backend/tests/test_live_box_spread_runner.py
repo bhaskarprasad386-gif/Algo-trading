@@ -18,7 +18,7 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
 
     class Tracker:
         def __init__(self, *args, **kwargs): pass
-        def atm(self, symbol, now_ns): return 100.0
+        def atm(self, symbol, now_ns, **kwargs): return 100.0
 
     monkeypatch.setattr(mod, "select_box_contracts", select)
     monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"ABC": (100.0, 110.0)})
@@ -47,7 +47,7 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
 
     class Tracker:
         def __init__(self, *args, **kwargs): pass
-        def atm(self, symbol, now_ns): return 100.0 if symbol == "READY" else None
+        def atm(self, symbol, now_ns, **kwargs): return 100.0 if symbol == "READY" else None
 
     class Feed:
         def __init__(self, *args, **kwargs): pass
@@ -116,7 +116,7 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
 
     class Tracker:
         def __init__(self, *args, **kwargs): pass
-        def atm(self, symbol, now_ns): return 100.0
+        def atm(self, symbol, now_ns, **kwargs): return 100.0
 
     class Feed:
         def __init__(self, *args, **kwargs): pass
