@@ -71,5 +71,5 @@ def test_nifty_weekly_atm15_options_are_box_spread_only():
     assert len(box_options) == 31 * 2
     assert all(token.startswith("22OCT2026-") for token in box_options)
     assert len(synthetic_options) == 31 * 2
-    assert all(token.startswith("05NOV2026-") for token in synthetic_options)
+    assert all(token.startswith("26NOV2026-") for token in synthetic_options)
     assert box_options.isdisjoint(synthetic_options)
