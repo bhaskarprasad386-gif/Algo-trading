@@ -271,6 +271,105 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
 
 
 
+
+def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="exit-basket-route", account_key=account_key,
+    )
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+    )
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    actions = {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+    trade_row = {
+        "trade_id": 456,
+        "legs": [{
+            "role": role, "open_position_quantity": 25,
+            "open_position_action": actions[role],
+        } for role in roles],
+    }
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account: request)
+    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "_matching_live_row", lambda contracts: row)
+    monkeypatch.setattr(routes._ledger, "list_open_trades", lambda account_key: [trade_row])
+    return row, trade_row
+
+
+def test_exit_preview_returns_all_four_executable_bid_ask_quotes_without_writing(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {
+        "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
+    })
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("preview must not write fills")),
+    )
+
+    result = routes.preview_exit_basket(456, account_key="basket-route-test")
+    assert result["order_type_default"] == "LIMIT"
+    assert result["quantity_per_leg"] == 25
+    quotes = {leg["role"]: leg for leg in result["legs"]}
+    assert set(quotes) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+    assert quotes["LOW_CE"]["executable_price"] == 10
+    assert quotes["HIGH_CE"]["executable_price"] == 21
+    assert quotes["HIGH_PE"]["executable_price"] == 30
+    assert quotes["LOW_PE"]["executable_price"] == 41
+    assert result["estimated_realized_plus_close_pnl"] == "30.00"
+
+
+def test_exit_basket_rejects_one_unmarketable_limit_without_any_fill(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("unmarketable basket must not write")),
+    )
+    payload = routes.ExitBasket(
+        account_key="basket-route-test", fill_id="limit-no-fill",
+        order_type="LIMIT",
+        limit_prices={"LOW_CE": 999, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 41},
+    )
+    with pytest.raises(HTTPException) as raised:
+        routes.exit_basket(456, payload)
+    assert raised.value.status_code == 409
+
+
+def test_exit_basket_confirms_all_four_legs_in_one_ledger_call(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    captured = {}
+    receipts = [
+        SimpleNamespace(
+            fill_id=f"EXIT:BASKET:manual:{role}", role=role,
+            action="SELL" if role in {"LOW_CE", "HIGH_PE"} else "BUY",
+            quantity=25, fill_price=price, charges=0, cash_delta=0,
+        )
+        for role, price in (("LOW_CE", 10), ("HIGH_CE", 21), ("HIGH_PE", 30), ("LOW_PE", 41))
+    ]
+    def record_exit_basket(**kwargs):
+        captured.update(kwargs)
+        return receipts
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", record_exit_basket)
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "CLOSED"})
+
+    result = routes.exit_basket(456, routes.ExitBasket(
+        account_key="basket-route-test", fill_id="manual",
+        order_type="LIMIT",
+    ))
+    assert set(captured["legs"]) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+    assert result["status"] == "CLOSED"
+    assert len(result["receipts"]) == 4
+
+
 def test_exit_uses_fresh_backend_executable_quote_not_browser_price(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
