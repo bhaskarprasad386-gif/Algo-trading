@@ -189,6 +189,27 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     entry_rows = snapshot.get("entry_data", []) if isinstance(snapshot, dict) else []
     if not isinstance(rows, list):
         rows = []
+    if not isinstance(entry_rows, list):
+        entry_rows = []
+
+    # Emit one durable monitor diagnostic for every cycle in which entry
+    # scanning cannot proceed. This makes OFF/stale/no-candidate states visible
+    # instead of silently returning from the background monitor.
+    if not snapshot.get("fresh", False):
+        _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
+                "scanner_snapshot_stale_or_unavailable;fresh_four_leg_data_required")
+    elif not rule_enabled:
+        _record(rule_id, account_key, "ENTRY_SCAN", "DISABLED",
+                f"algo_rule_disabled;scanner_candidates={len(entry_rows)}")
+    else:
+        with paper._paper_execution_state_lock:
+            entry_switch_enabled = paper._paper_execution_enabled
+        if not entry_switch_enabled:
+            _record(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
+                    f"paper_execution_switch_OFF;scanner_candidates={len(entry_rows)}")
+        elif not entry_rows:
+            _record(rule_id, account_key, "ENTRY_SCAN", "NO_CANDIDATES",
+                    "fresh_snapshot_has_no_entry_candidates;check_scanner_eligibility_and_feed")
 
     # Exit monitoring is independent of the new-entry kill switch. Turning OFF
     # blocks new entries but must not strand already-open paper positions.
@@ -283,18 +304,37 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     # five-second four-leg quote, idempotency, claim and ledger protections.
     with paper._paper_execution_state_lock:
         execution_enabled = paper._paper_execution_enabled
-    if not rule_enabled or not execution_enabled:
+    if not rule_enabled or not execution_enabled or not snapshot.get("fresh", False):
         return
 
     open_count = len(await asyncio.to_thread(_open_rule_trades, rule_id, account_key))
     max_open_positions = config["entry"]["max_open_positions"]
     if open_count >= max_open_positions:
+        _record(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
+                f"max_open_positions_reached;open={open_count};maximum={max_open_positions}")
         return
+
+    skipped_count = 0
+    skipped_reasons: dict[str, int] = {}
+    evaluated_count = 0
     for row in entry_rows:
         if open_count >= max_open_positions:
             break
+        evaluated_count += 1
         matched, reason = entry_matches(row, config)
         if not matched:
+            skipped_count += 1
+            skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+            # Keep the audit log useful without allowing a wide scanner universe
+            # to flood the bounded per-rule history on every polling cycle.
+            if skipped_count <= 20:
+                observed = metric_value(row, config["entry"]["metric"])
+                _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
+                        f"candidate={str(row.get('symbol','')).upper()} "
+                        f"expiry={row.get('expiry_date') or row.get('expiry')} "
+                        f"direction={row.get('direction')};reason={reason}",
+                        metric=config["entry"]["metric"], observed=observed,
+                        threshold=config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
             continue
         expiry = row.get("expiry_date") or row.get("expiry")
         candidate_audit = json.dumps({
@@ -380,6 +420,11 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                     trade.id if trade is not None else None,
                     config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
                     config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
+
+    if skipped_count > 20:
+        _record(rule_id, account_key, "ENTRY_SCAN", "SUMMARY",
+                f"evaluated={evaluated_count};skipped={skipped_count};"
+                f"remaining_skips_aggregated={skipped_count - 20};reasons={json.dumps(skipped_reasons, sort_keys=True)}")
 
 
 async def paper_rule_monitor_loop():
