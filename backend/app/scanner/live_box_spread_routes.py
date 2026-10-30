@@ -119,6 +119,9 @@ def snapshots(
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    page = []
+    selected_count = 0
+    expiry_counts = Counter()
     with SessionLocal() as db:
         rows = (
             db.query(LiveBoxSpreadSnapshot)
@@ -127,10 +130,8 @@ def snapshots(
                 LiveBoxSpreadSnapshot.observed_at.desc(),
                 LiveBoxSpreadSnapshot.id.desc(),
             )
-            .all()
+            .yield_per(1000)
         )
-        classified = []
-        expiry_counts = Counter()
         for row in rows:
             try:
                 item = json.loads(row.payload_json)
@@ -144,33 +145,31 @@ def snapshots(
                 else "UNKNOWN"
             )
             expiry_counts[kind] += 1
-            item["expiry_type"] = kind
-            item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            item["freshness"] = "SAVED SNAPSHOT"
-            classified.append(item)
+            if expiry_type is not None and kind != expiry_type:
+                continue
+            if offset <= selected_count < offset + limit:
+                item["expiry_type"] = kind
+                item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                item["freshness"] = "SAVED SNAPSHOT"
+                page.append(item)
+            selected_count += 1
 
-        selected = [
-            item for item in classified
-            if expiry_type is None or item["expiry_type"] == expiry_type
-        ]
-        total_count = len(selected)
-        page = selected[offset:offset + limit]
-        return {
-            "strategy": "box-spread",
-            "days": days,
-            "expiry_type": expiry_type,
-            "count": len(page),
-            "total_count": total_count,
-            "expiry_counts": {
-                "WEEKLY": expiry_counts["WEEKLY"],
-                "MONTHLY": expiry_counts["MONTHLY"],
-                "UNKNOWN": expiry_counts["UNKNOWN"],
-            },
-            "offset": offset,
-            "limit": limit,
-            "has_more": offset + len(page) < total_count,
-            "data": page,
-        }
+    return {
+        "strategy": "box-spread",
+        "days": days,
+        "expiry_type": expiry_type,
+        "count": len(page),
+        "total_count": selected_count,
+        "expiry_counts": {
+            "WEEKLY": expiry_counts["WEEKLY"],
+            "MONTHLY": expiry_counts["MONTHLY"],
+            "UNKNOWN": expiry_counts["UNKNOWN"],
+        },
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(page) < selected_count,
+        "data": page,
+    }
 
 
 @router.get("/analysis")
