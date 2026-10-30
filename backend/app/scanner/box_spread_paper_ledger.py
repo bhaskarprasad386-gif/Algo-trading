@@ -850,9 +850,9 @@ class BoxSpreadPaperLedger:
             unrealized_pnl = Decimal("0.00")
 
         return {
-            "trade_id": trade.id,
-            "status": trade.status,
-            "quantity": trade.quantity,
+            "trade_id": trade_record.id,
+            "status": trade_record.status,
+            "quantity": trade_record.quantity,
             "fill_count": len(entries),
             "buy_notional": buy_notional,
             "sell_notional": sell_notional,
@@ -860,7 +860,7 @@ class BoxSpreadPaperLedger:
             "net_cash_flow": net_cash_flow,
             "unrealized_pnl": unrealized_pnl,
             "realized_pnl": realized_pnl.quantize(CENT, rounding=ROUND_HALF_UP),
-            "fee_schedule_version": trade.fee_schedule_version,
+            "fee_schedule_version": trade_record.fee_schedule_version,
         }
 
     def list_fills(self, trade_id: int, account_key: str = "default") -> list[BoxSpreadPaperFillReceipt]:
