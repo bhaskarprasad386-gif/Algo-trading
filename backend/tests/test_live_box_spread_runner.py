@@ -145,3 +145,74 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
         assert str(exc) == "stop-after-selection"
     assert seeded == ["05NOV2026"]
     assert selected_expiries == ["05NOV2026"]
+
+
+def test_sensex_weekly_expiry_uses_bfo_option_master_without_future_contracts(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+
+    class Master:
+        instruments = [
+            {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "22OCT2026", "strike": "10000"},
+            {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "26NOV2026", "strike": "10000"},
+            {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "05NOV2026", "strike": "10000"},
+        ]
+        def download(self): pass
+
+    seeded = []
+    def concrete(*args, **kwargs):
+        seeded.append((kwargs.get("expiry"), kwargs.get("exchange_segment")))
+        return {"SENSEX": (100.0, 110.0)}
+
+    class Tracker:
+        def __init__(self, *args, **kwargs): pass
+        def atm(self, symbol, now_ns): return 100.0
+
+    class Feed:
+        def __init__(self, *args, **kwargs): pass
+        def run_forever(self): pass
+        def stop(self): pass
+
+    selected = []
+    def stop_after_selection(*args, **kwargs):
+        selected.append((kwargs.get("expiry"), kwargs.get("underlying")))
+        raise RuntimeError("stop-after-selection")
+
+    monkeypatch.setattr(mod, "concrete_strikes_from_master", concrete)
+    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "select_box_contracts", stop_after_selection)
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [mod.BoxSpreadLiveTarget("SENSEX", "INDEX")],
+        allowed_stock_symbols=set(),
+        future_master=Master(),
+        auth=object(),
+    )
+    try:
+        runner._run_session()
+    except RuntimeError as exc:
+        assert str(exc) == "stop-after-selection"
+
+    assert seeded == [("05NOV2026", "BFO")]
+    assert selected == [("05NOV2026", "SENSEX")]
+
+
+def test_nifty_and_sensex_targets_are_ordered_before_other_indices_and_stocks():
+    import app.market_data.live_box_spread_runner as mod
+
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [
+            mod.BoxSpreadLiveTarget("ABC", "STOCK"),
+            mod.BoxSpreadLiveTarget("BANKNIFTY", "INDEX"),
+            mod.BoxSpreadLiveTarget("SENSEX", "INDEX"),
+            mod.BoxSpreadLiveTarget("NIFTY", "INDEX"),
+        ],
+        allowed_stock_symbols={"ABC"},
+        future_master=object(),
+        auth=object(),
+    )
+
+    assert [target.underlying for target in runner.targets] == [
+        "NIFTY", "SENSEX", "ABC", "BANKNIFTY"
+    ]
