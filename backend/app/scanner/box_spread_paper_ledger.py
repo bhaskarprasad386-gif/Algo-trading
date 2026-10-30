@@ -1078,6 +1078,8 @@ class BoxSpreadPaperLedger:
         elif not open_roles:
             unrealized_pnl = Decimal("0.00")
             gross_unrealized_pnl = Decimal("0.00")
+        if gross_unrealized_pnl is not None:
+            gross_unrealized_pnl = gross_unrealized_pnl.quantize(CENT, rounding=ROUND_HALF_UP)
 
         return {
             "trade_id": trade_record.id,
