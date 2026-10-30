@@ -95,8 +95,11 @@ export default function BoxSpreadPaperTrading() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [ledger, setLedger] = useState<any | null>(null);
-  const [exitRole, setExitRole] = useState<Role>("LOW_CE");
-  const [exitQuantity, setExitQuantity] = useState("1");
+  const [exitPreview, setExitPreview] = useState<any | null>(null);
+  const [exitOrderType, setExitOrderType] = useState<"LIMIT" | "MARKET">("LIMIT");
+  const [exitLimitPrices, setExitLimitPrices] = useState<Record<Role, string>>({
+    LOW_CE: "", HIGH_CE: "", HIGH_PE: "", LOW_PE: "",
+  });
   const [lots, setLots] = useState(1);
   const [positionSearch, setPositionSearch] = useState("");
   const [positionDirection, setPositionDirection] = useState("ALL");
@@ -281,22 +284,40 @@ export default function BoxSpreadPaperTrading() {
     } finally { setBusy(false); }
   }
 
-  async function exitSelectedLeg(event: FormEvent) {
-    event.preventDefault();
+  async function loadExitPreview() {
     if (selectedTrade == null) return;
     setBusy(true); setError(null); setMessage(null);
     try {
-      const result = await request("/trades/" + selectedTrade + "/exit", {
+      const body = await request("/trades/" + selectedTrade + "/exit-preview?account_key=" + encodeURIComponent(account));
+      setExitPreview(body);
+      const defaults = Object.fromEntries((body.legs ?? []).map((leg: any) => [leg.role, String(leg.default_limit_price)])) as Record<Role, string>;
+      setExitLimitPrices(defaults);
+      setExitOrderType("LIMIT");
+      setMessage("Read-only four-leg exit preview loaded. No fill has been recorded.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Unable to load four-leg exit preview"); }
+    finally { setBusy(false); }
+  }
+
+  async function confirmBasketExit(event: FormEvent) {
+    event.preventDefault();
+    if (selectedTrade == null || !exitPreview) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      await request("/trades/" + selectedTrade + "/exit-basket", {
         method: "POST",
         body: JSON.stringify({
-          account_key: account, role: exitRole, quantity: Number(exitQuantity),
-          fill_id: "exit-" + crypto.randomUUID(),
+          account_key: account, fill_id: "manual-basket-" + crypto.randomUUID(),
+          order_type: exitOrderType,
+          ...(exitOrderType === "LIMIT" ? {
+            limit_prices: Object.fromEntries(roles.map(role => [role, Number(exitLimitPrices[role])])),
+          } : {}),
         }),
       });
+      setExitPreview(null);
       setLedger(await request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account)));
-      setMessage("Paper exit fill recorded for " + exitRole + ". Remaining legs stay visible until fully closed.");
+      setMessage("Four-leg paper basket exit recorded in one ledger transaction. No broker order was sent.");
       await refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : "Paper exit failed"); }
+    } catch (e) { setError(e instanceof Error ? e.message : "Four-leg basket exit was not completed"); }
     finally { setBusy(false); }
   }
 
@@ -330,7 +351,6 @@ export default function BoxSpreadPaperTrading() {
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
   const selectedTradeData = [...openTrades, ...closedTrades].find(trade => trade.trade_id === selectedTrade) ?? null;
-  const selectedExitLeg = selectedTradeData?.legs?.find(leg => leg.role === exitRole) ?? null;
   const totalRealizedPnl = Number(portfolioSummary?.realized_pnl ?? 0);
   const totalUnrealizedPnl = portfolioSummary?.unrealized_pnl == null ? null : Number(portfolioSummary.unrealized_pnl);
   const totalNetPnl = portfolioSummary?.net_pnl == null ? null : Number(portfolioSummary.net_pnl);
@@ -605,8 +625,7 @@ export default function BoxSpreadPaperTrading() {
               const mtm = legMtm(leg);
               const entryValue = leg.entry_average_price == null ? null : Number(leg.entry_average_price) * leg.open_quantity;
               const closeValue = leg.mark_price == null ? null : Number(leg.mark_price) * leg.open_quantity;
-              const selected = exitRole === leg.role;
-              return <article key={leg.role} className={"space-y-3 rounded-lg border p-3 " + (selected ? "border-cyan-500/70 theme-surface" : "theme-border theme-surface")}>
+              return <article key={leg.role} className="space-y-3 rounded-lg border theme-border theme-surface p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div><h4 className="font-bold theme-text">{leg.role.replace("_", " ")}</h4><p className="text-[11px] theme-muted">{leg.open_action} · Open qty {leg.open_quantity.toLocaleString("en-IN")}</p></div>
                   <span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (leg.open_quantity > 0 ? "bg-emerald-500/15 text-emerald-600" : "theme-surface-2 theme-muted")}>{leg.open_quantity > 0 ? "OPEN" : "FLAT"}</span>
@@ -619,14 +638,13 @@ export default function BoxSpreadPaperTrading() {
                 </div>
                 <div className="flex items-center justify-between gap-2 border-t theme-border pt-2">
                   <div><p className="text-[11px] theme-muted">Leg MTM</p><p className={"text-sm font-bold " + (mtm == null ? "theme-muted" : mtm >= 0 ? "text-emerald-600" : "text-red-500")}>{mtm == null ? "—" : money(mtm)}</p></div>
-                  <button type="button" disabled={leg.open_quantity <= 0} onClick={() => { setExitRole(leg.role); setExitQuantity(String(leg.open_quantity)); }} className="min-h-10 rounded-lg border border-cyan-600/50 px-3 py-2 text-xs font-bold theme-text disabled:opacity-40">{selected ? "Selected for exit" : "Select exit"}</button>
                 </div>
               </article>;
             })}
           </div>
           <div className="hidden overflow-x-auto rounded-lg border theme-border sm:block">
             <table className="w-full min-w-[760px] text-left text-xs">
-              <thead className="theme-surface theme-muted"><tr>{["Leg","Position","Entry avg","Exit-side mark","Open qty","Open entry value","Close value","Open MTM","Action"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
+              <thead className="theme-surface theme-muted"><tr>{["Leg","Position","Entry avg","Exit-side mark","Open qty","Open entry value","Close value","Open MTM"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
               <tbody>{(selectedTradeData.legs ?? []).map(leg => {
                 const mtm = legMtm(leg);
                 const entryValue = leg.entry_average_price == null ? null : Number(leg.entry_average_price) * leg.open_quantity;
@@ -640,23 +658,33 @@ export default function BoxSpreadPaperTrading() {
                   <td className="px-2 py-2 theme-text">{entryValue == null ? "—" : money(entryValue)}</td>
                   <td className="px-2 py-2 theme-text">{closeValue == null ? "—" : money(closeValue)}</td>
                   <td className={"px-2 py-2 font-bold " + (mtm == null ? "theme-muted" : mtm >= 0 ? "text-emerald-600" : "text-red-500")}>{mtm == null ? "—" : money(mtm)}</td>
-                  <td className="px-2 py-2"><button type="button" disabled={leg.open_quantity <= 0} onClick={() => { setExitRole(leg.role); setExitQuantity(String(leg.open_quantity)); }} className="rounded-md border theme-border px-2 py-1 font-semibold theme-text disabled:opacity-40">Select exit</button></td>
                 </tr>;
               })}</tbody>
             </table>
           </div>
         </>}
         <div className="grid gap-3 md:grid-cols-2">
-          <form onSubmit={exitSelectedLeg} className="space-y-3 rounded-lg border theme-border p-3">
-            <div><h4 className="font-semibold theme-text">Exit selected leg</h4><p className="mt-1 text-xs theme-muted">Selected: {exitRole} · open quantity {selectedExitLeg?.open_quantity ?? 0}. Backend independently checks fresh executable bid/ask and quantity; no browser price is submitted.</p></div>
-            <label className="block text-xs theme-muted">Leg
-              <select value={exitRole} onChange={e => { const role = e.target.value as Role; setExitRole(role); setExitQuantity(String(selectedTradeData?.legs?.find(leg => leg.role === role)?.open_quantity ?? 0)); }} className="mt-1 w-full rounded-lg border theme-border theme-surface px-3 py-2 text-sm theme-text">{roles.map(role => { const leg = selectedTradeData?.legs?.find(item => item.role === role); return <option key={role} value={role} disabled={!leg || leg.open_quantity <= 0}>{role} · open {leg?.open_quantity ?? 0}</option>; })}</select>
-            </label>
-            <label className="block text-xs theme-muted">Exit quantity (max {selectedExitLeg?.open_quantity ?? 0})
-              <input required type="number" min="1" max={selectedExitLeg?.open_quantity ?? 0} step="1" value={exitQuantity} onChange={e => setExitQuantity(e.target.value)} className="mt-1 w-full rounded-lg border theme-border theme-surface px-3 py-2 text-sm theme-text"/>
-            </label>
-            <button disabled={busy || !selectedTradeData || !selectedExitLeg || selectedExitLeg.open_quantity <= 0 || Number(exitQuantity) < 1 || Number(exitQuantity) > selectedExitLeg.open_quantity} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">Simulate exit at fresh backend quote</button>
-          </form>
+          <div className="space-y-3 rounded-lg border theme-border p-3">
+            <div><h4 className="font-semibold theme-text">Four-leg basket exit</h4><p className="mt-1 text-xs theme-muted">All four open legs are previewed and confirmed together. A missing, stale or unmarketable leg blocks the complete paper basket; no single leg is exited.</p></div>
+            <button type="button" onClick={() => void loadExitPreview()} disabled={busy || !selectedTradeData || selectedTradeData.legs?.some(leg => leg.open_quantity <= 0)} className="rounded-lg border border-cyan-600/50 px-4 py-2 text-sm font-bold theme-text disabled:opacity-50">Refresh four-leg exit preview</button>
+            {exitPreview && exitPreview.trade_id === selectedTrade && <form onSubmit={confirmBasketExit} className="space-y-3 rounded-lg theme-surface-2 p-3">
+              <div className="flex items-center justify-between gap-2"><strong className="text-sm theme-text">Exit preview · Qty {exitPreview.quantity_per_leg} per leg</strong><span className="text-[10px] font-bold text-emerald-600">READ ONLY</span></div>
+              <label className="block text-xs theme-muted">Order type
+                <select value={exitOrderType} onChange={e => setExitOrderType(e.target.value as "LIMIT" | "MARKET")} className="mt-1 w-full rounded-lg border theme-border theme-surface px-3 py-2 text-sm theme-text">
+                  <option value="LIMIT">Limit (default)</option><option value="MARKET">Market</option>
+                </select>
+              </label>
+              <div className="overflow-x-auto"><table className="w-full min-w-[440px] text-xs"><thead className="theme-muted"><tr>{["Leg","Close side","Bid","Ask","Qty",...(exitOrderType === "LIMIT" ? ["Limit price"] : ["Market price"])].map(label=><th key={label} className="px-2 py-2 text-left">{label}</th>)}</tr></thead><tbody>
+                {(exitPreview.legs ?? []).map((leg: any) => <tr key={leg.role} className="border-t theme-border"><td className="px-2 py-2 font-semibold theme-text">{leg.role}</td><td className="px-2 py-2 theme-text">{leg.close_action}</td><td className="px-2 py-2 theme-text">{money(leg.bid)}</td><td className="px-2 py-2 theme-text">{money(leg.ask)}</td><td className="px-2 py-2 theme-text">{leg.quantity}</td><td className="px-2 py-2 theme-text">{exitOrderType === "LIMIT" ? <input aria-label={leg.role + " limit price"} type="number" min="0.05" step="0.05" value={exitLimitPrices[leg.role as Role] ?? ""} onChange={e => setExitLimitPrices(current => ({ ...current, [leg.role]: e.target.value }))} className="w-24 rounded border theme-border theme-surface px-2 py-1"/> : money(leg.executable_price)}</td></tr>)}
+              </tbody></table></div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded border theme-border p-2"><div className="theme-muted">Gross close cash flow</div><strong className="theme-text">{money(exitPreview.gross_close_cash_flow)}</strong></div>
+                <div className="rounded border theme-border p-2"><div className="theme-muted">Estimated P&amp;L incl. close charges</div><strong className="theme-text">{money(exitPreview.estimated_realized_plus_close_pnl)}</strong></div>
+              </div>
+              <p className="text-[11px] theme-muted">Preview is not a fill guarantee. The backend rechecks fresh quotes and every limit at confirmation. If any leg cannot execute, all four remain open.</p>
+              <button type="submit" disabled={busy || (exitOrderType === "LIMIT" && roles.some(role => !Number.isFinite(Number(exitLimitPrices[role])) || Number(exitLimitPrices[role]) <= 0))} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">Confirm four-leg paper exit</button>
+            </form>}
+          </div>
           <div className="space-y-2 rounded-lg border border-amber-500/50 p-3" role="status">
             <h4 className="font-semibold theme-text">Expiry settlement · locked</h4>
             <p className="text-xs theme-muted">Settlement remains locked until the backend verifies official underlying settlement data and calculates each option leg's intrinsic value. User-entered prices are never accepted as official settlement values.</p>
