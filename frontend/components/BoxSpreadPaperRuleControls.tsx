@@ -55,8 +55,8 @@ export default function BoxSpreadPaperRuleControls({ api, token, account }: { ap
     try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");setEvaluations(Array.isArray(body.data)?body.data:[]);setNotice("Recent evaluations for rule #"+id);}
     catch(e){setError(e instanceof Error?e.message:"Unable to load evaluation history");}
   }
-  const entry=(key:keyof Config["entry"],value:unknown)=>setConfig(c=>({...c,entry:{...c.entry,[key]:value}}));
-  const exit=(key:keyof Config["exit"],value:unknown)=>setConfig(c=>({...c,exit:{...c.exit,[key]:value}}));
+  const entry=(key:keyof Config["entry"],value:unknown)=>setConfig(c=>({...c,entry:{...c.entry,[key]:value} as Config["entry"]}));
+  const exit=(key:keyof Config["exit"],value:unknown)=>setConfig(c=>({...c,exit:{...c.exit,[key]:value} as Config["exit"]}));
 
   return <section className="space-y-4 rounded-xl border theme-border p-3">
     <div><p className="text-xs font-semibold uppercase tracking-wider theme-accent">Custom automation</p><h3 className="text-lg font-semibold theme-text">Entry & Exit Rule Builder</h3><p className="text-xs theme-muted">Rules evaluate fresh backend four-leg quotes. Paper-only; no broker orders.</p></div>
