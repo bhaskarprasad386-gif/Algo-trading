@@ -318,7 +318,7 @@ export default function BoxSpreadPaperTrading() {
         <div><div className="theme-muted">Entry date / time</div><div className="mt-1 theme-text">{trade.entry_at ? istDateTime(trade.entry_at) : "No fills yet · " + istDateTime(trade.created_at)}</div></div>
         <div><div className="theme-muted">Expiry</div><div className="mt-1 theme-text">{trade.expiry}</div></div>
         <div><div className="theme-muted">Spot at entry</div><div className="mt-1 theme-text">{money(trade.entry_spot_price)}</div></div>
-        <div><div className="theme-muted">{closed ? "Closed at" : "Position age"}</div><div className="mt-1 theme-text">{closed ? istDateTime(trade.closed_at) : trade.entry_at ? istDateTime(trade.entry_at) : "Entry pending / review"}</div></div>
+        <div><div className="theme-muted">{closed ? "Closed at" : "Opened at"}</div><div className="mt-1 theme-text">{closed ? istDateTime(trade.closed_at) : trade.entry_at ? istDateTime(trade.entry_at) : "Entry pending / review"}</div></div>
       </div>
       <div className="overflow-x-auto rounded-lg border theme-border">
         <table className="w-full min-w-[610px] text-left text-xs">
