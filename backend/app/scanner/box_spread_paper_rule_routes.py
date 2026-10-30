@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import SessionLocal
 from app.scanner.box_spread_paper_routes import require_paper_access
@@ -20,9 +21,9 @@ from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry, BoxSpreadPaperEntryClaim,
 )
 from app.scanner.box_spread_paper_rules import (
-    BoxSpreadPaperRule, BoxSpreadPaperRuleEvaluation, decode_rule_config,
-    validate_rule_config, utc_now, entry_matches, exit_matches, metric_value,
-    select_entry_candidates,
+    BoxSpreadPaperRule, BoxSpreadPaperRuleEvaluation, BoxSpreadPaperEntryQuotaReservation,
+    decode_rule_config, validate_rule_config, utc_now, entry_matches, exit_matches,
+    metric_value, select_entry_candidates,
 )
 
 router = APIRouter(
@@ -165,6 +166,40 @@ def _claimed_rule_entry_window_count(
                    BoxSpreadPaperEntryClaim.claimed_at < end_utc)
         ).all()
     return len(claim_ids)
+
+
+def _reserve_rule_entry_quota_slot(
+    rule_id: int, account_key: str, window_start: datetime, window_end: datetime,
+    max_per_window: int, candidate_key: str,
+) -> int | None:
+    """Atomically reserve a unique durable slot before a paper entry attempt.
+
+    Unique database constraints serialize workers; reservations are never released,
+    because a crash or ambiguous attempt must continue consuming the interval quota.
+    """
+    for slot in range(1, max_per_window + 1):
+        try:
+            with SessionLocal() as session, session.begin():
+                reservation = BoxSpreadPaperEntryQuotaReservation(
+                    account_key=account_key, rule_id=rule_id,
+                    window_start_utc=window_start, window_end_utc=window_end,
+                    slot=slot, candidate_key=candidate_key, reserved_at=utc_now(),
+                )
+                session.add(reservation)
+                session.flush()
+                return slot
+        except IntegrityError:
+            # A competing worker may have taken this slot, or this exact candidate
+            # may already be reserved. The latter is a lifetime one-shot block.
+            with SessionLocal() as session:
+                existing_candidate = session.scalar(select(BoxSpreadPaperEntryQuotaReservation.id).where(
+                    BoxSpreadPaperEntryQuotaReservation.account_key == account_key,
+                    BoxSpreadPaperEntryQuotaReservation.rule_id == rule_id,
+                    BoxSpreadPaperEntryQuotaReservation.candidate_key == candidate_key,
+                ))
+            if existing_candidate is not None:
+                return None
+    return None
 
 
 def _claimed_rule_entry_keys(rule_id: int, account_key: str) -> set[str]:
@@ -368,11 +403,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         claimed_keys = await asyncio.to_thread(_claimed_rule_entry_keys, rule_id, account_key)
         window_minutes = config["monitor"]["entry_window_minutes"]
         window_start, window_end = _entry_window_bounds_utc(window_minutes)
-        window_claim_count = await asyncio.to_thread(
-            _claimed_rule_entry_window_count, rule_id, account_key, window_start, window_end,
-        )
         max_per_window = config["entry"]["max_trades_per_interval"]
-        remaining_range_slots = max(0, max_per_window - window_claim_count)
         unclaimed_rows = []
         previously_claimed_rows = []
         for candidate in entry_rows:
@@ -387,8 +418,10 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 unclaimed_rows.append(candidate)
                 continue
             (previously_claimed_rows if candidate_key in claimed_keys else unclaimed_rows).append(candidate)
+        # Rank all eligible candidates; the DB reservation below decides which
+        # workers actually own the remaining slots, avoiding stale count snapshots.
         selected_entry_rows, skipped_rows = select_entry_candidates(
-            unclaimed_rows, config, range_limit=remaining_range_slots,
+            unclaimed_rows, config, range_limit=len(unclaimed_rows),
         )
         skipped_rows.extend((candidate, "candidate_already_attempted") for candidate in previously_claimed_rows)
     else:
@@ -430,6 +463,14 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 rule_id, str(row.get("symbol", "")).upper(), paper._canonical_expiry(expiry),
                 row.get("low_strike"), row.get("high_strike"), str(row.get("direction", "")).upper(),
             )
+            quota_slot = await asyncio.to_thread(
+                _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
+                max_per_window, idempotency_key,
+            )
+            if quota_slot is None:
+                _record(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
+                        f"{candidate_audit};interval_quota_full_or_candidate_already_reserved")
+                continue
             request = paper.CreatePaperTrade(
                 underlying=str(row["symbol"]), instrument_class=str(row["instrument_class"]),
                 expiry=str(expiry), low_strike=float(row["low_strike"]),
