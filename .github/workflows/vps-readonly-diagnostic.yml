@@ -93,6 +93,35 @@ jobs:
           echo "=== LIVE_CASH_FUTURE_HEALTH ==="
           curl --fail --silent --show-error --connect-timeout 2 --max-time 12 http://127.0.0.1:8000/api/v1/market-data/live-cash-future/health || true
           echo
+          echo "=== BOX_SPREAD_LIVE_OPPORTUNITIES ==="
+          box_live_code=$(curl -sS --connect-timeout 2 --max-time 10 -o /tmp/box_spread_live_body -w "%{http_code}" "http://127.0.0.1:8000/api/v1/scanner/box-spread/live?limit=10&max_age_seconds=5" 2>/dev/null || true)
+          echo "BOX_SPREAD_LIVE_HTTP=$box_live_code"
+          if [ "$box_live_code" != "000" ]; then
+            head -c 12000 /tmp/box_spread_live_body || true
+            echo
+          fi
+          echo "=== BOX_SPREAD_DIAGNOSTICS ==="
+          box_diag_code=$(curl -sS --connect-timeout 2 --max-time 10 -o /tmp/box_spread_diag_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/scanner/box-spread/diagnostics 2>/dev/null || true)
+          echo "BOX_SPREAD_DIAGNOSTICS_HTTP=$box_diag_code"
+          if [ "$box_diag_code" != "000" ]; then
+            cat /tmp/box_spread_diag_body || true
+            echo
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              data = json.loads(Path("/tmp/box_spread_diag_body").read_text())
+          except Exception:
+              data = {}
+          last = data.get("last_scan") if isinstance(data.get("last_scan"), dict) else {}
+          counts = data.get("counts") if isinstance(data.get("counts"), dict) else {}
+          print("BOX_SPREAD_STATUS=" + str(data.get("status", "unknown")))
+          print("BOX_SPREAD_ACTIVE_BUCKETS=" + str(data.get("active_buckets", "unknown")))
+          print("BOX_SPREAD_LAST_SCAN=" + json.dumps(last, sort_keys=True))
+          print("BOX_SPREAD_COUNTERS=" + json.dumps(counts, sort_keys=True))
+          PY
+          echo
           echo "=== RECENT_ANGEL_WS_LOGS ==="
           journalctl -u algo-trading.service --since "30 minutes ago" --no-pager 2>/dev/null | grep -Ei "angel|websocket|dns|name resolution|login failed|connect_fail|temporary failure" | tail -120 || true
           echo "=== TIME ==="
