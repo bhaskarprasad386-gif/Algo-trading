@@ -25,10 +25,25 @@ type ScannerDiagnostics = {
 };
 type OpportunityStatus = "CHECKING" | "LIVE" | "EMPTY" | "ERROR";
 
+type PaperLegPosition = {
+  role: Role; entry_action: string | null; entry_quantity: number;
+  entry_average_price: string | null; open_quantity: number; open_action: string;
+  mark_price: string | null; exit_quantity: number; exit_average_price: string | null;
+};
+type PaperLedgerEntry = {
+  fill_id: string; role: string; action: string; quantity: number;
+  fill_price: string; notional: string; charges: string; cash_delta: string; created_at: string;
+};
 type PaperTrade = {
   trade_id: number; underlying: string; instrument_class: string; expiry: string;
   low_strike: number; high_strike: number; direction: string; lots: number;
   quantity: number; lot_size: number; status: string; created_at: string;
+  entry_spot_price?: number | null; entry_at?: string | null; closed_at?: string | null;
+  mark_status?: string; summary?: {
+    status?: string; realized_pnl?: string | null; unrealized_pnl?: string | null;
+    total_charges?: string | null; net_cash_flow?: string | null; fill_count?: number;
+  };
+  legs?: PaperLegPosition[]; entries?: PaperLedgerEntry[];
 };
 type RecoveryLeg = {
   role: Role; expected_quantity: number; entry_filled_quantity: number;
@@ -104,7 +119,7 @@ export default function BoxSpreadPaperTrading() {
     try {
       const [accountBody, tradesBody, controlBody] = await Promise.all([
         request("/account?account_key=" + encodeURIComponent(account)),
-        request("/trades?account_key=" + encodeURIComponent(account)),
+        request("/trades?account_key=" + encodeURIComponent(account) + "&limit=500&include_ledger=true"),
         request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
@@ -212,7 +227,7 @@ export default function BoxSpreadPaperTrading() {
           underlying: opportunity.symbol, instrument_class: opportunity.instrument_class,
           expiry: opportunity.expiry, low_strike: opportunity.low_strike,
           high_strike: opportunity.high_strike, direction: opportunity.direction,
-          lots, account_key: account,
+          lots, account_key: account, entry_spot_price: opportunity.spot_price ?? undefined,
           idempotency_key: "box-paper-" + crypto.randomUUID(),
         }),
       });
@@ -264,6 +279,74 @@ export default function BoxSpreadPaperTrading() {
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
 
+  const openTrades = trades.filter(trade =>
+    trade.legs?.some(leg => leg.open_quantity > 0) ||
+    (!trade.legs?.length && !["CLOSED", "CANCELLED"].includes(trade.status))
+  ).sort((a, b) => Date.parse(b.entry_at || b.created_at) - Date.parse(a.entry_at || a.created_at));
+  const closedTrades = trades.filter(trade =>
+    trade.status === "CLOSED" ||
+    (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
+  ).sort((a, b) => Date.parse(b.closed_at || b.created_at) - Date.parse(a.closed_at || a.created_at));
+  const totalRealizedPnl = trades.reduce((sum, trade) => sum + Number(trade.summary?.realized_pnl ?? 0), 0);
+  const allOpenMarked = openTrades.length > 0 && openTrades.every(trade =>
+    trade.legs?.every(leg => leg.open_quantity === 0 || leg.mark_price != null) &&
+    trade.summary?.unrealized_pnl != null
+  );
+  const totalUnrealizedPnl = allOpenMarked
+    ? openTrades.reduce((sum, trade) => sum + Number(trade.summary?.unrealized_pnl ?? 0), 0)
+    : null;
+  const totalNetPnl = totalUnrealizedPnl == null ? null : totalRealizedPnl + totalUnrealizedPnl;
+  const money = (value: string | number | null | undefined) =>
+    value == null || !Number.isFinite(Number(value)) ? "—" :
+      "₹" + Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const istDateTime = (value?: string | null) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value :
+      date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) + " IST";
+  };
+  const renderPositionCard = (trade: PaperTrade, closed: boolean) => (
+    <article key={trade.trade_id} className="space-y-3 rounded-xl border theme-border theme-surface-2 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold theme-text">#{trade.trade_id} · {trade.underlying} · {trade.direction} BOX</div>
+          <div className="mt-1 text-xs theme-muted">{trade.instrument_class} · {trade.low_strike.toLocaleString("en-IN")} / {trade.high_strike.toLocaleString("en-IN")} · {trade.lots} lot(s) · Qty {trade.quantity}</div>
+        </div>
+        <span className={"rounded-full px-2 py-1 text-[10px] font-bold " + (closed ? "bg-slate-500/15 theme-muted" : "bg-emerald-500/15 text-emerald-600")}>{closed ? "CLOSED" : trade.status}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <div><div className="theme-muted">Entry date / time</div><div className="mt-1 theme-text">{istDateTime(trade.entry_at || trade.created_at)}</div></div>
+        <div><div className="theme-muted">Expiry</div><div className="mt-1 theme-text">{trade.expiry}</div></div>
+        <div><div className="theme-muted">Spot at entry</div><div className="mt-1 theme-text">{money(trade.entry_spot_price)}</div></div>
+        <div><div className="theme-muted">{closed ? "Closed at" : "Position age"}</div><div className="mt-1 theme-text">{closed ? istDateTime(trade.closed_at) : trade.entry_at ? istDateTime(trade.entry_at) : "Entry pending / review"}</div></div>
+      </div>
+      <div className="overflow-x-auto rounded-lg border theme-border">
+        <table className="w-full min-w-[610px] text-left text-xs">
+          <thead className="theme-surface theme-muted"><tr>{["Leg","Entry side","Entry avg","Filled qty","Open qty","Mark / Exit avg"].map(label=><th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
+          <tbody>{(trade.legs ?? []).map(leg=><tr key={leg.role} className="border-t theme-border">
+            <td className="px-2 py-2 font-semibold theme-text">{leg.role}</td>
+            <td className="px-2 py-2 theme-text">{leg.entry_action ?? "—"}</td>
+            <td className="px-2 py-2 theme-text">{money(leg.entry_average_price)}</td>
+            <td className="px-2 py-2 theme-text">{leg.entry_quantity.toLocaleString("en-IN")}</td>
+            <td className="px-2 py-2 theme-text">{leg.open_quantity.toLocaleString("en-IN")}</td>
+            <td className="px-2 py-2 theme-text">{closed ? money(leg.exit_average_price) : money(leg.mark_price)}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Realized P&L</div><div className={"mt-1 text-sm font-bold " + (Number(trade.summary?.realized_pnl ?? 0) >= 0 ? "text-emerald-600" : "text-red-500")}>{money(trade.summary?.realized_pnl)}</div></div>
+        <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">{closed ? "Unrealized P&L" : "Unrealized P&L"}</div><div className="mt-1 text-sm font-bold theme-text">{closed ? money(0) : money(trade.summary?.unrealized_pnl)}</div></div>
+        <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Charges</div><div className="mt-1 text-sm font-semibold theme-text">{money(trade.summary?.total_charges)}</div></div>
+        <div className="rounded-lg border theme-border p-2"><div className="text-[11px] theme-muted">Fill records</div><div className="mt-1 text-sm font-semibold theme-text">{trade.summary?.fill_count ?? trade.entries?.length ?? 0}</div></div>
+      </div>
+      {!closed && trade.mark_status !== "FRESH_BACKEND_QUOTES" && <p className="text-[11px] text-amber-600">Live MTM unavailable: backend quotes are stale or incomplete. Unrealized P&L is not estimated from stale prices.</p>}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] theme-muted">{closed ? "Realized result from persisted exit fills." : "Open quantity and marks are based on persisted fills and fresh backend quotes only."}</p>
+        <button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Full fill ledger</button>
+      </div>
+    </article>
+  );
+
   if (!token) return (
     <section className="mx-auto max-w-lg space-y-4 rounded-2xl border theme-border theme-surface p-4 sm:p-5">
       <div><h2 className="text-xl font-semibold theme-text">Private Box Spread Paper Trading</h2><p className="mt-1 text-sm theme-muted">Enter your server-configured private password. This session only accesses the paper ledger; broker orders remain OFF.</p></div>
@@ -312,6 +395,33 @@ export default function BoxSpreadPaperTrading() {
         </label>
         <div className="flex items-end"><button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Refresh ledger</button></div>
       </div>
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div><p className="text-xs font-semibold uppercase tracking-wider theme-accent">Portfolio book</p><h3 className="text-lg font-semibold theme-text">Open & Closed Positions</h3><p className="text-xs theme-muted">Each executed trade, four leg fills, entry timestamp, expiry, entry spot, fees and P&L. All amounts are from the paper ledger.</p></div>
+          <span className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">{openTrades.length} open · {closedTrades.length} closed</span>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
+            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Open Positions</h4><span className="text-xs text-emerald-600">{openTrades.length} active</span></div>
+            {openTrades.length ? openTrades.map(trade=>renderPositionCard(trade,false)) : <p className="rounded-lg border theme-border p-4 text-sm theme-muted">No open paper positions for this account.</p>}
+          </div>
+          <div className="min-w-0 space-y-3 rounded-xl border theme-border p-3">
+            <div className="flex items-center justify-between gap-2"><h4 className="font-semibold theme-text">Closed Positions</h4><span className="text-xs theme-muted">{closedTrades.length} completed</span></div>
+            {closedTrades.length ? closedTrades.map(trade=>renderPositionCard(trade,true)) : <p className="rounded-lg border theme-border p-4 text-sm theme-muted">No closed paper positions for this account.</p>}
+          </div>
+        </div>
+        <div className="rounded-xl border theme-border p-3">
+          <h4 className="font-semibold theme-text">Total Profit & Loss · All Positions</h4>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Realized P&L</div><div className={"mt-1 text-lg font-bold " + (totalRealizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{money(totalRealizedPnl)}</div></div>
+            <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Open unrealized P&L</div><div className="mt-1 text-lg font-bold theme-text">{totalUnrealizedPnl == null ? "Unavailable" : money(totalUnrealizedPnl)}</div></div>
+            <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Net P&L</div><div className="mt-1 text-lg font-bold theme-text">{totalNetPnl == null ? "—" : money(totalNetPnl)}</div></div>
+            <div className="rounded-lg theme-surface-2 p-3"><div className="text-xs theme-muted">Total charges</div><div className="mt-1 text-lg font-bold theme-text">{money(trades.reduce((sum,trade)=>sum+Number(trade.summary?.total_charges??0),0))}</div></div>
+          </div>
+          <p className="mt-2 text-[11px] theme-muted">Net P&L is shown only when every open position has a fresh backend mark. If any leg quote is stale/missing, unrealized and combined P&L remain unavailable rather than using stale prices. Historical trades created before entry-spot capture will show —.</p>
+        </div>
+      </section>
 
       <div className="space-y-3 rounded-xl border theme-border p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
