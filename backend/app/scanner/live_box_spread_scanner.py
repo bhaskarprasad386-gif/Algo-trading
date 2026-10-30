@@ -164,7 +164,7 @@ class LiveBoxSpreadScanner:
             monitor_config = replace(scan_config, min_executable_edge=-1_000_000_000.0)
             monitor_results = scan_box_snapshot(
                 grouped, atm_strike=float(atm), instrument_class=cls,
-                config=monitor_config, policy=self.policy, include_nonpositive=True,
+                config=monitor_config, policy=self.policy, include_nonpositive=True, include_all_strike_pairs=True,
             )
             monitor_updated_ns = max(
                 stamp for result in monitor_results for stamp in (
