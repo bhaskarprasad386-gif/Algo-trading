@@ -535,11 +535,6 @@ export default function BoxSpreadPaperTrading() {
         <label className="text-sm theme-muted">Paper account key
           <input value={account} onChange={e => setAccount(e.target.value)} maxLength={128} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text" />
         </label>
-        <label className="text-sm theme-muted">Lots per paper trade
-          <select value={lots} onChange={e => setLots(Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text">
-            {[1, 2, 5].map(value => <option key={value} value={value}>{value} {value === 1 ? "lot" : "lots"}</option>)}
-          </select>
-        </label>
         <div className="flex items-end"><button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg border theme-border px-4 py-2 text-sm font-semibold theme-text disabled:opacity-50">Refresh ledger</button></div>
       </div>
 
