@@ -270,5 +270,5 @@ def test_snapshot_history_uses_current_classification_only_when_saved_type_missi
         routes, "_expiry_types",
         {("BANKNIFTY", routes._expiry_key(20261123)): "MONTHLY"},
     )
-    payload = routes.snapshots(days=30, limit=500)
+    payload = routes.snapshots(days=30, limit=500, offset=0)
     assert payload["data"][0]["expiry_type"] == "MONTHLY"
