@@ -848,16 +848,17 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
         execution = await _engine.execute_intent(
             idempotency_key=engine_key, reference_prices=reference_prices,
         )
-        receipts = []
-        for fill in execution.fills:
-            receipts.append(await asyncio.to_thread(
-                _ledger.record_fill,
-                trade_id=trade_id, fill_id=_ledger_fill_id(request.idempotency_key, fill.role),
-                role=fill.role, action=fill.action, quantity=fill.quantity,
-                fill_price=fill.fill_price, account_key=payload.account_key,
-            ))
-        await asyncio.to_thread(
-            _ledger.complete_entry_attempt, trade_id=trade_id, account_key=payload.account_key
+        basket_legs = {
+            fill.role: {
+                "fill_id": _ledger_fill_id(request.idempotency_key, fill.role),
+                "action": fill.action, "quantity": fill.quantity,
+                "fill_price": fill.fill_price,
+            }
+            for fill in execution.fills
+        }
+        receipts = await asyncio.to_thread(
+            _ledger.record_entry_basket,
+            trade_id=trade_id, legs=basket_legs, account_key=payload.account_key,
         )
         summary = await asyncio.to_thread(
             _ledger.get_trade_summary, trade_id, account_key=payload.account_key
