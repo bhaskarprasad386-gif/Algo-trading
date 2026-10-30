@@ -120,7 +120,7 @@ def test_contract_selection_uses_india_market_date_not_host_date(monkeypatch):
             underlying="NIFTY",
             instrument_class="INDEX",
             atm_strike=100.0,
-            expiry="26NOV2026",
+            expiry="29OCT2026",
         )
 
 
