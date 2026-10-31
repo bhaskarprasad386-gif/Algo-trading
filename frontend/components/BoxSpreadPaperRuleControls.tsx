@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 
 type Config = {
   entry: { symbols: string[]; direction: "ALL"|"LONG"|"SHORT"; instrument_class: "ALL"|"INDEX"|"STOCK"; expiry_type: "ALL"|"WEEKLY"|"MONTHLY"|"UNKNOWN"; metric: "executable_edge"|"edge_per_lot"|"gross_pnl"; operator: ">="|">"|"<="|"<"|"=="; threshold: number; range_enabled?: boolean; range_min?: number; range_max?: number; lots: number; max_open_positions: number; max_trades_per_interval: number };
-  exit: { metric: "executable_edge"|"edge_per_lot"|"gross_pnl"|"position_net_pnl"|"gross_profit_per_lot"|"net_profit_per_lot"; operator: "<="|"<"|">="|">"|"=="; threshold: number; hold_to_expiry: boolean; order_type: "LIMIT"|"MARKET" };
+  exit: { metric: "executable_edge"|"edge_per_lot"|"gross_pnl"|"position_net_pnl"|"gross_profit_per_lot"|"net_profit_per_lot"|"remaining_edge_per_lot"; operator: "<="|"<"|">="|">"|"=="; threshold: number; hold_to_expiry: boolean; order_type: "LIMIT"|"MARKET" };
   monitor: { interval_seconds: number; entry_window_minutes: number };
 };
 type Rule = { rule_id: number; name: string; enabled: boolean; config: Config };
