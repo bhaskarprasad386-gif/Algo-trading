@@ -232,6 +232,28 @@ def _signed_open_quantities(trade_id: int, account_key: str) -> dict[str, int]:
     return signed
 
 
+def _entry_edge_reference(trade_id: int, rule_id: int, account_key: str) -> float | None:
+    """Read the immutable executable edge captured when this rule opened the trade."""
+    with SessionLocal() as session:
+        value = session.scalar(
+            select(BoxSpreadPaperRuleEvaluation.observed_value)
+            .where(
+                BoxSpreadPaperRuleEvaluation.rule_id == rule_id,
+                BoxSpreadPaperRuleEvaluation.account_key == account_key,
+                BoxSpreadPaperRuleEvaluation.trade_id == trade_id,
+                BoxSpreadPaperRuleEvaluation.event == "ENTRY_EDGE_REFERENCE",
+                BoxSpreadPaperRuleEvaluation.metric == "entry_executable_edge",
+            )
+            .order_by(BoxSpreadPaperRuleEvaluation.id.desc())
+            .limit(1)
+        )
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed == parsed and abs(parsed) != float("inf") else None
+
+
 def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: str,
             trade_id: int | None = None, metric: str | None = None,
             observed: float | None = None, threshold: float | None = None):
@@ -247,7 +269,10 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
         # Keep evaluation history bounded: retain the newest 1,000 rows per rule.
         stale_ids = session.scalars(
             select(BoxSpreadPaperRuleEvaluation.id)
-            .where(BoxSpreadPaperRuleEvaluation.rule_id == rule_id)
+            .where(
+                BoxSpreadPaperRuleEvaluation.rule_id == rule_id,
+                BoxSpreadPaperRuleEvaluation.event != "ENTRY_EDGE_REFERENCE",
+            )
             .order_by(BoxSpreadPaperRuleEvaluation.evaluated_at.desc(),
                       BoxSpreadPaperRuleEvaluation.id.desc())
             .offset(1000)
@@ -326,12 +351,23 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
         signed = None
         observed_override = None
-        if exit_config["metric"] == "position_net_pnl":
+        entry_edge_reference = None
+        if exit_config["metric"] == "remaining_edge_per_lot":
+            entry_edge_reference = await asyncio.to_thread(
+                _entry_edge_reference, trade.id, rule_id, account_key,
+            )
+            observed_override = metric_value(live_row, "executable_edge")
+            if entry_edge_reference is None or observed_override is None:
+                _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+                        "remaining_edge_unavailable_without_durable_entry_edge_reference",
+                        trade.id, exit_config["metric"], observed_override, exit_config["threshold"])
+                continue
+        if exit_config["metric"] in {"position_net_pnl", "gross_profit_per_lot", "net_profit_per_lot"}:
             signed = await asyncio.to_thread(_signed_open_quantities, trade.id, account_key)
             quantities_for_pnl = {role: abs(int(signed.get(role, 0))) for role in roles}
             if any(quantity <= 0 for quantity in quantities_for_pnl.values()) or len(set(quantities_for_pnl.values())) != 1:
                 _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
-                        "position_net_pnl_unavailable_for_incomplete_or_unequal_four_leg_exposure",
+                        "position_pnl_unavailable_for_incomplete_or_unequal_four_leg_exposure",
                         trade.id, exit_config["metric"], None, exit_config["threshold"])
                 continue
             close_marks = {
@@ -342,14 +378,22 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 paper._ledger.get_trade_summary,
                 trade.id, account_key=account_key, mark_prices=close_marks,
             )
-            observed_override = float(
-                Decimal(pnl_summary["realized_pnl"]) +
-                Decimal(pnl_summary["unrealized_pnl"] or 0)
-            )
+            if exit_config["metric"] == "gross_profit_per_lot":
+                gross_total = Decimal(pnl_summary["gross_realized_pnl"]) + Decimal(pnl_summary["gross_unrealized_pnl"] or 0)
+                observed_override = float(gross_total / Decimal(max(1, trade.lots)))
+            else:
+                net_total = Decimal(pnl_summary["realized_pnl"]) + Decimal(pnl_summary["unrealized_pnl"] or 0)
+                if exit_config["metric"] == "net_profit_per_lot":
+                    observed_override = float(net_total / Decimal(max(1, trade.lots)))
+                else:
+                    observed_override = float(net_total)
 
         matched, reason, observed = exit_matches(
             live_row, config, metric_override=observed_override,
         )
+        if exit_config["metric"] == "remaining_edge_per_lot" and observed is not None and entry_edge_reference is not None:
+            captured_edge = entry_edge_reference - observed
+            reason = f"{reason}; entry_edge={entry_edge_reference:.4f}; remaining_edge={observed:.4f}; captured_edge={captured_edge:.4f} points"
         if not matched:
             _record(rule_id, account_key, "EXIT_CHECK", "NO_ACTION", reason,
                     trade.id, exit_config["metric"], observed, exit_config["threshold"])
@@ -526,6 +570,11 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                     execution_audit, trade.id,
                     config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
                     config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
+            entry_edge = metric_value(row, "executable_edge")
+            if entry_edge is not None:
+                _record(rule_id, account_key, "ENTRY_EDGE_REFERENCE", "RECORDED",
+                        "immutable_entry_executable_edge_for_remaining_edge_exit",
+                        trade.id, "entry_executable_edge", entry_edge, None)
         except HTTPException as exc:
             _record(rule_id, account_key, "ENTRY_CHECK", "BLOCKED",
                     f"{candidate_audit};paper_entry_blocked:{exc.status_code}:{exc.detail}",

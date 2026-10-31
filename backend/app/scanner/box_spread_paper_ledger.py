@@ -1003,6 +1003,7 @@ class BoxSpreadPaperLedger:
         sell_notional = sum((Decimal(row.notional) for row in entries if row.action == "SELL"), Decimal("0.00"))
         open_lots: dict[str, list[dict[str, object]]] = {}
         realized_pnl = Decimal("0.00")
+        gross_realized_pnl = Decimal("0.00")
         role_positions: dict[str, int] = {}
         for row in entries:
             role_lots = open_lots.setdefault(row.role, [])
@@ -1021,6 +1022,7 @@ class BoxSpreadPaperLedger:
                 entry_direction = int(lot["direction"])
                 entry_price = Decimal(lot["price"])
                 entry_fee_per_unit = Decimal(lot["fee_per_unit"])
+                gross_realized_pnl += (row_price - entry_price) * entry_direction * matched
                 realized_pnl += (
                     (row_price - entry_price) * entry_direction * matched
                     - (entry_fee_per_unit + row_fee_per_unit) * matched
@@ -1038,11 +1040,13 @@ class BoxSpreadPaperLedger:
                 })
 
         unrealized_pnl: Decimal | None = None
+        gross_unrealized_pnl: Decimal | None = None
         open_roles = {role for role, lots in open_lots.items() if lots}
         if mark_prices is not None and open_roles:
             if open_roles - set(mark_prices):
                 raise ValueError("mark_prices must include every open leg role")
             unrealized_pnl = Decimal("0.00")
+            gross_unrealized_pnl = Decimal("0.00")
             for role in open_roles:
                 try:
                     mark = Decimal(str(mark_prices[role]))
@@ -1059,6 +1063,7 @@ class BoxSpreadPaperLedger:
                     role_quantity += quantity
                     role_notional += (mark * quantity).quantize(CENT, rounding=ROUND_HALF_UP)
                     exit_action = "SELL" if direction > 0 else "BUY"
+                    gross_unrealized_pnl += (mark - Decimal(lot["price"])) * direction * quantity
                     unrealized_pnl += (
                         (mark - Decimal(lot["price"])) * direction * quantity
                         - Decimal(lot["fee_per_unit"]) * quantity
@@ -1072,6 +1077,9 @@ class BoxSpreadPaperLedger:
             unrealized_pnl = unrealized_pnl.quantize(CENT, rounding=ROUND_HALF_UP)
         elif not open_roles:
             unrealized_pnl = Decimal("0.00")
+            gross_unrealized_pnl = Decimal("0.00")
+        if gross_unrealized_pnl is not None:
+            gross_unrealized_pnl = gross_unrealized_pnl.quantize(CENT, rounding=ROUND_HALF_UP)
 
         return {
             "trade_id": trade_record.id,
@@ -1084,6 +1092,8 @@ class BoxSpreadPaperLedger:
             "net_cash_flow": net_cash_flow,
             "unrealized_pnl": unrealized_pnl,
             "realized_pnl": realized_pnl.quantize(CENT, rounding=ROUND_HALF_UP),
+            "gross_unrealized_pnl": gross_unrealized_pnl,
+            "gross_realized_pnl": gross_realized_pnl.quantize(CENT, rounding=ROUND_HALF_UP),
             "fee_schedule_version": trade_record.fee_schedule_version,
         }
 

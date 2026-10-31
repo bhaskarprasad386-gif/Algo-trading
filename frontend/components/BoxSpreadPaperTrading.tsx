@@ -96,6 +96,7 @@ export default function BoxSpreadPaperTrading() {
   const [message, setMessage] = useState<string | null>(null);
   const [ledger, setLedger] = useState<any | null>(null);
   const [exitPreview, setExitPreview] = useState<any | null>(null);
+  const [exitPreviewDirty, setExitPreviewDirty] = useState(false);
   const [exitOrderType, setExitOrderType] = useState<"LIMIT" | "MARKET">("LIMIT");
   const [exitLimitPrices, setExitLimitPrices] = useState<Record<Role, string>>({
     LOW_CE: "", HIGH_CE: "", HIGH_PE: "", LOW_PE: "",
@@ -320,8 +321,35 @@ export default function BoxSpreadPaperTrading() {
       const defaults = Object.fromEntries((body.legs ?? []).map((leg: any) => [leg.role, String(leg.default_limit_price)])) as Record<Role, string>;
       setExitLimitPrices(defaults);
       setExitOrderType("LIMIT");
+      setExitPreviewDirty(false);
       setMessage("Read-only four-leg exit preview loaded. No fill has been recorded.");
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load four-leg exit preview"); }
+    finally { setBusy(false); }
+  }
+
+  async function recalculateExitPreview() {
+    if (selectedTrade == null || !exitPreview) return;
+    if (exitOrderType === "LIMIT" && roles.some(role => !Number.isFinite(Number(exitLimitPrices[role])) || Number(exitLimitPrices[role]) <= 0)) {
+      setError("Enter a valid positive limit price for all four legs before recalculating.");
+      return;
+    }
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const body = await request("/trades/" + selectedTrade + "/exit-preview", {
+        method: "POST",
+        body: JSON.stringify({
+          account_key: account, order_type: exitOrderType,
+          ...(exitOrderType === "LIMIT" ? {
+            limit_prices: Object.fromEntries(roles.map(role => [role, Number(exitLimitPrices[role])])),
+          } : {}),
+        }),
+      });
+      setExitPreview(body);
+      setExitPreviewDirty(false);
+      setMessage(body.all_legs_marketable
+        ? "Preview recalculated from your proposed limits. All four legs are currently executable; confirmation still rechecks fresh quotes."
+        : "Preview recalculated. At least one limit is not currently executable; the P&L is an indicative scenario only.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Unable to recalculate proposed exit preview"); }
     finally { setBusy(false); }
   }
 
@@ -341,6 +369,7 @@ export default function BoxSpreadPaperTrading() {
         }),
       });
       setExitPreview(null);
+      setExitPreviewDirty(false);
       setLedger(await request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account)));
       setMessage("Four-leg paper basket exit recorded in one ledger transaction. No broker order was sent.");
       await refresh();
@@ -723,19 +752,24 @@ export default function BoxSpreadPaperTrading() {
             {exitPreview && exitPreview.trade_id === selectedTrade && <form onSubmit={confirmBasketExit} className="space-y-3 rounded-lg theme-surface-2 p-3">
               <div className="flex items-center justify-between gap-2"><strong className="text-sm theme-text">Exit preview · Qty {exitPreview.quantity_per_leg} per leg</strong><span className="text-[10px] font-bold text-emerald-600">READ ONLY</span></div>
               <label className="block text-xs theme-muted">Order type
-                <select value={exitOrderType} onChange={e => setExitOrderType(e.target.value as "LIMIT" | "MARKET")} className="mt-1 w-full rounded-lg border theme-border theme-surface px-3 py-2 text-sm theme-text">
+                <select value={exitOrderType} onChange={e => { setExitOrderType(e.target.value as "LIMIT" | "MARKET"); setExitPreviewDirty(true); }} className="mt-1 w-full rounded-lg border theme-border theme-surface px-3 py-2 text-sm theme-text">
                   <option value="LIMIT">Limit (default)</option><option value="MARKET">Market</option>
                 </select>
               </label>
               <div className="overflow-x-auto"><table className="w-full min-w-[440px] text-xs"><thead className="theme-muted"><tr>{["Leg","Close side","Bid","Ask","Qty",...(exitOrderType === "LIMIT" ? ["Limit price"] : ["Market price"])].map(label=><th key={label} className="px-2 py-2 text-left">{label}</th>)}</tr></thead><tbody>
-                {(exitPreview.legs ?? []).map((leg: any) => <tr key={leg.role} className="border-t theme-border"><td className="px-2 py-2 font-semibold theme-text">{leg.role}</td><td className="px-2 py-2 theme-text">{leg.close_action}</td><td className="px-2 py-2 theme-text">{money(leg.bid)}</td><td className="px-2 py-2 theme-text">{money(leg.ask)}</td><td className="px-2 py-2 theme-text">{leg.quantity}</td><td className="px-2 py-2 theme-text">{exitOrderType === "LIMIT" ? <input aria-label={leg.role + " limit price"} type="number" min="0.05" step="0.05" value={exitLimitPrices[leg.role as Role] ?? ""} onChange={e => setExitLimitPrices(current => ({ ...current, [leg.role]: e.target.value }))} className="w-24 rounded border theme-border theme-surface px-2 py-1"/> : money(leg.executable_price)}</td></tr>)}
+                {(exitPreview.legs ?? []).map((leg: any) => <tr key={leg.role} className="border-t theme-border"><td className="px-2 py-2 font-semibold theme-text">{leg.role}</td><td className="px-2 py-2 theme-text">{leg.close_action}</td><td className="px-2 py-2 theme-text">{money(leg.bid)}</td><td className="px-2 py-2 theme-text">{money(leg.ask)}</td><td className="px-2 py-2 theme-text">{leg.quantity}</td><td className="px-2 py-2 theme-text">{exitOrderType === "LIMIT" ? <input aria-label={leg.role + " limit price"} type="number" min="0.05" step="0.05" value={exitLimitPrices[leg.role as Role] ?? ""} onChange={e => { setExitLimitPrices(current => ({ ...current, [leg.role]: e.target.value })); setExitPreviewDirty(true); }} className="w-24 rounded border theme-border theme-surface px-2 py-1"/> : money(leg.executable_price)}</td></tr>)}
               </tbody></table></div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] theme-muted">{exitPreview.preview_price_source === "INDICATIVE_LIMIT_SCENARIO" ? "Indicative limit scenario · at least one leg is not executable now" : "Current executable quote basis"}</span>
+                <button type="button" onClick={() => void recalculateExitPreview()} disabled={busy || (exitOrderType === "LIMIT" && roles.some(role => !Number.isFinite(Number(exitLimitPrices[role])) || Number(exitLimitPrices[role]) <= 0))} className="rounded border border-cyan-600/50 px-3 py-1.5 text-xs font-semibold theme-text disabled:opacity-50">Recalculate proposed P&amp;L</button>
+              </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="rounded border theme-border p-2"><div className="theme-muted">Gross close cash flow</div><strong className="theme-text">{money(exitPreview.gross_close_cash_flow)}</strong></div>
                 <div className="rounded border theme-border p-2"><div className="theme-muted">Estimated P&amp;L incl. close charges</div><strong className="theme-text">{money(exitPreview.estimated_realized_plus_close_pnl)}</strong></div>
               </div>
-              <p className="text-[11px] theme-muted">Preview is not a fill guarantee. The backend rechecks fresh quotes and every limit at confirmation. If any leg cannot execute, all four remain open.</p>
-              <button type="submit" disabled={busy || (exitOrderType === "LIMIT" && roles.some(role => !Number.isFinite(Number(exitLimitPrices[role])) || Number(exitLimitPrices[role]) <= 0))} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">Confirm four-leg paper exit</button>
+              {exitPreviewDirty && <p className="text-[11px] font-semibold text-amber-600">Prices changed — recalculate the preview before confirmation.</p>}
+              <p className="text-[11px] theme-muted">This is a read-only estimate, not a fill guarantee. Non-marketable limits show an indicative scenario only. Confirmation rechecks fresh quotes and blocks the entire basket if any leg cannot execute.</p>
+              <button type="submit" disabled={busy || exitPreviewDirty || !exitPreview.all_legs_marketable || (exitOrderType === "LIMIT" && roles.some(role => !Number.isFinite(Number(exitLimitPrices[role])) || Number(exitLimitPrices[role]) <= 0))} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">Confirm four-leg paper exit</button>
             </form>}
           </div>
           <div className="space-y-2 rounded-lg border border-amber-500/50 p-3" role="status">

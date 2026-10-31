@@ -1165,3 +1165,39 @@ def test_fresh_marks_can_use_preloaded_trade_and_snapshot(monkeypatch):
     assert marks == {
         "LOW_CE": 10, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 41,
     }
+
+
+def test_exit_preview_recalculates_proposed_limit_prices_and_marks_non_marketable_legs(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: (
+        captured.update(kwargs) or {
+            "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
+        }
+    ))
+    payload = routes.ExitPreviewRequest(
+        account_key="basket-route-test", order_type="LIMIT",
+        limit_prices={"LOW_CE": 9, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 42},
+    )
+    result = routes.preview_exit_basket_with_limits(456, payload)
+    quotes = {leg["role"]: leg for leg in result["legs"]}
+    assert quotes["LOW_CE"]["preview_price"] == 10
+    assert quotes["LOW_CE"]["marketable"] is True
+    assert quotes["HIGH_CE"]["preview_price"] == 20
+    assert quotes["HIGH_CE"]["marketable"] is False
+    assert quotes["HIGH_PE"]["preview_price"] == 30
+    assert quotes["LOW_PE"]["preview_price"] == 41
+    assert result["all_legs_marketable"] is False
+    assert result["preview_price_source"] == "INDICATIVE_LIMIT_SCENARIO"
+    assert captured["mark_prices"] == {"LOW_CE": 10, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 41}
+    assert result["estimated_realized_plus_close_pnl"] == "30.00"
+
+
+def test_exit_preview_rejects_incomplete_or_invalid_proposed_limits(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    with pytest.raises(HTTPException) as raised:
+        routes.preview_exit_basket_with_limits(456, routes.ExitPreviewRequest(
+            account_key="basket-route-test", order_type="LIMIT",
+            limit_prices={"LOW_CE": 10},
+        ))
+    assert raised.value.status_code == 422
