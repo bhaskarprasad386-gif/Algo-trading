@@ -409,7 +409,27 @@ def test_exit_preview_returns_all_four_executable_bid_ask_quotes_without_writing
     assert quotes["HIGH_CE"]["executable_price"] == 21
     assert quotes["HIGH_PE"]["executable_price"] == 30
     assert quotes["LOW_PE"]["executable_price"] == 41
+    assert all(leg["required_depth"] == 25 and leg["available_depth"] == 25 and leg["depth_sufficient"] for leg in result["legs"])
+    assert result["all_legs_depth_sufficient"] is True
+    assert result["preview_is_executable"] is True
     assert result["estimated_realized_plus_close_pnl"] == "30.00"
+
+
+@pytest.mark.parametrize("depth_field", [
+    "low_call_bid_qty", "high_call_ask_qty", "high_put_bid_qty", "low_put_ask_qty",
+])
+def test_exit_preview_reports_missing_executable_depth_without_writing(monkeypatch, depth_field):
+    row, _ = _exit_basket_route_fixtures(monkeypatch)
+    row.pop(depth_field)
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {
+        "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
+    })
+    result = routes.preview_exit_basket(456, account_key="basket-route-test")
+    leg = next(item for item in result["legs"] if item["depth_sufficient"] is False)
+    assert leg["required_depth"] == 25
+    assert leg["available_depth"] is None
+    assert result["all_legs_depth_sufficient"] is False
+    assert result["preview_is_executable"] is False
 
 
 def test_exit_basket_rejects_one_unmarketable_limit_without_any_fill(monkeypatch):
