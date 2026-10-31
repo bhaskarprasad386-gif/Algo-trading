@@ -391,7 +391,7 @@ def test_automatic_rule_exit_uses_shared_four_leg_executor_even_when_entry_rule_
     monkeypatch.setattr(paper, "_resolve", lambda *_args: SimpleNamespace(direction="LONG"))
     monkeypatch.setattr(paper, "_matching_live_row", lambda *_args, **_kwargs: row)
     monkeypatch.setattr(
-        paper, "_signed_open_quantities",
+        rule_routes, "_signed_open_quantities",
         lambda *_args: {"LOW_CE": 5, "HIGH_CE": -5, "HIGH_PE": 5, "LOW_PE": -5},
     )
     monkeypatch.setattr(
