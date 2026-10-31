@@ -1256,3 +1256,42 @@ def test_shared_exit_executor_rejects_bad_fourth_leg_before_atomic_write(monkeyp
             order_type="LIMIT", fill_id="invalid-fourth-leg",
         )
     assert raised.value.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("role", "limit_prices"),
+    [
+        ("LOW_CE", {"LOW_CE": 11, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 41}),
+        ("HIGH_CE", {"LOW_CE": 10, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 41}),
+        ("HIGH_PE", {"LOW_CE": 10, "HIGH_CE": 21, "HIGH_PE": 31, "LOW_PE": 41}),
+        ("LOW_PE", {"LOW_CE": 10, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 40}),
+    ],
+)
+def test_all_or_none_exit_rejects_basket_if_any_one_leg_is_not_marketable(
+    monkeypatch, role, limit_prices,
+):
+    _exit_basket_route_fixtures(monkeypatch)
+    writes = []
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: writes.append(kwargs) or pytest.fail(
+            "AON basket must not record any leg when one leg cannot execute"
+        ),
+    )
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 40, "low_put_ask": 41,
+    }
+
+    with pytest.raises(HTTPException) as raised:
+        routes._execute_exit_basket_from_row(
+            456, "basket-route-test", row,
+            order_type="LIMIT", limit_prices=limit_prices,
+            fill_id=f"aon-non-marketable-{role}",
+        )
+
+    assert raised.value.status_code == 409
+    assert "no legs were exited" in raised.value.detail
+    assert writes == []
