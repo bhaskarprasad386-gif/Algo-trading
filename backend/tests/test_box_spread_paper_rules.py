@@ -453,3 +453,50 @@ def test_automatic_rule_exit_uses_shared_four_leg_executor_even_when_entry_rule_
     assert args[:3] == (42, "default", row)
     assert kwargs == {"order_type": "MARKET", "fill_id": "rule-exit-7-42"}
     assert any(args[3] == "EXIT_RECORDED" for args, _ in records if len(args) > 3)
+
+
+
+def test_automatic_rule_exit_skips_when_shared_four_leg_executor_rejects_depth(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from app.scanner import box_spread_paper_routes as paper
+    from app.scanner import live_box_spread_routes
+
+    config = validate_rule_config(base_config())
+    trade = SimpleNamespace(id=44, expiry="2026-11-05")
+    row = {"executable_edge": 0.0}
+    records = []
+    attempts = []
+
+    monkeypatch.setattr(rule_routes, "_open_rule_trades", lambda *_args: [trade])
+    monkeypatch.setattr(rule_routes, "_record", lambda *args, **kwargs: records.append((args, kwargs)))
+    monkeypatch.setattr(paper, "_load_trade_request", lambda *_args: object())
+    monkeypatch.setattr(paper, "_resolve", lambda *_args: SimpleNamespace(direction="LONG"))
+    monkeypatch.setattr(paper, "_matching_live_row", lambda *_args, **_kwargs: row)
+    monkeypatch.setattr(
+        rule_routes, "_signed_open_quantities",
+        lambda *_args: {"LOW_CE": 5, "HIGH_CE": -5, "HIGH_PE": 5, "LOW_PE": -5},
+    )
+
+    def reject_depth(*args, **kwargs):
+        attempts.append((args, kwargs))
+        raise HTTPException(
+            status_code=409,
+            detail="insufficient executable depth for HIGH_CE; no legs were exited",
+        )
+
+    monkeypatch.setattr(paper, "_execute_exit_basket_from_row", reject_depth)
+    monkeypatch.setattr(paper, "_paper_execution_enabled", False)
+    monkeypatch.setattr(live_box_spread_routes, "monitor_snapshot", lambda **_kwargs: {
+        "fresh": True, "data": [row], "entry_data": [],
+    })
+
+    asyncio.run(rule_routes._run_rule_cycle(7, "default", config, rule_enabled=False))
+
+    assert len(attempts) == 1
+    exit_records = [args for args, _ in records if len(args) > 3 and args[2] == "EXIT_CHECK"]
+    assert any(args[3] == "SKIPPED" for args in exit_records)
+    assert any("shared_four_leg_exit_rejected" in args[4] for args in exit_records)
+    assert not any(args[3] == "EXIT_RECORDED" for args in exit_records)
