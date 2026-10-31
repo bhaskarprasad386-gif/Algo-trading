@@ -201,6 +201,25 @@ def test_per_lot_profit_exit_metrics_use_server_calculated_override(metric):
     )
 
 
+def test_remaining_edge_exit_uses_current_executable_edge_as_remaining_points():
+    raw = base_config()
+    raw["exit"] = {
+        "metric": "remaining_edge_per_lot", "operator": "<=",
+        "threshold": 2, "hold_to_expiry": False,
+    }
+    config = validate_rule_config(raw)
+    # Entered at 20 points; at 2 points remaining, 18 points have been captured.
+    assert exit_matches({"executable_edge": 2}, config) == (
+        True, "exit_threshold_met", 2.0,
+    )
+    assert exit_matches({"executable_edge": 2.5}, config) == (
+        False, "exit_threshold_not_met", 2.5,
+    )
+    assert exit_matches({}, config) == (
+        False, "exit_metric_unavailable", None,
+    )
+
+
 def test_position_net_pnl_exit_threshold_uses_server_calculated_override():
     raw = base_config()
     raw["exit"] = {
