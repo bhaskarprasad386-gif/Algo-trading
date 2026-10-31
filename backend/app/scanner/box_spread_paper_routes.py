@@ -214,6 +214,11 @@ class ExitBasket(BaseModel):
     # Optional per-leg limits. When omitted, LIMIT defaults to the current executable quote.
     limit_prices: dict[str, float] | None = None
 
+class ExitPreviewRequest(BaseModel):
+    account_key: str = Field(default="default", min_length=1, max_length=128)
+    order_type: Literal["LIMIT", "MARKET"] = "LIMIT"
+    limit_prices: dict[str, float] | None = None
+
 
 def _resolve(payload: CreatePaperTrade):
     if not _master.instruments:
@@ -975,50 +980,93 @@ def _exit_quote_fields(role: str) -> tuple[str, str]:
     return fields[role]
 
 
+def _build_exit_preview(
+    trade_id: int,
+    account_key: str,
+    *,
+    order_type: str = "LIMIT",
+    limit_prices: dict[str, float] | None = None,
+):
+    """Read-only four-leg preview; proposed limits are repriced against fresh quotes."""
+    request = _load_trade_request(trade_id, account_key)
+    contracts = _resolve(request)
+    row = _matching_live_row(contracts)
+    if row is None:
+        raise HTTPException(status_code=409, detail="matching fresh four-leg quotes are unavailable")
+    trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    if limit_prices is not None and set(limit_prices) != set(roles):
+        raise HTTPException(status_code=422, detail="limit_prices must contain exactly all four leg roles")
+    preview_legs = []
+    marks: dict[str, float] = {}
+    gross_cash_flow = Decimal("0.00")
+    all_legs_marketable = True
+    for role in roles:
+        bid_field, ask_field = _exit_quote_fields(role)
+        try:
+            bid, ask = float(row[bid_field]), float(row[ask_field])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=409, detail=f"fresh bid/ask unavailable for {role}") from None
+        if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
+            raise HTTPException(status_code=409, detail=f"valid executable bid/ask unavailable for {role}")
+        leg = next(item for item in trade_row["legs"] if item["role"] == role)
+        close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
+        executable = bid if close_action == "SELL" else ask
+        proposed = executable
+        if order_type == "LIMIT" and limit_prices is not None:
+            try:
+                proposed = float(limit_prices[role])
+            except (TypeError, ValueError, OverflowError):
+                raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
+            if not math.isfinite(proposed) or proposed <= 0:
+                raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
+        marketable = proposed <= bid if close_action == "SELL" else proposed >= ask
+        all_legs_marketable = all_legs_marketable and marketable
+        # A marketable limit is expected to fill at the current executable quote.
+        # A non-marketable limit is only an indicative what-if mark, not a fill.
+        preview_mark = executable if marketable else proposed
+        marks[role] = preview_mark
+        gross_cash_flow += Decimal(str(preview_mark)) * quantities[role] * (1 if close_action == "SELL" else -1)
+        preview_legs.append({
+            "role": role, "close_action": close_action,
+            "quantity": quantities[role], "bid": bid, "ask": ask,
+            "default_limit_price": executable, "executable_price": executable,
+            "limit_price": proposed if order_type == "LIMIT" else None,
+            "marketable": marketable,
+            "preview_price": preview_mark,
+        })
+    summary = _ledger.get_trade_summary(trade_id, account_key=account_key, mark_prices=marks)
+    estimated_net_pnl = Decimal(summary["realized_pnl"]) + Decimal(summary["unrealized_pnl"] or 0)
+    return {
+        "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+        "order_type_default": "LIMIT", "order_type": order_type, "trade_id": trade_id,
+        "quantity_per_leg": next(iter(quantities.values())),
+        "legs": preview_legs, "gross_close_cash_flow": str(gross_cash_flow),
+        "estimated_charges_included": True,
+        "estimated_realized_plus_close_pnl": str(estimated_net_pnl),
+        "all_legs_marketable": all_legs_marketable,
+        "preview_is_executable": all_legs_marketable,
+        "preview_price_source": "CURRENT_EXECUTABLE_QUOTES" if all_legs_marketable else "INDICATIVE_LIMIT_SCENARIO",
+        "quote_source": "fresh_backend_four_leg_snapshot",
+    }
+
+
 @router.get("/trades/{trade_id}/exit-preview", dependencies=[Depends(require_paper_access)])
 def preview_exit_basket(trade_id: int, account_key: str = "default"):
-    """Read-only four-leg quote and P&L preview; it never records a fill."""
     try:
-        request = _load_trade_request(trade_id, account_key)
-        contracts = _resolve(request)
-        row = _matching_live_row(contracts)
-        if row is None:
-            raise HTTPException(status_code=409, detail="matching fresh four-leg quotes are unavailable")
-        trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
-        preview_legs = []
-        marks: dict[str, float] = {}
-        gross_cash_flow = Decimal("0.00")
-        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
-            bid_field, ask_field = _exit_quote_fields(role)
-            try:
-                bid, ask = float(row[bid_field]), float(row[ask_field])
-            except (KeyError, TypeError, ValueError, OverflowError):
-                raise HTTPException(status_code=409, detail=f"fresh bid/ask unavailable for {role}") from None
-            if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
-                raise HTTPException(status_code=409, detail=f"valid executable bid/ask unavailable for {role}")
-            leg = next(item for item in trade_row["legs"] if item["role"] == role)
-            close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
-            executable = bid if close_action == "SELL" else ask
-            marks[role] = executable
-            gross_cash_flow += Decimal(str(executable)) * quantities[role] * (1 if close_action == "SELL" else -1)
-            preview_legs.append({
-                "role": role, "close_action": close_action,
-                "quantity": quantities[role], "bid": bid, "ask": ask,
-                "default_limit_price": executable, "executable_price": executable,
-            })
-        summary = _ledger.get_trade_summary(
-            trade_id, account_key=account_key, mark_prices=marks,
+        return _build_exit_preview(trade_id, account_key)
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/trades/{trade_id}/exit-preview", dependencies=[Depends(require_paper_access)])
+def preview_exit_basket_with_limits(trade_id: int, payload: ExitPreviewRequest):
+    """Recalculate indicative P&L and charges from the proposed four-leg limits."""
+    try:
+        return _build_exit_preview(
+            trade_id, payload.account_key,
+            order_type=payload.order_type, limit_prices=payload.limit_prices,
         )
-        estimated_net_pnl = Decimal(summary["realized_pnl"]) + Decimal(summary["unrealized_pnl"] or 0)
-        return {
-            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
-            "order_type_default": "LIMIT", "trade_id": trade_id,
-            "quantity_per_leg": next(iter(quantities.values())),
-            "legs": preview_legs, "gross_close_cash_flow": str(gross_cash_flow),
-            "estimated_charges_included": True,
-            "estimated_realized_plus_close_pnl": str(estimated_net_pnl),
-            "quote_source": "fresh_backend_four_leg_snapshot",
-        }
     except Exception as exc:
         _error(exc)
 
