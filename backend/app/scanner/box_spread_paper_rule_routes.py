@@ -408,22 +408,20 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                     trade.id, exit_config["metric"], observed, exit_config["threshold"])
             continue
 
-        basket_legs = {
-            role: {
-                "quantity": open_quantities[role],
-                "fill_price": paper._exit_reference_price(live_row, contracts.direction, role),
-            }
-            for role in roles
-        }
-        await asyncio.to_thread(
-            paper._ledger.record_exit_basket,
-            trade_id=trade.id,
-            fill_id=f"rule-exit-{rule_id}-{trade.id}-{uuid.uuid4().hex}",
-            legs=basket_legs,
-            account_key=account_key,
-        )
+        try:
+            exit_result = await asyncio.to_thread(
+                paper._execute_exit_basket_from_row,
+                trade.id, account_key, live_row,
+                order_type=exit_config["order_type"],
+                fill_id=f"rule-exit-{rule_id}-{trade.id}",
+            )
+        except HTTPException as exc:
+            _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+                    f"shared_four_leg_exit_rejected:{exc.detail}",
+                    trade.id, exit_config["metric"], observed, exit_config["threshold"])
+            continue
         _record(rule_id, account_key, "EXIT_CHECK", "EXIT_RECORDED",
-                f"{reason}; {exit_config['order_type']} four-leg paper basket",
+                f"{reason}; shared {exit_config['order_type']} four-leg paper basket; status={exit_result['status']}",
                 trade.id, exit_config["metric"], observed, exit_config["threshold"])
 
     # Entry remains subject to the global paper execution switch and all existing
