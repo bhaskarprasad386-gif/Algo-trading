@@ -928,12 +928,21 @@ def _paper_open_basket_state(trade_id: int, account_key: str) -> tuple[dict[str,
     trade_row = next((item for item in rows if int(item["trade_id"]) == trade_id), None)
     if trade_row is None:
         raise HTTPException(status_code=404, detail="no open paper position found for this trade")
-    quantities = {
-        str(leg["role"]): int(leg["open_position_quantity"])
-        for leg in trade_row.get("legs", [])
-    }
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
-    if set(quantities) != set(roles) or any(quantities.get(role, 0) <= 0 for role in roles):
+    open_legs = trade_row.get("legs", [])
+    # Reject malformed ledger projections too: a duplicate role must not be
+    # silently collapsed by a dict comprehension while another row is ignored.
+    role_rows = [str(leg.get("role", "")) for leg in open_legs]
+    if len(open_legs) != 4 or len(set(role_rows)) != 4 or set(role_rows) != set(roles):
+        raise HTTPException(status_code=409, detail="exactly four distinct open Box Spread legs are required")
+    try:
+        quantities = {
+            str(leg["role"]): int(leg["open_position_quantity"])
+            for leg in open_legs
+        }
+    except (KeyError, TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=409, detail="valid open quantity is required for every basket leg") from None
+    if any(quantities.get(role, 0) <= 0 for role in roles):
         raise HTTPException(status_code=409, detail="four open legs are required for a basket exit")
     if len({quantities[role] for role in roles}) != 1:
         raise HTTPException(status_code=409, detail="four-leg open quantities are unequal; basket exit is blocked")
