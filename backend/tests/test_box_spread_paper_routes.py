@@ -1351,3 +1351,45 @@ def test_all_or_none_exit_rejects_basket_if_any_one_leg_is_not_marketable(
     assert raised.value.status_code == 409
     assert "no legs were exited" in raised.value.detail
     assert writes == []
+
+
+@pytest.mark.parametrize(
+    ("depth_field", "available"),
+    [
+        ("low_call_bid_qty", 24),
+        ("high_call_ask_qty", 24),
+        ("high_put_bid_qty", 24),
+        ("low_put_ask_qty", 24),
+        ("low_call_bid_qty", None),
+    ],
+)
+def test_all_or_none_exit_requires_full_executable_depth_on_every_leg(
+    monkeypatch, depth_field, available,
+):
+    _exit_basket_route_fixtures(monkeypatch)
+    writes = []
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: writes.append(kwargs) or pytest.fail(
+            "insufficient or missing depth must block the entire four-leg exit"
+        ),
+    )
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "low_put_bid": 40, "low_put_ask": 41,
+        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+    }
+    row[depth_field] = available
+    with pytest.raises(HTTPException) as raised:
+        routes._execute_exit_basket_from_row(
+            456, "basket-route-test", row,
+            order_type="MARKET", fill_id=f"aon-depth-{depth_field}",
+        )
+    assert raised.value.status_code == 409
+    assert "no legs were exited" in raised.value.detail
+    assert writes == []
