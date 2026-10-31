@@ -4,8 +4,8 @@ from threading import Barrier
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
@@ -788,6 +788,53 @@ def test_four_leg_basket_exit_commits_all_legs_atomically_and_is_idempotent(pape
     )
     assert len(replay) == 4
     assert len(paper_ledger.list_fills(trade.id)) == 8
+
+
+def test_four_leg_basket_exit_rolls_back_every_leg_if_a_mid_basket_write_fails(paper_ledger):
+    trade = _trade(paper_ledger)
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL",
+        "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    for role, action in entry_actions.items():
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id=f"rollback-entry-{role}", role=role,
+            action=action, quantity=trade.quantity, fill_price=100,
+        )
+
+    legs = {
+        role: {"quantity": trade.quantity, "fill_price": 105}
+        for role in entry_actions
+    }
+    before_fills = len(paper_ledger.list_fills(trade.id))
+    before_balance = paper_ledger.ensure_account()
+    exit_rows_seen = 0
+
+    def fail_on_third_exit_flush(session, flush_context, instances):
+        nonlocal exit_rows_seen
+        new_exit_rows = [
+            row for row in session.new
+            if isinstance(row, BoxSpreadPaperLedgerEntry)
+            and str(row.fill_id).startswith("EXIT:BASKET:rollback-atomic:")
+        ]
+        if new_exit_rows:
+            exit_rows_seen += len(new_exit_rows)
+            if exit_rows_seen >= 3:
+                raise RuntimeError("injected third-leg persistence failure")
+
+    event.listen(Session, "before_flush", fail_on_third_exit_flush)
+    try:
+        with pytest.raises(RuntimeError, match="third-leg persistence failure"):
+            paper_ledger.record_exit_basket(
+                trade_id=trade.id, fill_id="rollback-atomic", legs=legs,
+            )
+    finally:
+        event.remove(Session, "before_flush", fail_on_third_exit_flush)
+
+    assert exit_rows_seen == 3
+    assert len(paper_ledger.list_fills(trade.id)) == before_fills
+    assert paper_ledger.ensure_account() == before_balance
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "FILLED"
 
 
 def test_four_leg_basket_exit_rejects_unequal_open_quantities_without_partial_writes(paper_ledger):

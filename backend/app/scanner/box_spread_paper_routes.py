@@ -8,7 +8,7 @@ import math
 import threading
 import time
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -916,39 +916,11 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
 
 @router.post("/trades/{trade_id}/exit", dependencies=[Depends(require_paper_access)])
 def exit_leg(trade_id: int, payload: ExitLeg):
-    try:
-        # Never trust browser-entered exit prices. Resolve this persisted trade
-        # and require its matching fresh four-leg scanner row, just like entry.
-        request = _load_trade_request(trade_id, payload.account_key)
-        contracts = _resolve(request)
-        current_row = _matching_live_row(contracts)
-        if current_row is None:
-            raise HTTPException(
-                status_code=409,
-                detail="No matching fresh live Box Spread opportunity; paper exit was not recorded",
-            )
-        executable_price = _exit_reference_price(
-            current_row, contracts.direction, payload.role,
-        )
-        receipt = _ledger.record_exit_fill(
-            trade_id=trade_id, fill_id=payload.fill_id, role=payload.role,
-            quantity=payload.quantity, fill_price=executable_price,
-            account_key=payload.account_key,
-        )
-        summary = _ledger.get_trade_summary(trade_id, account_key=payload.account_key)
-        return {
-            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
-            "receipt": {
-                "trade_id": receipt.trade_id, "fill_id": receipt.fill_id,
-                "role": receipt.role, "action": receipt.action,
-                "quantity": receipt.quantity, "fill_price": str(receipt.fill_price),
-                "charges": str(receipt.charges), "cash_delta": str(receipt.cash_delta),
-                "virtual_balance": str(receipt.virtual_balance),
-            },
-            "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
-        }
-    except Exception as exc:
-        _error(exc)
+    """Reject legacy single-leg exits; Box Spread exits must be one four-leg basket."""
+    raise HTTPException(
+        status_code=409,
+        detail="Single-leg exits are disabled. Review the four-leg exit preview and confirm the complete basket.",
+    )
 
 
 def _paper_open_basket_state(trade_id: int, account_key: str) -> tuple[dict[str, Any], dict[str, int]]:
@@ -956,12 +928,24 @@ def _paper_open_basket_state(trade_id: int, account_key: str) -> tuple[dict[str,
     trade_row = next((item for item in rows if int(item["trade_id"]) == trade_id), None)
     if trade_row is None:
         raise HTTPException(status_code=404, detail="no open paper position found for this trade")
-    quantities = {
-        str(leg["role"]): int(leg["open_position_quantity"])
-        for leg in trade_row.get("legs", [])
-    }
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
-    if set(quantities) != set(roles) or any(quantities.get(role, 0) <= 0 for role in roles):
+    open_legs = trade_row.get("legs", [])
+    # Reject malformed ledger projections too: a duplicate role must not be
+    # silently collapsed by a dict comprehension while another row is ignored.
+    role_rows = [str(leg.get("role", "")) for leg in open_legs]
+    if len(open_legs) != 4 or len(set(role_rows)) != 4 or set(role_rows) != set(roles):
+        raise HTTPException(status_code=409, detail="exactly four distinct open Box Spread legs are required")
+    try:
+        quantities = {}
+        for leg in open_legs:
+            raw_quantity = leg["open_position_quantity"]
+            decimal_quantity = Decimal(str(raw_quantity))
+            if not decimal_quantity.is_finite() or decimal_quantity <= 0 or decimal_quantity != decimal_quantity.to_integral_value():
+                raise ValueError("open quantity must be a positive whole number")
+            quantities[str(leg["role"])] = int(decimal_quantity)
+    except (KeyError, TypeError, ValueError, OverflowError, InvalidOperation):
+        raise HTTPException(status_code=409, detail="valid positive whole-number open quantity is required for every basket leg") from None
+    if any(quantities.get(role, 0) <= 0 for role in roles):
         raise HTTPException(status_code=409, detail="four open legs are required for a basket exit")
     if len({quantities[role] for role in roles}) != 1:
         raise HTTPException(status_code=409, detail="four-leg open quantities are unequal; basket exit is blocked")
@@ -988,6 +972,10 @@ def _build_exit_preview(
     limit_prices: dict[str, float] | None = None,
 ):
     """Read-only four-leg preview; proposed limits are repriced against fresh quotes."""
+    if order_type not in {"LIMIT", "MARKET"}:
+        raise HTTPException(status_code=422, detail="order_type must be LIMIT or MARKET")
+    if order_type == "MARKET" and limit_prices is not None:
+        raise HTTPException(status_code=422, detail="MARKET preview must not include limit_prices")
     request = _load_trade_request(trade_id, account_key)
     contracts = _resolve(request)
     row = _matching_live_row(contracts)
@@ -1001,6 +989,7 @@ def _build_exit_preview(
     marks: dict[str, float] = {}
     gross_cash_flow = Decimal("0.00")
     all_legs_marketable = True
+    all_legs_depth_sufficient = True
     for role in roles:
         bid_field, ask_field = _exit_quote_fields(role)
         try:
@@ -1012,6 +1001,20 @@ def _build_exit_preview(
         leg = next(item for item in trade_row["legs"] if item["role"] == role)
         close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
         executable = bid if close_action == "SELL" else ask
+        depth_field = {
+            "LOW_CE": ("low_call_bid_qty", "low_call_ask_qty"),
+            "HIGH_CE": ("high_call_bid_qty", "high_call_ask_qty"),
+            "HIGH_PE": ("high_put_bid_qty", "high_put_ask_qty"),
+            "LOW_PE": ("low_put_bid_qty", "low_put_ask_qty"),
+        }[role][0 if close_action == "SELL" else 1]
+        try:
+            available_depth = float(row[depth_field])
+            if not math.isfinite(available_depth) or available_depth < 0:
+                available_depth = None
+        except (KeyError, TypeError, ValueError, OverflowError):
+            available_depth = None
+        depth_sufficient = available_depth is not None and available_depth >= quantities[role]
+        all_legs_depth_sufficient = all_legs_depth_sufficient and depth_sufficient
         proposed = executable
         if order_type == "LIMIT" and limit_prices is not None:
             try:
@@ -1033,6 +1036,9 @@ def _build_exit_preview(
             "default_limit_price": executable, "executable_price": executable,
             "limit_price": proposed if order_type == "LIMIT" else None,
             "marketable": marketable,
+            "required_depth": quantities[role],
+            "available_depth": available_depth,
+            "depth_sufficient": depth_sufficient,
             "preview_price": preview_mark,
         })
     summary = _ledger.get_trade_summary(trade_id, account_key=account_key, mark_prices=marks)
@@ -1045,7 +1051,8 @@ def _build_exit_preview(
         "estimated_charges_included": True,
         "estimated_realized_plus_close_pnl": str(estimated_net_pnl),
         "all_legs_marketable": all_legs_marketable,
-        "preview_is_executable": all_legs_marketable,
+        "all_legs_depth_sufficient": all_legs_depth_sufficient,
+        "preview_is_executable": all_legs_marketable and all_legs_depth_sufficient,
         "preview_price_source": "CURRENT_EXECUTABLE_QUOTES" if all_legs_marketable else "INDICATIVE_LIMIT_SCENARIO",
         "quote_source": "fresh_backend_four_leg_snapshot",
     }
@@ -1071,60 +1078,98 @@ def preview_exit_basket_with_limits(trade_id: int, payload: ExitPreviewRequest):
         _error(exc)
 
 
+def _execute_exit_basket_from_row(
+    trade_id: int,
+    account_key: str,
+    row: dict[str, Any],
+    *,
+    order_type: str = "LIMIT",
+    limit_prices: dict[str, float] | None = None,
+    fill_id: str,
+) -> dict[str, Any]:
+    """Shared manual/automatic paper exit execution against one fresh four-leg row."""
+    if order_type not in {"LIMIT", "MARKET"}:
+        raise HTTPException(status_code=422, detail="order_type must be LIMIT or MARKET")
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    if order_type == "MARKET" and limit_prices is not None:
+        raise HTTPException(status_code=422, detail="MARKET exit must not include limit_prices")
+    if limit_prices is not None and set(limit_prices) != set(roles):
+        raise HTTPException(status_code=422, detail="limit_prices must contain exactly all four leg roles")
+
+    trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
+    basket_legs: dict[str, dict[str, object]] = {}
+    for role in roles:
+        bid_field, ask_field = _exit_quote_fields(role)
+        try:
+            bid, ask = float(row[bid_field]), float(row[ask_field])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=409, detail=f"fresh bid/ask unavailable for {role}") from None
+        if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
+            raise HTTPException(status_code=409, detail=f"valid executable bid/ask unavailable for {role}")
+        leg = next(item for item in trade_row["legs"] if item["role"] == role)
+        close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
+        executable = bid if close_action == "SELL" else ask
+        depth_field = {
+            "LOW_CE": ("low_call_bid_qty", "low_call_ask_qty"),
+            "HIGH_CE": ("high_call_bid_qty", "high_call_ask_qty"),
+            "HIGH_PE": ("high_put_bid_qty", "high_put_ask_qty"),
+            "LOW_PE": ("low_put_bid_qty", "low_put_ask_qty"),
+        }[role][0 if close_action == "SELL" else 1]
+        try:
+            available_depth = float(row[depth_field])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=409,
+                detail=f"full executable depth unavailable for {role}; no legs were exited",
+            ) from None
+        if not math.isfinite(available_depth) or available_depth < quantities[role]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"insufficient executable depth for {role}; required {quantities[role]}, available {available_depth:g}; no legs were exited",
+            )
+        if order_type == "LIMIT":
+            try:
+                limit_price = executable if limit_prices is None else float(limit_prices[role])
+            except (TypeError, ValueError, OverflowError):
+                raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
+            if not math.isfinite(limit_price) or limit_price <= 0:
+                raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
+            if close_action == "SELL" and limit_price > bid:
+                raise HTTPException(status_code=409, detail=f"{role} sell limit is not executable at the current bid; no legs were exited")
+            if close_action == "BUY" and limit_price < ask:
+                raise HTTPException(status_code=409, detail=f"{role} buy limit is not executable at the current ask; no legs were exited")
+        basket_legs[role] = {"quantity": quantities[role], "fill_price": executable}
+
+    receipts = _ledger.record_exit_basket(
+        trade_id=trade_id, fill_id=fill_id, legs=basket_legs, account_key=account_key,
+    )
+    summary = _ledger.get_trade_summary(trade_id, account_key=account_key)
+    return {
+        "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+        "order_type": order_type, "trade_id": trade_id, "status": summary["status"],
+        "receipts": [{
+            "fill_id": receipt.fill_id, "role": receipt.role, "action": receipt.action,
+            "quantity": receipt.quantity, "fill_price": str(receipt.fill_price),
+            "charges": str(receipt.charges), "cash_delta": str(receipt.cash_delta),
+        } for receipt in receipts],
+        "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
+    }
+
+
 @router.post("/trades/{trade_id}/exit-basket", dependencies=[Depends(require_paper_access)])
 def exit_basket(trade_id: int, payload: ExitBasket):
-    """Paper-only all-four-leg exit; any non-marketable limit rejects the whole basket."""
+    """Manual paper exit delegates to the shared four-leg execution path."""
     try:
         request = _load_trade_request(trade_id, payload.account_key)
         contracts = _resolve(request)
         row = _matching_live_row(contracts)
         if row is None:
             raise HTTPException(status_code=409, detail="matching fresh four-leg quotes are unavailable; no exit recorded")
-        trade_row, quantities = _paper_open_basket_state(trade_id, payload.account_key)
-        if payload.limit_prices is not None and set(payload.limit_prices) != {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}:
-            raise HTTPException(status_code=422, detail="limit_prices must contain exactly all four leg roles")
-
-        basket_legs: dict[str, dict[str, object]] = {}
-        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
-            bid_field, ask_field = _exit_quote_fields(role)
-            try:
-                bid, ask = float(row[bid_field]), float(row[ask_field])
-            except (KeyError, TypeError, ValueError, OverflowError):
-                raise HTTPException(status_code=409, detail=f"fresh bid/ask unavailable for {role}") from None
-            if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
-                raise HTTPException(status_code=409, detail=f"valid executable bid/ask unavailable for {role}")
-            leg = next(item for item in trade_row["legs"] if item["role"] == role)
-            close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
-            executable = bid if close_action == "SELL" else ask
-            if payload.order_type == "LIMIT":
-                limit_price = executable if payload.limit_prices is None else float(payload.limit_prices[role])
-                if not math.isfinite(limit_price) or limit_price <= 0:
-                    raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
-                # A paper limit is considered immediately executable only when it
-                # crosses the current quote. Otherwise the entire basket stays open.
-                if close_action == "SELL" and limit_price > bid:
-                    raise HTTPException(status_code=409, detail=f"{role} sell limit is not executable at the current bid; no legs were exited")
-                if close_action == "BUY" and limit_price < ask:
-                    raise HTTPException(status_code=409, detail=f"{role} buy limit is not executable at the current ask; no legs were exited")
-            basket_legs[role] = {"quantity": quantities[role], "fill_price": executable}
-
-        receipts = _ledger.record_exit_basket(
-            trade_id=trade_id, fill_id=payload.fill_id,
-            legs=basket_legs, account_key=payload.account_key,
+        return _execute_exit_basket_from_row(
+            trade_id, payload.account_key, row,
+            order_type=payload.order_type, limit_prices=payload.limit_prices,
+            fill_id=payload.fill_id,
         )
-        summary = _ledger.get_trade_summary(trade_id, account_key=payload.account_key)
-        return {
-            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
-            "order_type": payload.order_type, "trade_id": trade_id,
-            "status": summary["status"],
-            "receipts": [{
-                "fill_id": receipt.fill_id, "role": receipt.role,
-                "action": receipt.action, "quantity": receipt.quantity,
-                "fill_price": str(receipt.fill_price),
-                "charges": str(receipt.charges), "cash_delta": str(receipt.cash_delta),
-            } for receipt in receipts],
-            "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
-        }
     except Exception as exc:
         _error(exc)
 
