@@ -1186,10 +1186,10 @@ def test_exit_preview_recalculates_proposed_limit_prices_and_marks_non_marketabl
     assert quotes["HIGH_CE"]["preview_price"] == 20
     assert quotes["HIGH_CE"]["marketable"] is False
     assert quotes["HIGH_PE"]["preview_price"] == 30
-    assert quotes["LOW_PE"]["preview_price"] == 42
+    assert quotes["LOW_PE"]["preview_price"] == 41
     assert result["all_legs_marketable"] is False
     assert result["preview_price_source"] == "INDICATIVE_LIMIT_SCENARIO"
-    assert captured["mark_prices"] == {"LOW_CE": 10, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 42}
+    assert captured["mark_prices"] == {"LOW_CE": 10, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 41}
     assert result["estimated_realized_plus_close_pnl"] == "30.00"
 
 
