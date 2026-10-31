@@ -394,77 +394,19 @@ def test_exit_basket_confirms_all_four_legs_in_one_ledger_call(monkeypatch):
     assert len(result["receipts"]) == 4
 
 
-def test_exit_uses_fresh_backend_executable_quote_not_browser_price(monkeypatch):
-    request = routes.CreatePaperTrade(
-        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="exit-backend-price", account_key="exit-test",
-    )
-    contracts = SimpleNamespace(
-        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
-    )
-    row = {
-        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
-        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
-        "low_call_bid": 10, "low_call_ask": 11,
-        "high_call_bid": 20, "high_call_ask": 21,
-        "high_put_bid": 30, "high_put_ask": 31,
-        "low_put_bid": 40, "low_put_ask": 41,
-    }
-    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
-    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
-    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
-    captured = {}
-
-    def record_exit_fill(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(
-            trade_id=kwargs["trade_id"], fill_id=kwargs["fill_id"],
-            role=kwargs["role"], action="SELL", quantity=kwargs["quantity"],
-            fill_price=kwargs["fill_price"], charges=0, cash_delta=0,
-            virtual_balance=10000000,
-        )
-
-    monkeypatch.setattr(routes._ledger, "record_exit_fill", record_exit_fill)
-    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "OPEN"})
-    # Browser price is omitted: the API must use the fresh backend executable quote.
-    result = routes.exit_leg(123, routes.ExitLeg(
-        role="LOW_CE", quantity=50,
-        fill_id="exit-fresh-quote", account_key="exit-test",
-    ))
-
-    assert captured["fill_price"] == 10
-    assert captured["account_key"] == "exit-test"
-    assert result["receipt"]["fill_price"] == "10.0"
-    assert result["broker_orders_enabled"] is False
-
-
-def test_exit_rejects_when_matching_fresh_backend_quote_is_missing(monkeypatch):
-    request = routes.CreatePaperTrade(
-        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="exit-no-quote", account_key="exit-test",
-    )
-    contracts = SimpleNamespace(
-        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
-    )
-    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
-    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
-    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": []})
-
+def test_legacy_single_leg_exit_is_blocked_without_any_ledger_write(monkeypatch):
     def forbidden(**kwargs):
-        pytest.fail("exit ledger must not record a fill without a matching fresh quote")
+        pytest.fail("single-leg endpoint must never write a partial Box Spread exit")
 
     monkeypatch.setattr(routes._ledger, "record_exit_fill", forbidden)
     with pytest.raises(HTTPException) as raised:
         routes.exit_leg(123, routes.ExitLeg(
             role="LOW_CE", quantity=50, fill_price=1,
-            fill_id="exit-no-fresh-quote", account_key="exit-test",
+            fill_id="legacy-single-leg", account_key="exit-test",
         ))
     assert raised.value.status_code == 409
-    assert "No matching fresh live Box Spread opportunity" in raised.value.detail
+    assert "four-leg exit preview" in raised.value.detail
+
 
 def test_recovery_endpoint_is_read_only_and_scoped_to_requested_account(monkeypatch):
     open_trades = [
