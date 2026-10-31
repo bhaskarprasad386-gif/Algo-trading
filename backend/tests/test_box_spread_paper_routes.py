@@ -330,6 +330,31 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
     return row, trade_row
 
 
+@pytest.mark.parametrize("operation", ["preview", "confirm"])
+def test_unequal_open_leg_quantities_block_preview_and_exit_before_any_write(monkeypatch, operation):
+    _exit_basket_route_fixtures(monkeypatch)
+    trade_row = next(
+        row for row in routes._ledger.list_open_trades(account_key="basket-route-test")
+        if row["trade_id"] == 456
+    )
+    trade_row["legs"][-1]["open_position_quantity"] = 24
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("unequal four-leg quantities must never write an exit"),
+    )
+    if operation == "preview":
+        action = lambda: routes.preview_exit_basket(456, account_key="basket-route-test")
+    else:
+        action = lambda: routes.exit_basket(456, routes.ExitBasket(
+            account_key="basket-route-test", fill_id="unequal-confirm",
+            order_type="LIMIT",
+        ))
+    with pytest.raises(HTTPException) as raised:
+        action()
+    assert raised.value.status_code == 409
+    assert "unequal" in raised.value.detail
+
+
 def test_exit_preview_returns_all_four_executable_bid_ask_quotes_without_writing(monkeypatch):
     _exit_basket_route_fixtures(monkeypatch)
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {
