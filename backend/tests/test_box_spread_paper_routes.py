@@ -366,6 +366,32 @@ def test_duplicate_open_leg_role_blocks_preview_and_exit_before_any_write(monkey
 
 
 @pytest.mark.parametrize("operation", ["preview", "confirm"])
+@pytest.mark.parametrize("invalid_quantity", [25.5, "25.5", None, True, float("nan")])
+def test_non_integer_open_leg_quantity_blocks_preview_and_exit_before_any_write(monkeypatch, operation, invalid_quantity):
+    _exit_basket_route_fixtures(monkeypatch)
+    trade_row = next(
+        row for row in routes._ledger.list_open_trades(account_key="basket-route-test")
+        if row["trade_id"] == 456
+    )
+    trade_row["legs"][0]["open_position_quantity"] = invalid_quantity
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("invalid open quantity must never write an exit"),
+    )
+    if operation == "preview":
+        action = lambda: routes.preview_exit_basket(456, account_key="basket-route-test")
+    else:
+        action = lambda: routes.exit_basket(456, routes.ExitBasket(
+            account_key="basket-route-test", fill_id="invalid-quantity-confirm",
+            order_type="LIMIT",
+        ))
+    with pytest.raises(HTTPException) as raised:
+        action()
+    assert raised.value.status_code == 409
+    assert "whole-number open quantity" in raised.value.detail
+
+
+@pytest.mark.parametrize("operation", ["preview", "confirm"])
 def test_unequal_open_leg_quantities_block_preview_and_exit_before_any_write(monkeypatch, operation):
     _exit_basket_route_fixtures(monkeypatch)
     trade_row = next(
