@@ -1201,3 +1201,61 @@ def test_exit_preview_rejects_incomplete_or_invalid_proposed_limits(monkeypatch)
             limit_prices={"LOW_CE": 10},
         ))
     assert raised.value.status_code == 422
+
+
+
+def test_shared_exit_executor_validates_and_records_all_four_legs_for_market(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: captured.update(kwargs) or [
+            SimpleNamespace(fill_id=f"exit-{role}", role=role, action="SELL" if role in {"LOW_CE", "HIGH_PE"} else "BUY",
+                             quantity=25, fill_price=kwargs["legs"][role]["fill_price"],
+                             charges=Decimal("1.00"), cash_delta=Decimal("10.00"))
+            for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        ],
+    )
+    monkeypatch.setattr(
+        routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: {"status": "CLOSED", "realized_pnl": Decimal("50.00")},
+    )
+
+    result = routes._execute_exit_basket_from_row(
+        456, "basket-route-test",
+        {
+            "low_call_bid": 10, "low_call_ask": 11,
+            "high_call_bid": 20, "high_call_ask": 21,
+            "high_put_bid": 30, "high_put_ask": 31,
+            "low_put_bid": 40, "low_put_ask": 41,
+        },
+        order_type="MARKET", fill_id="shared-market-exit",
+    )
+
+    assert result["status"] == "CLOSED"
+    assert result["broker_orders_enabled"] is False
+    assert result["order_type"] == "MARKET"
+    assert set(captured["legs"]) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+    assert {role: item["fill_price"] for role, item in captured["legs"].items()} == {
+        "LOW_CE": 10, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 41,
+    }
+
+
+def test_shared_exit_executor_rejects_bad_fourth_leg_before_atomic_write(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("invalid four-leg quotes must not write any exit fills"),
+    )
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "low_put_bid": 42, "low_put_ask": 41,
+    }
+    with pytest.raises(HTTPException) as raised:
+        routes._execute_exit_basket_from_row(
+            456, "basket-route-test", row,
+            order_type="LIMIT", fill_id="invalid-fourth-leg",
+        )
+    assert raised.value.status_code == 409
