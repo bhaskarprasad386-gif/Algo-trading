@@ -8,7 +8,7 @@ import math
 import threading
 import time
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -943,7 +943,7 @@ def _paper_open_basket_state(trade_id: int, account_key: str) -> tuple[dict[str,
             if not decimal_quantity.is_finite() or decimal_quantity <= 0 or decimal_quantity != decimal_quantity.to_integral_value():
                 raise ValueError("open quantity must be a positive whole number")
             quantities[str(leg["role"])] = int(decimal_quantity)
-    except (KeyError, TypeError, ValueError, OverflowError):
+    except (KeyError, TypeError, ValueError, OverflowError, InvalidOperation):
         raise HTTPException(status_code=409, detail="valid positive whole-number open quantity is required for every basket leg") from None
     if any(quantities.get(role, 0) <= 0 for role in roles):
         raise HTTPException(status_code=409, detail="four open legs are required for a basket exit")
