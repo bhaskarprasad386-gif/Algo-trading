@@ -269,7 +269,10 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
         # Keep evaluation history bounded: retain the newest 1,000 rows per rule.
         stale_ids = session.scalars(
             select(BoxSpreadPaperRuleEvaluation.id)
-            .where(BoxSpreadPaperRuleEvaluation.rule_id == rule_id)
+            .where(
+                BoxSpreadPaperRuleEvaluation.rule_id == rule_id,
+                BoxSpreadPaperRuleEvaluation.event != "ENTRY_EDGE_REFERENCE",
+            )
             .order_by(BoxSpreadPaperRuleEvaluation.evaluated_at.desc(),
                       BoxSpreadPaperRuleEvaluation.id.desc())
             .offset(1000)
