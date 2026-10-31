@@ -936,12 +936,15 @@ def _paper_open_basket_state(trade_id: int, account_key: str) -> tuple[dict[str,
     if len(open_legs) != 4 or len(set(role_rows)) != 4 or set(role_rows) != set(roles):
         raise HTTPException(status_code=409, detail="exactly four distinct open Box Spread legs are required")
     try:
-        quantities = {
-            str(leg["role"]): int(leg["open_position_quantity"])
-            for leg in open_legs
-        }
+        quantities = {}
+        for leg in open_legs:
+            raw_quantity = leg["open_position_quantity"]
+            decimal_quantity = Decimal(str(raw_quantity))
+            if not decimal_quantity.is_finite() or decimal_quantity <= 0 or decimal_quantity != decimal_quantity.to_integral_value():
+                raise ValueError("open quantity must be a positive whole number")
+            quantities[str(leg["role"])] = int(decimal_quantity)
     except (KeyError, TypeError, ValueError, OverflowError):
-        raise HTTPException(status_code=409, detail="valid open quantity is required for every basket leg") from None
+        raise HTTPException(status_code=409, detail="valid positive whole-number open quantity is required for every basket leg") from None
     if any(quantities.get(role, 0) <= 0 for role in roles):
         raise HTTPException(status_code=409, detail="four open legs are required for a basket exit")
     if len({quantities[role] for role in roles}) != 1:
