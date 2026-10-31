@@ -346,9 +346,11 @@ export default function BoxSpreadPaperTrading() {
       });
       setExitPreview(body);
       setExitPreviewDirty(false);
-      setMessage(body.all_legs_marketable
-        ? "Preview recalculated from your proposed limits. All four legs are currently executable; confirmation still rechecks fresh quotes."
-        : "Preview recalculated. At least one limit is not currently executable; the P&L is an indicative scenario only.");
+      setMessage(body.preview_is_executable
+        ? "Preview recalculated. All four limits are marketable and full executable depth is available; confirmation still rechecks fresh quotes."
+        : !body.all_legs_marketable
+          ? "Preview recalculated. At least one limit is not currently executable; the P&L is an indicative scenario only."
+          : "Preview recalculated. Prices are marketable, but at least one leg lacks full executable depth; the entire basket remains blocked.");
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to recalculate proposed exit preview"); }
     finally { setBusy(false); }
   }
