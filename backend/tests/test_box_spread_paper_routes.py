@@ -330,6 +330,25 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
     return row, trade_row
 
 
+def test_duplicate_open_leg_role_blocks_preview_and_exit_before_any_write(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    trade_row = next(
+        row for row in routes._ledger.list_open_trades(account_key="basket-route-test")
+        if row["trade_id"] == 456
+    )
+    # Keep all four valid roles but append a duplicate role. A dict-based
+    # projection would otherwise silently ignore the extra persisted leg.
+    trade_row["legs"].append(dict(trade_row["legs"][0]))
+    monkeypatch.setattr(
+        routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("malformed four-leg projection must never write an exit"),
+    )
+    with pytest.raises(HTTPException) as raised:
+        routes.preview_exit_basket(456, account_key="basket-route-test")
+    assert raised.value.status_code == 409
+    assert "exactly four distinct" in raised.value.detail
+
+
 @pytest.mark.parametrize("operation", ["preview", "confirm"])
 def test_unequal_open_leg_quantities_block_preview_and_exit_before_any_write(monkeypatch, operation):
     _exit_basket_route_fixtures(monkeypatch)
