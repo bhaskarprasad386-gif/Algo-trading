@@ -916,39 +916,11 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
 
 @router.post("/trades/{trade_id}/exit", dependencies=[Depends(require_paper_access)])
 def exit_leg(trade_id: int, payload: ExitLeg):
-    try:
-        # Never trust browser-entered exit prices. Resolve this persisted trade
-        # and require its matching fresh four-leg scanner row, just like entry.
-        request = _load_trade_request(trade_id, payload.account_key)
-        contracts = _resolve(request)
-        current_row = _matching_live_row(contracts)
-        if current_row is None:
-            raise HTTPException(
-                status_code=409,
-                detail="No matching fresh live Box Spread opportunity; paper exit was not recorded",
-            )
-        executable_price = _exit_reference_price(
-            current_row, contracts.direction, payload.role,
-        )
-        receipt = _ledger.record_exit_fill(
-            trade_id=trade_id, fill_id=payload.fill_id, role=payload.role,
-            quantity=payload.quantity, fill_price=executable_price,
-            account_key=payload.account_key,
-        )
-        summary = _ledger.get_trade_summary(trade_id, account_key=payload.account_key)
-        return {
-            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
-            "receipt": {
-                "trade_id": receipt.trade_id, "fill_id": receipt.fill_id,
-                "role": receipt.role, "action": receipt.action,
-                "quantity": receipt.quantity, "fill_price": str(receipt.fill_price),
-                "charges": str(receipt.charges), "cash_delta": str(receipt.cash_delta),
-                "virtual_balance": str(receipt.virtual_balance),
-            },
-            "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
-        }
-    except Exception as exc:
-        _error(exc)
+    """Reject legacy single-leg exits; Box Spread exits must be one four-leg basket."""
+    raise HTTPException(
+        status_code=409,
+        detail="Single-leg exits are disabled. Review the four-leg exit preview and confirm the complete basket.",
+    )
 
 
 def _paper_open_basket_state(trade_id: int, account_key: str) -> tuple[dict[str, Any], dict[str, int]]:
