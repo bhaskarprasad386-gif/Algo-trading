@@ -414,6 +414,8 @@ export default function BoxSpreadPaperTrading() {
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
   const selectedTradeData = [...openTrades, ...closedTrades].find(trade => trade.trade_id === selectedTrade) ?? null;
+  const selectedOpenLegQuantities = selectedTradeData?.legs?.map(leg => leg.open_quantity) ?? [];
+  const selectedLegQuantitiesEqual = selectedOpenLegQuantities.length === 4 && selectedOpenLegQuantities.every(quantity => quantity > 0 && quantity === selectedOpenLegQuantities[0]);
   const totalRealizedPnl = Number(portfolioSummary?.realized_pnl ?? 0);
   const totalUnrealizedPnl = portfolioSummary?.unrealized_pnl == null ? null : Number(portfolioSummary.unrealized_pnl);
   const totalNetPnl = portfolioSummary?.net_pnl == null ? null : Number(portfolioSummary.net_pnl);
@@ -748,7 +750,8 @@ export default function BoxSpreadPaperTrading() {
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-3 rounded-lg border theme-border p-3">
             <div><h4 className="font-semibold theme-text">Four-leg basket exit</h4><p className="mt-1 text-xs theme-muted">All four open legs are previewed and confirmed together. A missing, stale or unmarketable leg blocks the complete paper basket; no single leg is exited.</p></div>
-            <button type="button" onClick={() => void loadExitPreview()} disabled={busy || !selectedTradeData || selectedTradeData.legs?.some(leg => leg.open_quantity <= 0)} className="rounded-lg border border-cyan-600/50 px-4 py-2 text-sm font-bold theme-text disabled:opacity-50">Refresh four-leg exit preview</button>
+            {selectedTradeData?.legs?.length === 4 && selectedOpenLegQuantities.some(quantity => quantity > 0) && !selectedLegQuantitiesEqual && <p className="text-xs font-semibold text-amber-600">Unequal open quantities across the four legs — manual and automatic basket exits are blocked. Review the remaining exposure; do not mark this trade closed.</p>}
+            <button type="button" onClick={() => void loadExitPreview()} disabled={busy || !selectedTradeData || !selectedLegQuantitiesEqual} className="rounded-lg border border-cyan-600/50 px-4 py-2 text-sm font-bold theme-text disabled:opacity-50">Refresh four-leg exit preview</button>
             {exitPreview && exitPreview.trade_id === selectedTrade && <form onSubmit={confirmBasketExit} className="space-y-3 rounded-lg theme-surface-2 p-3">
               <div className="flex items-center justify-between gap-2"><strong className="text-sm theme-text">Exit preview · Qty {exitPreview.quantity_per_leg} per leg</strong><span className="text-[10px] font-bold text-emerald-600">READ ONLY</span></div>
               <label className="block text-xs theme-muted">Order type
