@@ -1170,6 +1170,17 @@ def test_exit_preview_rejects_incomplete_or_invalid_proposed_limits(monkeypatch)
     assert raised.value.status_code == 422
 
 
+def test_market_exit_preview_rejects_limit_prices(monkeypatch):
+    _exit_basket_route_fixtures(monkeypatch)
+    with pytest.raises(HTTPException) as raised:
+        routes.preview_exit_basket_with_limits(456, routes.ExitPreviewRequest(
+            account_key="basket-route-test", order_type="MARKET",
+            limit_prices={"LOW_CE": 10, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 40},
+        ))
+    assert raised.value.status_code == 422
+    assert "MARKET preview must not include limit_prices" in raised.value.detail
+
+
 
 def test_shared_exit_executor_validates_and_records_all_four_legs_for_market(monkeypatch):
     _exit_basket_route_fixtures(monkeypatch)
