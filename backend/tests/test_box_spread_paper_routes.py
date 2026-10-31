@@ -1270,9 +1270,13 @@ def test_shared_exit_executor_validates_and_records_all_four_legs_for_market(mon
         456, "basket-route-test",
         {
             "low_call_bid": 10, "low_call_ask": 11,
+            "low_call_bid_qty": 25, "low_call_ask_qty": 25,
             "high_call_bid": 20, "high_call_ask": 21,
+            "high_call_bid_qty": 25, "high_call_ask_qty": 25,
             "high_put_bid": 30, "high_put_ask": 31,
+            "high_put_bid_qty": 25, "high_put_ask_qty": 25,
             "low_put_bid": 40, "low_put_ask": 41,
+            "low_put_bid_qty": 25, "low_put_ask_qty": 25,
         },
         order_type="MARKET", fill_id="shared-market-exit",
     )
