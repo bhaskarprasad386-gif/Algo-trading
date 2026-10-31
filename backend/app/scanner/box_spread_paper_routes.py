@@ -1087,6 +1087,24 @@ def _execute_exit_basket_from_row(
         leg = next(item for item in trade_row["legs"] if item["role"] == role)
         close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
         executable = bid if close_action == "SELL" else ask
+        depth_field = {
+            "LOW_CE": ("low_call_bid_qty", "low_call_ask_qty"),
+            "HIGH_CE": ("high_call_bid_qty", "high_call_ask_qty"),
+            "HIGH_PE": ("high_put_bid_qty", "high_put_ask_qty"),
+            "LOW_PE": ("low_put_bid_qty", "low_put_ask_qty"),
+        }[role][0 if close_action == "SELL" else 1]
+        try:
+            available_depth = float(row[depth_field])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=409,
+                detail=f"full executable depth unavailable for {role}; no legs were exited",
+            ) from None
+        if not math.isfinite(available_depth) or available_depth < quantities[role]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"insufficient executable depth for {role}; required {quantities[role]}, available {available_depth:g}; no legs were exited",
+            )
         if order_type == "LIMIT":
             try:
                 limit_price = executable if limit_prices is None else float(limit_prices[role])
