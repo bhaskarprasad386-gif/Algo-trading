@@ -17,7 +17,7 @@ from app.core.database import Base, SessionLocal
 
 
 ENTRY_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl"})
-EXIT_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl", "position_net_pnl", "gross_profit_per_lot", "net_profit_per_lot"})
+EXIT_METRICS = frozenset({"executable_edge", "edge_per_lot", "gross_pnl", "position_net_pnl", "gross_profit_per_lot", "net_profit_per_lot", "remaining_edge_per_lot"})
 OPERATORS = frozenset({"<", "<=", "==", ">=", ">"})
 DIRECTIONS = frozenset({"ALL", "LONG", "SHORT"})
 INSTRUMENT_CLASSES = frozenset({"ALL", "INDEX", "STOCK"})
@@ -300,7 +300,8 @@ def exit_matches(
             return False, "exit_metric_unavailable", None
         value = float(value)
     else:
-        value = metric_value(row, exit_rule["metric"])
+        metric_name = "executable_edge" if exit_rule["metric"] == "remaining_edge_per_lot" else exit_rule["metric"]
+        value = metric_value(row, metric_name)
     if value is None:
         return False, "exit_metric_unavailable", None
     matched = compare(value, exit_rule["operator"], exit_rule["threshold"])
