@@ -960,6 +960,10 @@ def _build_exit_preview(
     limit_prices: dict[str, float] | None = None,
 ):
     """Read-only four-leg preview; proposed limits are repriced against fresh quotes."""
+    if order_type not in {"LIMIT", "MARKET"}:
+        raise HTTPException(status_code=422, detail="order_type must be LIMIT or MARKET")
+    if order_type == "MARKET" and limit_prices is not None:
+        raise HTTPException(status_code=422, detail="MARKET preview must not include limit_prices")
     request = _load_trade_request(trade_id, account_key)
     contracts = _resolve(request)
     row = _matching_live_row(contracts)
