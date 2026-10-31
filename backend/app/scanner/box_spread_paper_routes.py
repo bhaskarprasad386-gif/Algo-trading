@@ -986,6 +986,7 @@ def _build_exit_preview(
     marks: dict[str, float] = {}
     gross_cash_flow = Decimal("0.00")
     all_legs_marketable = True
+    all_legs_depth_sufficient = True
     for role in roles:
         bid_field, ask_field = _exit_quote_fields(role)
         try:
@@ -997,6 +998,20 @@ def _build_exit_preview(
         leg = next(item for item in trade_row["legs"] if item["role"] == role)
         close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
         executable = bid if close_action == "SELL" else ask
+        depth_field = {
+            "LOW_CE": ("low_call_bid_qty", "low_call_ask_qty"),
+            "HIGH_CE": ("high_call_bid_qty", "high_call_ask_qty"),
+            "HIGH_PE": ("high_put_bid_qty", "high_put_ask_qty"),
+            "LOW_PE": ("low_put_bid_qty", "low_put_ask_qty"),
+        }[role][0 if close_action == "SELL" else 1]
+        try:
+            available_depth = float(row[depth_field])
+            if not math.isfinite(available_depth) or available_depth < 0:
+                available_depth = None
+        except (KeyError, TypeError, ValueError, OverflowError):
+            available_depth = None
+        depth_sufficient = available_depth is not None and available_depth >= quantities[role]
+        all_legs_depth_sufficient = all_legs_depth_sufficient and depth_sufficient
         proposed = executable
         if order_type == "LIMIT" and limit_prices is not None:
             try:
@@ -1018,6 +1033,9 @@ def _build_exit_preview(
             "default_limit_price": executable, "executable_price": executable,
             "limit_price": proposed if order_type == "LIMIT" else None,
             "marketable": marketable,
+            "required_depth": quantities[role],
+            "available_depth": available_depth,
+            "depth_sufficient": depth_sufficient,
             "preview_price": preview_mark,
         })
     summary = _ledger.get_trade_summary(trade_id, account_key=account_key, mark_prices=marks)
@@ -1030,7 +1048,8 @@ def _build_exit_preview(
         "estimated_charges_included": True,
         "estimated_realized_plus_close_pnl": str(estimated_net_pnl),
         "all_legs_marketable": all_legs_marketable,
-        "preview_is_executable": all_legs_marketable,
+        "all_legs_depth_sufficient": all_legs_depth_sufficient,
+        "preview_is_executable": all_legs_marketable and all_legs_depth_sufficient,
         "preview_price_source": "CURRENT_EXECUTABLE_QUOTES" if all_legs_marketable else "INDICATIVE_LIMIT_SCENARIO",
         "quote_source": "fresh_backend_four_leg_snapshot",
     }
