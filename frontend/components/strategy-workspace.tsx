@@ -252,7 +252,7 @@ function formatValue(raw: unknown) {
 function parseTimestamp(raw: unknown): Date | null {
   if (raw === undefined || raw === null || raw === "") return null;
   // Handle Unix seconds, milliseconds and nanoseconds without treating ms as ns.
-  if (typeof raw === "number" || (typeof raw === "string" && /^\\d+(?:\\.\\d+)?$/.test(raw.trim()))) {
+  if (typeof raw === "number" || (typeof raw === "string" && /^\d+(?:\.\d+)?$/.test(raw.trim()))) {
     const n = Number(raw);
     if (!Number.isFinite(n)) return null;
     const millis = n >= 1e17 ? n / 1e6 : n >= 1e12 ? n : n >= 1e9 ? n * 1000 : NaN;
