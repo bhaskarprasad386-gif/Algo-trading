@@ -349,3 +349,15 @@ html[data-theme="white"] .box-live-opportunities [class*="text-slate-600"],
 html[data-theme="white"] .box-live-opportunities [class*="text-slate-700"] {
   color: #1e293b !important;
 }
+
+/* Improve Box Spread readability in White theme without changing trading UI logic. */
+html[data-theme="white"] .box-live-opportunities,
+html[data-theme="white"] .box-workspace-header,
+html[data-theme="white"] .box-workspace-nav {
+  font-weight: 500;
+}
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-400"],
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-500"],
+html[data-theme="white"] .box-workspace-header .text-slate-400 {
+  color: #0f172a !important;
+}
