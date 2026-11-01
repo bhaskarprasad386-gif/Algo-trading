@@ -238,6 +238,7 @@ def snapshots(
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     expiry_type: str | None = Query(None, pattern="^(WEEKLY|MONTHLY|UNKNOWN)$"),
+    symbol: str | None = Query(None, pattern="^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|BANKEX)$"),
 ):
     """Return expiry-filtered persisted observations with counts for every class."""
     from collections import Counter
@@ -283,6 +284,7 @@ def snapshots(
         "strategy": "box-spread",
         "days": days,
         "expiry_type": expiry_type,
+        "symbol": symbol,
         "count": len(page),
         "total_count": selected_count,
         "expiry_counts": {
