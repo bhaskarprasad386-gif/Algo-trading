@@ -18,7 +18,7 @@ class LiveBoxSpreadScanner:
         self._lock=Lock(); self._buckets={}
         self._diagnostic_counts=Counter()
         self._last_diagnostics={}
-        self._monitor_snapshots={}
+        self._monitor_snapshots={}; self._atm_error_buckets=set()
 
     @staticmethod
     def _price(v):
@@ -178,9 +178,12 @@ class LiveBoxSpreadScanner:
             except Exception:
                 # A transient spot/ATM source failure must not escape the quote
                 # callback and interrupt option-feed assembly for this runner.
-                self._diagnostic_counts["atm_provider_errors"] += 1
+                if key not in self._atm_error_buckets:
+                    self._diagnostic_counts["atm_provider_errors"] += 1
+                    self._atm_error_buckets.add(key)
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"}
                 self._prune(ts); return ()
+            self._atm_error_buckets.discard(key)
             if atm is None:
                 self._diagnostic_counts["atm_unavailable"] += 1
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"}
@@ -272,6 +275,7 @@ class LiveBoxSpreadScanner:
         if pruned:
             self._diagnostic_counts["pruned_buckets"] += pruned
         self._buckets=retained
+        self._atm_error_buckets.intersection_update(retained)
         active_monitor_keys = {(key[0], key[2]) for key in retained}
         self._monitor_snapshots = {
             key: value for key, value in self._monitor_snapshots.items()
