@@ -26,7 +26,11 @@ def configure_spot_provider(provider):
 
 
 def _spot_fields(symbol):
-    snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    # A missing spot tick must not prevent delivery of a valid option basket.
+    try:
+        snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    except Exception:
+        snapshot = None
     if not isinstance(snapshot, dict):
         return {"spot_price": None, "spot_timestamp_ns": None, "spot_age_seconds": None}
     return {
