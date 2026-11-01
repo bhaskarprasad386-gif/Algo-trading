@@ -166,13 +166,13 @@ export default function BoxSpreadPostMarketHistory() {
   };
 
   return (
-    <Card className="theme-border theme-surface p-4 sm:p-5">
+    <Card className="scroll-mt-24 border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl sm:p-5" id="box-history">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
           <div>
-            <h2 className="text-base font-semibold theme-text">Post-Market Box Spread Pair History</h2>
-            <p className="mt-1 text-xs theme-muted">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
+            <h2 className="text-base font-extrabold text-white">Post-Market Box Spread Pair History</h2>
+            <p className="mt-1 text-xs text-slate-400">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
           </div>
         </div>
         <button type="button" onClick={refresh} disabled={loading || loadingMore} className="inline-flex min-h-9 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
