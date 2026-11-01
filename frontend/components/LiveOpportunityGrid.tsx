@@ -7,7 +7,7 @@ import { appConfig } from "@/lib/config";
 type Opportunity = Record<string, unknown> & {
   symbol?: string; expiry?: string | number; expiry_type?: string; low_strike?: number; high_strike?: number;
   spot_price?: number | null; spot_timestamp_ns?: number | string | null; spot_age_seconds?: number | null;
-  direction?: string; executable_edge?: number; last_update_timestamp_ns?: number;
+  direction?: string; executable_edge?: number; last_update_timestamp_ns?: number | string; timestamp_skew_ms?: number | null;
   edge_per_lot?: number; gross_pnl?: number; lot_size?: number;
 };
 type TrackedRow = { key: string; row: Opportunity; lastSeen: number; status: "LIVE" | "STALE" };
@@ -260,6 +260,7 @@ export default function LiveOpportunityGrid() {
                   <span className={"rounded-md px-2 py-1 text-[9px] font-bold " + (status === "LIVE" ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200")}>{status}</span>
                   <div className="flex flex-col items-end gap-0.5 text-[9px] tabular-nums text-slate-500">
                     <span>Quote {quoteTime(row.last_update_timestamp_ns)}</span>
+                    <span>4-leg skew {n(row, "timestamp_skew_ms") === null ? "—" : fmt(row.timestamp_skew_ms, 3) + " ms"}</span>
                     <span>Received {new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })} IST</span>
                   </div>
                 </div>
