@@ -21,7 +21,12 @@ def configure_spot_provider(provider):
     _spot_provider = provider
 
 def _spot_fields(symbol):
-    snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    # Spot is supplementary context: a spot-feed failure must never suppress
+    # an otherwise valid four-leg option opportunity.
+    try:
+        snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    except Exception:
+        snapshot = None
     if not isinstance(snapshot, dict):
         return {"spot_price": None, "spot_timestamp_ns": None, "spot_age_seconds": None}
     return {
