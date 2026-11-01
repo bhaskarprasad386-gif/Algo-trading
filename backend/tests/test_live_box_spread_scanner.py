@@ -550,3 +550,29 @@ def test_live_box_timestamp_parser_preserves_large_nanosecond_integer_precision(
     assert LiveBoxSpreadScanner._positive_integer_timestamp(timestamp_ns) == timestamp_ns
     assert LiveBoxSpreadScanner._positive_integer_timestamp(str(timestamp_ns)) == timestamp_ns
     assert LiveBoxSpreadScanner._positive_integer_timestamp("1700000000123456789.5") is None
+
+
+def test_box_snapshot_rejects_negative_fees_and_fractional_liquidity_thresholds():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+    import pytest
+
+    quote = OptionQuote(10, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100)
+    policy = ScanPolicy(stock_box_distances=(1,))
+    for config in (
+        BoxSpreadScanConfig(
+            fees_per_unit=-0.01, allowed_stock_symbols=frozenset({"ABC"}),
+        ),
+        BoxSpreadScanConfig(
+            min_option_volume=1.5, allowed_stock_symbols=frozenset({"ABC"}),
+        ),
+        BoxSpreadScanConfig(
+            min_option_oi=2.5, allowed_stock_symbols=frozenset({"ABC"}),
+        ),
+    ):
+        with pytest.raises(ValueError, match="invalid Box Spread scan configuration"):
+            scan_box_snapshot(
+                (quote,), atm_strike=100, instrument_class="STOCK",
+                config=config, policy=policy,
+            )
