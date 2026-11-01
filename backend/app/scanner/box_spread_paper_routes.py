@@ -861,7 +861,22 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
         # row, which has already passed the five-second four-leg freshness check.
         # Map executable bid/ask sides by each paper leg action. Never feed a
         # sell-side quote into a simulated BUY (or vice versa).
-        reference_prices = _reference_prices_for_direction(current_row, contracts.direction)
+        try:
+            depth_selection = await asyncio.to_thread(
+                _fresh_entry_depth_selection, contracts, request.lots,
+            )
+        except BoxPaperDepthFeedError as exc:
+            raise HTTPException(status_code=409, detail=f"fresh four-leg depth unavailable; no entry executed: {exc}") from exc
+        if depth_selection["lots"] != request.lots:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"fresh depth supports {depth_selection['lots']} complete lots, "
+                    f"but this paper trade was created for {request.lots}; no entry executed. "
+                    "Create a new paper trade with the supported lot count."
+                ),
+            )
+        reference_prices = depth_selection["prices"]
         limit_prices = None
         if payload.order_type == "LIMIT":
             limit_prices = payload.limit_prices or dict(reference_prices)
