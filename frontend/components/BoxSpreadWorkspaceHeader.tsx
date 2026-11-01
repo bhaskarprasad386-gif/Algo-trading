@@ -4,7 +4,7 @@ const indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANK
 
 export default function BoxSpreadWorkspaceHeader() {
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-slate-700/80 bg-[#081323] text-white shadow-[0_18px_55px_rgba(2,6,23,0.22)]">
+    <section className="box-workspace-header relative overflow-hidden rounded-2xl border border-slate-700/80 bg-[#081323] text-white shadow-[0_18px_55px_rgba(2,6,23,0.22)]">
       <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-cyan-400/10 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-24 left-1/3 h-52 w-52 rounded-full bg-blue-500/10 blur-3xl" />
       <div className="relative p-5 sm:p-7">

@@ -184,7 +184,7 @@ export default function LiveOpportunityGrid() {
   const streamHealthy = streamLabel === "LIVE";
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-700/80 bg-[#080f1d] text-slate-100 shadow-[0_18px_55px_rgba(2,6,23,0.28)]">
+    <section className="box-live-opportunities overflow-hidden rounded-2xl border border-slate-700/80 bg-[#080f1d] text-slate-100 shadow-[0_18px_55px_rgba(2,6,23,0.28)]">
       <div className="border-b border-slate-800 bg-gradient-to-r from-[#101d32] via-[#0c1728] to-[#111827] p-4 sm:p-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-start gap-3">

@@ -51,6 +51,7 @@ from app.scanner.calendar_spread_routes import router as calendar_spread_scanner
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, set_expiry_types as set_live_box_expiry_types
+from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, set_expiry_types as set_live_box_websocket_expiry_types
@@ -224,6 +225,7 @@ app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
 app.include_router(live_synthetic_trace_router)
 app.include_router(live_box_spread_router)
+app.include_router(box_spread_trace_router)
 app.include_router(box_spread_paper_router)
 app.include_router(box_spread_paper_rule_router)
 app.include_router(live_box_spread_websocket_router)
