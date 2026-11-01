@@ -191,6 +191,7 @@ export default function BoxSpreadPostMarketHistory() {
       const body = await response.json();
       if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.message || "Unable to add trace");
       setTraces(old => ({ ...old, [String(body.data.source_identity)]: { id: Number(body.data.id), quantity_lots: Number(body.data.quantity_lots) } }));
+      window.dispatchEvent(new CustomEvent("box-spread-trace-updated", { detail: body.data }));
     } catch (e) { setTraceError(e instanceof Error ? e.message : "Unable to add trace"); }
     finally { setTraceBusy(null); }
   };
