@@ -83,6 +83,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
       {rows.length === 0 ? (
         <p className="rounded-lg border theme-border p-3 text-xs theme-muted">No positive-edge observations saved yet.</p>
       ) : (
+        <>
         <div className="grid gap-2 sm:hidden">
           {rows.map(row => <div key={row.key} className="rounded-lg border theme-border theme-surface-2 p-3">
             <div className="flex items-center justify-between gap-2"><span className="text-sm font-bold theme-text">{row.key}{label === "30-min IST" ? " IST" : ""}</span><span className="text-[10px] theme-muted">{row.distinct_dates} trading days</span></div>
@@ -103,6 +104,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
             </tr>)}</tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );
