@@ -1033,91 +1033,114 @@ def _build_exit_preview(
     order_type: str = "LIMIT",
     limit_prices: dict[str, float] | None = None,
 ):
-    """Read-only four-leg preview; proposed limits are repriced against fresh quotes."""
+    """Read-only preview from current four-leg depth; no ledger writes or orders."""
     if order_type not in {"LIMIT", "MARKET"}:
         raise HTTPException(status_code=422, detail="order_type must be LIMIT or MARKET")
     if order_type == "MARKET" and limit_prices is not None:
         raise HTTPException(status_code=422, detail="MARKET preview must not include limit_prices")
     request = _load_trade_request(trade_id, account_key)
     contracts = _resolve(request)
-    row = _matching_live_row(contracts)
-    if row is None:
-        raise HTTPException(status_code=409, detail="matching fresh four-leg quotes are unavailable")
     trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     if limit_prices is not None and set(limit_prices) != set(roles):
         raise HTTPException(status_code=422, detail="limit_prices must contain exactly all four leg roles")
-    preview_legs = []
-    marks: dict[str, float] = {}
-    gross_cash_flow = Decimal("0.00")
-    all_legs_marketable = True
-    all_legs_depth_sufficient = True
-    for role in roles:
-        bid_field, ask_field = _exit_quote_fields(role)
-        try:
-            bid, ask = float(row[bid_field]), float(row[ask_field])
-        except (KeyError, TypeError, ValueError, OverflowError):
-            raise HTTPException(status_code=409, detail=f"fresh bid/ask unavailable for {role}") from None
-        if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= 0 or bid > ask:
-            raise HTTPException(status_code=409, detail=f"valid executable bid/ask unavailable for {role}")
-        leg = next(item for item in trade_row["legs"] if item["role"] == role)
-        close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
-        executable = bid if close_action == "SELL" else ask
-        depth_field = {
-            "LOW_CE": ("low_call_bid_qty", "low_call_ask_qty"),
-            "HIGH_CE": ("high_call_bid_qty", "high_call_ask_qty"),
-            "HIGH_PE": ("high_put_bid_qty", "high_put_ask_qty"),
-            "LOW_PE": ("low_put_bid_qty", "low_put_ask_qty"),
-        }[role][0 if close_action == "SELL" else 1]
-        try:
-            available_depth = float(row[depth_field])
-            if not math.isfinite(available_depth) or available_depth < 0:
-                available_depth = None
-        except (KeyError, TypeError, ValueError, OverflowError):
-            available_depth = None
-        depth_sufficient = available_depth is not None and available_depth >= quantities[role]
-        all_legs_depth_sufficient = all_legs_depth_sufficient and depth_sufficient
-        proposed = executable
-        if order_type == "LIMIT" and limit_prices is not None:
-            try:
-                proposed = float(limit_prices[role])
-            except (TypeError, ValueError, OverflowError):
-                raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
-            if not math.isfinite(proposed) or proposed <= 0:
-                raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
-        marketable = proposed <= bid if close_action == "SELL" else proposed >= ask
-        all_legs_marketable = all_legs_marketable and marketable
-        # A marketable limit is expected to fill at the current executable quote.
-        # A non-marketable limit is only an indicative what-if mark, not a fill.
-        preview_mark = executable if marketable else proposed
-        marks[role] = preview_mark
-        gross_cash_flow += Decimal(str(preview_mark)) * quantities[role] * (1 if close_action == "SELL" else -1)
-        preview_legs.append({
-            "role": role, "close_action": close_action,
-            "quantity": quantities[role], "bid": bid, "ask": ask,
-            "default_limit_price": executable, "executable_price": executable,
-            "limit_price": proposed if order_type == "LIMIT" else None,
-            "marketable": marketable,
-            "required_depth": quantities[role],
-            "available_depth": available_depth,
-            "depth_sufficient": depth_sufficient,
-            "preview_price": preview_mark,
-        })
-    summary = _ledger.get_trade_summary(trade_id, account_key=account_key, mark_prices=marks)
-    estimated_net_pnl = Decimal(summary["realized_pnl"]) + Decimal(summary["unrealized_pnl"] or 0)
-    return {
-        "mode": "PAPER_ONLY", "broker_orders_enabled": False,
-        "order_type_default": "LIMIT", "order_type": order_type, "trade_id": trade_id,
-        "quantity_per_leg": next(iter(quantities.values())),
-        "legs": preview_legs, "gross_close_cash_flow": str(gross_cash_flow),
-        "estimated_charges_included": True,
-        "estimated_realized_plus_close_pnl": str(estimated_net_pnl),
-        "all_legs_marketable": all_legs_marketable,
-        "all_legs_depth_sufficient": all_legs_depth_sufficient,
-        "preview_is_executable": all_legs_marketable and all_legs_depth_sufficient,
-        "preview_price_source": "CURRENT_EXECUTABLE_QUOTES" if all_legs_marketable else "INDICATIVE_LIMIT_SCENARIO",
-        "quote_source": "fresh_backend_four_leg_snapshot",
-    }
+    target_quantity = quantities[roles[0]]
+    if target_quantity % contracts.lot_size:
+        raise HTTPException(status_code=409, detail="open quantity is not a whole number of lots")
+    target_lots = target_quantity // contracts.lot_size
+    legs_by_role = {item["role"]: item for item in trade_row["legs"]}
+
+    try:
+        with fresh_box_paper_depth(contracts) as records:
+            depth_by_role = {}
+            for role in roles:
+                leg = legs_by_role[role]
+                close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
+                depth_by_role[role] = depth_levels(
+                    records.get(role), "BID" if close_action == "SELL" else "ASK",
+                )
+            selected = select_complete_lots(
+                target_lots, contracts.lot_size, depth_by_role, roles=roles,
+            )
+            if selected is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="fresh depth is insufficient for even one complete four-leg exit lot",
+                )
+            executable_lots = int(selected["lots"])
+            preview_legs = []
+            marks: dict[str, float] = {}
+            gross_cash_flow = Decimal("0.00")
+            all_legs_marketable = True
+            for role in roles:
+                leg = legs_by_role[role]
+                close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
+                allocation = selected["allocations"][role]
+                executable = float(allocation["vwap"])
+                proposed = executable
+                if order_type == "LIMIT" and limit_prices is not None:
+                    try:
+                        proposed = float(limit_prices[role])
+                    except (TypeError, ValueError, OverflowError):
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
+                    if not math.isfinite(proposed) or proposed <= 0:
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
+                # Marketability is checked against the depth VWAP; a limit must
+                # not claim a fill better than the executable depth allows.
+                marketable = proposed <= executable if close_action == "SELL" else proposed >= executable
+                all_legs_marketable = all_legs_marketable and marketable
+                preview_price = executable if marketable else proposed
+                marks[role] = preview_price
+                gross_cash_flow += (
+                    Decimal(str(preview_price)) * int(selected["quantity"])
+                    * (1 if close_action == "SELL" else -1)
+                )
+                preview_legs.append({
+                    "role": role, "close_action": close_action,
+                    "quantity": int(selected["quantity"]),
+                    "requested_quantity": target_quantity,
+                    "executable_vwap": executable,
+                    "depth_levels_used": allocation.get("levels_used"),
+                    "available_depth_quantity": sum(qty for _, qty in depth_by_role[role]),
+                    "limit_price": proposed if order_type == "LIMIT" else None,
+                    "marketable": marketable,
+                    "preview_price": preview_price,
+                })
+
+            full_position_executable = executable_lots == target_lots
+            summary = None
+            if full_position_executable and all_legs_marketable:
+                summary_raw = _ledger.get_trade_summary(
+                    trade_id, account_key=account_key, mark_prices=marks,
+                )
+                summary = {
+                    key: str(value) if isinstance(value, Decimal) else value
+                    for key, value in summary_raw.items()
+                }
+            return {
+                "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+                "order_type_default": "LIMIT", "order_type": order_type, "trade_id": trade_id,
+                "requested_exit_lots": target_lots,
+                "executable_exit_lots": executable_lots,
+                "remaining_open_lots_after_preview": target_lots - executable_lots,
+                "quantity_per_leg": int(selected["quantity"]),
+                "legs": preview_legs, "gross_close_cash_flow": str(gross_cash_flow),
+                "all_legs_marketable": all_legs_marketable,
+                "full_position_executable": full_position_executable,
+                "preview_is_executable": all_legs_marketable,
+                "estimated_pnl_summary": summary,
+                "pnl_summary_note": (
+                    "Full-position estimate shown only when all open lots are executable"
+                    if summary is not None else
+                    "Partial-lot preview only; full-position P&L is not estimated from partial depth"
+                ),
+                "quote_source": "fresh_shared_websocket_four_leg_depth",
+            }
+    except BoxPaperDepthFeedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"fresh four-leg exit depth unavailable: {exc}",
+        ) from exc
 
 
 @router.get("/trades/{trade_id}/exit-preview", dependencies=[Depends(require_paper_access)])
