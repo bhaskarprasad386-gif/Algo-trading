@@ -27,6 +27,10 @@ from app.scanner.live_box_spread_routes import live as live_box_spread_opportuni
 from app.scanner.box_spread_contract_resolver import (
     BoxSpreadContractResolutionError, resolve_box_spread_contracts,
 )
+from app.scanner.box_spread_paper_depth import depth_levels, select_complete_lots
+from app.scanner.box_spread_paper_depth_feed import (
+    BoxPaperDepthFeedError, fresh_box_paper_depth,
+)
 from app.scanner.box_spread_paper_engine import BoxSpreadPaperEngine, BoxSpreadPaperEngineError
 from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperLedger, BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry,
@@ -290,6 +294,40 @@ def _reference_prices_for_direction(row: dict[str, Any], direction: str) -> dict
         buy = direction == "LONG" if role in {"LOW_CE", "HIGH_PE"} else direction == "SHORT"
         prices[role] = ask if buy else bid
     return prices
+
+
+def _entry_depth_side(direction: str, role: str) -> str:
+    """Entry BUY consumes asks; entry SELL consumes bids."""
+    buy = (direction == "LONG") == (role in {"LOW_CE", "HIGH_PE"})
+    return "ASK" if buy else "BID"
+
+
+def _fresh_entry_depth_selection(contracts, target_lots: int):
+    """Select the largest whole-lot four-leg entry from one fresh shared-feed snapshot."""
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    with fresh_box_paper_depth(contracts) as records:
+        depth = {
+            role: depth_levels(records.get(role), _entry_depth_side(contracts.direction, role))
+            for role in roles
+        }
+        selected = select_complete_lots(
+            target_lots, contracts.lot_size, depth, roles=roles,
+        )
+        if selected is None:
+            raise HTTPException(
+                status_code=409,
+                detail="insufficient fresh four-leg market depth for even one complete lot; no entry created",
+            )
+        prices = {
+            role: float(selected["allocations"][role]["vwap"])
+            for role in roles
+        }
+        return {
+            "lots": int(selected["lots"]),
+            "quantity": int(selected["quantity"]),
+            "prices": prices,
+            "allocations": selected["allocations"],
+        }
 
 
 def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> float:
