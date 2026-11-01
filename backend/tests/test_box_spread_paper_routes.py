@@ -19,9 +19,17 @@ def _fake_paper_depth(row, roles=None):
     }
     records = {}
     for role, (bid, ask, bid_qty, ask_qty) in fields.items():
+        payload = {
+            "best_5_buy_data": ([{
+                "price": float(row[bid]) * 100, "quantity": row.get(bid_qty),
+            }] if row.get(bid) is not None and row.get(bid_qty) is not None else []),
+            "best_5_sell_data": ([{
+                "price": float(row[ask]) * 100, "quantity": row.get(ask_qty),
+            }] if row.get(ask) is not None and row.get(ask_qty) is not None else []),
+        }
         records[role] = SimpleNamespace(
             bid=row.get(bid), ask=row.get(ask),
-            bid_qty=row.get(bid_qty), ask_qty=row.get(ask_qty), payload={},
+            bid_qty=row.get(bid_qty), ask_qty=row.get(ask_qty), payload=payload,
         )
     yield records
 
@@ -914,6 +922,11 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
     claim_state = {"claimed": False}
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "_fresh_entry_depth_selection", lambda contracts, target_lots: {
+        "lots": target_lots, "quantity": target_lots * contracts.lot_size,
+        "prices": {"LOW_CE": 11, "HIGH_CE": 20, "HIGH_PE": 31, "LOW_PE": 40},
+        "allocations": {},
+    })
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(
@@ -1349,7 +1362,7 @@ def test_shared_exit_executor_rejects_bad_fourth_leg_before_atomic_write(monkeyp
         lambda **kwargs: pytest.fail("invalid four-leg quotes must not write any exit fills"),
     )
     row.update({
-        "low_put_bid": 42, "low_put_ask": 41,
+        "low_put_bid": 40, "low_put_ask": 0,
     })
     with pytest.raises(HTTPException) as raised:
         routes._execute_exit_basket_from_row(
