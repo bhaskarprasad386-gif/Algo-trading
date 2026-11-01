@@ -73,10 +73,10 @@ const quoteTime = (value: number | string | null | undefined) => {
   let milliseconds: number;
   try {
     const timestamp = BigInt(raw);
-    if (timestamp <= 0n) return "—";
+    if (timestamp <= BigInt("0")) return "—";
     // Snapshot timestamps are epoch nanoseconds. Convert before Number so
     // large integer precision is not lost while deriving the clock time.
-    milliseconds = Number(timestamp / 1_000_000n);
+    milliseconds = Number(timestamp / BigInt("1000000"));
   } catch {
     return "—";
   }
