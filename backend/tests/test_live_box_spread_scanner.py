@@ -377,3 +377,49 @@ def test_box_scanner_isolates_atm_provider_exception_and_keeps_quote_bucket():
     assert snapshot["counts"]["atm_provider_errors"] == 1
     assert snapshot["last_scan"]["outcome"] == "atm_provider_error"
     assert snapshot["active_buckets"] == 1
+
+
+def test_box_scanner_rejects_fractional_lot_size_instead_of_truncating():
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig
+
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: 100,
+        config_provider=lambda _s: BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    for strike in (100, 110):
+        for option_type in ("CE", "PE"):
+            scanner.observe({
+                "underlying": "ABC", "instrument_class": "STOCK",
+                "source_timestamp_ns": 10, "expiry": "30SEP2026",
+                "strike": strike, "option_type": option_type,
+                "bid": 10, "ask": 10.1, "lot_size": 10.5,
+                "volume": 100, "oi": 100,
+            })
+
+    assert scanner.monitor_snapshot()["data"] == ()
+    assert scanner.diagnostics_snapshot()["counts"]["expiry_or_lot_mismatch"] == 4
+
+
+def test_box_scanner_rejects_fractional_liquidity_counts():
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig
+
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: 100,
+        config_provider=lambda _s: BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    for strike in (100, 110):
+        for option_type in ("CE", "PE"):
+            scanner.observe({
+                "underlying": "ABC", "instrument_class": "STOCK",
+                "source_timestamp_ns": 10, "expiry": "30SEP2026",
+                "strike": strike, "option_type": option_type,
+                "bid": 10, "ask": 10.1, "lot_size": 10,
+                "volume": 100.5, "oi": 100,
+            })
+
+    assert scanner.monitor_snapshot()["data"] == ()
+    assert scanner.diagnostics_snapshot()["counts"]["malformed_leg_pair"] == 4
