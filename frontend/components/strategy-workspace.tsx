@@ -1078,6 +1078,55 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <p className="text-[10px] theme-muted">Cards are observation-based, not independent feed subscriptions. “No spot observation” means no current opportunity row supplied a spot quote; it does not prove that the exchange feed is down. Market session is not inferred from clock time.</p>
         </section>
       )}
+      {slug === "box-spread" && (
+        <Card className="theme-border theme-surface p-4" aria-label="Box Spread system health">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-bold theme-text"><Activity className="h-4 w-4 theme-accent" /> System Health</h2>
+              <p className="mt-1 text-xs theme-muted">Common market-data feed and Box Spread runner diagnostics · exchange-level status, not per-index feed confirmation.</p>
+            </div>
+            <span className={"rounded-lg border px-3 py-1.5 text-[11px] font-bold " + (feedStatus === "LIVE" && runner?.running ? "theme-border theme-success-bg theme-success" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-warning-bg theme-warning")}>
+              {feedStatus === "LIVE" && runner?.running ? "FEED + RUNNER LIVE" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "HEALTH ATTENTION" : "STATUS CHECKING"}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Common Feed</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">cumulative ticks</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Age</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p>
+              <p className="text-[10px] theme-muted">oldest required exchange tick</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">NSE / NFO</p>
+              <p className="mt-1 text-sm font-bold theme-text">{String(feedExchangeFreshness?.NSE?.status ?? "UNKNOWN")} / {String(feedExchangeFreshness?.NFO?.status ?? "UNKNOWN")}</p>
+              <p className="text-[10px] theme-muted">NSE {typeof feedExchangeFreshness?.NSE?.age_seconds === "number" ? feedExchangeFreshness.NSE.age_seconds.toFixed(1) + "s" : "—"} · NFO {typeof feedExchangeFreshness?.NFO?.age_seconds === "number" ? feedExchangeFreshness.NFO.age_seconds.toFixed(1) + "s" : "—"}</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Box Runner</p>
+              <p className={"mt-1 text-sm font-bold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNKNOWN"}</p>
+              <p className="text-[10px] theme-muted">{runner?.detail || "Runner detail unavailable"}</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Instruments</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">active common-feed instruments</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Errors</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedErrors == null ? "—" : (feedErrors.delivery + feedErrors.normalizer).toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">delivery {feedErrors?.delivery ?? "—"} · normalizer {feedErrors?.normalizer ?? "—"}</p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border theme-border px-3 py-2 text-xs">
+            <span className="theme-muted">Scanner: <b className="theme-text">{String(scannerDiagnostics?.status ?? "not separately reported")}</b></span>
+            <span className="font-bold theme-warning">BROKER ORDERS OFF · NO ORDER ROUTING</span>
+          </div>
+        </Card>
+      )}
       <Card className="theme-border theme-surface px-3 py-3">
         <div className="flex items-center gap-2 text-xs font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
         <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(160px,0.7fr)_auto]">
