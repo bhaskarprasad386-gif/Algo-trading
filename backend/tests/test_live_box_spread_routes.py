@@ -338,3 +338,27 @@ def test_monitor_route_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
     payload = routes.monitor_snapshot(max_age_seconds=5)
     assert payload["fresh"] is True
     assert payload["count"] == 0
+
+
+def test_http_and_websocket_box_rows_keep_identical_edge_and_executable_prices(monkeypatch):
+    from app.scanner import live_box_spread_websocket as websocket
+
+    result = _result()
+    now_ns = max(result.low.timestamp_ns, result.high.timestamp_ns)
+    result.low.call_timestamp_ns = now_ns
+    result.low.put_timestamp_ns = now_ns
+    result.high.call_timestamp_ns = now_ns
+    result.high.put_timestamp_ns = now_ns
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    monkeypatch.setattr(routes.time, "time_ns", lambda: now_ns)
+    monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
+
+    http_row = routes.live(10)["data"][0]
+    ws_row = websocket._row(result)
+
+    for key in (
+        "executable_edge", "edge_per_lot", "gross_pnl", "low_call_price",
+        "low_put_price", "high_call_price", "high_put_price",
+        "last_update_timestamp_ns", "quote_age_seconds", "timestamp_skew_ms",
+    ):
+        assert http_row[key] == ws_row[key]
