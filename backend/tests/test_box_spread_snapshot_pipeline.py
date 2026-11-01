@@ -362,8 +362,16 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
 
     spool = tmp_path / "pending.jsonl"
     monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(spool))
-    valid_one = {"symbol": "NIFTY", "last_update_timestamp_ns": 100}
-    valid_two = {"symbol": "SENSEX", "last_update_timestamp_ns": 200}
+    def valid_row(symbol, expiry, timestamp):
+        return {
+            "symbol": symbol, "expiry": expiry, "low_strike": 22000,
+            "high_strike": 23000, "direction": "LONG",
+            "observed_at": "2026-11-01T09:15:00Z",
+            "last_update_timestamp_ns": timestamp,
+        }
+
+    valid_one = valid_row("NIFTY", 20261103, 100)
+    valid_two = valid_row("SENSEX", 20261105, 200)
     corrupt_json = '{"symbol": "BROKEN",\n'
     non_object = '[]\n'
     spool.write_text(
