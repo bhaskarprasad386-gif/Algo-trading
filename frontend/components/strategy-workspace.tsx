@@ -82,7 +82,13 @@ function BoxSpreadLegQuote({ row, column }: { row: Row; column: BoxSpreadLegColu
   const prefix = column.startsWith("Low ") ? "low_" : "high_";
   const option = column.includes("Call") ? "call" : "put";
   const key = prefix + option;
-  const isBuy = (prefix === "low_" && option === "call") || (prefix === "high_" && option === "put");
+  const direction = String(value(row, "direction") ?? "LONG").toUpperCase();
+  const isLong = direction !== "SHORT";
+  // Box Spread executable sides reverse for SHORT baskets. Keep the visual
+  // BUY/ASK and SELL/BID labels aligned with the actual direction.
+  const isBuy = isLong
+    ? (prefix === "low_" && option === "call") || (prefix === "high_" && option === "put")
+    : (prefix === "low_" && option === "put") || (prefix === "high_" && option === "call");
   const tone = isBuy ? "rounded bg-emerald-500/15 px-1.5 py-0.5 font-semibold text-emerald-600 dark:text-emerald-300" : "rounded bg-rose-500/15 px-1.5 py-0.5 font-semibold text-rose-600 dark:text-rose-300";
   const action = isBuy ? "BUY · ASK" : "SELL · BID";
   const priceSide = isBuy ? "ask" : "bid";
