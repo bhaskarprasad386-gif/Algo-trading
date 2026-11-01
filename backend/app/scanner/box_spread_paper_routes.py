@@ -778,17 +778,20 @@ def trades(
 def create_trade(payload: CreatePaperTrade):
     try:
         contracts = _resolve(payload)
+        selection = _fresh_entry_depth_selection(contracts, payload.lots)
+        selected_lots = int(selection["lots"])
         trade = _ledger.create_trade(
             idempotency_key=payload.idempotency_key, underlying=contracts.underlying,
             instrument_class=contracts.instrument_class, expiry=contracts.expiry,
             low_strike=contracts.low_strike, high_strike=contracts.high_strike,
-            direction=contracts.direction, lots=payload.lots, lot_size=contracts.lot_size,
+            direction=contracts.direction, lots=selected_lots, lot_size=contracts.lot_size,
             account_key=payload.account_key, entry_spot_price=payload.entry_spot_price,
         )
         return {
             "mode": "PAPER_ONLY", "broker_orders_enabled": False,
             "trade_id": trade.id, "status": trade.status,
             "idempotency_key": trade.idempotency_key,
+            "requested_lots": payload.lots, "selected_lots": selected_lots,
             "contracts": _contract_payload(contracts),
             "next_step": "Run paper simulation against fresh backend Box Spread quotes; no broker order is sent.",
         }
