@@ -30,7 +30,7 @@ type Snapshot = {
   high_put_ltp?: number | null; high_put_bid?: number | null; high_put_ask?: number | null; high_put_bid_qty?: number | null; high_put_ask_qty?: number | null;
   trace_entry_sides?: Record<string, string>;
   trace_entry_prices?: Record<string, number | null>;
-  trace_entry_depth?: Record<string, number | null>;
+  trace_entry_depth?: Record<string, number | null> | Array<number | null>;
 };
 
 type SnapshotResponse = {
@@ -425,7 +425,7 @@ export default function BoxSpreadPostMarketHistory() {
               {([["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const).map(([label,leg]) => {
                 const side = trace.entry.trace_entry_sides?.[leg] || "—";
                 const price = trace.entry.trace_entry_prices?.[leg];
-                const depth = trace.entry.trace_entry_depth?.[leg];
+                const depth = Array.isArray(trace.entry.trace_entry_depth) ? trace.entry.trace_entry_depth[(["low_call","low_put","high_call","high_put"] as string[]).indexOf(leg)] : trace.entry.trace_entry_depth?.[leg];
                 return <div key={leg} className="rounded-lg border theme-border theme-surface p-2">
                   <p className="text-[10px] font-bold theme-text">{label} · {side}</p>
                   <p className="mt-1 text-xs font-semibold theme-text">Entry ₹{number(price)}</p>
