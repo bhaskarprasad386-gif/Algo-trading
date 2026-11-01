@@ -68,9 +68,19 @@ const mergeSnapshots = (current: Snapshot[], incoming: Snapshot[]) => {
 
 const quoteTime = (value: number | string | null | undefined) => {
   if (value == null || value === "") return "—";
-  const timestamp = Number(value);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return "—";
-  const date = new Date(timestamp / 1_000_000);
+  const raw = String(value);
+  if (!/^\\d+$/.test(raw)) return "—";
+  let milliseconds: number;
+  try {
+    const timestamp = BigInt(raw);
+    if (timestamp <= 0n) return "—";
+    // Snapshot timestamps are epoch nanoseconds. Convert before Number so
+    // large integer precision is not lost while deriving the clock time.
+    milliseconds = Number(timestamp / 1_000_000n);
+  } catch {
+    return "—";
+  }
+  const date = new Date(milliseconds);
   return Number.isNaN(date.getTime())
     ? "—"
     : date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) + " IST";
