@@ -49,7 +49,7 @@ function quoteTime(value: unknown) {
   let milliseconds: number;
   try {
     const raw = String(value);
-    if (!/^\\d+$/.test(raw)) return "—";
+    if (!/^\d+$/.test(raw)) return "—";
     milliseconds = Number(BigInt(raw) / 1_000_000n);
   } catch {
     return "—";
