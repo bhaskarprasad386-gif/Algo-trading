@@ -290,3 +290,48 @@ html[data-theme="white"] .box-live-opportunities [class*="bg-amber-"] {
 html[data-theme="white"] .box-live-opportunities [class*="text-white"] {
   color: #0f172a !important;
 }
+
+
+/* Box Spread workspace header and section navigation follow White theme. */
+html[data-theme="white"] .box-workspace-header {
+  background: linear-gradient(115deg, #ffffff 0%, #f1f5f9 58%, #ffffff 100%) !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .08) !important;
+}
+html[data-theme="white"] .box-workspace-header h1,
+html[data-theme="white"] .box-workspace-header .text-white,
+html[data-theme="white"] .box-workspace-header .text-slate-300,
+html[data-theme="white"] .box-workspace-header .text-slate-400 {
+  color: #0f172a !important;
+}
+html[data-theme="white"] .box-workspace-header .text-cyan-300,
+html[data-theme="white"] .box-workspace-header .text-cyan-200 {
+  color: #0e7490 !important;
+}
+html[data-theme="white"] .box-workspace-header .border-slate-700 {
+  border-color: #cbd5e1 !important;
+}
+html[data-theme="white"] .box-workspace-header .bg-slate-900\/70 {
+  background-color: #e2e8f0 !important;
+}
+html[data-theme="white"] .box-workspace-header .bg-cyan-300\/10 {
+  background-color: #ecfeff !important;
+  border-color: #a5f3fc !important;
+}
+html[data-theme="white"] .box-workspace-header .bg-cyan-400\/10,
+html[data-theme="white"] .box-workspace-header .bg-blue-500\/10 {
+  background-color: rgba(14, 116, 144, .06) !important;
+}
+html[data-theme="white"] .box-workspace-nav {
+  background: rgba(255, 255, 255, .96) !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .07) !important;
+}
+html[data-theme="white"] .box-workspace-nav a {
+  color: #334155 !important;
+}
+html[data-theme="white"] .box-workspace-nav a:hover {
+  background-color: #ecfeff !important;
+  color: #0e7490 !important;
+}
