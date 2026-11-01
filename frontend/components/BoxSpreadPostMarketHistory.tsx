@@ -211,13 +211,13 @@ export default function BoxSpreadPostMarketHistory() {
   };
 
   return (
-    <Card className="scroll-mt-24 border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl sm:p-5" id="box-history">
+    <Card className="scroll-mt-24 theme-border theme-surface theme-text p-4 shadow-xl sm:p-5" id="box-history">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
           <div>
-            <h2 className="text-base font-extrabold text-white">Post-Market Box Spread Pair History</h2>
-            <p className="mt-1 text-xs text-slate-400">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
+            <h2 className="text-base font-extrabold theme-text">Post-Market Box Spread Pair History</h2>
+            <p className="mt-1 text-xs theme-muted">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
           </div>
         </div>
         <button type="button" onClick={refresh} disabled={loading || loadingMore} className="inline-flex min-h-9 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
@@ -255,8 +255,14 @@ export default function BoxSpreadPostMarketHistory() {
       {!rows.length && loading && <p className="mt-4 text-sm theme-muted">Loading saved Box Spread snapshots…</p>}
       {!rows.length && !loading && !error && <p className="mt-4 rounded-lg border theme-border p-3 text-sm theme-muted">No qualifying snapshots were saved in this window. No synthetic or sample rows are displayed.</p>}
 
+      {rows.length > 0 && <div className="mt-4 space-y-2 md:hidden">
+        <div className="grid grid-cols-3 gap-2" aria-label="Sort saved history">
+          {(["profit","edge","time"] as const).map(key => <button key={key} type="button" onClick={() => void selectSort(key)} disabled={sortingAll} aria-pressed={sortKey === key} className={"min-h-10 rounded-lg border px-2 text-xs font-semibold disabled:opacity-50 " + (sortKey === key ? "theme-accent theme-accent-bg theme-border" : "theme-border theme-surface theme-text")}>{key === "profit" ? "Profit" : key === "edge" ? "Edge" : "Timing"}{sortMark(key)}</button>)}
+        </div>
+        {sortingAll && <p role="status" className="text-xs theme-muted">Loading complete history for sorting…</p>}
+      </div>}
       {rows.length > 0 && <div className="mt-4 grid gap-3 md:hidden">
-        {rows.map(row => <article key={snapshotKey(row)} className="rounded-xl border theme-border theme-surface-2 p-3">
+        {sortedRows.map(row => <article key={snapshotKey(row)} className="rounded-xl border theme-border theme-surface-2 p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div><div className="flex items-center gap-2"><span className="text-sm font-bold theme-text">{row.symbol}</span><span className={"rounded-md px-2 py-0.5 text-[9px] font-bold " + (row.expiry_type === "WEEKLY" ? "bg-cyan-500/10 text-cyan-500" : row.expiry_type === "MONTHLY" ? "bg-violet-500/10 text-violet-500" : "bg-slate-500/10 theme-muted")}>{row.expiry_type || "UNKNOWN"}</span></div><p className="mt-1 text-[11px] theme-muted">Expiry {row.expiry_date || row.expiry} · {row.direction}</p></div>
             <div className="text-right"><p className="text-[9px] uppercase tracking-wide theme-muted">Executable edge</p><p className="text-lg font-extrabold tabular-nums theme-text">₹{number(row.executable_edge)}</p></div>
@@ -272,6 +278,7 @@ export default function BoxSpreadPostMarketHistory() {
       </div>}
 
       {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
+        {sortingAll && <p role="status" className="px-3 py-2 text-xs theme-muted">Loading complete history for sorting…</p>}
         <table className="w-full min-w-[2600px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
             <th className="px-3 py-2"><button type="button" onClick={() => void selectSort("time")} disabled={sortingAll}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("edge")} disabled={sortingAll}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("profit")} disabled={sortingAll}>Gross P&L{sortMark("profit")}</button></th>
