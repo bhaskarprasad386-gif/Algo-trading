@@ -24,7 +24,7 @@ function n(row: Opportunity, field: string) {
 function timestampMilliseconds(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const raw = String(value);
-  if (!/^\\d+$/.test(raw)) return null;
+  if (!/^\d+$/.test(raw)) return null;
   try {
     // Keep nanosecond epoch values exact until after conversion to milliseconds.
     const integer = BigInt(raw);
@@ -158,7 +158,7 @@ export default function LiveOpportunityGrid() {
             const incomingTimestamp = incomingRawTimestamp == null ? "" : String(incomingRawTimestamp);
             // Compare exchange nanosecond timestamps as integers, not JS Numbers.
             // Number conversion can collapse distinct large timestamps at 1e18.
-            if (!/^\\d+$/.test(incomingTimestamp)) continue;
+            if (!/^\d+$/.test(incomingTimestamp)) continue;
             let incomingNs: bigint;
             try { incomingNs = BigInt(incomingTimestamp); } catch { continue; }
             if (incomingNs <= 0n) continue;
@@ -168,7 +168,7 @@ export default function LiveOpportunityGrid() {
             const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
             // Ignore duplicate and out-of-order frames. Replayed snapshots must
             // not keep an old opportunity looking live by refreshing lastSeen.
-            if (/^\\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
+            if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
             rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
           }
           publishRows();
