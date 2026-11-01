@@ -362,6 +362,7 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
 
     spool = tmp_path / "pending.jsonl"
     monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(spool))
+
     def valid_row(symbol, expiry, timestamp):
         return {
             "symbol": symbol, "expiry": expiry, "low_strike": 22000,
@@ -372,8 +373,8 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
 
     valid_one = valid_row("NIFTY", 20261103, 100)
     valid_two = valid_row("SENSEX", 20261105, 200)
-    corrupt_json = '{"symbol": "BROKEN",\n'
-    non_object = '[]\n'
+    corrupt_json = '{"symbol": "BROKEN",\\n'
+    non_object = '[]\\n'
     incomplete = json.dumps({"symbol": "PARTIAL"}) + "\\n"
     invalid_snapshot = json.dumps({
         "symbol": "NIFTY", "expiry": "not-an-expiry",
@@ -382,7 +383,8 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
         "last_update_timestamp_ns": 1,
     }) + "\\n"
     spool.write_text(
-        json.dumps(valid_one) + "\n" + corrupt_json + non_object + incomplete + invalid_snapshot + json.dumps(valid_two) + "\n",
+        json.dumps(valid_one) + "\\n" + corrupt_json + non_object
+        + incomplete + invalid_snapshot + json.dumps(valid_two) + "\\n",
         encoding="utf-8",
     )
 
@@ -394,6 +396,6 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
     ]
     quarantine = tmp_path / "pending.jsonl.corrupt"
     assert quarantine.read_text(encoding="utf-8").splitlines() == [
-        corrupt_json.rstrip("\n"), non_object.rstrip("\n"),,
-        incomplete.rstrip("\\n"), invalid_snapshot.rstrip("\\n")
+        corrupt_json.rstrip("\\n"), non_object.rstrip("\\n"),
+        incomplete.rstrip("\\n"), invalid_snapshot.rstrip("\\n"),
     ]
