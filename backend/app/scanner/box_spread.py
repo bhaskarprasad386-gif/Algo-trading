@@ -39,13 +39,21 @@ def _whole_nonnegative(value) -> bool:
         return False
 
 
+def _positive_integer(value) -> int | None:
+    try:
+        number = float(value)
+        return int(number) if isfinite(number) and number > 0 and number.is_integer() else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _valid_quote(q: OptionQuote) -> bool:
     try:
         strike = float(q.strike)
         lot_size = float(q.lot_size)
-        timestamp = int(q.timestamp_ns)
+        timestamp = _positive_integer(q.timestamp_ns)
         leg_timestamps = tuple(
-            int(value if value is not None else q.timestamp_ns)
+            _positive_integer(value if value is not None else q.timestamp_ns)
             for value in (q.call_timestamp_ns, q.put_timestamp_ns)
         )
         prices = (q.call_bid, q.call_ask, q.put_bid, q.put_ask)
@@ -53,7 +61,7 @@ def _valid_quote(q: OptionQuote) -> bool:
             return False
         if not isfinite(lot_size) or lot_size <= 0 or not lot_size.is_integer():
             return False
-        if timestamp <= 0 or any(value <= 0 for value in leg_timestamps):
+        if timestamp is None or any(value is None for value in leg_timestamps):
             return False
         if any(not isfinite(float(value)) or float(value) <= 0 for value in prices):
             return False
