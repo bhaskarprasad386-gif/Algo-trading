@@ -107,7 +107,10 @@ class BoxPaperDepthFeed:
                     self._condition.wait(min(remaining, 0.1))
             yield snapshot_records
         finally:
+            # Also clear if start() failed after callback registration but
+            # before CommonStrategyMarketFeed marked itself started.
             self._feed.stop()
+            self._feed.manager.clear_consumer(_CONSUMER)
             with self._condition:
                 self._keys.clear()
                 self._records.clear()
