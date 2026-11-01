@@ -27,7 +27,7 @@ from app.scanner.live_box_spread_routes import live as live_box_spread_opportuni
 from app.scanner.box_spread_contract_resolver import (
     BoxSpreadContractResolutionError, resolve_box_spread_contracts,
 )
-from app.scanner.box_spread_paper_depth import depth_levels, select_complete_lots
+from app.scanner.box_spread_paper_depth import allocate_depth, depth_levels, select_complete_lots
 from app.scanner.box_spread_paper_depth_feed import (
     BoxPaperDepthFeedError, fresh_box_paper_depth,
 )
