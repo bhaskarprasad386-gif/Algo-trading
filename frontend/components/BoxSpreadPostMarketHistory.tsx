@@ -28,6 +28,9 @@ type Snapshot = {
   low_put_ltp?: number | null; low_put_bid?: number | null; low_put_ask?: number | null; low_put_bid_qty?: number | null; low_put_ask_qty?: number | null;
   high_call_ltp?: number | null; high_call_bid?: number | null; high_call_ask?: number | null; high_call_bid_qty?: number | null; high_call_ask_qty?: number | null;
   high_put_ltp?: number | null; high_put_bid?: number | null; high_put_ask?: number | null; high_put_bid_qty?: number | null; high_put_ask_qty?: number | null;
+  trace_entry_sides?: Record<string, string>;
+  trace_entry_prices?: Record<string, number | null>;
+  trace_entry_depth?: Record<string, number | null>;
 };
 
 type SnapshotResponse = {
