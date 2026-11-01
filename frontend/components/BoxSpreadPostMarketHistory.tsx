@@ -69,7 +69,7 @@ const mergeSnapshots = (current: Snapshot[], incoming: Snapshot[]) => {
 const quoteTime = (value: number | string | null | undefined) => {
   if (value == null || value === "") return "—";
   const raw = String(value);
-  if (!/^\\d+$/.test(raw)) return "—";
+  if (!/^\d+$/.test(raw)) return "—";
   let milliseconds: number;
   try {
     const timestamp = BigInt(raw);
