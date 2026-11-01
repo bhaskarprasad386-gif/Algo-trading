@@ -52,15 +52,30 @@ def _expiry_key(value):
         return parsed
     return "".join(character for character in str(value or "").strip().upper() if character.isalnum())
 
+def _timestamp_ns(value):
+    from decimal import Decimal, InvalidOperation
+    try:
+        number = Decimal(str(value))
+        return int(number) if number.is_finite() and number > 0 and number == number.to_integral_value() else None
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _leg_timestamps(row):
-    """Return timestamps for each executable option quote, with strike fallback."""
-    low_ts = int(getattr(row.low, "timestamp_ns", 0) or 0)
-    high_ts = int(getattr(row.high, "timestamp_ns", 0) or 0)
-    return (
-        int(getattr(row.low, "call_timestamp_ns", None) or low_ts),
-        int(getattr(row.low, "put_timestamp_ns", None) or low_ts),
-        int(getattr(row.high, "call_timestamp_ns", None) or high_ts),
-        int(getattr(row.high, "put_timestamp_ns", None) or high_ts),
+    """Return exact positive timestamps for each executable option quote."""
+    low_ts = _timestamp_ns(getattr(row.low, "timestamp_ns", None))
+    high_ts = _timestamp_ns(getattr(row.high, "timestamp_ns", None))
+    if low_ts is None or high_ts is None:
+        return (None, None, None, None)
+    values = (
+        getattr(row.low, "call_timestamp_ns", None),
+        getattr(row.low, "put_timestamp_ns", None),
+        getattr(row.high, "call_timestamp_ns", None),
+        getattr(row.high, "put_timestamp_ns", None),
+    )
+    return tuple(
+        _timestamp_ns(value if value is not None else fallback)
+        for value, fallback in zip(values, (low_ts, low_ts, high_ts, high_ts))
     )
 
 
@@ -110,6 +125,9 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
     fresh_rows=[]
     for row in rows:
         leg_timestamps = _leg_timestamps(row)
+        # Reject malformed timestamps rather than silently falling back to strike time.
+        if any(stamp is None for stamp in leg_timestamps):
+            continue
         # All four executable option legs must be fresh and synchronized.
         if not all(cutoff <= stamp <= now_ns for stamp in leg_timestamps):
             continue
@@ -124,6 +142,8 @@ def _serialize_monitor_result(result, *, now_ns: int, max_age_ns: int, freshness
     from math import isfinite
     low, high = result.low, result.high
     stamps = _leg_timestamps(SimpleNamespace(low=low, high=high))
+    if any(stamp is None for stamp in stamps):
+        return None
     if not all(now_ns - max_age_ns <= stamp <= now_ns for stamp in stamps):
         return None
     if max(stamps) - min(stamps) > min(max_age_ns, MAX_LEG_TIMESTAMP_SKEW_NS):
