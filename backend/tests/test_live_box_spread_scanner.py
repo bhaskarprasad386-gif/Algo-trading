@@ -489,3 +489,48 @@ def test_box_snapshot_rejects_nonpositive_individual_leg_timestamp():
 
     assert results == ()
     assert diagnostics["invalid_quotes"] == 1
+
+
+def test_box_snapshot_rejects_fractional_leg_timestamp():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(
+        10, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100,
+        call_timestamp_ns=10.5, put_timestamp_ns=10,
+    )
+    high = OptionQuote(
+        10, "ABC", 20261231, 110, 5, 6, 9, 10, 10, "STOCK", 100, 100,
+        call_timestamp_ns=10, put_timestamp_ns=10,
+    )
+    diagnostics = {}
+    assert scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)), diagnostics=diagnostics,
+    ) == ()
+    assert diagnostics["invalid_quotes"] == 1
+
+
+def test_live_box_scanner_rejects_fractional_source_timestamp():
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig
+
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: 100,
+        config_provider=lambda _s: BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    result = scanner.observe({
+        "underlying": "ABC", "instrument_class": "STOCK",
+        "source_timestamp_ns": 123.5, "expiry": "30SEP2026",
+        "strike": 100, "option_type": "CE", "bid": 10, "ask": 10.1,
+        "lot_size": 10, "volume": 100, "oi": 100,
+    })
+
+    assert result == ()
+    assert scanner.diagnostics_snapshot()["counts"]["invalid_identity_or_timestamp"] == 1
