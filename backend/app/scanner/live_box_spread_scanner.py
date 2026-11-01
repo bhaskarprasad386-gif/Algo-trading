@@ -236,7 +236,7 @@ class LiveBoxSpreadScanner:
                 self._diagnostic_counts["scan_"+name] += int(value)
             self._last_diagnostics={"symbol":symbol,"expiry":expiry,"atm_strike":float(atm),
                 "grouped_strikes":len(grouped),"result_count":len(results),
-                "min_executable_edge":float(self.config_provider(symbol).min_executable_edge),
+                "min_executable_edge":float(scan_config.min_executable_edge),
                 "outcome":"qualified" if results else "no_qualifying_box",
                 "scan":scan_stats}
             self._prune(ts)
