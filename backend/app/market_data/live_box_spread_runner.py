@@ -297,7 +297,7 @@ class LiveBoxSpreadRunner:
                 def observe(payload):
                     pipeline.observe(payload)
                     symbol=str(payload.get("underlying") or "").strip().upper()
-                    current=self.tracker.atm(symbol,time_ns())
+                    current=self.tracker.atm(symbol,time_ns(),max_age_seconds=10.0)
                     coverage = subscribed_strikes.get(symbol, set())
                     if (
                         _atm_outside_subscribed_range(current, coverage)
