@@ -74,13 +74,13 @@ def _read_spool():
                 if not isinstance(row, dict):
                     raise ValueError("spool record must be a JSON object")
                 rows.append(row)
-                valid_lines.append(line if line.endswith("\\n") else line + "\\n")
+                valid_lines.append(line if line.endswith("\n") else line + "\n")
             except (json.JSONDecodeError, ValueError) as exc:
                 logger.error(
                     "Quarantining corrupt Box Spread spool record at line %s: %s",
                     line_number, exc,
                 )
-                corrupt_lines.append(line if line.endswith("\\n") else line + "\\n")
+                corrupt_lines.append(line if line.endswith("\n") else line + "\n")
 
     if corrupt_lines:
         # Preserve the original malformed records for diagnosis before atomically
