@@ -5,11 +5,11 @@ import BoxSpreadWorkspaceHeader from "@/components/BoxSpreadWorkspaceHeader";
 
 export default function BoxSpreadWorkspacePage() {
   return (
-    <div className="space-y-4">
+    <main className="space-y-4">
       <BoxSpreadWorkspaceHeader />
+      <StrategyWorkspace slug="box-spread" />
       <BoxSpreadEdgeTimingAnalysis />
       <BoxSpreadPostMarketHistory />
-      <StrategyWorkspace slug="box-spread" />
-    </div>
+    </main>
   );
 }
