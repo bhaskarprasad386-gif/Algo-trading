@@ -915,6 +915,7 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(
         routes._ledger, "get_entry_claim",
         lambda **kwargs: {"status": "CLAIMED"} if claim_state["claimed"] else None,
@@ -1342,21 +1343,14 @@ def test_shared_exit_executor_validates_and_records_all_four_legs_for_market(mon
 
 
 def test_shared_exit_executor_rejects_bad_fourth_leg_before_atomic_write(monkeypatch):
-    _exit_basket_route_fixtures(monkeypatch)
+    row, _ = _exit_basket_route_fixtures(monkeypatch)
     monkeypatch.setattr(
         routes._ledger, "record_exit_basket",
         lambda **kwargs: pytest.fail("invalid four-leg quotes must not write any exit fills"),
     )
-    row = {
-        "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
-        "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
-        "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+    row.update({
         "low_put_bid": 42, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
-    }
+    })
     with pytest.raises(HTTPException) as raised:
         routes._execute_exit_basket_from_row(
             456, "basket-route-test", row,
@@ -1421,7 +1415,7 @@ def test_all_or_none_exit_rejects_basket_if_any_one_leg_is_not_marketable(
 def test_all_or_none_exit_requires_full_executable_depth_on_every_leg(
     monkeypatch, depth_field, available,
 ):
-    _exit_basket_route_fixtures(monkeypatch)
+    row, _ = _exit_basket_route_fixtures(monkeypatch)
     writes = []
     monkeypatch.setattr(
         routes._ledger, "record_exit_basket",
@@ -1429,16 +1423,6 @@ def test_all_or_none_exit_requires_full_executable_depth_on_every_leg(
             "insufficient or missing depth must block the entire four-leg exit"
         ),
     )
-    row = {
-        "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
-        "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
-        "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
-        "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
-    }
     row[depth_field] = available
     with pytest.raises(HTTPException) as raised:
         routes._execute_exit_basket_from_row(
