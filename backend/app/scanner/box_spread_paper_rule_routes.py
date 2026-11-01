@@ -516,8 +516,14 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 entry_spot_price=row.get("spot_price"),
             )
             contracts = await asyncio.to_thread(paper._resolve, request)
-            # Validate all four executable prices before consuming a quota slot.
-            paper._reference_prices_for_direction(row, contracts.direction)
+            # Select quantity before creating the durable trade row. The
+            # selected lots are the largest whole-lot basket all four legs can
+            # execute from one synchronized fresh depth snapshot.
+            depth_selection = await asyncio.to_thread(
+                paper._fresh_entry_depth_selection, contracts, request.lots,
+            )
+            if depth_selection["lots"] < request.lots:
+                request = request.model_copy(update={"lots": depth_selection["lots"]})
             quota_slot = await asyncio.to_thread(
                 _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
                 max_per_window, idempotency_key,
