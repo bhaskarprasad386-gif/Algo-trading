@@ -1056,7 +1056,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               const latest = matching.reduce<Row | null>((best, row) => {
                 const stamp = String(row.spot_timestamp_ns ?? row.timestamp_ns ?? "0");
                 const bestStamp = String(best?.spot_timestamp_ns ?? best?.timestamp_ns ?? "0");
-                const newer = /^\\d+$/.test(stamp) && /^\\d+$/.test(bestStamp)
+                const newer = /^\d+$/.test(stamp) && /^\d+$/.test(bestStamp)
                   ? BigInt(stamp) > BigInt(bestStamp)
                   : Number(stamp) > Number(bestStamp);
                 return !best || newer ? row : best;
