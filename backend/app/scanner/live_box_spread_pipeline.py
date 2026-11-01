@@ -73,7 +73,12 @@ def _clear_spool():
 
 def _snapshot_payload(result, observed_at, spot_provider=None):
     low, high = result.low, result.high
-    spot = spot_provider(low.underlying) if callable(spot_provider) else None
+    # Snapshot persistence is driven by the four option quotes. Spot is
+    # optional context and a temporary spot-provider error must not lose it.
+    try:
+        spot = spot_provider(low.underlying) if callable(spot_provider) else None
+    except Exception:
+        spot = None
     if not isinstance(spot, dict):
         spot = {}
     return {
