@@ -1246,7 +1246,10 @@ def _execute_exit_basket_from_row(
                     consumed_by_role[role] = lot_size
 
                 # All four roles have been validated before any ledger write.
-                batch_fill_id = f"{fill_id}:LOT:{batch_number}"
+                # Keep the ledger key within its 96-character contract even when
+                # callers supply a maximum-length idempotency key.
+                fill_digest = hashlib.sha256(str(fill_id).encode("utf-8")).hexdigest()[:40]
+                batch_fill_id = f"exit:{fill_digest}:LOT:{batch_number}"
                 receipts.extend(_ledger.record_exit_basket(
                     trade_id=trade_id, fill_id=batch_fill_id, legs=batch_legs,
                     account_key=account_key,
