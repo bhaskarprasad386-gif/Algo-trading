@@ -462,3 +462,30 @@ def test_box_snapshot_rejects_nonfinite_atm_and_fee_configuration():
             (quote,), atm_strike=100, instrument_class="STOCK",
             config=config, policy=ScanPolicy(stock_box_distances=(1,)),
         )
+
+
+def test_box_snapshot_rejects_nonpositive_individual_leg_timestamp():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(
+        10, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100,
+        call_timestamp_ns=0, put_timestamp_ns=10,
+    )
+    high = OptionQuote(
+        10, "ABC", 20261231, 110, 5, 6, 9, 10, 10, "STOCK", 100, 100,
+        call_timestamp_ns=10, put_timestamp_ns=10,
+    )
+    diagnostics = {}
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)), diagnostics=diagnostics,
+    )
+
+    assert results == ()
+    assert diagnostics["invalid_quotes"] == 1
