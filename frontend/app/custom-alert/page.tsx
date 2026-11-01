@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Bell, Bot, Plus, Trash2 } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import BoxSpreadTimingPanel from "./BoxSpreadTimingPanel";
 
 const scanners = [
   { id: "cash-future", label: "Cash-Future" },
@@ -212,6 +213,8 @@ export default function CustomAlertPage() {
   return (
     <div className="space-y-5 theme-text">
       <PageTitle eyebrow="Phase 4 • Custom Alert" title="Custom Alert" description="Scanner-wide alert rules with a separate master notification switch." />
+
+      <BoxSpreadTimingPanel />
 
       <Card className="p-5">
         <div className="flex items-center gap-3">

@@ -39,6 +39,10 @@ def test_live_box_route_serializes_bid_ask_snapshot(monkeypatch):
     assert row["freshness"] == "LIVE"
     assert row["quote_age_seconds"] >= 0
     assert row["timestamp_skew_ms"] == 0
+    assert row["low_call_timestamp_ns"] == result.low.timestamp_ns
+    assert row["low_put_timestamp_ns"] == result.low.timestamp_ns
+    assert row["high_call_timestamp_ns"] == result.high.timestamp_ns
+    assert row["high_put_timestamp_ns"] == result.high.timestamp_ns
 
 
 def test_live_box_route_preserves_bse_index_identity(monkeypatch):
@@ -292,6 +296,9 @@ def test_raw_monitor_route_returns_fresh_edge_even_when_normal_entry_threshold_w
     assert payload["entry_count"] == 1
     assert payload["entry_data"][0]["freshness"] == "LIVE_RULE_CANDIDATE"
     assert payload["data"][0]["low_call_bid"] == 10
+    assert payload["data"][0]["low_call_timestamp_ns"] == result.low.timestamp_ns
+    assert payload["data"][0]["high_put_timestamp_ns"] == result.high.timestamp_ns
+    assert payload["data"][0]["timestamp_skew_ms"] == 0
     assert payload["data"][0]["high_put_ask"] == 3
 
 
@@ -305,3 +312,88 @@ def test_raw_monitor_route_fails_closed_for_stale_snapshot(monkeypatch):
     assert payload["fresh"] is False
     assert payload["count"] == 0
     assert payload["data"] == []
+
+def test_live_box_route_keeps_option_row_when_spot_provider_raises(monkeypatch):
+    result = _result()
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    monkeypatch.setattr(routes, "_spot_provider", lambda _symbol: (_ for _ in ()).throw(RuntimeError("spot feed unavailable")))
+
+    payload = routes.live(10)
+
+    assert payload["count"] == 1
+    row = payload["data"][0]
+    assert row["executable_edge"] == 6
+    assert row["spot_price"] is None
+    assert row["spot_timestamp_ns"] is None
+    assert row["spot_age_seconds"] is None
+
+
+def test_live_route_rejects_fractional_leg_timestamp_without_truncating(monkeypatch):
+    result = _result()
+    result.low.call_timestamp_ns = str(result.low.timestamp_ns) + ".5"
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    assert routes.live(10)["count"] == 0
+
+
+def test_live_route_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
+    result = _result()
+    result.low.call_timestamp_ns = 0
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    assert routes.live(10)["count"] == 0
+
+
+def test_monitor_route_reports_all_four_leg_timestamps_and_exact_skew(monkeypatch):
+    now = time.time_ns()
+    result = _result(low_ts=now - 500_000_000, high_ts=now)
+    result.low.call_timestamp_ns = now - 1_000_000_000
+    result.low.put_timestamp_ns = now - 800_000_000
+    result.high.call_timestamp_ns = now - 400_000_000
+    result.high.put_timestamp_ns = now
+    monkeypatch.setattr(
+        routes, "_monitor_getter",
+        lambda: {"updated_at_ns": now, "data": (result,), "entry_data": ()},
+    )
+
+    row = routes.monitor_snapshot(max_age_seconds=5)["data"][0]
+
+    assert row["low_call_timestamp_ns"] == now - 1_000_000_000
+    assert row["low_put_timestamp_ns"] == now - 800_000_000
+    assert row["high_call_timestamp_ns"] == now - 400_000_000
+    assert row["high_put_timestamp_ns"] == now
+    assert row["timestamp_skew_ms"] == 1000.0
+
+
+def test_monitor_route_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
+    result = _result()
+    result.low.call_timestamp_ns = 0
+    monkeypatch.setattr(
+        routes, "_monitor_getter",
+        lambda: {"updated_at_ns": result.low.timestamp_ns, "data": (result,), "entry_data": ()},
+    )
+    payload = routes.monitor_snapshot(max_age_seconds=5)
+    assert payload["fresh"] is True
+    assert payload["count"] == 0
+
+
+def test_http_and_websocket_box_rows_keep_identical_edge_and_executable_prices(monkeypatch):
+    from app.scanner import live_box_spread_websocket as websocket
+
+    result = _result()
+    now_ns = max(result.low.timestamp_ns, result.high.timestamp_ns)
+    result.low.call_timestamp_ns = now_ns
+    result.low.put_timestamp_ns = now_ns
+    result.high.call_timestamp_ns = now_ns
+    result.high.put_timestamp_ns = now_ns
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    monkeypatch.setattr(routes.time, "time_ns", lambda: now_ns)
+    monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
+
+    http_row = routes.live(10)["data"][0]
+    ws_row = websocket._row(result)
+
+    for key in (
+        "executable_edge", "edge_per_lot", "gross_pnl", "low_call_price",
+        "low_put_price", "high_call_price", "high_put_price",
+        "last_update_timestamp_ns", "quote_age_seconds", "timestamp_skew_ms",
+    ):
+        assert http_row[key] == ws_row[key]

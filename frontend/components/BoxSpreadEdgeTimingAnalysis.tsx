@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -42,13 +42,17 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const requestSequence = useRef(0);
 
   const refresh = useCallback(async () => {
+    const requestId = ++requestSequence.current;
+    setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + "/api/v1/scanner/box-spread/analysis", { cache: "no-store" });
       if (!response.ok) throw new Error("HTTP " + response.status);
       const result = (await response.json()) as TimingAnalysis;
+      if (requestId !== requestSequence.current) return;
       if (result?.strategy !== "box-spread" || !Array.isArray(result.by_day) || !Array.isArray(result.by_time)) {
         throw new Error("Unexpected analysis response");
       }
@@ -56,16 +60,21 @@ export default function BoxSpreadEdgeTimingAnalysis() {
       setError(null);
       setUpdatedAt(new Date().toISOString());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Analysis API unavailable");
+      if (requestId === requestSequence.current) {
+        setError(e instanceof Error ? e.message : "Analysis API unavailable");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      requestSequence.current += 1;
+    };
   }, [refresh]);
 
   const groupTable = (title: string, rows: TimingGroup[], label: string) => (
@@ -74,7 +83,14 @@ export default function BoxSpreadEdgeTimingAnalysis() {
       {rows.length === 0 ? (
         <p className="rounded-lg border theme-border p-3 text-xs theme-muted">No positive-edge observations saved yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border theme-border">
+        <>
+        <div className="grid gap-2 sm:hidden">
+          {rows.map(row => <div key={row.key} className="rounded-lg border theme-border theme-surface-2 p-3">
+            <div className="flex items-center justify-between gap-2"><span className="text-sm font-bold theme-text">{row.key}{label === "30-min IST" ? " IST" : ""}</span><span className="text-[10px] theme-muted">{row.distinct_dates} trading days</span></div>
+            <div className="mt-2 grid grid-cols-3 gap-2"><div><p className="text-[9px] theme-muted">Samples</p><p className="text-xs font-semibold theme-text">{row.count.toLocaleString("en-IN")}</p></div><div><p className="text-[9px] theme-muted">Max edge</p><p className="text-xs font-semibold theme-text">₹{fmt(row.max_edge)}</p></div><div><p className="text-[9px] theme-muted">Avg edge</p><p className="text-xs font-semibold theme-text">{row.distinct_dates >= (data?.minimum_distinct_dates_for_average_conclusion ?? 5) ? "₹" + fmt(row.average_edge) : "Need 5 days"}</p></div></div>
+          </div>)}
+        </div>
+        <div className="hidden overflow-x-auto rounded-lg border theme-border sm:block">
           <table className="w-full min-w-[360px] text-left text-xs">
             <thead className="theme-surface-2 theme-muted"><tr>
               <th className="px-3 py-2">{label}</th><th className="px-3 py-2">Samples</th><th className="px-3 py-2">Days</th><th className="px-3 py-2">Max edge</th><th className="px-3 py-2">Avg edge</th>
@@ -88,12 +104,13 @@ export default function BoxSpreadEdgeTimingAnalysis() {
             </tr>)}</tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );
 
   return (
-    <Card className="theme-border theme-surface p-4 sm:p-5">
+    <Card className="theme-border theme-surface p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Activity className="mt-0.5 h-5 w-5 theme-accent" />

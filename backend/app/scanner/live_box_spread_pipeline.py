@@ -43,15 +43,98 @@ def _append_spool(rows):
         os.fsync(handle.fileno())
 
 
+def _rewrite_spool_lines(path, lines):
+    """Atomically replace the spool with the supplied original JSONL lines."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.writelines(lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _valid_spool_record(row):
+    """Reject structurally valid JSON records that cannot form a DB snapshot."""
+    from math import isfinite
+    required = {
+        "symbol", "expiry", "low_strike", "high_strike",
+        "direction", "observed_at", "last_update_timestamp_ns",
+    }
+    if not isinstance(row, dict) or not required.issubset(row):
+        return False
+    try:
+        if not str(row["symbol"]).strip():
+            return False
+        expiry = int(row["expiry"])
+        if expiry <= 0 or str(expiry) != str(row["expiry"]).strip():
+            return False
+        low = float(row["low_strike"])
+        high = float(row["high_strike"])
+        if not isfinite(low) or not isfinite(high) or low <= 0 or high <= low:
+            return False
+        if str(row["direction"]).strip().upper() not in {"LONG", "SHORT"}:
+            return False
+        datetime.strptime(str(row["observed_at"]), "%Y-%m-%dT%H:%M:%SZ")
+        _positive_timestamp_ns(row["last_update_timestamp_ns"], "spool.last_update_timestamp_ns")
+        for field, value in row.items():
+            if isinstance(value, float) and not isfinite(value):
+                return False
+        for field in (
+            "spot_price", "spot_age_seconds", "low_call_ltp", "low_call_bid",
+            "low_call_ask", "low_put_ltp", "low_put_bid", "low_put_ask",
+            "high_call_ltp", "high_call_bid", "high_call_ask", "high_put_ltp",
+            "high_put_bid", "high_put_ask", "executable_edge", "edge_per_lot",
+            "gross_pnl", "lot_size", "strike_distance", "timestamp_skew_ms",
+        ):
+            if field in row and row[field] is not None and not isfinite(float(row[field])):
+                return False
+        json.dumps(row, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
 def _read_spool():
     path = _spool_path()
     if not path.exists():
         return []
     rows = []
+    valid_lines = []
+    corrupt_lines = []
     with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                rows.append(json.loads(line))
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError("spool record must be a JSON object")
+                if not _valid_spool_record(row):
+                    raise ValueError("spool record is not a valid Box Spread snapshot")
+                rows.append(row)
+                valid_lines.append(line if line.endswith("\n") else line + "\n")
+            except (json.JSONDecodeError, ValueError) as exc:
+                logger.error(
+                    "Quarantining corrupt Box Spread spool record at line %s: %s",
+                    line_number, exc,
+                )
+                corrupt_lines.append(line if line.endswith("\n") else line + "\n")
+
+    if corrupt_lines:
+        # Preserve the original malformed records for diagnosis before atomically
+        # rewriting the active queue. If quarantine cannot be fsynced, fail closed
+        # and leave the original spool untouched.
+        quarantine = path.with_name(path.name + ".corrupt")
+        with quarantine.open("a", encoding="utf-8") as handle:
+            handle.writelines(corrupt_lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _rewrite_spool_lines(path, valid_lines)
     return rows
 
 
@@ -71,9 +154,46 @@ def _clear_spool():
 
 
 
+def _positive_timestamp_ns(value, field_name):
+    """Validate an exact positive integer nanosecond timestamp without truncation."""
+    from decimal import Decimal, InvalidOperation
+    try:
+        number = Decimal(str(value))
+        if not number.is_finite() or number <= 0 or number != number.to_integral_value():
+            raise ValueError
+        return int(number)
+    except (InvalidOperation, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"invalid Box Spread quote timestamp: {field_name}") from exc
+
+
 def _snapshot_payload(result, observed_at, spot_provider=None):
     low, high = result.low, result.high
-    spot = spot_provider(low.underlying) if callable(spot_provider) else None
+    low_ts = _positive_timestamp_ns(low.timestamp_ns, "low.timestamp_ns")
+    high_ts = _positive_timestamp_ns(high.timestamp_ns, "high.timestamp_ns")
+    # Explicit zero/fractional leg timestamps are malformed, not "missing".
+    raw_leg_timestamps = (
+        getattr(low, "call_timestamp_ns", None),
+        getattr(low, "put_timestamp_ns", None),
+        getattr(high, "call_timestamp_ns", None),
+        getattr(high, "put_timestamp_ns", None),
+    )
+    leg_timestamps = tuple(
+        _positive_timestamp_ns(value if value is not None else fallback, field)
+        for value, fallback, field in zip(
+            raw_leg_timestamps,
+            (low_ts, low_ts, high_ts, high_ts),
+            ("low.call_timestamp_ns", "low.put_timestamp_ns",
+             "high.call_timestamp_ns", "high.put_timestamp_ns"),
+        )
+    )
+    newest_timestamp = max(leg_timestamps)
+    oldest_timestamp = min(leg_timestamps)
+    # Snapshot persistence is driven by the four option quotes. Spot is
+    # optional context and a temporary spot-provider error must not lose it.
+    try:
+        spot = spot_provider(low.underlying) if callable(spot_provider) else None
+    except Exception:
+        spot = None
     if not isinstance(spot, dict):
         spot = {}
     return {
@@ -89,28 +209,14 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "high_strike": high.strike,
         "direction": result.direction,
         "observed_at": observed_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "timestamp_ns": int(low.timestamp_ns),
-        "high_timestamp_ns": int(high.timestamp_ns),
-        "low_call_timestamp_ns": int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-        "low_put_timestamp_ns": int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-        "high_call_timestamp_ns": int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-        "high_put_timestamp_ns": int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns),
-        "last_update_timestamp_ns": max(
-            int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-            int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-            int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-            int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns),
-        ),
-        "timestamp_skew_ms": round((
-            max(int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-                int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-                int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-                int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns))
-            - min(int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-                  int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-                  int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-                  int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns))
-        ) / 1_000_000, 3),
+        "timestamp_ns": low_ts,
+        "high_timestamp_ns": high_ts,
+        "low_call_timestamp_ns": leg_timestamps[0],
+        "low_put_timestamp_ns": leg_timestamps[1],
+        "high_call_timestamp_ns": leg_timestamps[2],
+        "high_put_timestamp_ns": leg_timestamps[3],
+        "last_update_timestamp_ns": newest_timestamp,
+        "timestamp_skew_ms": round((newest_timestamp - oldest_timestamp) / 1_000_000, 3),
         "low_call_ltp": getattr(low, "call_ltp", None),
         "low_call_bid": low.call_bid,
         "low_call_bid_qty": getattr(low, "call_bid_qty", None),

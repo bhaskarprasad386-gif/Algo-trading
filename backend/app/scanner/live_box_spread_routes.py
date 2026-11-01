@@ -21,7 +21,12 @@ def configure_spot_provider(provider):
     _spot_provider = provider
 
 def _spot_fields(symbol):
-    snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    # Spot is supplementary context: a spot-feed failure must never suppress
+    # an otherwise valid four-leg option opportunity.
+    try:
+        snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    except Exception:
+        snapshot = None
     if not isinstance(snapshot, dict):
         return {"spot_price": None, "spot_timestamp_ns": None, "spot_age_seconds": None}
     return {
@@ -47,15 +52,30 @@ def _expiry_key(value):
         return parsed
     return "".join(character for character in str(value or "").strip().upper() if character.isalnum())
 
+def _timestamp_ns(value):
+    from decimal import Decimal, InvalidOperation
+    try:
+        number = Decimal(str(value))
+        return int(number) if number.is_finite() and number > 0 and number == number.to_integral_value() else None
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _leg_timestamps(row):
-    """Return timestamps for each executable option quote, with strike fallback."""
-    low_ts = int(getattr(row.low, "timestamp_ns", 0) or 0)
-    high_ts = int(getattr(row.high, "timestamp_ns", 0) or 0)
-    return (
-        int(getattr(row.low, "call_timestamp_ns", None) or low_ts),
-        int(getattr(row.low, "put_timestamp_ns", None) or low_ts),
-        int(getattr(row.high, "call_timestamp_ns", None) or high_ts),
-        int(getattr(row.high, "put_timestamp_ns", None) or high_ts),
+    """Return exact positive timestamps for each executable option quote."""
+    low_ts = _timestamp_ns(getattr(row.low, "timestamp_ns", None))
+    high_ts = _timestamp_ns(getattr(row.high, "timestamp_ns", None))
+    if low_ts is None or high_ts is None:
+        return (None, None, None, None)
+    values = (
+        getattr(row.low, "call_timestamp_ns", None),
+        getattr(row.low, "put_timestamp_ns", None),
+        getattr(row.high, "call_timestamp_ns", None),
+        getattr(row.high, "put_timestamp_ns", None),
+    )
+    return tuple(
+        _timestamp_ns(value if value is not None else fallback)
+        for value, fallback in zip(values, (low_ts, low_ts, high_ts, high_ts))
     )
 
 
@@ -105,6 +125,9 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
     fresh_rows=[]
     for row in rows:
         leg_timestamps = _leg_timestamps(row)
+        # Reject malformed timestamps rather than silently falling back to strike time.
+        if any(stamp is None for stamp in leg_timestamps):
+            continue
         # All four executable option legs must be fresh and synchronized.
         if not all(cutoff <= stamp <= now_ns for stamp in leg_timestamps):
             continue
@@ -112,13 +135,15 @@ def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annota
             continue
         fresh_rows.append(row)
     rows=fresh_rows[:limit]
-    return {"strategy":"box-spread","mode":"paper-safe","count":len(rows),"opportunity_count":sum(float(r.executable_edge or 0)>0 for r in rows),"data":[{"symbol":r.low.underlying,"instrument_class":r.low.instrument_class,"expiry":r.low.expiry,"expiry_date":_expiry_date(r.low.expiry),"expiry_type":_expiry_types.get((str(r.low.underlying).strip().upper(), _expiry_key(r.low.expiry)), "UNKNOWN"),"low_strike":r.low.strike,"high_strike":r.high.strike,**_spot_fields(r.low.underlying),"direction":r.direction,"timestamp_ns":r.low.timestamp_ns,"high_timestamp_ns":r.high.timestamp_ns,"last_update_timestamp_ns":max(_leg_timestamps(r)),"quote_age_seconds":round(max(0.0,(now_ns-min(_leg_timestamps(r)))/1_000_000_000),3),"freshness":"LIVE","timestamp_skew_ms":round((max(int(getattr(r.low,"call_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.low,"put_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.high,"call_timestamp_ns",None) or r.high.timestamp_ns),int(getattr(r.high,"put_timestamp_ns",None) or r.high.timestamp_ns))-min(int(getattr(r.low,"call_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.low,"put_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.high,"call_timestamp_ns",None) or r.high.timestamp_ns),int(getattr(r.high,"put_timestamp_ns",None) or r.high.timestamp_ns)))/1_000_000,3),"low_call_ltp":getattr(r.low,"call_ltp",None),"low_call_bid":r.low.call_bid,"low_call_bid_qty":getattr(r.low,"call_bid_qty",None),"low_call_ask":r.low.call_ask,"low_call_ask_qty":getattr(r.low,"call_ask_qty",None),"low_put_ltp":getattr(r.low,"put_ltp",None),"low_put_bid":r.low.put_bid,"low_put_bid_qty":getattr(r.low,"put_bid_qty",None),"low_put_ask":r.low.put_ask,"low_put_ask_qty":getattr(r.low,"put_ask_qty",None),"high_call_ltp":getattr(r.high,"call_ltp",None),"high_call_bid":r.high.call_bid,"high_call_bid_qty":getattr(r.high,"call_bid_qty",None),"high_call_ask":r.high.call_ask,"high_call_ask_qty":getattr(r.high,"call_ask_qty",None),"high_put_ltp":getattr(r.high,"put_ltp",None),"high_put_bid":r.high.put_bid,"high_put_bid_qty":getattr(r.high,"put_bid_qty",None),"high_put_ask":r.high.put_ask,"high_put_ask_qty":getattr(r.high,"put_ask_qty",None),"executable_edge":r.executable_edge,"edge_per_lot":r.edge_per_lot,"gross_pnl":r.gross_pnl,"lot_size":r.low.lot_size,"strike_distance":r.strike_distance,"liquidity_qty":min(r.low.volume,r.high.volume),"low_call_price":r.low.call_ask if r.direction=="LONG" else r.low.call_bid,"low_put_price":r.low.put_ask if r.direction=="LONG" else r.low.put_bid,"high_call_price":r.high.call_bid if r.direction=="LONG" else r.high.call_ask,"high_put_price":r.high.put_bid if r.direction=="LONG" else r.high.put_ask} for r in rows]}
+    return {"strategy":"box-spread","mode":"paper-safe","count":len(rows),"opportunity_count":sum(float(r.executable_edge or 0)>0 for r in rows),"data":[{"symbol":r.low.underlying,"instrument_class":r.low.instrument_class,"expiry":r.low.expiry,"expiry_date":_expiry_date(r.low.expiry),"expiry_type":_expiry_types.get((str(r.low.underlying).strip().upper(), _expiry_key(r.low.expiry)), "UNKNOWN"),"low_strike":r.low.strike,"high_strike":r.high.strike,**_spot_fields(r.low.underlying),"direction":r.direction,"timestamp_ns":r.low.timestamp_ns,"high_timestamp_ns":r.high.timestamp_ns,"low_call_timestamp_ns":_leg_timestamps(r)[0],"low_put_timestamp_ns":_leg_timestamps(r)[1],"high_call_timestamp_ns":_leg_timestamps(r)[2],"high_put_timestamp_ns":_leg_timestamps(r)[3],"last_update_timestamp_ns":max(_leg_timestamps(r)),"quote_age_seconds":round(max(0.0,(now_ns-min(_leg_timestamps(r)))/1_000_000_000),3),"freshness":"LIVE","timestamp_skew_ms":round((max(int(getattr(r.low,"call_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.low,"put_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.high,"call_timestamp_ns",None) or r.high.timestamp_ns),int(getattr(r.high,"put_timestamp_ns",None) or r.high.timestamp_ns))-min(int(getattr(r.low,"call_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.low,"put_timestamp_ns",None) or r.low.timestamp_ns),int(getattr(r.high,"call_timestamp_ns",None) or r.high.timestamp_ns),int(getattr(r.high,"put_timestamp_ns",None) or r.high.timestamp_ns)))/1_000_000,3),"low_call_ltp":getattr(r.low,"call_ltp",None),"low_call_bid":r.low.call_bid,"low_call_bid_qty":getattr(r.low,"call_bid_qty",None),"low_call_ask":r.low.call_ask,"low_call_ask_qty":getattr(r.low,"call_ask_qty",None),"low_put_ltp":getattr(r.low,"put_ltp",None),"low_put_bid":r.low.put_bid,"low_put_bid_qty":getattr(r.low,"put_bid_qty",None),"low_put_ask":r.low.put_ask,"low_put_ask_qty":getattr(r.low,"put_ask_qty",None),"high_call_ltp":getattr(r.high,"call_ltp",None),"high_call_bid":r.high.call_bid,"high_call_bid_qty":getattr(r.high,"call_bid_qty",None),"high_call_ask":r.high.call_ask,"high_call_ask_qty":getattr(r.high,"call_ask_qty",None),"high_put_ltp":getattr(r.high,"put_ltp",None),"high_put_bid":r.high.put_bid,"high_put_bid_qty":getattr(r.high,"put_bid_qty",None),"high_put_ask":r.high.put_ask,"high_put_ask_qty":getattr(r.high,"put_ask_qty",None),"executable_edge":r.executable_edge,"edge_per_lot":r.edge_per_lot,"gross_pnl":r.gross_pnl,"lot_size":r.low.lot_size,"strike_distance":r.strike_distance,"liquidity_qty":min(r.low.volume,r.high.volume),"low_call_price":r.low.call_ask if r.direction=="LONG" else r.low.call_bid,"low_put_price":r.low.put_ask if r.direction=="LONG" else r.low.put_bid,"high_call_price":r.high.call_bid if r.direction=="LONG" else r.high.call_ask,"high_put_price":r.high.put_bid if r.direction=="LONG" else r.high.put_ask} for r in rows]}
 
 
 def _serialize_monitor_result(result, *, now_ns: int, max_age_ns: int, freshness: str):
     from math import isfinite
     low, high = result.low, result.high
     stamps = _leg_timestamps(SimpleNamespace(low=low, high=high))
+    if any(stamp is None for stamp in stamps):
+        return None
     if not all(now_ns - max_age_ns <= stamp <= now_ns for stamp in stamps):
         return None
     if max(stamps) - min(stamps) > min(max_age_ns, MAX_LEG_TIMESTAMP_SKEW_NS):
@@ -133,6 +158,9 @@ def _serialize_monitor_result(result, *, now_ns: int, max_age_ns: int, freshness
         "low_strike": low.strike, "high_strike": high.strike,
         "direction": result.direction, **_spot_fields(low.underlying),
         "timestamp_ns": low.timestamp_ns, "high_timestamp_ns": high.timestamp_ns,
+        "low_call_timestamp_ns": stamps[0], "low_put_timestamp_ns": stamps[1],
+        "high_call_timestamp_ns": stamps[2], "high_put_timestamp_ns": stamps[3],
+        "timestamp_skew_ms": round((max(stamps) - min(stamps)) / 1_000_000, 3),
         "last_update_timestamp_ns": max(stamps),
         "quote_age_seconds": round(max(0.0, (now_ns - min(stamps)) / 1_000_000_000), 3),
         "freshness": freshness,

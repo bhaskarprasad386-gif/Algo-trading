@@ -26,7 +26,11 @@ def configure_spot_provider(provider):
 
 
 def _spot_fields(symbol):
-    snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    # A missing spot tick must not prevent delivery of a valid option basket.
+    try:
+        snapshot = _spot_provider(symbol) if callable(_spot_provider) else None
+    except Exception:
+        snapshot = None
     if not isinstance(snapshot, dict):
         return {"spot_price": None, "spot_timestamp_ns": None, "spot_age_seconds": None}
     return {
@@ -55,15 +59,30 @@ def set_expiry_types(mapping):
     }
 
 
+def _timestamp_ns(value):
+    from decimal import Decimal, InvalidOperation
+    try:
+        number = Decimal(str(value))
+        return int(number) if number.is_finite() and number > 0 and number == number.to_integral_value() else None
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _leg_timestamps(low, high):
-    """Return timestamps for all four executable option legs."""
-    low_ts = int(getattr(low, "timestamp_ns", 0) or 0)
-    high_ts = int(getattr(high, "timestamp_ns", 0) or 0)
-    return (
-        int(getattr(low, "call_timestamp_ns", None) or low_ts),
-        int(getattr(low, "put_timestamp_ns", None) or low_ts),
-        int(getattr(high, "call_timestamp_ns", None) or high_ts),
-        int(getattr(high, "put_timestamp_ns", None) or high_ts),
+    """Return exact positive timestamps for all four executable option legs."""
+    low_ts = _timestamp_ns(getattr(low, "timestamp_ns", None))
+    high_ts = _timestamp_ns(getattr(high, "timestamp_ns", None))
+    if low_ts is None or high_ts is None:
+        return (None, None, None, None)
+    values = (
+        getattr(low, "call_timestamp_ns", None),
+        getattr(low, "put_timestamp_ns", None),
+        getattr(high, "call_timestamp_ns", None),
+        getattr(high, "put_timestamp_ns", None),
+    )
+    return tuple(
+        _timestamp_ns(value if value is not None else fallback)
+        for value, fallback in zip(values, (low_ts, low_ts, high_ts, high_ts))
     )
 
 
@@ -71,6 +90,8 @@ def _row(result):
     low, high = result.low, result.high
     now_ns = time.time_ns()
     leg_timestamps = _leg_timestamps(low, high)
+    if any(stamp is None for stamp in leg_timestamps):
+        return None
     oldest_timestamp = min(leg_timestamps)
     newest_timestamp = max(leg_timestamps)
 
@@ -85,6 +106,8 @@ def _row(result):
         "expiry": low.expiry, "expiry_type": _expiry_types.get((str(low.underlying).strip().upper(), _expiry_key(low.expiry)), "UNKNOWN"), "low_strike": low.strike, "high_strike": high.strike,
         "direction": result.direction, **_spot_fields(low.underlying), "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
+        "low_call_timestamp_ns": leg_timestamps[0], "low_put_timestamp_ns": leg_timestamps[1],
+        "high_call_timestamp_ns": leg_timestamps[2], "high_put_timestamp_ns": leg_timestamps[3],
         "last_update_timestamp_ns": newest_timestamp,
         "observed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "freshness": "LIVE",
@@ -96,6 +119,10 @@ def _row(result):
         "high_put_ltp": getattr(high, "put_ltp", None), "high_put_bid": high.put_bid, "high_put_bid_qty": getattr(high, "put_bid_qty", None), "high_put_ask": high.put_ask, "high_put_ask_qty": getattr(high, "put_ask_qty", None),
         "executable_edge": result.executable_edge, "edge_per_lot": result.edge_per_lot,
         "gross_pnl": result.gross_pnl, "lot_size": low.lot_size, "strike_distance": result.strike_distance,
+        "low_call_price": low.call_ask if result.direction == "LONG" else low.call_bid,
+        "low_put_price": low.put_ask if result.direction == "LONG" else low.put_bid,
+        "high_call_price": high.call_bid if result.direction == "LONG" else high.call_ask,
+        "high_put_price": high.put_bid if result.direction == "LONG" else high.put_ask,
     }
 
 

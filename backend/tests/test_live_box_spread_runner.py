@@ -216,3 +216,53 @@ def test_nifty_and_sensex_targets_are_ordered_before_other_indices_and_stocks():
     assert [target.underlying for target in runner.targets] == [
         "NIFTY", "SENSEX", "ABC", "BANKNIFTY"
     ]
+
+
+def test_box_runner_unions_atm_strikes_across_weekly_and_monthly_targets(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+
+    class Master:
+        instruments = []
+        def download(self): pass
+
+    seeded = {}
+    class Tracker:
+        def __init__(self, *, strikes_by_symbol):
+            seeded.update(strikes_by_symbol)
+        def atm(self, symbol, now_ns): return 100.0
+
+    class Feed:
+        def __init__(self, *args, **kwargs): pass
+        def run_forever(self): pass
+        def stop(self): pass
+
+    selected = []
+    def concrete(*args, **kwargs):
+        return {"NIFTY": (100.0, 110.0)} if kwargs["expiry"] == "05NOV2026" else {"NIFTY": (100.0, 120.0)}
+
+    def stop_after_selection(*args, **kwargs):
+        selected.append(kwargs["expiry"])
+        raise RuntimeError("stop-after-selection")
+
+    monkeypatch.setattr(mod, "concrete_strikes_from_master", concrete)
+    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "select_box_contracts", stop_after_selection)
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [
+            mod.BoxSpreadLiveTarget("NIFTY", "INDEX", "05NOV2026"),
+            mod.BoxSpreadLiveTarget("NIFTY", "INDEX", "26NOV2026"),
+        ],
+        allowed_stock_symbols=set(),
+        future_master=Master(),
+        auth=object(),
+    )
+
+    try:
+        runner._run_session()
+    except RuntimeError as exc:
+        assert str(exc) == "stop-after-selection"
+
+    assert seeded["NIFTY"] == (100.0, 110.0, 120.0)
+    assert selected == ["05NOV2026"]

@@ -82,7 +82,13 @@ function BoxSpreadLegQuote({ row, column }: { row: Row; column: BoxSpreadLegColu
   const prefix = column.startsWith("Low ") ? "low_" : "high_";
   const option = column.includes("Call") ? "call" : "put";
   const key = prefix + option;
-  const isBuy = (prefix === "low_" && option === "call") || (prefix === "high_" && option === "put");
+  const direction = String(value(row, "direction") ?? "LONG").toUpperCase();
+  const isLong = direction !== "SHORT";
+  // Box Spread executable sides reverse for SHORT baskets. Keep the visual
+  // BUY/ASK and SELL/BID labels aligned with the actual direction.
+  const isBuy = isLong
+    ? (prefix === "low_" && option === "call") || (prefix === "high_" && option === "put")
+    : (prefix === "low_" && option === "put") || (prefix === "high_" && option === "call");
   const tone = isBuy ? "rounded bg-emerald-500/15 px-1.5 py-0.5 font-semibold text-emerald-600 dark:text-emerald-300" : "rounded bg-rose-500/15 px-1.5 py-0.5 font-semibold text-rose-600 dark:text-rose-300";
   const action = isBuy ? "BUY · ASK" : "SELL · BID";
   const priceSide = isBuy ? "ask" : "bid";
@@ -246,7 +252,7 @@ function formatValue(raw: unknown) {
 function parseTimestamp(raw: unknown): Date | null {
   if (raw === undefined || raw === null || raw === "") return null;
   // Handle Unix seconds, milliseconds and nanoseconds without treating ms as ns.
-  if (typeof raw === "number" || (typeof raw === "string" && /^\\d+(?:\\.\\d+)?$/.test(raw.trim()))) {
+  if (typeof raw === "number" || (typeof raw === "string" && /^\d+(?:\.\d+)?$/.test(raw.trim()))) {
     const n = Number(raw);
     if (!Number.isFinite(n)) return null;
     const millis = n >= 1e17 ? n / 1e6 : n >= 1e12 ? n : n >= 1e9 ? n * 1000 : NaN;
@@ -993,11 +999,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const visibleHistoryRows = filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
 
   return (
-    <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
+    <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
       <div className="flex items-center justify-between gap-3">
-        <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
-          <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
-        </Link>
+        {slug === "box-spread" ? (
+          <span className="text-[10px] font-bold uppercase tracking-[0.16em] theme-muted">Box Spread · Live market monitor</span>
+        ) : (
+          <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
+            <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
+          </Link>
+        )}
         <span className={"inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold " +
           (loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" :
           feedStatus === "LIVE" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>
@@ -1005,29 +1015,130 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </span>
       </div>
 
-      <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />
+      {slug !== "box-spread" && <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />}
 
-      {slug === "box-spread" && <LiveOpportunityGrid />}
-
+      {slug === "box-spread" ? (
+        <Card className="theme-border theme-surface-2 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px]">
+            <span className="font-bold theme-text">INDEX OPTIONS</span>
+            <span className="theme-muted">Feed <b className="theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"}</b></span>
+            <span className="theme-muted">Runner <b className={runner?.running ? "theme-success" : "theme-warning"}>{runner?.running ? "RUNNING" : "STOPPED"}</b></span>
+            <span className="theme-muted">Eligible <b className="theme-text">{metricValue("Eligible Boxes")}</b></span>
+            <span className="theme-muted">Edges <b className="theme-text">{metricValue("Executable Edges")}</b></span>
+            <span className="theme-muted">Last Scan <b className="theme-text">{metricValue("Last Scan")}</b></span>
+            <span className="theme-muted">Feed age <b className="theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</b></span>
+            <span className="theme-muted">NSE <b className="theme-text">{String(feedExchangeFreshness?.NSE?.status ?? "—")}</b></span>
+            <span className="theme-muted">NFO <b className="theme-text">{String(feedExchangeFreshness?.NFO?.status ?? "—")}</b></span>
+            <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
+            <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
+            <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
+            <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
+          </div>
+        </Card>
+      ) : (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Common Market Data Feed</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Activity className="h-4 w-4" />{feedTicks == null ? "CHECKING" : feedTicks.toLocaleString("en-IN") + " ticks"}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{runnerLabel(slug)}</p><p className={"mt-2 text-sm font-semibold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNAVAILABLE"}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Broker Orders</p><p className="mt-2 text-sm font-semibold theme-warning">OFF</p></Card>
       </div>
+      )}
 
-      <Card className="theme-border theme-surface p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_auto]">
+      {slug === "box-spread" && (
+        <section id="box-overview" className="scroll-mt-24 space-y-3 rounded-2xl border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl" aria-label="Box Spread market overview">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><h2 className="text-xs font-extrabold uppercase tracking-[0.14em] theme-text">Index Spot Board</h2><p className="mt-1 text-[10px] theme-muted">Latest spot observations attached to Box Spread opportunities · 5s freshness target</p></div>
+            <span className="text-[10px] theme-muted">NSE / NFO session state: {String(feedExchangeFreshness?.NSE?.status ?? "UNKNOWN")} / {String(feedExchangeFreshness?.NFO?.status ?? "UNKNOWN")}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            {["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"].map((symbol) => {
+              const matching = rows.filter((row) => String(row.symbol ?? row.underlying ?? "").trim().toUpperCase() === symbol);
+              const latest = matching.reduce<Row | null>((best, row) => {
+                const stamp = String(row.spot_timestamp_ns ?? row.timestamp_ns ?? "0");
+                const bestStamp = String(best?.spot_timestamp_ns ?? best?.timestamp_ns ?? "0");
+                const newer = /^\d+$/.test(stamp) && /^\d+$/.test(bestStamp)
+                  ? BigInt(stamp) > BigInt(bestStamp)
+                  : Number(stamp) > Number(bestStamp);
+                return !best || newer ? row : best;
+              }, null);
+              const spot = latest ? nullableNumber(value(latest, "spot_price", "underlying_spot_price")) : null;
+              const spotDate = latest ? parseTimestamp(value(latest, "spot_timestamp_ns")) : null;
+              const spotAge = spotDate ? Math.max(0, (Date.now() - spotDate.getTime()) / 1000) : latest ? nullableNumber(value(latest, "spot_age_seconds")) : null;
+              const spotQuoteTime = spotDate ? spotDate.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST" : "Quote time unavailable";
+              const spotLive = spotAge !== null && spotAge <= 5;
+              return <div key={symbol} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+                <div className="flex items-center justify-between gap-1"><p className="text-[11px] font-extrabold tracking-wide theme-text">{symbol}</p><span className={"h-2 w-2 shrink-0 rounded-full " + (spotLive ? "bg-emerald-400" : spotAge === null ? "bg-slate-500" : "bg-amber-400")} aria-label={spotLive ? "Spot fresh" : spotAge === null ? "Spot unavailable" : "Spot stale"} /></div>
+                <p className="mt-2 truncate text-lg font-bold tabular-nums theme-text">{spot === null ? "—" : formatValue(spot)}</p>
+                <p className={"mt-1 text-[9px] font-bold uppercase tracking-wider " + (spotLive ? "theme-success" : "theme-muted")}>{spotLive ? "SPOT LIVE" : spotAge === null ? "NO SPOT OBSERVATION" : "SPOT STALE"}</p>
+                <p className="mt-1 text-[10px] theme-muted">{spotAge === null ? "No spot quote in current rows" : spotAge.toFixed(1) + "s old"} · {matching.length} rows</p>
+                <p className="mt-1 truncate text-[9px] tabular-nums theme-muted">Tick {spotQuoteTime}</p>
+              </div>;
+            })}
+          </div>
+          <p className="text-[10px] theme-muted">Cards are observation-based, not independent feed subscriptions. “No spot observation” means no current opportunity row supplied a spot quote; it does not prove that the exchange feed is down. Market session is not inferred from clock time.</p>
+        </section>
+      )}
+      {slug === "box-spread" && (
+        <Card className="scroll-mt-24 border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl" aria-label="Box Spread system health" id="box-system-health">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-bold theme-text"><Activity className="h-4 w-4 theme-accent" /> System Health</h2>
+              <p className="mt-1 text-xs theme-muted">Common market-data feed and Box Spread runner diagnostics · exchange-level status, not per-index feed confirmation.</p>
+            </div>
+            <span className={"rounded-lg border px-3 py-1.5 text-[11px] font-bold " + (feedStatus === "LIVE" && runner?.running ? "theme-border theme-success-bg theme-success" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-warning-bg theme-warning")}>
+              {feedStatus === "LIVE" && runner?.running ? "FEED + RUNNER LIVE" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "HEALTH ATTENTION" : "STATUS CHECKING"}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Common Feed</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">cumulative ticks</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Age</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p>
+              <p className="text-[10px] theme-muted">oldest required exchange tick</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">NSE / NFO</p>
+              <p className="mt-1 text-sm font-bold theme-text">{String(feedExchangeFreshness?.NSE?.status ?? "UNKNOWN")} / {String(feedExchangeFreshness?.NFO?.status ?? "UNKNOWN")}</p>
+              <p className="text-[10px] theme-muted">NSE {typeof feedExchangeFreshness?.NSE?.age_seconds === "number" ? feedExchangeFreshness.NSE.age_seconds.toFixed(1) + "s" : "—"} · NFO {typeof feedExchangeFreshness?.NFO?.age_seconds === "number" ? feedExchangeFreshness.NFO.age_seconds.toFixed(1) + "s" : "—"}</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Box Runner</p>
+              <p className={"mt-1 text-sm font-bold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNKNOWN"}</p>
+              <p className="text-[10px] theme-muted">{runner?.detail || "Runner detail unavailable"}</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Instruments</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">active common-feed instruments</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Errors</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedErrors == null ? "—" : (feedErrors.delivery + feedErrors.normalizer).toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">delivery {feedErrors?.delivery ?? "—"} · normalizer {feedErrors?.normalizer ?? "—"}</p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border theme-border px-3 py-2 text-xs">
+            <span className="theme-muted">Scanner: <b className="theme-text">{String(scannerDiagnostics?.status ?? "not separately reported")}</b></span>
+            <span className="font-bold theme-warning">BROKER ORDERS OFF · NO ORDER ROUTING</span>
+          </div>
+        </Card>
+      )}
+      <Card className="theme-border theme-surface px-3 py-3">
+        <div className="flex items-center gap-2 text-xs font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(160px,0.7fr)_auto]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 theme-muted" />
             <span className="sr-only">Search</span>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 pl-9 text-sm theme-text" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 pl-9 text-xs theme-text" />
           </label>
-          <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-sm theme-text">
+          <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 text-xs theme-text">
             {c.controls.map((x) => <option key={x} value={x}>{slug === "synthetic-arbitrage" && x === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS (15)" : x}</option>)}
           </select>
-          <button type="button" onClick={refresh} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border">
+          <button type="button" onClick={refresh} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text hover:theme-border">
             <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> Refresh
           </button>
         </div>
@@ -1063,6 +1174,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         )}
       </Card>
 
+      {slug !== "box-spread" && (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {c.metrics.map((metric) => (
           <Card key={metric} className="theme-border theme-surface p-4">
@@ -1071,7 +1183,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </Card>
         ))}
       </div>
+      )}
 
+      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <div><p className="text-xs theme-muted">Common Feed Ticks</p><p className="mt-1 text-lg font-semibold theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p><p className="text-[11px] theme-muted">Actual cumulative feed counter</p></div>
@@ -1083,6 +1197,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div><p className="text-xs theme-muted">Normalizer Errors</p><p className="mt-1 text-lg font-semibold theme-text">{feedErrors?.normalizer ?? "—"}</p></div>
         </div>
       </Card>
+      )}
 
       {slug === "synthetic-arbitrage" && (
         <Card className="theme-border theme-surface p-4">
@@ -1128,30 +1243,48 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
-      <Card className="overflow-hidden theme-border theme-surface">
-        <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Live opportunity expiry type">
-            <button type="button" onClick={() => setLiveExpiryView("MONTHLY")} aria-pressed={liveExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
-            <button type="button" onClick={() => setLiveExpiryView("WEEKLY")} aria-pressed={liveExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
-          </div>}{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
-          <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span></div>
-        </div>
-        <div className="grid gap-2 p-3 md:hidden">
-          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</div></div>)}</div></div>)}
-        </div>
-        <div className="hidden overflow-x-auto md:block">
-          <table className="min-w-[1100px] w-full text-left text-sm">
-            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
-            <tbody>
-              {loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr> :
-              filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</td></tr> :
-              filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className={"border-b theme-border last:border-0 " + (slug === "synthetic-arbitrage" && (index === 0 || String(filteredRows[index - 1]?.underlying ?? "").toUpperCase() !== String(row.underlying ?? "").toUpperCase()) ? "border-t-2 theme-border" : "")}>
-                {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted") + " " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</td>)}
-              </tr>)}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {slug === "box-spread" && <div id="box-live-opportunities" className="scroll-mt-24"><LiveOpportunityGrid /></div>}
+      {slug === "box-spread" && (
+        <section id="box-analytics" className="scroll-mt-24 rounded-2xl border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl" aria-label="Box Spread analytics">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><h2 className="text-sm font-extrabold text-white">Scanner Analytics</h2><p className="mt-1 text-xs text-slate-400">Latest backend scanner counters · live observations, not estimated performance.</p></div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-200">Box Spread only</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {([["Eligible Boxes", metricValue("Eligible Boxes")], ["Executable Edges", metricValue("Executable Edges")], ["Signals", metricValue("Signals")], ["Last Scan", metricValue("Last Scan")]] as Array<[string, unknown]>).map(([label, raw]) => (
+              <div key={label} className="rounded-xl border border-slate-700 bg-[#101d30] p-3"><p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p><p className="mt-2 break-words text-lg font-extrabold tabular-nums text-white">{String(raw ?? "—")}</p></div>
+            ))}
+          </div>
+          <p className="mt-3 text-[10px] leading-5 text-slate-500">Edge Timing Analysis remains on Custom Alert as previously decided. This panel reports scanner counters only; it is not a backtest or profit forecast.</p>
+        </section>
+      )}
+
+      {slug !== "box-spread" && (
+        <Card className="overflow-hidden theme-border theme-surface">
+          <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Live opportunity expiry type">
+              <button type="button" onClick={() => setLiveExpiryView("MONTHLY")} aria-pressed={liveExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
+              <button type="button" onClick={() => setLiveExpiryView("WEEKLY")} aria-pressed={liveExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
+            </div>}{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
+            <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • 1.5s refresh</span></div>
+          </div>
+          <div className="grid gap-2 p-3 md:hidden">
+            {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</div></div>)}</div></div>)}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="min-w-[1100px] w-full text-left text-sm">
+              <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+              <tbody>
+                {loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr> :
+                filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</td></tr> :
+                filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className={"border-b theme-border last:border-0 " + (slug === "synthetic-arbitrage" && (index === 0 || String(filteredRows[index - 1]?.underlying ?? "").toUpperCase() !== String(row.underlying ?? "").toUpperCase()) ? "border-t-2 theme-border" : "")}>
+                  {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted") + " " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</td>)}
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       {slug === "synthetic-arbitrage" && (
         <Card className="theme-border theme-surface p-4">
@@ -1311,6 +1444,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </Card>
       )}
 
+      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
@@ -1352,9 +1486,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Common feed:</span> {feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"} • {feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN") + " instruments"} • runner {runner?.running ? "RUNNING" : "STOPPED"}.</div>
       </Card>
 
+      )}
+
+      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> {slug === "box-spread" ? "Post-Market Opportunity (" + (historyExpiryView === "MONTHLY" ? "Monthly" : "Weekly") + ") History" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> {"Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
             <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
@@ -1406,6 +1543,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
         </div>}
       </Card>
+      )}
 
       {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
       {copyFallbackText && <div className="space-y-2 rounded-xl border theme-border theme-surface p-3">
@@ -1415,6 +1553,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <button type="button" onClick={() => { setCopyFallbackText(""); setCopyStatus(""); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Close</button>
       </div>}
 
+      {slug !== "box-spread" && (
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>
@@ -1470,6 +1609,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </Card>}
         <Card className="theme-border theme-surface p-4"><div className="text-sm font-semibold theme-text">Session Diagnostics</div><p className="mt-2 text-xs leading-5 theme-muted">MCX can remain live after NSE closes. Calendar/commodity output therefore follows the common feed and actual exchange session rather than the NSE-only status.</p></Card>
       </div>
+      )}
     </div>
   );
 }

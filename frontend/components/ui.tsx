@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <section className={`rounded-2xl border theme-border theme-surface theme-shadow ${className}`}>{children}</section>;
+export function Card({ children, className = "", id, "aria-label": ariaLabel }: { children: ReactNode; className?: string; id?: string; "aria-label"?: string }) {
+  return <section id={id} aria-label={ariaLabel} className={`rounded-2xl border theme-border theme-surface theme-shadow ${className}`}>{children}</section>;
 }
 
 export function StatusDot({ live = false }: { live?: boolean }) {

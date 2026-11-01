@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Archive, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -21,6 +21,8 @@ type Snapshot = {
   gross_pnl?: number | null;
   lot_size?: number | null;
   freshness?: string;
+  last_update_timestamp_ns?: number | string | null;
+  timestamp_skew_ms?: number | null;
 };
 
 type SnapshotResponse = {
@@ -47,6 +49,43 @@ const observedTime = (value: string) => {
     : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
 };
 
+const snapshotKey = (row: Snapshot) => [
+  row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction,
+  row.last_update_timestamp_ns ?? row.observed_at,
+].join("|");
+
+const mergeSnapshots = (current: Snapshot[], incoming: Snapshot[]) => {
+  const seen = new Set(current.map(snapshotKey));
+  const merged = [...current];
+  for (const row of incoming) {
+    const key = snapshotKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(row);
+  }
+  return merged;
+};
+
+const quoteTime = (value: number | string | null | undefined) => {
+  if (value == null || value === "") return "—";
+  const raw = String(value);
+  if (!/^\d+$/.test(raw)) return "—";
+  let milliseconds: number;
+  try {
+    const timestamp = BigInt(raw);
+    if (timestamp <= BigInt("0")) return "—";
+    // Snapshot timestamps are epoch nanoseconds. Convert before Number so
+    // large integer precision is not lost while deriving the clock time.
+    milliseconds = Number(timestamp / BigInt("1000000"));
+  } catch {
+    return "—";
+  }
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) + " IST";
+};
+
 export default function BoxSpreadPostMarketHistory() {
   const [days, setDays] = useState(7);
   const [expiryType, setExpiryType] = useState("ALL");
@@ -59,9 +98,16 @@ export default function BoxSpreadPostMarketHistory() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const requestSequence = useRef(0);
+  const appendInFlight = useRef(false);
 
   const load = useCallback(async (append = false, pageOffset = 0) => {
-    if (append) setLoadingMore(true);
+    if (append && appendInFlight.current) return;
+    const requestId = ++requestSequence.current;
+    if (append) {
+      appendInFlight.current = true;
+      setLoadingMore(true);
+    }
     else setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -78,10 +124,11 @@ export default function BoxSpreadPostMarketHistory() {
       });
       if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
       const body = (await response.json()) as SnapshotResponse;
+      if (requestId !== requestSequence.current) return;
       if (body?.strategy !== "box-spread" || !Array.isArray(body.data) || !body.expiry_counts) {
         throw new Error("Unexpected snapshot history response");
       }
-      setRows(current => append ? [...current, ...body.data] : body.data);
+      setRows(current => append ? mergeSnapshots(current, body.data) : mergeSnapshots([], body.data));
       setTotal(body.total_count);
       setCounts(body.expiry_counts);
       setOffset(nextOffset + body.data.length);
@@ -89,15 +136,27 @@ export default function BoxSpreadPostMarketHistory() {
       setError(null);
       setCheckedAt(new Date().toISOString());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load saved Box Spread history");
+      if (requestId === requestSequence.current) {
+        setError(e instanceof Error ? e.message : "Unable to load saved Box Spread history");
+      }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (requestId === requestSequence.current) {
+        setLoading(false);
+        setLoadingMore(false);
+        appendInFlight.current = false;
+      }
     }
   }, [days, expiryType]);
 
   useEffect(() => {
+    // Do not display rows from the previous expiry/window under the new filter
+    // while its request is in flight or after that request fails.
+    appendInFlight.current = false;
+    setRows([]);
+    setTotal(0);
+    setCounts({ WEEKLY: 0, MONTHLY: 0, UNKNOWN: 0 });
     setOffset(0);
+    setHasMore(false);
     void load(false);
   }, [load]); // Filter changes intentionally reset pagination.
 
@@ -107,13 +166,13 @@ export default function BoxSpreadPostMarketHistory() {
   };
 
   return (
-    <Card className="theme-border theme-surface p-4 sm:p-5">
+    <Card className="scroll-mt-24 border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl sm:p-5" id="box-history">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
           <div>
-            <h2 className="text-base font-semibold theme-text">Post-Market Box Spread Pair History</h2>
-            <p className="mt-1 text-xs theme-muted">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
+            <h2 className="text-base font-extrabold text-white">Post-Market Box Spread Pair History</h2>
+            <p className="mt-1 text-xs text-slate-400">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
           </div>
         </div>
         <button type="button" onClick={refresh} disabled={loading || loadingMore} className="inline-flex min-h-9 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
@@ -151,13 +210,31 @@ export default function BoxSpreadPostMarketHistory() {
       {!rows.length && loading && <p className="mt-4 text-sm theme-muted">Loading saved Box Spread snapshots…</p>}
       {!rows.length && !loading && !error && <p className="mt-4 rounded-lg border theme-border p-3 text-sm theme-muted">No qualifying snapshots were saved in this window. No synthetic or sample rows are displayed.</p>}
 
-      {rows.length > 0 && <div className="mt-4 overflow-x-auto rounded-xl border theme-border">
-        <table className="w-full min-w-[980px] text-left text-xs">
+      {rows.length > 0 && <div className="mt-4 grid gap-3 md:hidden">
+        {rows.map(row => <article key={snapshotKey(row)} className="rounded-xl border theme-border theme-surface-2 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div><div className="flex items-center gap-2"><span className="text-sm font-bold theme-text">{row.symbol}</span><span className={"rounded-md px-2 py-0.5 text-[9px] font-bold " + (row.expiry_type === "WEEKLY" ? "bg-cyan-500/10 text-cyan-500" : row.expiry_type === "MONTHLY" ? "bg-violet-500/10 text-violet-500" : "bg-slate-500/10 theme-muted")}>{row.expiry_type || "UNKNOWN"}</span></div><p className="mt-1 text-[11px] theme-muted">Expiry {row.expiry_date || row.expiry} · {row.direction}</p></div>
+            <div className="text-right"><p className="text-[9px] uppercase tracking-wide theme-muted">Executable edge</p><p className="text-lg font-extrabold tabular-nums theme-text">₹{number(row.executable_edge)}</p></div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Strike range</p><p className="mt-1 text-xs font-semibold theme-text">{number(row.low_strike)} – {number(row.high_strike)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Spot price</p><p className="mt-1 text-xs font-semibold theme-text">{row.spot_price == null ? "—" : "₹" + number(row.spot_price)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Edge / lot</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.edge_per_lot)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Gross P&L</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.gross_pnl)}</p></div>
+          </div>
+          <div className="mt-3 flex flex-wrap justify-between gap-2 border-t theme-border pt-2 text-[10px] theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
+        </article>)}
+      </div>}
+
+      {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
+        <table className="w-full min-w-[1120px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
-            <th className="px-3 py-2">Observed (IST)</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2">Edge</th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2">Gross P&L</th>
+            <th className="px-3 py-2">Saved (IST)</th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2">Edge</th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2">Gross P&L</th>
           </tr></thead>
-          <tbody>{rows.map((row, index) => <tr key={row.symbol + "-" + row.expiry + "-" + row.low_strike + "-" + row.high_strike + "-" + row.direction + "-" + row.observed_at + "-" + index} className="border-t theme-border">
+          <tbody>{rows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
+            <td className="whitespace-nowrap px-3 py-2 theme-muted">{quoteTime(row.last_update_timestamp_ns)}</td>
+            <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.timestamp_skew_ms == null ? "—" : number(row.timestamp_skew_ms) + " ms"}</td>
             <td className="px-3 py-2 font-semibold theme-text">{row.symbol}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.expiry_date || row.expiry}</td>
             <td className="px-3 py-2 theme-muted">{row.expiry_type || "UNKNOWN"}</td>
