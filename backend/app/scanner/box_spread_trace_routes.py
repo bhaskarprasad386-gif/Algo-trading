@@ -203,6 +203,59 @@ def _resolve_leg_instruments(entry):
     return descriptors
 
 
+def _exit_depth_levels(record, exit_side):
+    """Return normalized executable levels from the live Angel One depth snapshot.
+
+    Exit SELL consumes bids (buy side); exit BUY consumes asks (sell side).
+    Angel One raw prices are in paise, while canonical record prices are rupees.
+    """
+    if record is None:
+        return []
+    side = "buy" if exit_side == "SELL" else "sell"
+    payload = record.payload if isinstance(record.payload, dict) else {}
+    raw_levels = None
+    for key in (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side):
+        candidate = payload.get(key)
+        if isinstance(candidate, list) and candidate:
+            raw_levels = candidate
+            break
+        if isinstance(candidate, dict):
+            raw_levels = [candidate]
+            break
+    levels = []
+    for level in raw_levels or []:
+        if not isinstance(level, dict):
+            continue
+        raw_price = _finite_positive(level.get("price") or level.get(f"{side}_price"))
+        raw_qty = _finite_positive(level.get("quantity") or level.get("qty") or level.get(f"{side}_quantity"))
+        if raw_price is None or raw_qty is None:
+            continue
+        levels.append((raw_price / 100.0, raw_qty))
+    if not levels:
+        price = _finite_positive(record.bid if exit_side == "SELL" else record.ask)
+        qty = _finite_positive(record.bid_qty if exit_side == "SELL" else record.ask_qty)
+        if price is not None and qty is not None:
+            levels = [(price, qty)]
+    # Do not rely on provider ordering for executable price priority.
+    levels.sort(key=lambda item: item[0], reverse=(exit_side == "SELL"))
+    return levels
+
+
+def _depth_vwap(levels, required_quantity):
+    remaining = float(required_quantity)
+    filled = 0.0
+    notional = 0.0
+    for price, quantity in levels:
+        take = min(remaining, quantity)
+        if take > 0:
+            filled += take
+            notional += take * price
+            remaining -= take
+        if remaining <= 0:
+            break
+    return (notional / filled if filled > 0 else None), filled
+
+
 def _exit_valuation(trace, quotes):
     entry = json.loads(trace.entry_json)
     sides = _entry_sides(trace.direction)
@@ -221,22 +274,28 @@ def _exit_valuation(trace, quotes):
         if quote_age is not None:
             quote_age = max(0.0, quote_age)
         all_fresh = all_fresh and fresh
-        price = None if not fresh else (record.bid if exit_side == "SELL" else record.ask)
-        depth = None if not fresh else (record.bid_qty if exit_side == "SELL" else record.ask_qty)
-        price = _finite_positive(price)
-        depth = _finite_positive(depth)
-        complete_lots = 0 if depth is None or price is None else int(depth // trace.lot_size)
+        levels = _exit_depth_levels(record, exit_side) if fresh else []
+        total_depth = sum(level[1] for level in levels)
+        executable_price, executable_qty = _depth_vwap(levels, qty)
+        complete_lots = int(total_depth // trace.lot_size)
         available_lots.append(complete_lots)
         entry_price = _finite_positive(entry.get("trace_entry_prices", {}).get(leg))
-        leg_pnl = None if price is None or entry_price is None else ((price - entry_price) if entry_side == "BUY" else (entry_price - price)) * qty
-        if leg_pnl is not None:
+        leg_pnl = None
+        if executable_price is not None and entry_price is not None:
+            pnl_quantity = min(qty, executable_qty)
+            leg_pnl = ((executable_price - entry_price) if entry_side == "BUY" else (entry_price - executable_price)) * pnl_quantity
             gross += leg_pnl
+        best_price = levels[0][0] if levels else None
         legs.append({
             "leg": leg, "entry_side": entry_side, "entry_price": entry_price,
-            "exit_side": exit_side, "exit_price": price, "exit_qty": depth,
+            "exit_side": exit_side, "exit_price": executable_price,
+            "best_exit_price": best_price, "exit_qty": total_depth,
+            "executable_quantity": executable_qty,
             "quote_age_seconds": None if quote_age is None else round(quote_age, 3),
             "fresh": fresh, "leg_gross_pnl": leg_pnl,
-            "required_quantity": qty, "can_fill_required_quantity": bool(fresh and price is not None and depth is not None and depth >= qty),
+            "required_quantity": qty,
+            "can_fill_required_quantity": bool(fresh and executable_price is not None and executable_qty >= qty),
+            "depth_levels": [{"price": price, "quantity": quantity} for price, quantity in levels],
         })
     min_lots = min(available_lots) if available_lots else 0
     can_exit = all_fresh and all(item["can_fill_required_quantity"] for item in legs)
@@ -252,7 +311,6 @@ def _exit_valuation(trace, quotes):
                     "Current market depth/quotes do not support a verified all-four-leg exit at the traced quantity."),
         "legs": legs, "orders_placed": False,
     }
-
 
 @router.get("/{trace_id}/exit-checks")
 def list_trace_exit_checks(trace_id: int, limit: int = 50):
