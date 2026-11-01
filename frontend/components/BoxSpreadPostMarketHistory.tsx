@@ -104,7 +104,13 @@ export default function BoxSpreadPostMarketHistory() {
   }, [days, expiryType]);
 
   useEffect(() => {
+    // Do not display rows from the previous expiry/window under the new filter
+    // while its request is in flight or after that request fails.
+    setRows([]);
+    setTotal(0);
+    setCounts({ WEEKLY: 0, MONTHLY: 0, UNKNOWN: 0 });
     setOffset(0);
+    setHasMore(false);
     void load(false);
   }, [load]); // Filter changes intentionally reset pagination.
 
