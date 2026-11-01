@@ -179,6 +179,9 @@ export default function LiveOpportunityGrid() {
     ? (n(b.row, "executable_edge") ?? -Infinity) - (n(a.row, "executable_edge") ?? -Infinity)
     : b.lastSeen - a.lastSeen), [expiryRows, sortByEdge]);
   const liveCount = useMemo(() => expiryRows.filter((item) => item.status === "LIVE").length, [expiryRows]);
+  // An open socket alone is not proof of a healthy stream; require a recent server frame.
+  const streamLabel = connection !== "LIVE" ? connection : lastMessageAt === null ? "WAITING DATA" : Date.now() - lastMessageAt > 15000 ? "NO RECENT DATA" : "LIVE";
+  const streamHealthy = streamLabel === "LIVE";
 
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-700/80 bg-[#080f1d] text-slate-100 shadow-[0_18px_55px_rgba(2,6,23,0.28)]">
@@ -195,8 +198,8 @@ export default function LiveOpportunityGrid() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[11px]">
-            <span className={"inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 font-bold " + (connection === "LIVE" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-200")}>
-              {connection === "LIVE" ? <Wifi size={13}/> : <WifiOff size={13}/>} {connection}
+            <span className={"inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 font-bold " + (streamHealthy ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-200")}>
+              {streamHealthy ? <Wifi size={13}/> : <WifiOff size={13}/>} {streamLabel}
             </span>
             <span className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-300">{liveCount} live <span className="text-slate-500">/ {expiryRows.length} retained</span></span>
           </div>
@@ -224,8 +227,8 @@ export default function LiveOpportunityGrid() {
       {orderedRows.length === 0 ? (
         <div className="px-5 py-12 text-center">
           <div className="mx-auto grid h-11 w-11 place-items-center rounded-full border border-slate-700 bg-slate-900 text-slate-400"><Radio size={19}/></div>
-          <p className="mt-3 text-sm font-semibold text-slate-200">{connection !== "LIVE" ? "Connecting to the live scanner" : rows.length === 0 ? "Waiting for a qualifying opportunity" : "No " + expiryView.toLowerCase() + " opportunities in the current stream window"}</p>
-          <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-slate-500">{connection !== "LIVE" ? "The stream will reconnect automatically. No historical values are presented as live." : "Only backend events explicitly classified " + expiryView + " are shown here. This empty state does not create or estimate opportunities."}</p>
+          <p className="mt-3 text-sm font-semibold text-slate-200">{!streamHealthy ? (streamLabel === "NO RECENT DATA" ? "Live stream has stopped sending updates" : "Connecting to the live scanner") : rows.length === 0 ? "Waiting for a qualifying opportunity" : "No " + expiryView.toLowerCase() + " opportunities in the current stream window"}</p>
+          <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-slate-500">{!streamHealthy ? "Waiting for a fresh server frame. No historical values are presented as live." : "Only backend events explicitly classified " + expiryView + " are shown here. This empty state does not create or estimate opportunities."}</p>
         </div>
       ) : (
         <div className="space-y-3 p-3 sm:p-4">
