@@ -81,8 +81,9 @@ class BoxPaperDepthFeed:
         try:
             self._feed.start(descriptors, self._on_record)
             deadline = monotonic() + max(0.1, float(timeout_seconds))
+            snapshot_records = None
             with self._condition:
-                while True:
+                while snapshot_records is None:
                     now = monotonic()
                     fresh = {
                         role: pair for role, pair in self._records.items()
@@ -91,8 +92,8 @@ class BoxPaperDepthFeed:
                     if len(fresh) == 4:
                         arrivals = [pair[1] for pair in fresh.values()]
                         if max(arrivals) - min(arrivals) <= self._max_skew:
-                            yield {role: pair[0] for role, pair in fresh.items()}
-                            return
+                            snapshot_records = {role: pair[0] for role, pair in fresh.items()}
+                            break
                     remaining = deadline - now
                     if remaining <= 0:
                         missing = sorted(set(_ROLES) - set(fresh))
@@ -104,6 +105,7 @@ class BoxPaperDepthFeed:
                             "fresh depth unavailable for: " + ", ".join(missing or _ROLES)
                         )
                     self._condition.wait(min(remaining, 0.1))
+            yield snapshot_records
         finally:
             self._feed.stop()
             with self._condition:
