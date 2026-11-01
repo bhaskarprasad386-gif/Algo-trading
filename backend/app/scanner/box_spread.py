@@ -144,6 +144,16 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
     first = quotes[0]
     if any(q.underlying != first.underlying or q.expiry != first.expiry or q.instrument_class != cls for q in quotes):
         raise ValueError("box option quotes must share underlying, expiry and instrument class")
+    # A crossed market is a snapshot-level integrity failure: do not build
+    # boxes from the remaining strikes while silently dropping the bad quote.
+    if any(
+        (float(q.call_ask) < float(q.call_bid)) or (float(q.put_ask) < float(q.put_bid))
+        for q in quotes
+        if all(value is not None for value in (q.call_bid, q.call_ask, q.put_bid, q.put_ask))
+    ):
+        stats["invalid_quotes"] = stats.get("quotes", 0)
+        stats["crossed_quote_snapshots"] = stats.get("crossed_quote_snapshots", 0) + 1
+        return ()
     quotes = tuple(q for q in quotes if _valid_quote(q))
     stats["invalid_quotes"] = stats.get("quotes", 0) - len(quotes)
     if not quotes:
