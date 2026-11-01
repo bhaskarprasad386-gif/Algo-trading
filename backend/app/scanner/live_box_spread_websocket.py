@@ -106,7 +106,7 @@ def _row(result):
         "expiry": low.expiry, "expiry_type": _expiry_types.get((str(low.underlying).strip().upper(), _expiry_key(low.expiry)), "UNKNOWN"), "low_strike": low.strike, "high_strike": high.strike,
         "direction": result.direction, **_spot_fields(low.underlying), "timestamp_ns": int(low.timestamp_ns),
         "high_timestamp_ns": int(high.timestamp_ns),
-        "last_update_timestamp_ns": newest_timestamp,
+        "low_call_timestamp_ns": leg_timestamps[0], "low_put_timestamp_ns": leg_timestamps[1],\n        "high_call_timestamp_ns": leg_timestamps[2], "high_put_timestamp_ns": leg_timestamps[3],\n        "last_update_timestamp_ns": newest_timestamp,
         "observed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "freshness": "LIVE",
         "quote_age_seconds": round(max(0.0, (now_ns - oldest_timestamp) / 1e9), 3),
