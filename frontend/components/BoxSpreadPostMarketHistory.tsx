@@ -21,6 +21,8 @@ type Snapshot = {
   gross_pnl?: number | null;
   lot_size?: number | null;
   freshness?: string;
+  last_update_timestamp_ns?: number | string | null;
+  timestamp_skew_ms?: number | null;
 };
 
 type SnapshotResponse = {
@@ -45,6 +47,16 @@ const observedTime = (value: string) => {
   return Number.isNaN(date.getTime())
     ? value
     : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
+};
+
+const quoteTime = (value: number | string | null | undefined) => {
+  if (value == null || value === "") return "—";
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "—";
+  const date = new Date(timestamp / 1_000_000);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) + " IST";
 };
 
 export default function BoxSpreadPostMarketHistory() {
@@ -165,12 +177,14 @@ export default function BoxSpreadPostMarketHistory() {
       {!rows.length && !loading && !error && <p className="mt-4 rounded-lg border theme-border p-3 text-sm theme-muted">No qualifying snapshots were saved in this window. No synthetic or sample rows are displayed.</p>}
 
       {rows.length > 0 && <div className="mt-4 overflow-x-auto rounded-xl border theme-border">
-        <table className="w-full min-w-[980px] text-left text-xs">
+        <table className="w-full min-w-[1120px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
-            <th className="px-3 py-2">Observed (IST)</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2">Edge</th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2">Gross P&L</th>
+            <th className="px-3 py-2">Saved (IST)</th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2">Edge</th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2">Gross P&L</th>
           </tr></thead>
           <tbody>{rows.map((row, index) => <tr key={row.symbol + "-" + row.expiry + "-" + row.low_strike + "-" + row.high_strike + "-" + row.direction + "-" + row.observed_at + "-" + index} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
+            <td className="whitespace-nowrap px-3 py-2 theme-muted">{quoteTime(row.last_update_timestamp_ns)}</td>
+            <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.timestamp_skew_ms == null ? "—" : number(row.timestamp_skew_ms) + " ms"}</td>
             <td className="px-3 py-2 font-semibold theme-text">{row.symbol}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.expiry_date || row.expiry}</td>
             <td className="px-3 py-2 theme-muted">{row.expiry_type || "UNKNOWN"}</td>
