@@ -437,46 +437,40 @@ def test_unequal_open_leg_quantities_block_preview_and_exit_before_any_write(mon
     assert "unequal" in raised.value.detail
 
 
-def test_exit_preview_returns_all_four_executable_bid_ask_quotes_without_writing(monkeypatch):
+def test_exit_preview_returns_all_four_executable_depth_quotes_without_writing(monkeypatch):
     _exit_basket_route_fixtures(monkeypatch)
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {
         "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
     })
-    monkeypatch.setattr(
-        routes._ledger, "record_exit_basket",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("preview must not write fills")),
-    )
-
+    monkeypatch.setattr(routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("preview must not write fills"))
     result = routes.preview_exit_basket(456, account_key="basket-route-test")
     assert result["order_type_default"] == "LIMIT"
     assert result["quantity_per_leg"] == 25
     quotes = {leg["role"]: leg for leg in result["legs"]}
-    assert set(quotes) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
-    assert quotes["LOW_CE"]["executable_price"] == 10
-    assert quotes["HIGH_CE"]["executable_price"] == 21
-    assert quotes["HIGH_PE"]["executable_price"] == 30
-    assert quotes["LOW_PE"]["executable_price"] == 41
-    assert all(leg["required_depth"] == 25 and leg["available_depth"] == 25 and leg["depth_sufficient"] for leg in result["legs"])
-    assert result["all_legs_depth_sufficient"] is True
+    assert quotes["LOW_CE"]["executable_vwap"] == 10
+    assert quotes["HIGH_CE"]["executable_vwap"] == 21
+    assert quotes["HIGH_PE"]["executable_vwap"] == 30
+    assert quotes["LOW_PE"]["executable_vwap"] == 41
+    assert all(leg["available_depth_quantity"] == 25 for leg in result["legs"])
+    assert result["all_legs_marketable"] is True
+    assert result["full_position_executable"] is True
     assert result["preview_is_executable"] is True
-    assert result["estimated_realized_plus_close_pnl"] == "30.00"
+    assert result["estimated_pnl_summary"]["realized_pnl"] == "10.00"
 
 
 @pytest.mark.parametrize("depth_field", [
     "low_call_bid_qty", "high_call_ask_qty", "high_put_bid_qty", "low_put_ask_qty",
 ])
-def test_exit_preview_reports_missing_executable_depth_without_writing(monkeypatch, depth_field):
+def test_exit_preview_rejects_when_any_leg_lacks_one_complete_lot(monkeypatch, depth_field):
     row, _ = _exit_basket_route_fixtures(monkeypatch)
     row.pop(depth_field)
-    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {
-        "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
-    })
-    result = routes.preview_exit_basket(456, account_key="basket-route-test")
-    leg = next(item for item in result["legs"] if item["depth_sufficient"] is False)
-    assert leg["required_depth"] == 25
-    assert leg["available_depth"] is None
-    assert result["all_legs_depth_sufficient"] is False
-    assert result["preview_is_executable"] is False
+    monkeypatch.setattr(routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("incomplete four-leg preview must never write"))
+    with pytest.raises(HTTPException) as raised:
+        routes.preview_exit_basket(456, account_key="basket-route-test")
+    assert raised.value.status_code == 409
+    assert "even one complete" in raised.value.detail
 
 
 def test_exit_basket_rejects_one_unmarketable_limit_without_any_fill(monkeypatch):
@@ -1269,30 +1263,18 @@ def test_fresh_marks_can_use_preloaded_trade_and_snapshot(monkeypatch):
     }
 
 
-def test_exit_preview_recalculates_proposed_limit_prices_and_marks_non_marketable_legs(monkeypatch):
+def test_exit_preview_filters_each_depth_level_by_proposed_limit(monkeypatch):
     _exit_basket_route_fixtures(monkeypatch)
-    captured = {}
-    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: (
-        captured.update(kwargs) or {
-            "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
-        }
-    ))
+    monkeypatch.setattr(routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: pytest.fail("unmarketable basket must not calculate full-position P&L"))
     payload = routes.ExitPreviewRequest(
         account_key="basket-route-test", order_type="LIMIT",
-        limit_prices={"LOW_CE": 9, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 42},
+        limit_prices={"LOW_CE": 11, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 41},
     )
-    result = routes.preview_exit_basket_with_limits(456, payload)
-    quotes = {leg["role"]: leg for leg in result["legs"]}
-    assert quotes["LOW_CE"]["preview_price"] == 10
-    assert quotes["LOW_CE"]["marketable"] is True
-    assert quotes["HIGH_CE"]["preview_price"] == 20
-    assert quotes["HIGH_CE"]["marketable"] is False
-    assert quotes["HIGH_PE"]["preview_price"] == 30
-    assert quotes["LOW_PE"]["preview_price"] == 41
-    assert result["all_legs_marketable"] is False
-    assert result["preview_price_source"] == "INDICATIVE_LIMIT_SCENARIO"
-    assert captured["mark_prices"] == {"LOW_CE": 10, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 41}
-    assert result["estimated_realized_plus_close_pnl"] == "30.00"
+    with pytest.raises(HTTPException) as raised:
+        routes.preview_exit_basket_with_limits(456, payload)
+    assert raised.value.status_code == 409
+    assert "even one complete" in raised.value.detail
 
 
 def test_exit_preview_rejects_incomplete_or_invalid_proposed_limits(monkeypatch):
