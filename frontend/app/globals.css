@@ -229,3 +229,64 @@ input::placeholder, textarea::placeholder { color: var(--app-subtle); }
 @media (min-width: 1024px) {
   .app-navigation { padding: 1.1rem .85rem; }
 }
+
+
+/* Box Spread live opportunity area follows the selected White theme. */
+html[data-theme="white"] .box-live-opportunities {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .08) !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="bg-[#"],
+html[data-theme="white"] .box-live-opportunities [class*="bg-slate-"] {
+  background-color: #f8fafc !important;
+}
+html[data-theme="white"] .box-live-opportunities > div:first-child {
+  background: linear-gradient(110deg, #ffffff, #f1f5f9 58%, #ffffff) !important;
+  border-color: #e2e8f0 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="border-slate-"] {
+  border-color: #cbd5e1 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-100"],
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-200"],
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-300"] {
+  color: #0f172a !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-400"],
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-500"],
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-600"],
+html[data-theme="white"] .box-live-opportunities [class*="text-slate-700"] {
+  color: #475569 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="from-[#"],
+html[data-theme="white"] .box-live-opportunities [class*="via-[#"],
+html[data-theme="white"] .box-live-opportunities [class*="to-[#"] {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(255 255 255 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), #f1f5f9, #ffffff !important;
+}
+html[data-theme="white"] .box-live-opportunities .bg-slate-800 {
+  background-color: #e2e8f0 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="bg-emerald-500/[0.07]"] {
+  background-color: #ecfdf5 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="bg-emerald-500/"],
+html[data-theme="white"] .box-live-opportunities [class*="bg-emerald-400/"] {
+  background-color: #ecfdf5 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="bg-cyan-400/"],
+html[data-theme="white"] .box-live-opportunities [class*="bg-violet-400/"] {
+  background-color: #f1f5f9 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="bg-rose-400/"] {
+  background-color: #fff1f2 !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="bg-amber-"] {
+  background-color: #fffbeb !important;
+}
+html[data-theme="white"] .box-live-opportunities [class*="text-white"] {
+  color: #0f172a !important;
+}
