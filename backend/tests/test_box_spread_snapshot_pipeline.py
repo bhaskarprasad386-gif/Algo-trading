@@ -337,3 +337,19 @@ def test_snapshot_payload_persists_all_four_leg_timestamps_and_quote_skew(tmp_pa
     assert saved["high_put_timestamp_ns"] == base + 300_000_000
     assert saved["last_update_timestamp_ns"] == base + 300_000_000
     assert saved["timestamp_skew_ms"] == 300.0
+
+
+
+def test_snapshot_payload_rejects_explicit_zero_leg_timestamp(tmp_path, monkeypatch):
+    """An explicit malformed leg timestamp must not silently fall back to strike time."""
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    result = make_result(1_793_084_708_000_000_000)
+    result.low.call_timestamp_ns = 0
+    pipeline = LiveBoxSpreadPipeline(
+        scanner=RepeatingScanner(result), session_factory=None, alerts=NoopAlerts(),
+    )
+
+    with pytest.raises(RuntimeError, match="could not be durably queued"):
+        pipeline.observe({})
+
+    assert not (tmp_path / "pending.jsonl").exists()
