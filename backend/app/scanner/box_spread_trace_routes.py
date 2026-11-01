@@ -212,7 +212,8 @@ def _exit_depth_levels(record, exit_side):
     if record is None:
         return []
     side = "buy" if exit_side == "SELL" else "sell"
-    payload = getattr(record, "payload", {})\n    payload = payload if isinstance(payload, dict) else {}
+    payload = getattr(record, "payload", {})
+    payload = payload if isinstance(payload, dict) else {}
     raw_levels = None
     for key in (f"best_5_{side}_data", f"best_{side}_data", f"best_{side}", side):
         candidate = payload.get(key)
