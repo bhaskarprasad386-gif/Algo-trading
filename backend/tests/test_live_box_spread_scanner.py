@@ -352,3 +352,28 @@ def test_pipeline_persists_option_snapshot_when_spot_provider_raises(monkeypatch
     assert all(row["spot_price"] is None for row in saved)
     assert all(row["spot_timestamp_ns"] is None for row in saved)
     assert all(row["executable_edge"] > 0 for row in saved)
+
+
+def test_box_scanner_isolates_atm_provider_exception_and_keeps_quote_bucket():
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig
+
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: (_ for _ in ()).throw(RuntimeError("spot unavailable")),
+        config_provider=lambda _s: BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    base = {
+        "underlying": "ABC", "instrument_class": "STOCK",
+        "source_timestamp_ns": 10, "expiry": "30SEP2026",
+        "strike": 100, "bid": 10, "ask": 10.1,
+        "lot_size": 10, "volume": 100, "oi": 100,
+    }
+
+    assert scanner.observe(base | {"option_type": "CE"}) == ()
+    assert scanner.observe(base | {"option_type": "PE"}) == ()
+
+    snapshot = scanner.diagnostics_snapshot()
+    assert snapshot["counts"]["atm_provider_errors"] == 1
+    assert snapshot["last_scan"]["outcome"] == "atm_provider_error"
+    assert snapshot["active_buckets"] == 1
