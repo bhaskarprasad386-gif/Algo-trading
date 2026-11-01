@@ -65,21 +65,6 @@ function fmt(value: unknown, digits = 2) {
 function quote(row: Opportunity, priceField: string, quantityField: string) {
   return { price: n(row, priceField), qty: n(row, quantityField) };
 }
-function quoteTime(value: unknown) {
-  if (value === null || value === undefined || value === "") return "—";
-  let milliseconds: number;
-  try {
-    const raw = String(value);
-    if (!/^\d+$/.test(raw)) return "—";
-    milliseconds = Number(BigInt(raw) / 1_000_000n);
-  } catch {
-    return "—";
-  }
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "—";
-  return new Date(milliseconds).toLocaleTimeString("en-IN", {
-    hour12: false, timeZone: "Asia/Kolkata",
-  }) + " IST";
-}
 function makeWsUrl() {
   const base = typeof window === "undefined" ? appConfig.wsUrl : new URL(appConfig.wsUrl, window.location.href).toString();
   const url = new URL(base);
