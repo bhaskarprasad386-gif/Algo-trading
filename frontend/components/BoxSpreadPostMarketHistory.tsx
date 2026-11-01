@@ -242,10 +242,10 @@ export default function BoxSpreadPostMarketHistory() {
       </div>}
 
       {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
-        <table className="w-full min-w-[1900px] text-left text-xs">
+        <table className="w-full min-w-[2600px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
             <th className="px-3 py-2"><button type="button" onClick={() => selectSort("time")}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => selectSort("edge")}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => selectSort("profit")}>Gross P&L{sortMark("profit")}</button></th>
-          </tr><tr><th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr></thead>
+          </tr><tr>{Array.from({length:13},(_,i)=><th key={"blank"+i}></th>)}<th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr><tr>{Array.from({length:13},(_,i)=><th key={"subblank"+i}></th>)}{Array.from({length:4},(_,i)=><React.Fragment key={i}>{["LTP","Bid","Bid Qty","Ask","Ask Qty"].map(label=><th key={i+label} className="px-2 py-1">{label}</th>)}</React.Fragment>)}</tr></thead>
           <tbody>{sortedRows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{quoteTime(row.last_update_timestamp_ns)}</td>
