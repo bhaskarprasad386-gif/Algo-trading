@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from itertools import combinations
 from math import isfinite
+from decimal import Decimal, InvalidOperation
 from typing import Iterable
 from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, OptionQuote
 from app.backtesting.arbitrage_scan_policy import ScanPolicy, ordered_strikes_around_atm, enumerate_box_pairs
@@ -41,9 +42,9 @@ def _whole_nonnegative(value) -> bool:
 
 def _positive_integer(value) -> int | None:
     try:
-        number = float(value)
-        return int(number) if isfinite(number) and number > 0 and number.is_integer() else None
-    except (TypeError, ValueError, OverflowError):
+        number = Decimal(str(value))
+        return int(number) if number.is_finite() and number > 0 and number == number.to_integral_value() else None
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
         return None
 
 
