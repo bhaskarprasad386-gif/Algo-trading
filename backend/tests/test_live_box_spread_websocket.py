@@ -65,6 +65,10 @@ def test_websocket_quote_age_uses_oldest_leg_and_reports_newest(monkeypatch):
     assert row["last_update_timestamp_ns"] == now_ns - 100_000_000
     assert 1.9 <= row["quote_age_seconds"] <= 2.1
     assert row["timestamp_skew_ms"] == 1900.0
+    assert row["low_call_timestamp_ns"] == now_ns - 2_000_000_000
+    assert row["low_put_timestamp_ns"] == now_ns - 1_800_000_000
+    assert row["high_call_timestamp_ns"] == now_ns - 100_000_000
+    assert row["high_put_timestamp_ns"] == now_ns - 1_500_000_000
     assert row["freshness"] == "LIVE"
 
 
