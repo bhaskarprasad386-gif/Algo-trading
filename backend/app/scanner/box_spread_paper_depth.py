@@ -134,3 +134,26 @@ def max_complete_lots(
         for role in roles
     ]
     return min(capacities) if capacities else 0
+
+
+def limit_eligible_depth(
+    levels: Sequence[tuple[float, float]],
+    close_action: str,
+    limit_price: float | None,
+) -> list[tuple[float, float]]:
+    """Keep only book levels that can execute at the requested closing limit.
+
+    A sell-to-close limit can execute only at bids >= limit; a buy-to-close
+    limit can execute only at asks <= limit. None means market/no price filter.
+    """
+    action = str(close_action or "").strip().upper()
+    if action not in {"BUY", "SELL"}:
+        raise ValueError("close_action must be BUY or SELL")
+    if limit_price is None:
+        return list(levels)
+    limit = _positive(limit_price)
+    if limit is None:
+        raise ValueError("limit_price must be positive and finite")
+    if action == "SELL":
+        return [(price, qty) for price, qty in levels if price >= limit]
+    return [(price, qty) for price, qty in levels if price <= limit]
