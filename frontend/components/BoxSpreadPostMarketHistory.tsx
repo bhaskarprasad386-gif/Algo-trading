@@ -307,13 +307,15 @@ export default function BoxSpreadPostMarketHistory() {
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.expiry_date || row.expiry}</td>
             <td className="px-3 py-2 theme-muted">{row.expiry_type || "UNKNOWN"}</td>
             <td className="px-3 py-2 theme-text">{number(row.low_strike)}</td>
-            <td className="px-3 py-2 theme-text">{number(row.high_strike)}</td>\n            <td className="px-3 py-2 theme-text">{number(strikeGap(row))}</td>\n            <td className="px-3 py-2 theme-text">{executableLots(row) == null ? "—" : executableLots(row)}</td>
+            <td className="px-3 py-2 theme-text">{number(row.high_strike)}</td>
+            <td className="px-3 py-2 theme-text">{number(strikeGap(row))}</td>
+            <td className="px-3 py-2 theme-text">{executableLots(row) == null ? "—" : executableLots(row)}</td>
             <td className="px-3 py-2 font-semibold theme-text">{row.direction}</td>
             <td className="px-3 py-2 theme-muted">{number(row.spot_price)}</td>
             <td className="px-3 py-2 theme-text">{number(row.executable_edge)}</td>
             <td className="px-3 py-2 theme-text">{number(row.edge_per_lot)}</td>
             <td className="px-3 py-2 theme-text">{number(row.gross_pnl)}</td>
-            {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask_qty")}</td>])}
+            {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => { const isLong = row.direction?.toUpperCase().includes("LONG"); const buy = isLong ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); const buyTone = "text-emerald-600 dark:text-emerald-400 font-bold"; const sellTone = "text-rose-600 dark:text-rose-400 font-bold"; return [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask_qty")}</td>];})}
           </tr>)}</tbody>
         </table>
       </div>}
