@@ -133,6 +133,14 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
             or not _whole_nonnegative(config.min_option_volume)
             or not _whole_nonnegative(config.min_option_oi) or max_spread < 0):
         raise ValueError("invalid Box Spread scan configuration")
+    config = replace(
+        config,
+        fees_per_unit=fees,
+        min_executable_edge=min_edge,
+        min_option_volume=int(config.min_option_volume),
+        min_option_oi=int(config.min_option_oi),
+        max_option_spread_pct=max_spread,
+    )
     first = quotes[0]
     if any(q.underlying != first.underlying or q.expiry != first.expiry or q.instrument_class != cls for q in quotes):
         raise ValueError("box option quotes must share underlying, expiry and instrument class")
