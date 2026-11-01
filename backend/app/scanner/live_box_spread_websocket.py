@@ -59,15 +59,30 @@ def set_expiry_types(mapping):
     }
 
 
+def _timestamp_ns(value):
+    from decimal import Decimal, InvalidOperation
+    try:
+        number = Decimal(str(value))
+        return int(number) if number.is_finite() and number > 0 and number == number.to_integral_value() else None
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _leg_timestamps(low, high):
-    """Return timestamps for all four executable option legs."""
-    low_ts = int(getattr(low, "timestamp_ns", 0) or 0)
-    high_ts = int(getattr(high, "timestamp_ns", 0) or 0)
-    return (
-        int(getattr(low, "call_timestamp_ns", None) or low_ts),
-        int(getattr(low, "put_timestamp_ns", None) or low_ts),
-        int(getattr(high, "call_timestamp_ns", None) or high_ts),
-        int(getattr(high, "put_timestamp_ns", None) or high_ts),
+    """Return exact positive timestamps for all four executable option legs."""
+    low_ts = _timestamp_ns(getattr(low, "timestamp_ns", None))
+    high_ts = _timestamp_ns(getattr(high, "timestamp_ns", None))
+    if low_ts is None or high_ts is None:
+        return (None, None, None, None)
+    values = (
+        getattr(low, "call_timestamp_ns", None),
+        getattr(low, "put_timestamp_ns", None),
+        getattr(high, "call_timestamp_ns", None),
+        getattr(high, "put_timestamp_ns", None),
+    )
+    return tuple(
+        _timestamp_ns(value if value is not None else fallback)
+        for value, fallback in zip(values, (low_ts, low_ts, high_ts, high_ts))
     )
 
 
@@ -75,6 +90,8 @@ def _row(result):
     low, high = result.low, result.high
     now_ns = time.time_ns()
     leg_timestamps = _leg_timestamps(low, high)
+    if any(stamp is None for stamp in leg_timestamps):
+        return None
     oldest_timestamp = min(leg_timestamps)
     newest_timestamp = max(leg_timestamps)
 
