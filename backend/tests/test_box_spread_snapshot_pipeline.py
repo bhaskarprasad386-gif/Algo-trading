@@ -374,8 +374,15 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
     valid_two = valid_row("SENSEX", 20261105, 200)
     corrupt_json = '{"symbol": "BROKEN",\n'
     non_object = '[]\n'
+    incomplete = json.dumps({"symbol": "PARTIAL"}) + "\\n"
+    invalid_snapshot = json.dumps({
+        "symbol": "NIFTY", "expiry": "not-an-expiry",
+        "low_strike": 22000, "high_strike": 23000, "direction": "LONG",
+        "observed_at": "2026-11-01T09:15:00Z",
+        "last_update_timestamp_ns": 1,
+    }) + "\\n"
     spool.write_text(
-        json.dumps(valid_one) + "\n" + corrupt_json + non_object + json.dumps(valid_two) + "\n",
+        json.dumps(valid_one) + "\n" + corrupt_json + non_object + incomplete + invalid_snapshot + json.dumps(valid_two) + "\n",
         encoding="utf-8",
     )
 
@@ -387,5 +394,6 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
     ]
     quarantine = tmp_path / "pending.jsonl.corrupt"
     assert quarantine.read_text(encoding="utf-8").splitlines() == [
-        corrupt_json.rstrip("\n"), non_object.rstrip("\n"),
+        corrupt_json.rstrip("\n"), non_object.rstrip("\n"),,
+        incomplete.rstrip("\\n"), invalid_snapshot.rstrip("\\n")
     ]
