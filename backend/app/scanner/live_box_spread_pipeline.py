@@ -43,15 +43,55 @@ def _append_spool(rows):
         os.fsync(handle.fileno())
 
 
+def _rewrite_spool_lines(path, lines):
+    """Atomically replace the spool with the supplied original JSONL lines."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.writelines(lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def _read_spool():
     path = _spool_path()
     if not path.exists():
         return []
     rows = []
+    valid_lines = []
+    corrupt_lines = []
     with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                rows.append(json.loads(line))
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError("spool record must be a JSON object")
+                rows.append(row)
+                valid_lines.append(line if line.endswith("\\n") else line + "\\n")
+            except (json.JSONDecodeError, ValueError) as exc:
+                logger.error(
+                    "Quarantining corrupt Box Spread spool record at line %s: %s",
+                    line_number, exc,
+                )
+                corrupt_lines.append(line if line.endswith("\\n") else line + "\\n")
+
+    if corrupt_lines:
+        # Preserve the original malformed records for diagnosis before atomically
+        # rewriting the active queue. If quarantine cannot be fsynced, fail closed
+        # and leave the original spool untouched.
+        quarantine = path.with_name(path.name + ".corrupt")
+        with quarantine.open("a", encoding="utf-8") as handle:
+            handle.writelines(corrupt_lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _rewrite_spool_lines(path, valid_lines)
     return rows
 
 
