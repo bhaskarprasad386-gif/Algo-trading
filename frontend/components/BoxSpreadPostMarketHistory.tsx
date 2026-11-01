@@ -15,6 +15,7 @@ type Snapshot = {
   high_strike: number;
   direction: string;
   observed_at: string;
+  timestamp_ns?: number | string | null;
   spot_price?: number | null;
   executable_edge?: number | null;
   edge_per_lot?: number | null;
@@ -54,6 +55,8 @@ const observedTime = (value: string) => {
 };
 
 const quoteField = (row: Snapshot, prefix: string, field: string) => number(row[(prefix + "_" + field) as keyof Snapshot] as number | null | undefined);
+
+const traceIdentity = (row: Snapshot) => [row.symbol, row.expiry, row.timestamp_ns ?? row.last_update_timestamp_ns ?? "", row.low_strike, row.high_strike, row.direction].join("|");
 
 const snapshotKey = (row: Snapshot) => [
   row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction,
@@ -108,6 +111,11 @@ export default function BoxSpreadPostMarketHistory() {
   const [sortingAll, setSortingAll] = useState(false);
   const [sortKey, setSortKey] = useState<"profit" | "edge" | "time" | "gap" | "lots">("time");
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
+  const [traces, setTraces] = useState<Record<string, { id: number; quantity_lots: number }>>({});
+  const [traceBusy, setTraceBusy] = useState<string | null>(null);
+  const [traceError, setTraceError] = useState<string | null>(null);
+  const [exitChecks, setExitChecks] = useState<Record<number, { status: string; gross_pnl: number | null; max_complete_exit_lots_now: number }>>({});
+  const [exitBusy, setExitBusy] = useState<number | null>(null);
   const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
   const executableLots = (row: Snapshot) => {
     const isLong = String(row.direction ?? "LONG").toUpperCase() !== "SHORT";
@@ -161,6 +169,38 @@ export default function BoxSpreadPostMarketHistory() {
     } finally { setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
+  const traceApi = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread/trace";
+  useEffect(() => {
+    let active = true;
+    fetch(traceApi, { cache: "no-store" }).then(r => r.ok ? r.json() : Promise.reject(new Error("Trace API unavailable"))).then(body => {
+      if (!active || !Array.isArray(body.data)) return;
+      const next: Record<string, { id: number; quantity_lots: number }> = {};
+      for (const item of body.data) next[String(item.source_identity)] = { id: Number(item.id), quantity_lots: Number(item.quantity_lots) };
+      setTraces(next);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [traceApi]);
+  const addTrace = async (row: Snapshot) => {
+    const key = traceIdentity(row); setTraceBusy(key); setTraceError(null);
+    try {
+      const snapshot = { ...row, timestamp_ns: row.timestamp_ns ?? row.last_update_timestamp_ns };
+      const response = await fetch(traceApi, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.message || "Unable to add trace");
+      setTraces(old => ({ ...old, [String(body.data.source_identity)]: { id: Number(body.data.id), quantity_lots: Number(body.data.quantity_lots) } }));
+    } catch (e) { setTraceError(e instanceof Error ? e.message : "Unable to add trace"); }
+    finally { setTraceBusy(null); }
+  };
+  const checkExit = async (id: number) => {
+    setExitBusy(id); setTraceError(null);
+    try {
+      const response = await fetch(traceApi + "/" + id + "/exit-check", { method: "POST", cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.message || "Exit check failed");
+      setExitChecks(old => ({ ...old, [id]: body }));
+    } catch (e) { setTraceError(e instanceof Error ? e.message : "Exit check failed"); }
+    finally { setExitBusy(null); }
+  };
   const requestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
@@ -181,6 +221,7 @@ export default function BoxSpreadPostMarketHistory() {
         offset: String(nextOffset),
       });
       if (expiryType !== "ALL") params.set("expiry_type", expiryType);
+      if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
       const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), {
         cache: "no-store",
         signal: AbortSignal.timeout(12000),
@@ -272,6 +313,7 @@ export default function BoxSpreadPostMarketHistory() {
         </div>)}
       </div>
 
+      {traceError && <div role="status" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs theme-text">{traceError}</div>}
       {error && <div role="status" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs theme-text">
         History request failed ({error}). {rows.length ? "Previously loaded rows are retained." : "No verified saved history is available."}
       </div>}
