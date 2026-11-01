@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -6,6 +7,32 @@ from fastapi import HTTPException
 import pytest
 
 from app.scanner import box_spread_paper_routes as routes
+
+
+@contextmanager
+def _fake_paper_depth(row, roles=None):
+    fields = {
+        "LOW_CE": ("low_call_bid", "low_call_ask", "low_call_bid_qty", "low_call_ask_qty"),
+        "HIGH_CE": ("high_call_bid", "high_call_ask", "high_call_bid_qty", "high_call_ask_qty"),
+        "HIGH_PE": ("high_put_bid", "high_put_ask", "high_put_bid_qty", "high_put_ask_qty"),
+        "LOW_PE": ("low_put_bid", "low_put_ask", "low_put_bid_qty", "low_put_ask_qty"),
+    }
+    records = {}
+    for role, (bid, ask, bid_qty, ask_qty) in fields.items():
+        payload = {
+            "best_5_buy_data": ([{
+                "price": float(row[bid]) * 100, "quantity": row.get(bid_qty),
+            }] if row.get(bid) is not None and row.get(bid_qty) is not None else []),
+            "best_5_sell_data": ([{
+                "price": float(row[ask]) * 100, "quantity": row.get(ask_qty),
+            }] if row.get(ask) is not None and row.get(ask_qty) is not None else []),
+        }
+        records[role] = SimpleNamespace(
+            bid=row.get(bid), ask=row.get(ask),
+            bid_qty=row.get(bid_qty), ask_qty=row.get(ask_qty), payload=payload,
+        )
+    yield records
+
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +129,7 @@ def test_paper_error_handler_preserves_http_status():
 def test_matching_live_row_skips_malformed_strikes_without_crashing(monkeypatch):
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     malformed = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
@@ -133,7 +160,7 @@ def test_simulation_rejects_malformed_live_strikes_without_server_error(monkeypa
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
@@ -152,6 +179,7 @@ def test_simulation_rejects_malformed_live_strikes_without_server_error(monkeypa
     monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: [])
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
 
     with pytest.raises(HTTPException) as raised:
@@ -176,7 +204,7 @@ def test_simulation_rejects_missing_fresh_backend_opportunity_before_execution(m
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
@@ -242,7 +270,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -262,6 +290,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     monkeypatch.setattr(routes._ledger, "complete_entry_attempt", lambda **kwargs: None)
     monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "FILLED"})
 
@@ -316,7 +345,7 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -341,6 +370,7 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
     }
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "_matching_live_row", lambda contracts: row)
     monkeypatch.setattr(routes._ledger, "list_open_trades", lambda account_key: [trade_row])
     return row, trade_row
@@ -416,46 +446,40 @@ def test_unequal_open_leg_quantities_block_preview_and_exit_before_any_write(mon
     assert "unequal" in raised.value.detail
 
 
-def test_exit_preview_returns_all_four_executable_bid_ask_quotes_without_writing(monkeypatch):
+def test_exit_preview_returns_all_four_executable_depth_quotes_without_writing(monkeypatch):
     _exit_basket_route_fixtures(monkeypatch)
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {
         "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
     })
-    monkeypatch.setattr(
-        routes._ledger, "record_exit_basket",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("preview must not write fills")),
-    )
-
+    monkeypatch.setattr(routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("preview must not write fills"))
     result = routes.preview_exit_basket(456, account_key="basket-route-test")
     assert result["order_type_default"] == "LIMIT"
     assert result["quantity_per_leg"] == 25
     quotes = {leg["role"]: leg for leg in result["legs"]}
-    assert set(quotes) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
-    assert quotes["LOW_CE"]["executable_price"] == 10
-    assert quotes["HIGH_CE"]["executable_price"] == 21
-    assert quotes["HIGH_PE"]["executable_price"] == 30
-    assert quotes["LOW_PE"]["executable_price"] == 41
-    assert all(leg["required_depth"] == 25 and leg["available_depth"] == 25 and leg["depth_sufficient"] for leg in result["legs"])
-    assert result["all_legs_depth_sufficient"] is True
+    assert quotes["LOW_CE"]["executable_vwap"] == 10
+    assert quotes["HIGH_CE"]["executable_vwap"] == 21
+    assert quotes["HIGH_PE"]["executable_vwap"] == 30
+    assert quotes["LOW_PE"]["executable_vwap"] == 41
+    assert all(leg["available_depth_quantity"] == 25 for leg in result["legs"])
+    assert result["all_legs_marketable"] is True
+    assert result["full_position_executable"] is True
     assert result["preview_is_executable"] is True
-    assert result["estimated_realized_plus_close_pnl"] == "30.00"
+    assert result["estimated_pnl_summary"]["realized_pnl"] == "10.00"
 
 
 @pytest.mark.parametrize("depth_field", [
     "low_call_bid_qty", "high_call_ask_qty", "high_put_bid_qty", "low_put_ask_qty",
 ])
-def test_exit_preview_reports_missing_executable_depth_without_writing(monkeypatch, depth_field):
+def test_exit_preview_rejects_when_any_leg_lacks_one_complete_lot(monkeypatch, depth_field):
     row, _ = _exit_basket_route_fixtures(monkeypatch)
     row.pop(depth_field)
-    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {
-        "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
-    })
-    result = routes.preview_exit_basket(456, account_key="basket-route-test")
-    leg = next(item for item in result["legs"] if item["depth_sufficient"] is False)
-    assert leg["required_depth"] == 25
-    assert leg["available_depth"] is None
-    assert result["all_legs_depth_sufficient"] is False
-    assert result["preview_is_executable"] is False
+    monkeypatch.setattr(routes._ledger, "record_exit_basket",
+        lambda **kwargs: pytest.fail("incomplete four-leg preview must never write"))
+    with pytest.raises(HTTPException) as raised:
+        routes.preview_exit_basket(456, account_key="basket-route-test")
+    assert raised.value.status_code == 409
+    assert "fresh valid two-sided exit quote is unavailable" in raised.value.detail
 
 
 def test_exit_basket_rejects_one_unmarketable_limit_without_any_fill(monkeypatch):
@@ -880,7 +904,7 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -898,7 +922,13 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
     claim_state = {"claimed": False}
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "_fresh_entry_depth_selection", lambda contracts, target_lots: {
+        "lots": target_lots, "quantity": target_lots * contracts.lot_size,
+        "prices": {"LOW_CE": 11, "HIGH_CE": 20, "HIGH_PE": 31, "LOW_PE": 40},
+        "allocations": {},
+    })
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(
         routes._ledger, "get_entry_claim",
         lambda **kwargs: {"status": "CLAIMED"} if claim_state["claimed"] else None,
@@ -988,7 +1018,7 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -1013,6 +1043,7 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
         return contracts
 
     monkeypatch.setattr(routes, "_resolve", resolve_and_switch_off)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(
         routes._ledger, "claim_entry_attempt",
@@ -1192,7 +1223,7 @@ def test_mark_price_rejects_invalid_two_sided_quote():
 def test_matching_live_row_reuses_supplied_snapshot_without_scanner_request(monkeypatch):
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     matching = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
@@ -1235,7 +1266,7 @@ def test_fresh_marks_can_use_preloaded_trade_and_snapshot(monkeypatch):
         routes, "_resolve",
         lambda request: SimpleNamespace(
             underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-            low_strike=25000.0, high_strike=25100.0, direction="LONG",
+            low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
         ),
     )
     marks = routes._fresh_mark_prices_for_trade(
@@ -1247,30 +1278,18 @@ def test_fresh_marks_can_use_preloaded_trade_and_snapshot(monkeypatch):
     }
 
 
-def test_exit_preview_recalculates_proposed_limit_prices_and_marks_non_marketable_legs(monkeypatch):
+def test_exit_preview_filters_each_depth_level_by_proposed_limit(monkeypatch):
     _exit_basket_route_fixtures(monkeypatch)
-    captured = {}
-    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: (
-        captured.update(kwargs) or {
-            "realized_pnl": Decimal("10.00"), "unrealized_pnl": Decimal("20.00"),
-        }
-    ))
+    monkeypatch.setattr(routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: pytest.fail("unmarketable basket must not calculate full-position P&L"))
     payload = routes.ExitPreviewRequest(
         account_key="basket-route-test", order_type="LIMIT",
-        limit_prices={"LOW_CE": 9, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 42},
+        limit_prices={"LOW_CE": 11, "HIGH_CE": 21, "HIGH_PE": 30, "LOW_PE": 41},
     )
-    result = routes.preview_exit_basket_with_limits(456, payload)
-    quotes = {leg["role"]: leg for leg in result["legs"]}
-    assert quotes["LOW_CE"]["preview_price"] == 10
-    assert quotes["LOW_CE"]["marketable"] is True
-    assert quotes["HIGH_CE"]["preview_price"] == 20
-    assert quotes["HIGH_CE"]["marketable"] is False
-    assert quotes["HIGH_PE"]["preview_price"] == 30
-    assert quotes["LOW_PE"]["preview_price"] == 41
-    assert result["all_legs_marketable"] is False
-    assert result["preview_price_source"] == "INDICATIVE_LIMIT_SCENARIO"
-    assert captured["mark_prices"] == {"LOW_CE": 10, "HIGH_CE": 20, "HIGH_PE": 30, "LOW_PE": 41}
-    assert result["estimated_realized_plus_close_pnl"] == "30.00"
+    with pytest.raises(HTTPException) as raised:
+        routes.preview_exit_basket_with_limits(456, payload)
+    assert raised.value.status_code == 409
+    assert "even one complete" in raised.value.detail
 
 
 def test_exit_preview_rejects_incomplete_or_invalid_proposed_limits(monkeypatch):
@@ -1337,21 +1356,14 @@ def test_shared_exit_executor_validates_and_records_all_four_legs_for_market(mon
 
 
 def test_shared_exit_executor_rejects_bad_fourth_leg_before_atomic_write(monkeypatch):
-    _exit_basket_route_fixtures(monkeypatch)
+    row, _ = _exit_basket_route_fixtures(monkeypatch)
     monkeypatch.setattr(
         routes._ledger, "record_exit_basket",
         lambda **kwargs: pytest.fail("invalid four-leg quotes must not write any exit fills"),
     )
-    row = {
-        "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
-        "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
-        "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
-        "low_put_bid": 42, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
-    }
+    row.update({
+        "low_put_bid": 40, "low_put_ask": 0,
+    })
     with pytest.raises(HTTPException) as raised:
         routes._execute_exit_basket_from_row(
             456, "basket-route-test", row,
@@ -1416,7 +1428,7 @@ def test_all_or_none_exit_rejects_basket_if_any_one_leg_is_not_marketable(
 def test_all_or_none_exit_requires_full_executable_depth_on_every_leg(
     monkeypatch, depth_field, available,
 ):
-    _exit_basket_route_fixtures(monkeypatch)
+    row, _ = _exit_basket_route_fixtures(monkeypatch)
     writes = []
     monkeypatch.setattr(
         routes._ledger, "record_exit_basket",
@@ -1424,16 +1436,6 @@ def test_all_or_none_exit_requires_full_executable_depth_on_every_leg(
             "insufficient or missing depth must block the entire four-leg exit"
         ),
     )
-    row = {
-        "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
-        "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
-        "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
-        "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
-    }
     row[depth_field] = available
     with pytest.raises(HTTPException) as raised:
         routes._execute_exit_basket_from_row(

@@ -413,7 +413,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 paper._execute_exit_basket_from_row,
                 trade.id, account_key, live_row,
                 order_type=exit_config["order_type"],
-                fill_id=f"rule-exit-{rule_id}-{trade.id}",
+                fill_id=f"rule-exit-{rule_id}-{trade.id}-{uuid.uuid4().hex}",
             )
         except HTTPException as exc:
             _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
@@ -516,8 +516,25 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 entry_spot_price=row.get("spot_price"),
             )
             contracts = await asyncio.to_thread(paper._resolve, request)
-            # Validate all four executable prices before consuming a quota slot.
-            paper._reference_prices_for_direction(row, contracts.direction)
+            # Select quantity before creating the durable trade row. The
+            # selected lots are the largest whole-lot basket all four legs can
+            # execute from one synchronized fresh depth snapshot.
+            depth_selection = await asyncio.to_thread(
+                paper._fresh_entry_depth_selection, contracts, request.lots,
+            )
+            if depth_selection["lots"] < request.lots:
+                request = paper.CreatePaperTrade(
+                    underlying=request.underlying,
+                    instrument_class=request.instrument_class,
+                    expiry=request.expiry,
+                    low_strike=request.low_strike,
+                    high_strike=request.high_strike,
+                    direction=request.direction,
+                    lots=int(depth_selection["lots"]),
+                    idempotency_key=request.idempotency_key,
+                    account_key=request.account_key,
+                    entry_spot_price=request.entry_spot_price,
+                )
             quota_slot = await asyncio.to_thread(
                 _reserve_rule_entry_quota_slot, rule_id, account_key, window_start, window_end,
                 max_per_window, idempotency_key,

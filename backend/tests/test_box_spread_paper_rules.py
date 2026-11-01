@@ -451,7 +451,9 @@ def test_automatic_rule_exit_uses_shared_four_leg_executor_even_when_entry_rule_
     assert len(calls) == 1
     args, kwargs = calls[0]
     assert args[:3] == (42, "default", row)
-    assert kwargs == {"order_type": "MARKET", "fill_id": "rule-exit-7-42"}
+    assert kwargs["order_type"] == "MARKET"
+    assert kwargs["fill_id"].startswith("rule-exit-7-42-")
+    assert len(kwargs["fill_id"]) <= 96
     assert any(args[3] == "EXIT_RECORDED" for args, _ in records if len(args) > 3)
 
 
