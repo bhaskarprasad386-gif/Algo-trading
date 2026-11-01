@@ -423,3 +423,42 @@ def test_box_scanner_rejects_fractional_liquidity_counts():
 
     assert scanner.monitor_snapshot()["data"] == ()
     assert scanner.diagnostics_snapshot()["counts"]["malformed_leg_pair"] == 4
+
+
+def test_box_snapshot_rejects_malformed_quote_before_edge_ranking():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    low = OptionQuote(1, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100)
+    high = OptionQuote(1, "ABC", 20261231, 110, 5, 6, 9, 10, 10, "STOCK", 100.5, 100)
+    diagnostics = {}
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)), diagnostics=diagnostics,
+    )
+
+    assert results == ()
+    assert diagnostics["invalid_quotes"] == 1
+
+
+def test_box_snapshot_rejects_nonfinite_atm_and_fee_configuration():
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+    quote = OptionQuote(1, "ABC", 20261231, 100, 9, 10, 5, 6, 10, "STOCK", 100, 100)
+    config = BoxSpreadScanConfig(
+        fees_per_unit=float("inf"), allowed_stock_symbols=frozenset({"ABC"}),
+    )
+
+    import pytest
+    with pytest.raises(ValueError, match="invalid Box Spread scan configuration"):
+        scan_box_snapshot(
+            (quote,), atm_strike=100, instrument_class="STOCK",
+            config=config, policy=ScanPolicy(stock_box_distances=(1,)),
+        )
