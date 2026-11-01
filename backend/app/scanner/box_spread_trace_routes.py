@@ -13,7 +13,7 @@ from app.core.database import SessionLocal
 from app.models.box_spread_trace import BoxSpreadTrace, BoxSpreadTraceExitCheck
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
-from app.market_data.common_websocket import shared_common_manager
+from app.market_data.common_strategy_feed import shared_common_manager
 
 router = APIRouter(prefix="/api/v1/scanner/box-spread/trace", tags=["box-spread-trace"])
 _master = InstrumentMaster()
