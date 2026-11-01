@@ -245,7 +245,7 @@ def _exit_valuation(trace, quotes):
         "status": status, "checked_at": datetime.now(timezone.utc).isoformat(),
         "trace_id": trace.id, "direction": trace.direction,
         "quantity_lots": trace.quantity_lots, "quantity": qty, "lot_size": trace.lot_size,
-        "gross_pnl": round(gross, 2) if all(item["leg_gross_pnl"] is not None for item in legs) else None,
+        "gross_pnl": round(gross, 2) if can_exit and all(item["leg_gross_pnl"] is not None for item in legs) else None,
         "max_complete_exit_lots_now": min_lots,
         "can_exit_full_quantity_now": can_exit,
         "message": ("All four legs have fresh executable depth for the traced quantity." if can_exit else
