@@ -242,11 +242,11 @@ export default function BoxSpreadPostMarketHistory() {
       </div>}
 
       {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
-        <table className="w-full min-w-[1120px] text-left text-xs">
+        <table className="w-full min-w-[1900px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
             <th className="px-3 py-2"><button type="button" onClick={() => selectSort("time")}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => selectSort("edge")}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => selectSort("profit")}>Gross P&L{sortMark("profit")}</button></th>
-          </tr></thead>
-          <tbody>{rows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
+          </tr><tr><th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr></thead>
+          <tbody>{sortedRows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{quoteTime(row.last_update_timestamp_ns)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.timestamp_skew_ms == null ? "—" : number(row.timestamp_skew_ms) + " ms"}</td>
@@ -260,6 +260,7 @@ export default function BoxSpreadPostMarketHistory() {
             <td className="px-3 py-2 theme-text">{number(row.executable_edge)}</td>
             <td className="px-3 py-2 theme-text">{number(row.edge_per_lot)}</td>
             <td className="px-3 py-2 theme-text">{number(row.gross_pnl)}</td>
+            {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask_qty")}</td>])}
           </tr>)}</tbody>
         </table>
       </div>}
