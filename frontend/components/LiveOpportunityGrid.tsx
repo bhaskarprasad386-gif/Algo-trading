@@ -229,7 +229,7 @@ export default function LiveOpportunityGrid() {
         </div>
       ) : (
         <div className="space-y-3 p-3 sm:p-4">
-          {orderedRows.map(({ key, row, lastSeen, status }, index) => (
+          {orderedRows.map(({ key, row, lastSeen, status }) => (
             <article key={key} className={"overflow-hidden rounded-xl border " + (status === "LIVE" ? "border-slate-700 bg-[#0d192a]" : "border-amber-500/20 bg-[#111827] opacity-75")}>
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-3 py-3 sm:px-4">
                 <div className="flex flex-wrap items-center gap-2">
