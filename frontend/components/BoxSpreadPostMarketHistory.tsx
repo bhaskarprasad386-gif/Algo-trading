@@ -143,7 +143,6 @@ export default function BoxSpreadPostMarketHistory() {
       while (more) {
         const params = new URLSearchParams({ days: String(days), limit: "5000", offset: String(nextOffset) });
         if (expiryType !== "ALL") params.set("expiry_type", expiryType);
-      if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
         if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
         const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
         if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
