@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -42,13 +42,17 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const requestSequence = useRef(0);
 
   const refresh = useCallback(async () => {
+    const requestId = ++requestSequence.current;
+    setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + "/api/v1/scanner/box-spread/analysis", { cache: "no-store" });
       if (!response.ok) throw new Error("HTTP " + response.status);
       const result = (await response.json()) as TimingAnalysis;
+      if (requestId !== requestSequence.current) return;
       if (result?.strategy !== "box-spread" || !Array.isArray(result.by_day) || !Array.isArray(result.by_time)) {
         throw new Error("Unexpected analysis response");
       }
@@ -56,16 +60,21 @@ export default function BoxSpreadEdgeTimingAnalysis() {
       setError(null);
       setUpdatedAt(new Date().toISOString());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Analysis API unavailable");
+      if (requestId === requestSequence.current) {
+        setError(e instanceof Error ? e.message : "Analysis API unavailable");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      requestSequence.current += 1;
+    };
   }, [refresh]);
 
   const groupTable = (title: string, rows: TimingGroup[], label: string) => (
