@@ -305,29 +305,35 @@ def _entry_depth_side(direction: str, role: str) -> str:
 def _fresh_entry_depth_selection(contracts, target_lots: int):
     """Select the largest whole-lot four-leg entry from one fresh shared-feed snapshot."""
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
-    with fresh_box_paper_depth(contracts) as records:
-        depth = {
-            role: depth_levels(records.get(role), _entry_depth_side(contracts.direction, role))
-            for role in roles
-        }
-        selected = select_complete_lots(
-            target_lots, contracts.lot_size, depth, roles=roles,
-        )
-        if selected is None:
-            raise HTTPException(
-                status_code=409,
-                detail="insufficient fresh four-leg market depth for even one complete lot; no entry created",
+    try:
+        with fresh_box_paper_depth(contracts) as records:
+            depth = {
+                role: depth_levels(records.get(role), _entry_depth_side(contracts.direction, role))
+                for role in roles
+            }
+            selected = select_complete_lots(
+                target_lots, contracts.lot_size, depth, roles=roles,
             )
-        prices = {
-            role: float(selected["allocations"][role]["vwap"])
-            for role in roles
-        }
-        return {
-            "lots": int(selected["lots"]),
-            "quantity": int(selected["quantity"]),
-            "prices": prices,
-            "allocations": selected["allocations"],
-        }
+            if selected is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="insufficient fresh four-leg market depth for even one complete lot; no entry created",
+                )
+            prices = {
+                role: float(selected["allocations"][role]["vwap"])
+                for role in roles
+            }
+            return {
+                "lots": int(selected["lots"]),
+                "quantity": int(selected["quantity"]),
+                "prices": prices,
+                "allocations": selected["allocations"],
+            }
+    except BoxPaperDepthFeedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"fresh four-leg depth unavailable; no entry created: {exc}",
+        ) from exc
 
 
 def _exit_reference_price(row: dict[str, Any], direction: str, role: str) -> float:
