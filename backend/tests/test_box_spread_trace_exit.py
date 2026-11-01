@@ -47,4 +47,5 @@ def test_trace_exit_refuses_full_exit_when_one_leg_depth_is_insufficient():
     assert result["status"] == "PARTIAL_DEPTH"
     assert result["max_complete_exit_lots_now"] == 1
     assert result["can_exit_full_quantity_now"] is False
-    assert result["gross_pnl"] is not None
+    assert result["legs"][0]["leg_gross_pnl"] is not None
+    assert result["gross_pnl"] is None
