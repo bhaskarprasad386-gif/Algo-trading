@@ -999,7 +999,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const visibleHistoryRows = filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
 
   return (
-    <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
+    <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
       <div className="flex items-center justify-between gap-3">
         {slug === "box-spread" ? (
           <span className="text-[10px] font-bold uppercase tracking-[0.16em] theme-muted">Box Spread · Live market monitor</span>
