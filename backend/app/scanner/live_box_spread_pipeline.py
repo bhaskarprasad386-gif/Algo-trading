@@ -73,6 +73,12 @@ def _read_spool():
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError("spool record must be a JSON object")
+                required = {
+                    "symbol", "expiry", "low_strike", "high_strike",
+                    "direction", "observed_at", "last_update_timestamp_ns",
+                }
+                if not required.issubset(row):
+                    raise ValueError("spool record is missing required snapshot fields")
                 rows.append(row)
                 valid_lines.append(line if line.endswith("\n") else line + "\n")
             except (json.JSONDecodeError, ValueError) as exc:
