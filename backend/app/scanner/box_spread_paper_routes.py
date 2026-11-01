@@ -27,7 +27,7 @@ from app.scanner.live_box_spread_routes import live as live_box_spread_opportuni
 from app.scanner.box_spread_contract_resolver import (
     BoxSpreadContractResolutionError, resolve_box_spread_contracts,
 )
-from app.scanner.box_spread_paper_depth import allocate_depth, depth_levels, select_complete_lots
+from app.scanner.box_spread_paper_depth import allocate_depth, depth_levels, limit_eligible_depth, select_complete_lots
 from app.scanner.box_spread_paper_depth_feed import (
     BoxPaperDepthFeedError, fresh_box_paper_depth,
 )
@@ -1052,13 +1052,25 @@ def _build_exit_preview(
 
     try:
         with fresh_box_paper_depth(contracts) as records:
+            raw_depth_by_role = {}
             depth_by_role = {}
+            parsed_limits = {}
             for role in roles:
                 leg = legs_by_role[role]
                 close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
-                depth_by_role[role] = depth_levels(
+                raw_depth_by_role[role] = depth_levels(
                     records.get(role), "BID" if close_action == "SELL" else "ASK",
                 )
+                limit_price = None
+                if order_type == "LIMIT" and limit_prices is not None:
+                    try:
+                        limit_price = float(limit_prices[role])
+                    except (TypeError, ValueError, OverflowError):
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
+                    if not math.isfinite(limit_price) or limit_price <= 0:
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
+                parsed_limits[role] = limit_price
+                depth_by_role[role] = limit_eligible_depth(raw_depth_by_role[role], close_action, limit_price)
             selected = select_complete_lots(
                 target_lots, contracts.lot_size, depth_by_role, roles=roles,
             )
@@ -1077,17 +1089,9 @@ def _build_exit_preview(
                 close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
                 allocation = selected["allocations"][role]
                 executable = float(allocation["vwap"])
-                proposed = executable
-                if order_type == "LIMIT" and limit_prices is not None:
-                    try:
-                        proposed = float(limit_prices[role])
-                    except (TypeError, ValueError, OverflowError):
-                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
-                    if not math.isfinite(proposed) or proposed <= 0:
-                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
-                # Marketability is checked against the depth VWAP; a limit must
-                # not claim a fill better than the executable depth allows.
-                marketable = proposed <= executable if close_action == "SELL" else proposed >= executable
+                proposed = parsed_limits[role] if order_type == "LIMIT" else executable
+                # Limit eligibility is filtered per book level before selecting lots.
+                marketable = bool(allocation["complete"])
                 all_legs_marketable = all_legs_marketable and marketable
                 preview_price = executable if marketable else proposed
                 marks[role] = preview_price
@@ -1101,7 +1105,7 @@ def _build_exit_preview(
                     "requested_quantity": target_quantity,
                     "executable_vwap": executable,
                     "depth_levels_used": allocation.get("levels_used"),
-                    "available_depth_quantity": sum(qty for _, qty in depth_by_role[role]),
+                    "available_depth_quantity": sum(qty for _, qty in raw_depth_by_role[role]),
                     "limit_price": proposed if order_type == "LIMIT" else None,
                     "marketable": marketable,
                     "preview_price": preview_price,
@@ -1198,7 +1202,16 @@ def _execute_exit_basket_from_row(
                 leg = legs_by_role[role]
                 close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
                 side = "BID" if close_action == "SELL" else "ASK"
-                depth_by_role[role] = depth_levels(records.get(role), side)
+                levels = depth_levels(records.get(role), side)
+                limit_price = None
+                if order_type == "LIMIT" and limit_prices is not None:
+                    try:
+                        limit_price = float(limit_prices[role])
+                    except (TypeError, ValueError, OverflowError):
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
+                    if not math.isfinite(limit_price) or limit_price <= 0:
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
+                depth_by_role[role] = limit_eligible_depth(levels, close_action, limit_price)
 
             # Prefer the entire open quantity. If that is unavailable, close
             # only the largest number of complete lots supported by all legs.
@@ -1238,10 +1251,6 @@ def _execute_exit_basket_from_row(
                             raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
                         if not math.isfinite(limit_price) or limit_price <= 0:
                             raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
-                        if close_action == "SELL" and limit_price > executable:
-                            raise HTTPException(status_code=409, detail=f"{role} sell limit is not executable against available depth")
-                        if close_action == "BUY" and limit_price < executable:
-                            raise HTTPException(status_code=409, detail=f"{role} buy limit is not executable against available depth")
                     batch_legs[role] = {"quantity": lot_size, "fill_price": executable}
                     consumed_by_role[role] = lot_size
 
