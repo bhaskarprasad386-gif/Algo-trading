@@ -219,10 +219,21 @@ export default function LiveOpportunityGrid() {
                     <span className="text-slate-700">•</span><span>Lot size <b className="text-slate-200">{fmt(row.lot_size, 0)}</b></span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                    <LegQuote row={row} name="LOW CE" price="low_call_ask" qty="low_call_ask_qty" side="BUY"/>
-                    <LegQuote row={row} name="LOW PE" price="low_put_bid" qty="low_put_bid_qty" side="SELL"/>
-                    <LegQuote row={row} name="HIGH CE" price="high_call_bid" qty="high_call_bid_qty" side="SELL"/>
-                    <LegQuote row={row} name="HIGH PE" price="high_put_ask" qty="high_put_ask_qty" side="BUY"/>
+                    {String(row.direction || "LONG").toUpperCase() === "SHORT" ? (
+                      <>
+                        <LegQuote row={row} name="LOW CE" price="low_call_bid" qty="low_call_bid_qty" side="SELL"/>
+                        <LegQuote row={row} name="LOW PE" price="low_put_ask" qty="low_put_ask_qty" side="BUY"/>
+                        <LegQuote row={row} name="HIGH CE" price="high_call_ask" qty="high_call_ask_qty" side="BUY"/>
+                        <LegQuote row={row} name="HIGH PE" price="high_put_bid" qty="high_put_bid_qty" side="SELL"/>
+                      </>
+                    ) : (
+                      <>
+                        <LegQuote row={row} name="LOW CE" price="low_call_ask" qty="low_call_ask_qty" side="BUY"/>
+                        <LegQuote row={row} name="LOW PE" price="low_put_bid" qty="low_put_bid_qty" side="SELL"/>
+                        <LegQuote row={row} name="HIGH CE" price="high_call_bid" qty="high_call_bid_qty" side="SELL"/>
+                        <LegQuote row={row} name="HIGH PE" price="high_put_ask" qty="high_put_ask_qty" side="BUY"/>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 xl:min-w-[230px] xl:grid-cols-1">
@@ -241,7 +252,7 @@ export default function LiveOpportunityGrid() {
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 bg-slate-950/60 px-4 py-3 text-[10px] text-slate-500">
-        <span>Four-leg quote sides are shown for identification; green = BUY/ASK, red = SELL/BID.</span>
+        <span>Four-leg quote sides follow LONG/SHORT direction; green = BUY/ASK, red = SELL/BID.</span>
         <span>Rows become STALE after 1.5s and expire after 60s without updates.</span>
       </div>
     </section>
