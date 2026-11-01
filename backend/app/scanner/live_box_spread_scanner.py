@@ -146,7 +146,14 @@ class LiveBoxSpreadScanner:
             if not timestamps:
                 self._prune(ts); return ()
             anchor_ts=max(timestamps)
-            atm=self.atm_provider(symbol,anchor_ts)
+            try:
+                atm=self.atm_provider(symbol,anchor_ts)
+            except Exception:
+                # A transient spot/ATM source failure must not escape the quote
+                # callback and interrupt option-feed assembly for this runner.
+                self._diagnostic_counts["atm_provider_errors"] += 1
+                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"}
+                self._prune(ts); return ()
             if atm is None:
                 self._diagnostic_counts["atm_unavailable"] += 1
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"}
