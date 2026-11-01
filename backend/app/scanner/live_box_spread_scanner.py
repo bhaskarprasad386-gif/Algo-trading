@@ -45,6 +45,14 @@ class LiveBoxSpreadScanner:
             return None
 
     @staticmethod
+    def _positive_integer_timestamp(value):
+        try:
+            number = float(value)
+            return int(number) if number > 0 and number.is_integer() else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
     def _expiry(v):
         text=str(v or "").strip().upper()
         for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d","%d-%m-%Y"):
@@ -64,9 +72,8 @@ class LiveBoxSpreadScanner:
     def observe(self,payload):
         symbol=str(payload.get("underlying") or "").strip().upper()
         cls=str(payload.get("instrument_class") or "").strip().upper()
-        try:
-            ts = int(payload.get("source_timestamp_ns") or 0)
-        except (TypeError, ValueError, OverflowError):
+        ts = self._positive_integer_timestamp(payload.get("source_timestamp_ns"))
+        if ts is None:
             with self._lock:
                 self._diagnostic_counts["invalid_identity_or_timestamp"] += 1
             return ()
@@ -111,9 +118,8 @@ class LiveBoxSpreadScanner:
             leg_key=(strike,typ)
             previous=bucket.get(leg_key)
             if previous is not None:
-                try: previous_ts=int(previous.get("source_timestamp_ns") or 0)
-                except (TypeError,ValueError): previous_ts=0
-                if previous_ts > ts:
+                previous_ts = self._positive_integer_timestamp(previous.get("source_timestamp_ns"))
+                if previous_ts is not None and previous_ts > ts:
                     self._diagnostic_counts["out_of_order_ticks"] += 1
                     self._prune(ts)
                     return ()
@@ -144,7 +150,11 @@ class LiveBoxSpreadScanner:
                     if ce_bid is None or ce_ask is None or ce_ask < ce_bid or pe_bid is None or pe_ask is None or pe_ask < pe_bid:
                         missing_or_non_executable_pairs += 1
                         continue
-                    ce_ts=int(ce.get("source_timestamp_ns") or 0); pe_ts=int(pe.get("source_timestamp_ns") or 0)
+                    ce_ts=self._positive_integer_timestamp(ce.get("source_timestamp_ns"))
+                    pe_ts=self._positive_integer_timestamp(pe.get("source_timestamp_ns"))
+                    if ce_ts is None or pe_ts is None:
+                        self._diagnostic_counts["malformed_leg_pair"] += 1
+                        continue
                     grouped.append(OptionQuote(
                         max(ce_ts,pe_ts),symbol,ce_expiry,s,ce_bid,ce_ask,pe_bid,pe_ask,ce_lot,cls,
                         min(ce_volume, pe_volume),
