@@ -413,7 +413,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 paper._execute_exit_basket_from_row,
                 trade.id, account_key, live_row,
                 order_type=exit_config["order_type"],
-                fill_id=f"rule-exit-{rule_id}-{trade.id}",
+                fill_id=f"rule-exit-{rule_id}-{trade.id}-{uuid.uuid4().hex}",
             )
         except HTTPException as exc:
             _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
