@@ -101,3 +101,19 @@ def test_websocket_row_keeps_option_row_when_spot_provider_raises(monkeypatch):
     assert row["executable_edge"] == 6
     assert row["spot_price"] is None
     assert row["spot_timestamp_ns"] is None
+
+
+def test_websocket_row_rejects_fractional_leg_timestamp_without_truncating(monkeypatch):
+    now_ns = time.time_ns()
+    result = _result(now_ns)
+    result.low.call_timestamp_ns = now_ns + 0.5
+    monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
+    assert websocket._row(result) is None
+
+
+def test_websocket_row_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
+    now_ns = time.time_ns()
+    result = _result(now_ns)
+    result.low.call_timestamp_ns = 0
+    monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
+    assert websocket._row(result) is None
