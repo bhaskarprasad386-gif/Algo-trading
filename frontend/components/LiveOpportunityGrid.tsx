@@ -21,13 +21,24 @@ function n(row: Opportunity, field: string) {
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
+function timestampMilliseconds(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const raw = String(value);
+  if (!/^\\d+$/.test(raw)) return null;
+  try {
+    // Keep nanosecond epoch values exact until after conversion to milliseconds.
+    const integer = BigInt(raw);
+    if (integer >= 100_000_000_000_000_000n) return Number(integer / 1_000_000n);
+    if (integer >= 1_000_000_000_000n) return Number(integer);
+    if (integer >= 1_000_000_000n) return Number(integer * 1000n);
+  } catch {
+    return null;
+  }
+  return null;
+}
 function spotFeedStatus(row: Opportunity, receivedAt?: number) {
   const price = n(row, "spot_price");
-  const rawTimestamp = row.spot_timestamp_ns;
-  const timestamp = rawTimestamp == null || rawTimestamp === "" ? null : Number(rawTimestamp);
-  const timestampMs = timestamp === null || !Number.isFinite(timestamp)
-    ? null
-    : timestamp >= 1e17 ? timestamp / 1e6 : timestamp >= 1e12 ? timestamp : timestamp >= 1e9 ? timestamp * 1000 : null;
+  const timestampMs = timestampMilliseconds(row.spot_timestamp_ns);
   const fallbackAge = n(row, "spot_age_seconds");
   const ageSeconds = timestampMs === null
     ? fallbackAge === null
@@ -38,6 +49,13 @@ function spotFeedStatus(row: Opportunity, receivedAt?: number) {
     return { label: "SPOT WAITING", age: null, live: false };
   }
   return { label: ageSeconds <= 5 ? "SPOT LIVE" : "SPOT STALE", age: ageSeconds, live: ageSeconds <= 5 };
+}
+function quoteTime(value: unknown) {
+  const milliseconds = timestampMilliseconds(value);
+  if (milliseconds === null || !Number.isFinite(milliseconds) || milliseconds <= 0) return "—";
+  return new Date(milliseconds).toLocaleTimeString("en-IN", {
+    hour12: false, timeZone: "Asia/Kolkata",
+  }) + " IST";
 }
 function fmt(value: unknown, digits = 2) {
   if (value === null || value === undefined || value === "") return "—";
@@ -136,16 +154,21 @@ export default function LiveOpportunityGrid() {
             const symbol = String(row.symbol || "").toUpperCase();
             const threshold = symbol === "NIFTY" ? 5 : 10;
             if (edge === null || edge <= threshold) continue;
-            const incomingTimestamp = n(row, "last_update_timestamp_ns");
-            // Live rows must carry a valid positive integer nanosecond timestamp.
-            // Missing/malformed timestamps cannot refresh a row's liveness.
-            if (incomingTimestamp === null || incomingTimestamp <= 0 || !Number.isInteger(incomingTimestamp)) continue;
+            const incomingRawTimestamp = row.last_update_timestamp_ns;
+            const incomingTimestamp = incomingRawTimestamp == null ? "" : String(incomingRawTimestamp);
+            // Compare exchange nanosecond timestamps as integers, not JS Numbers.
+            // Number conversion can collapse distinct large timestamps at 1e18.
+            if (!/^\\d+$/.test(incomingTimestamp)) continue;
+            let incomingNs: bigint;
+            try { incomingNs = BigInt(incomingTimestamp); } catch { continue; }
+            if (incomingNs <= 0n) continue;
             const key = keyOf(row);
             const existing = rowsRef.current.get(key);
-            const existingTimestamp = existing ? n(existing.row, "last_update_timestamp_ns") : null;
+            const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
+            const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
             // Ignore duplicate and out-of-order frames. Replayed snapshots must
             // not keep an old opportunity looking live by refreshing lastSeen.
-            if (existingTimestamp !== null && incomingTimestamp <= existingTimestamp) continue;
+            if (/^\\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
             rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
           }
           publishRows();
