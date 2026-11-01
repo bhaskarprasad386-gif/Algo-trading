@@ -117,8 +117,6 @@ export default function BoxSpreadPostMarketHistory() {
   const [traces, setTraces] = useState<Record<string, { id: number; quantity_lots: number }>>({});
   const [traceBusy, setTraceBusy] = useState<string | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
-  const [exitChecks, setExitChecks] = useState<Record<number, { status: string; gross_pnl: number | null; max_complete_exit_lots_now: number; message: string; legs: Array<{ leg: string; exit_side: string; exit_price: number | null; exit_qty: number | null; leg_gross_pnl: number | null }> }>>({});
-  const [exitBusy, setExitBusy] = useState<number | null>(null);
   const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
   const executableLots = (row: Snapshot) => {
     const isLong = String(row.direction ?? "LONG").toUpperCase() !== "SHORT";
@@ -194,16 +192,6 @@ export default function BoxSpreadPostMarketHistory() {
       window.dispatchEvent(new CustomEvent("box-spread-trace-updated", { detail: body.data }));
     } catch (e) { setTraceError(e instanceof Error ? e.message : "Unable to add trace"); }
     finally { setTraceBusy(null); }
-  };
-  const checkExit = async (id: number) => {
-    setExitBusy(id); setTraceError(null);
-    try {
-      const response = await fetch(traceApi + "/" + id + "/exit-check", { method: "POST", cache: "no-store" });
-      const body = await response.json();
-      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.message || "Exit check failed");
-      setExitChecks(old => ({ ...old, [id]: body }));
-    } catch (e) { setTraceError(e instanceof Error ? e.message : "Exit check failed"); }
-    finally { setExitBusy(null); }
   };
   const requestSequence = useRef(0);
   const appendInFlight = useRef(false);
@@ -375,13 +363,7 @@ export default function BoxSpreadPostMarketHistory() {
 
             {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => { const isLong = row.direction?.toUpperCase().includes("LONG"); const buy = isLong ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); const buyTone = "text-emerald-600 dark:text-emerald-400 font-bold"; const sellTone = "text-rose-600 dark:text-rose-400 font-bold"; return [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask_qty")}</td>];})}
             <td className="min-w-[240px] px-3 py-2">
-{traces[traceIdentity(row)] ? <div className="flex flex-col gap-1">
-<span className="text-[10px] font-bold text-emerald-600">TRACED · {traces[traceIdentity(row)].quantity_lots} LOTS</span>
-<button type="button" onClick={() => void checkExit(traces[traceIdentity(row)].id)} disabled={exitBusy === traces[traceIdentity(row)].id} className="min-h-8 rounded-md border border-amber-500/50 px-2 text-[10px] font-bold theme-text disabled:opacity-50">{exitBusy === traces[traceIdentity(row)].id ? "Checking…" : "Exit Check"}</button>
-{exitChecks[traces[traceIdentity(row)].id] && <span className="text-[10px] theme-text">{exitChecks[traces[traceIdentity(row)].id].status} · {exitChecks[traces[traceIdentity(row)].id].gross_pnl == null ? "P&L —" : "₹" + number(exitChecks[traces[traceIdentity(row)].id].gross_pnl)}</span>}
-                {exitChecks[traces[traceIdentity(row)].id] && <details className="text-[10px] theme-text"><summary className="cursor-pointer">4-leg live quotes</summary>{exitChecks[traces[traceIdentity(row)].id].message}{exitChecks[traces[traceIdentity(row)].id].legs.map(leg => <div key={leg.leg}>{leg.leg} {leg.exit_side} ₹{number(leg.exit_price)} Qty {number(leg.exit_qty)} P&L ₹{number(leg.leg_gross_pnl)}</div>)}</details>}
-</div> : <button type="button" onClick={() => void addTrace(row)} disabled={traceBusy === traceIdentity(row)} className="min-h-8 rounded-md border border-cyan-500/50 px-2 text-[10px] font-bold theme-text disabled:opacity-50">{traceBusy === traceIdentity(row) ? "Adding…" : "＋ Add Trace"}</button>}
-</td>
+{traces[traceIdentity(row)] ? <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300">ADDED TO TRACE · {traces[traceIdentity(row)].quantity_lots} LOTS</span> : <button type="button" onClick={() => void addTrace(row)} disabled={traceBusy === traceIdentity(row)} className="min-h-8 rounded-md border border-cyan-500/50 px-2 text-[10px] font-bold theme-text disabled:opacity-50">{traceBusy === traceIdentity(row) ? "Adding…" : "＋ Add to Trace"}</button>}</td>
           </tr>)}</tbody>
         </table>
       </div>}
