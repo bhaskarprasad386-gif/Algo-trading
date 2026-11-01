@@ -115,6 +115,28 @@ def classify_expiry_type(symbol, expiry):
         (str(symbol or "").strip().upper(), _expiry_key(expiry)), "UNKNOWN"
     )
 
+@router.get("/index-spots")
+def index_spot_snapshot():
+    """Return independent source-backed spot quotes for all supported Box Spread indices."""
+    symbols = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
+    now_ns = time.time_ns()
+    data = []
+    for symbol in symbols:
+        quote = _spot_fields(symbol)
+        stamp = _timestamp_ns(quote.get("spot_timestamp_ns"))
+        age = max(0.0, (now_ns - stamp) / 1_000_000_000) if stamp is not None and stamp <= now_ns else None
+        price = quote.get("spot_price")
+        fresh = price is not None and age is not None and age <= 5.0
+        data.append({
+            "symbol": symbol,
+            "spot_price": price if fresh else None,
+            "spot_timestamp_ns": stamp,
+            "spot_age_seconds": round(age, 3) if age is not None else None,
+            "status": "LIVE" if fresh else "STALE" if price is not None and age is not None else "NO_DATA",
+        })
+    return {"strategy": "box-spread", "freshness_target_seconds": 5, "data": data}
+
+
 @router.get("/live")
 def live(limit: Annotated[int, Query(ge=1,le=500)] = 50, max_age_seconds: Annotated[float, Query(gt=0,le=60)] = 5.0):
     rows=list(_latest()) if callable(_latest) else list(_latest)
