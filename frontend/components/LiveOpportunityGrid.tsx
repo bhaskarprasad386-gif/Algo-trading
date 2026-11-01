@@ -44,6 +44,21 @@ function fmt(value: unknown, digits = 2) {
 function quote(row: Opportunity, priceField: string, quantityField: string) {
   return { price: n(row, priceField), qty: n(row, quantityField) };
 }
+function quoteTime(value: unknown) {
+  if (value === null || value === undefined || value === "") return "—";
+  let milliseconds: number;
+  try {
+    const raw = String(value);
+    if (!/^\\d+$/.test(raw)) return "—";
+    milliseconds = Number(BigInt(raw) / 1_000_000n);
+  } catch {
+    return "—";
+  }
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "—";
+  return new Date(milliseconds).toLocaleTimeString("en-IN", {
+    hour12: false, timeZone: "Asia/Kolkata",
+  }) + " IST";
+}
 function makeWsUrl() {
   const base = typeof window === "undefined" ? appConfig.wsUrl : new URL(appConfig.wsUrl, window.location.href).toString();
   const url = new URL(base);
@@ -217,7 +232,10 @@ export default function LiveOpportunityGrid() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={"rounded-md px-2 py-1 text-[9px] font-bold " + (status === "LIVE" ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200")}>{status}</span>
-                  <span className="text-[10px] tabular-nums text-slate-500">{new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })} IST</span>
+                  <div className="flex flex-col items-end gap-0.5 text-[9px] tabular-nums text-slate-500">
+                    <span>Quote {quoteTime(row.last_update_timestamp_ns)}</span>
+                    <span>Received {new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })} IST</span>
+                  </div>
                 </div>
               </div>
               <div className="grid gap-3 p-3 sm:p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
