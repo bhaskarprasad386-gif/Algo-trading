@@ -305,3 +305,17 @@ def test_raw_monitor_route_fails_closed_for_stale_snapshot(monkeypatch):
     assert payload["fresh"] is False
     assert payload["count"] == 0
     assert payload["data"] == []
+
+def test_live_box_route_keeps_option_row_when_spot_provider_raises(monkeypatch):
+    result = _result()
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    monkeypatch.setattr(routes, "_spot_provider", lambda _symbol: (_ for _ in ()).throw(RuntimeError("spot feed unavailable")))
+
+    payload = routes.live(10)
+
+    assert payload["count"] == 1
+    row = payload["data"][0]
+    assert row["executable_edge"] == 6
+    assert row["spot_price"] is None
+    assert row["spot_timestamp_ns"] is None
+    assert row["spot_age_seconds"] is None
