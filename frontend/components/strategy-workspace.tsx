@@ -1023,8 +1023,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <span className="font-bold theme-text">INDEX OPTIONS</span>
             <span className="theme-muted">Feed <b className="theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"}</b></span>
             <span className="theme-muted">Runner <b className={runner?.running ? "theme-success" : "theme-warning"}>{runner?.running ? "RUNNING" : "STOPPED"}</b></span>
-            <span className="theme-muted">Eligible <b className="theme-text">{rows.length.toLocaleString("en-IN")}</b></span>
-            <span className="theme-muted">Edges <b className="theme-text">{signals.toLocaleString("en-IN")}</b></span>
+            <span className="theme-muted">Eligible <b className="theme-text">{metricValue("Eligible Boxes")}</b></span>
+            <span className="theme-muted">Edges <b className="theme-text">{metricValue("Executable Edges")}</b></span>
+            <span className="theme-muted">Last Scan <b className="theme-text">{metricValue("Last Scan")}</b></span>
             <span className="theme-muted">Feed age <b className="theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</b></span>
             <span className="theme-muted">NSE <b className="theme-text">{String(feedExchangeFreshness?.NSE?.status ?? "—")}</b></span>
             <span className="theme-muted">NFO <b className="theme-text">{String(feedExchangeFreshness?.NFO?.status ?? "—")}</b></span>
@@ -1389,9 +1390,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       )}
 
+      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> {slug === "box-spread" ? "Post-Market Opportunity (" + (historyExpiryView === "MONTHLY" ? "Monthly" : "Weekly") + ") History" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> {"Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
             <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
@@ -1443,6 +1445,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
         </div>}
       </Card>
+      )}
 
       {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
       {copyFallbackText && <div className="space-y-2 rounded-xl border theme-border theme-surface p-3">
@@ -1452,6 +1455,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <button type="button" onClick={() => { setCopyFallbackText(""); setCopyStatus(""); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Close</button>
       </div>}
 
+      {slug !== "box-spread" && (
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>
@@ -1507,6 +1511,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </Card>}
         <Card className="theme-border theme-surface p-4"><div className="text-sm font-semibold theme-text">Session Diagnostics</div><p className="mt-2 text-xs leading-5 theme-muted">MCX can remain live after NSE closes. Calendar/commodity output therefore follows the common feed and actual exchange session rather than the NSE-only status.</p></Card>
       </div>
+      )}
     </div>
   );
 }
