@@ -260,7 +260,7 @@ export default function LiveOpportunityGrid() {
                   <span className={"rounded-md px-2 py-1 text-[9px] font-bold " + (status === "LIVE" ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200")}>{status}</span>
                   <div className="flex flex-col items-end gap-0.5 text-[9px] tabular-nums text-slate-500">
                     <span>Quote {quoteTime(row.last_update_timestamp_ns)}</span>
-                    <span>4-leg skew {n(row, "timestamp_skew_ms") === null ? "—" : fmt(row.timestamp_skew_ms, 3) + " ms"}</span>
+                    <span>4-leg skew {(() => { const skew = n(row, "timestamp_skew_ms"); return skew === null || skew < 0 ? "—" : fmt(skew, 3) + " ms"; })()}</span>
                     <span>Received {new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })} IST</span>
                   </div>
                 </div>
