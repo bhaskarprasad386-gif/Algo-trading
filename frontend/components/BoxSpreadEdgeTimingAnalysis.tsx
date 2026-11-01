@@ -83,7 +83,13 @@ export default function BoxSpreadEdgeTimingAnalysis() {
       {rows.length === 0 ? (
         <p className="rounded-lg border theme-border p-3 text-xs theme-muted">No positive-edge observations saved yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border theme-border">
+        <div className="grid gap-2 sm:hidden">
+          {rows.map(row => <div key={row.key} className="rounded-lg border theme-border theme-surface-2 p-3">
+            <div className="flex items-center justify-between gap-2"><span className="text-sm font-bold theme-text">{row.key}{label === "30-min IST" ? " IST" : ""}</span><span className="text-[10px] theme-muted">{row.distinct_dates} trading days</span></div>
+            <div className="mt-2 grid grid-cols-3 gap-2"><div><p className="text-[9px] theme-muted">Samples</p><p className="text-xs font-semibold theme-text">{row.count.toLocaleString("en-IN")}</p></div><div><p className="text-[9px] theme-muted">Max edge</p><p className="text-xs font-semibold theme-text">₹{fmt(row.max_edge)}</p></div><div><p className="text-[9px] theme-muted">Avg edge</p><p className="text-xs font-semibold theme-text">{row.distinct_dates >= (data?.minimum_distinct_dates_for_average_conclusion ?? 5) ? "₹" + fmt(row.average_edge) : "Need 5 days"}</p></div></div>
+          </div>)}
+        </div>
+        <div className="hidden overflow-x-auto rounded-lg border theme-border sm:block">
           <table className="w-full min-w-[360px] text-left text-xs">
             <thead className="theme-surface-2 theme-muted"><tr>
               <th className="px-3 py-2">{label}</th><th className="px-3 py-2">Samples</th><th className="px-3 py-2">Days</th><th className="px-3 py-2">Max edge</th><th className="px-3 py-2">Avg edge</th>
@@ -102,7 +108,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   );
 
   return (
-    <Card className="theme-border theme-surface p-4 sm:p-5">
+    <Card className="theme-border theme-surface p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Activity className="mt-0.5 h-5 w-5 theme-accent" />
