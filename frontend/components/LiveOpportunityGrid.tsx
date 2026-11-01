@@ -21,15 +21,18 @@ function n(row: Opportunity, field: string) {
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
-function spotFeedStatus(row: Opportunity) {
+function spotFeedStatus(row: Opportunity, receivedAt?: number) {
   const price = n(row, "spot_price");
   const rawTimestamp = row.spot_timestamp_ns;
   const timestamp = rawTimestamp == null || rawTimestamp === "" ? null : Number(rawTimestamp);
   const timestampMs = timestamp === null || !Number.isFinite(timestamp)
     ? null
     : timestamp >= 1e17 ? timestamp / 1e6 : timestamp >= 1e12 ? timestamp : timestamp >= 1e9 ? timestamp * 1000 : null;
+  const fallbackAge = n(row, "spot_age_seconds");
   const ageSeconds = timestampMs === null
-    ? n(row, "spot_age_seconds")
+    ? fallbackAge === null
+      ? null
+      : fallbackAge + (receivedAt == null ? 0 : Math.max(0, Date.now() - receivedAt) / 1000)
     : (Date.now() - timestampMs) / 1000;
   if (price === null || ageSeconds === null || !Number.isFinite(ageSeconds) || ageSeconds < 0) {
     return { label: "SPOT WAITING", age: null, live: false };
@@ -227,7 +230,7 @@ export default function LiveOpportunityGrid() {
                   <span className="text-[11px] text-slate-400">Expiry {String(row.expiry_date || row.expiry || "—")}</span>
                   <span className="inline-flex flex-wrap items-center gap-1.5 text-[11px]">
                     <span className="text-slate-300">Spot ₹{fmt(row.spot_price)}</span>
-                    {(() => { const spot = spotFeedStatus(row); return <><span className={"rounded px-1.5 py-0.5 text-[9px] font-bold " + (spot.live ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200")}>{spot.label}</span>{spot.age !== null && <span className="text-slate-500">{fmt(spot.age, 2)}s</span>}</>; })()}
+                    {(() => { const spot = spotFeedStatus(row, lastSeen); return <><span className={"rounded px-1.5 py-0.5 text-[9px] font-bold " + (spot.live ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200")}>{spot.label}</span>{spot.age !== null && <span className="text-slate-500">{fmt(spot.age, 2)}s</span>}</>; })()}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
