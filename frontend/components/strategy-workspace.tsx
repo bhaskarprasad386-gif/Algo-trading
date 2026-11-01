@@ -799,6 +799,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   useEffect(() => {
+    if (slug !== "box-spread") { setIndexSpotRows([]); return; }
+    let cancelled = false;
+    const loadIndexSpots = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const response = await fetch(base + "/api/v1/scanner/box-spread/index-spots", { cache: "no-store" });
+        if (!response.ok) throw new Error("index spot snapshot unavailable");
+        const body = await response.json();
+        if (!cancelled) setIndexSpotRows(Array.isArray(body?.data) ? body.data : []);
+      } catch {
+        if (!cancelled) setIndexSpotRows([]);
+      }
+    };
+    void loadIndexSpots();
+    const timer = window.setInterval(loadIndexSpots, 1000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [slug]);
+
+  useEffect(() => {
     if (isCustom) return;
     void loadHistory();
     const timer = window.setInterval(() => void loadHistory(), 10000);
