@@ -171,7 +171,10 @@ class LiveBoxSpreadRunner:
                             continue
                 if expiries: wanted = min(expiries)[1]
             if wanted:
-                selected_expiries[target.underlying.strip().upper()] = wanted
+                symbol_key = target.underlying.strip().upper()
+                selected_expiries.setdefault(symbol_key, [])
+                if wanted not in selected_expiries[symbol_key]:
+                    selected_expiries[symbol_key].append(wanted)
                 expiry_strikes = concrete_strikes_from_master(
                     self.master.instruments,
                     symbols=(target.underlying,),
@@ -218,7 +221,7 @@ class LiveBoxSpreadRunner:
                     # Reuse the same valid expiry used to seed the ATM tracker.
                     # Letting the selector infer expiry independently can pick an
                     # expired option chain from the instrument master.
-                    wanted = target.expiry or selected_expiries.get(target.underlying.strip().upper())
+                    wanted = target.expiry or next(iter(selected_expiries.get(target.underlying.strip().upper(), ())), None)
                     if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                         expiries = []
@@ -245,8 +248,13 @@ class LiveBoxSpreadRunner:
                     except (LookupError, ValueError) as exc:
                         unavailable_symbols.append({"symbol": target.underlying, "reason": str(exc)})
                         continue
-                    contract_expiries[target.underlying.strip().upper()] = str(sel.expiry)
-                    subscription_counts[target.underlying.strip().upper()] = len(sel.subscriptions)
+                    symbol_key = target.underlying.strip().upper()
+                    contract_expiries.setdefault(symbol_key, [])
+                    contract_expiry = str(sel.expiry)
+                    if contract_expiry not in contract_expiries[symbol_key]:
+                        contract_expiries[symbol_key].append(contract_expiry)
+                    subscription_counts.setdefault(symbol_key, [])
+                    subscription_counts[symbol_key].append({"expiry": contract_expiry, "count": len(sel.subscriptions)})
                     subs.extend(sel.subscriptions)
                 # Preserve held-position strikes when the ATM subscription window moves.
                 subs.extend(self._open_position_subscriptions())
