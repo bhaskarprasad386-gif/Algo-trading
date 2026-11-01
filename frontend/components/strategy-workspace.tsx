@@ -995,9 +995,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   return (
     <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
       <div className="flex items-center justify-between gap-3">
-        <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
-          <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
-        </Link>
+        {slug === "box-spread" ? (
+          <span className="text-[10px] font-bold uppercase tracking-[0.16em] theme-muted">Box Spread · Live market monitor</span>
+        ) : (
+          <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
+            <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
+          </Link>
+        )}
         <span className={"inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold " +
           (loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" :
           feedStatus === "LIVE" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>
@@ -1005,7 +1009,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </span>
       </div>
 
-      <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />
+      {slug !== "box-spread" && <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />}
 
       {slug === "box-spread" && <LiveOpportunityGrid />}
 
