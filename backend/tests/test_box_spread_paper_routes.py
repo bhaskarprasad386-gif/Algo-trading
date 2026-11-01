@@ -479,7 +479,7 @@ def test_exit_preview_rejects_when_any_leg_lacks_one_complete_lot(monkeypatch, d
     with pytest.raises(HTTPException) as raised:
         routes.preview_exit_basket(456, account_key="basket-route-test")
     assert raised.value.status_code == 409
-    assert "even one complete" in raised.value.detail
+    assert "fresh valid two-sided exit quote is unavailable" in raised.value.detail
 
 
 def test_exit_basket_rejects_one_unmarketable_limit_without_any_fill(monkeypatch):
