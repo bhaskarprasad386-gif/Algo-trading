@@ -42,7 +42,7 @@ export default function BoxSpreadTraceArea() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [results, setResults] = useState<Record<number, ExitResult>>({});
-  const api = appConfig.apiBaseUrl.replace(/\\/$/, "") + "/api/v1/scanner/box-spread/trace";
+  const api = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread/trace";
   const load = useCallback(async () => {
     setLoading(true);
     try {
