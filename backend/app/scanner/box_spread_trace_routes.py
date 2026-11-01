@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from threading import Lock
 from fastapi import APIRouter, HTTPException
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field
 from app.core.database import SessionLocal
 from app.models.box_spread_trace import BoxSpreadTrace, BoxSpreadTraceExitCheck
@@ -144,9 +145,21 @@ def create_trace(payload: TraceCreate):
             entry_json=json.dumps(snapshot, separators=(",", ":"), default=str),
         )
         db.add(row)
-        db.commit()
-        db.refresh(row)
-        return {"strategy": "box-spread", "created": True, "data": _serialize_trace(row)}
+        try:
+            db.commit()
+            db.refresh(row)
+            return {"strategy": "box-spread", "created": True, "data": _serialize_trace(row)}
+        except IntegrityError:
+            # Two identical Add-to-Trace requests can pass the initial lookup
+            # concurrently. The unique source_identity index is authoritative;
+            # recover the winner instead of surfacing a duplicate-click error.
+            db.rollback()
+            existing = (db.query(BoxSpreadTrace)
+                        .filter(BoxSpreadTrace.source_identity == identity)
+                        .first())
+            if existing is not None:
+                return {"strategy": "box-spread", "created": False, "data": _serialize_trace(existing)}
+            raise
 
 
 def _resolve_leg_instruments(entry):
