@@ -210,7 +210,23 @@ export default function BoxSpreadPostMarketHistory() {
       {!rows.length && loading && <p className="mt-4 text-sm theme-muted">Loading saved Box Spread snapshots…</p>}
       {!rows.length && !loading && !error && <p className="mt-4 rounded-lg border theme-border p-3 text-sm theme-muted">No qualifying snapshots were saved in this window. No synthetic or sample rows are displayed.</p>}
 
-      {rows.length > 0 && <div className="mt-4 overflow-x-auto rounded-xl border theme-border">
+      {rows.length > 0 && <div className="mt-4 grid gap-3 md:hidden">
+        {rows.map(row => <article key={snapshotKey(row)} className="rounded-xl border theme-border theme-surface-2 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div><div className="flex items-center gap-2"><span className="text-sm font-bold theme-text">{row.symbol}</span><span className={"rounded-md px-2 py-0.5 text-[9px] font-bold " + (row.expiry_type === "WEEKLY" ? "bg-cyan-500/10 text-cyan-500" : row.expiry_type === "MONTHLY" ? "bg-violet-500/10 text-violet-500" : "bg-slate-500/10 theme-muted")}>{row.expiry_type || "UNKNOWN"}</span></div><p className="mt-1 text-[11px] theme-muted">Expiry {row.expiry_date || row.expiry} · {row.direction}</p></div>
+            <div className="text-right"><p className="text-[9px] uppercase tracking-wide theme-muted">Executable edge</p><p className="text-lg font-extrabold tabular-nums theme-text">₹{number(row.executable_edge)}</p></div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Strike range</p><p className="mt-1 text-xs font-semibold theme-text">{number(row.low_strike)} – {number(row.high_strike)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Spot price</p><p className="mt-1 text-xs font-semibold theme-text">{row.spot_price == null ? "—" : "₹" + number(row.spot_price)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Edge / lot</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.edge_per_lot)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Gross P&L</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.gross_pnl)}</p></div>
+          </div>
+          <div className="mt-3 flex flex-wrap justify-between gap-2 border-t theme-border pt-2 text-[10px] theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
+        </article>)}
+      </div>}
+
+      {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
         <table className="w-full min-w-[1120px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
             <th className="px-3 py-2">Saved (IST)</th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2">Edge</th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2">Gross P&L</th>
