@@ -202,14 +202,17 @@ def _exit_valuation(trace, quotes):
         record = quotes.get(leg)
         entry_side = sides[leg]
         exit_side = "SELL" if entry_side == "BUY" else "BUY"
-        quote_age = None if record is None else max(0.0, (time.time_ns() - int(record.timestamp_ns)) / 1e9)
-        fresh = record is not None and quote_age is not None and quote_age <= 5.0
+        now_ns = time.time_ns()
+        quote_age = None if record is None else (now_ns - int(record.timestamp_ns)) / 1e9
+        fresh = record is not None and quote_age is not None and -1.0 <= quote_age <= 5.0
+        if quote_age is not None:
+            quote_age = max(0.0, quote_age)
         all_fresh = all_fresh and fresh
         price = None if not fresh else (record.bid if exit_side == "SELL" else record.ask)
         depth = None if not fresh else (record.bid_qty if exit_side == "SELL" else record.ask_qty)
         price = _finite_positive(price)
         depth = _finite_positive(depth)
-        complete_lots = 0 if depth is None else int(depth // trace.lot_size)
+        complete_lots = 0 if depth is None or price is None else int(depth // trace.lot_size)
         available_lots.append(complete_lots)
         entry_price = _finite_positive(entry.get("trace_entry_prices", {}).get(leg))
         leg_pnl = None if price is None or entry_price is None else ((price - entry_price) if entry_side == "BUY" else (entry_price - price)) * qty
