@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
 from itertools import combinations
+from math import isfinite
 from typing import Iterable
 from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, OptionQuote
 from app.backtesting.arbitrage_scan_policy import ScanPolicy, ordered_strikes_around_atm, enumerate_box_pairs
@@ -30,7 +31,36 @@ class BoxSpreadScanResult:
     gross_pnl: float
     strike_distance: int
 
+def _whole_nonnegative(value) -> bool:
+    try:
+        number = float(value)
+        return isfinite(number) and number >= 0 and number.is_integer()
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _valid_quote(q: OptionQuote) -> bool:
+    try:
+        strike = float(q.strike)
+        lot_size = float(q.lot_size)
+        timestamp = int(q.timestamp_ns)
+        prices = (q.call_bid, q.call_ask, q.put_bid, q.put_ask)
+        if not isfinite(strike) or strike <= 0:
+            return False
+        if not isfinite(lot_size) or lot_size <= 0 or not lot_size.is_integer():
+            return False
+        if timestamp <= 0 or any(not isfinite(float(value)) or float(value) <= 0 for value in prices):
+            return False
+        if not _whole_nonnegative(q.volume) or not _whole_nonnegative(q.oi):
+            return False
+        return float(q.call_ask) >= float(q.call_bid) and float(q.put_ask) >= float(q.put_bid)
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        return False
+
+
 def _liquid_quote(q: OptionQuote, config: BoxSpreadScanConfig) -> bool:
+    if not _valid_quote(q):
+        return False
     if q.volume < config.min_option_volume or q.oi < config.min_option_oi:
         return False
     for bid, ask in ((q.call_bid, q.call_ask), (q.put_bid, q.put_ask)):
@@ -76,11 +106,24 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
         raise ValueError("box scanner supports only STOCK and INDEX")
     if cls == "STOCK" and quotes[0].underlying.upper() not in {s.upper() for s in config.allowed_stock_symbols}:
         raise ValueError("stock is outside the configured Box Spread stock universe")
-    if config.min_option_volume < 0 or config.min_option_oi < 0 or config.max_option_spread_pct < 0:
-        raise ValueError("invalid box liquidity policy")
+    try:
+        atm_value = float(atm_strike)
+        fees = float(config.fees_per_unit)
+        min_edge = float(config.min_executable_edge)
+        max_spread = float(config.max_option_spread_pct)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("invalid Box Spread scan configuration")
+    if (not isfinite(atm_value) or atm_value <= 0 or not isfinite(fees)
+            or not isfinite(min_edge) or not isfinite(max_spread)
+            or config.min_option_volume < 0 or config.min_option_oi < 0 or max_spread < 0):
+        raise ValueError("invalid Box Spread scan configuration")
     first = quotes[0]
     if any(q.underlying != first.underlying or q.expiry != first.expiry or q.instrument_class != cls for q in quotes):
         raise ValueError("box option quotes must share underlying, expiry and instrument class")
+    quotes = tuple(q for q in quotes if _valid_quote(q))
+    stats["invalid_quotes"] = stats.get("quotes", 0) - len(quotes)
+    if not quotes:
+        return ()
     by_strike = {q.strike: q for q in quotes}
     if len(by_strike) != len(quotes):
         raise ValueError("duplicate box strike")
