@@ -121,7 +121,7 @@ def test_paper_error_handler_preserves_http_status():
 def test_matching_live_row_skips_malformed_strikes_without_crashing(monkeypatch):
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     malformed = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
