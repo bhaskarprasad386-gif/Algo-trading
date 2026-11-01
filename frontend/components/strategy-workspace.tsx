@@ -1017,12 +1017,30 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       {slug !== "box-spread" && <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />}
 
+      {slug === "box-spread" ? (
+        <Card className="theme-border theme-surface-2 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px]">
+            <span className="font-bold theme-text">INDEX OPTIONS</span>
+            <span className="theme-muted">Feed <b className="theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"}</b></span>
+            <span className="theme-muted">Runner <b className={runner?.running ? "theme-success" : "theme-warning"}>{runner?.running ? "RUNNING" : "STOPPED"}</b></span>
+            <span className="theme-muted">Eligible <b className="theme-text">{rows.length.toLocaleString("en-IN")}</b></span>
+            <span className="theme-muted">Edges <b className="theme-text">{signals.toLocaleString("en-IN")}</b></span>
+            <span className="theme-muted">Feed age <b className="theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</b></span>
+            <span className="theme-muted">NSE <b className="theme-text">{String(feedExchangeFreshness?.NSE?.status ?? "—")}</b></span>
+            <span className="theme-muted">NFO <b className="theme-text">{String(feedExchangeFreshness?.NFO?.status ?? "—")}</b></span>
+            <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
+            <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
+            <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
+          </div>
+        </Card>
+      ) : (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Common Market Data Feed</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Activity className="h-4 w-4" />{feedTicks == null ? "CHECKING" : feedTicks.toLocaleString("en-IN") + " ticks"}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{runnerLabel(slug)}</p><p className={"mt-2 text-sm font-semibold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNAVAILABLE"}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Broker Orders</p><p className="mt-2 text-sm font-semibold theme-warning">OFF</p></Card>
       </div>
+      )}
 
       <Card className="theme-border theme-surface p-4">
         <div className="flex items-center gap-2 text-sm font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
@@ -1323,6 +1341,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </Card>
       )}
 
+      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
@@ -1363,6 +1382,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </div>
         <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Common feed:</span> {feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"} • {feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN") + " instruments"} • runner {runner?.running ? "RUNNING" : "STOPPED"}.</div>
       </Card>
+
+      )}
 
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
