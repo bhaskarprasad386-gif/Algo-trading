@@ -28,9 +28,9 @@ function timestampMilliseconds(value: unknown): number | null {
   try {
     // Keep nanosecond epoch values exact until after conversion to milliseconds.
     const integer = BigInt(raw);
-    if (integer >= 100_000_000_000_000_000n) return Number(integer / 1_000_000n);
-    if (integer >= 1_000_000_000_000n) return Number(integer);
-    if (integer >= 1_000_000_000n) return Number(integer * 1000n);
+    if (integer >= BigInt("100000000000000000")) return Number(integer / BigInt("1000000"));
+    if (integer >= BigInt("1000000000000")) return Number(integer);
+    if (integer >= BigInt("1000000000")) return Number(integer * BigInt("1000"));
   } catch {
     return null;
   }
@@ -146,7 +146,7 @@ export default function LiveOpportunityGrid() {
             if (!/^\d+$/.test(incomingTimestamp)) continue;
             let incomingNs: bigint;
             try { incomingNs = BigInt(incomingTimestamp); } catch { continue; }
-            if (incomingNs <= 0n) continue;
+            if (incomingNs <= BigInt("0")) continue;
             const key = keyOf(row);
             const existing = rowsRef.current.get(key);
             const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
