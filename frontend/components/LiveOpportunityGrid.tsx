@@ -119,6 +119,13 @@ export default function LiveOpportunityGrid() {
             const threshold = symbol === "NIFTY" ? 5 : 10;
             if (edge === null || edge <= threshold) continue;
             const key = keyOf(row);
+            const existing = rowsRef.current.get(key);
+            const incomingTimestamp = n(row, "last_update_timestamp_ns");
+            const existingTimestamp = existing ? n(existing.row, "last_update_timestamp_ns") : null;
+            // WebSocket frames can be delayed or replayed after reconnect. Never
+            // replace a newer four-leg quote basket with an older observation.
+            if (existingTimestamp !== null && incomingTimestamp !== null
+                && incomingTimestamp < existingTimestamp) continue;
             rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
           }
           publishRows();
