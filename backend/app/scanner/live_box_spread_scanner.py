@@ -4,6 +4,7 @@ from threading import Lock
 from datetime import datetime
 from dataclasses import replace
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 from app.backtesting.arbitrage_backtester import OptionQuote
 from app.core.config import settings
 from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
@@ -47,9 +48,9 @@ class LiveBoxSpreadScanner:
     @staticmethod
     def _positive_integer_timestamp(value):
         try:
-            number = float(value)
-            return int(number) if number > 0 and number.is_integer() else None
-        except (TypeError, ValueError, OverflowError):
+            number = Decimal(str(value))
+            return int(number) if number.is_finite() and number > 0 and number == number.to_integral_value() else None
+        except (InvalidOperation, TypeError, ValueError, OverflowError):
             return None
 
     @staticmethod
