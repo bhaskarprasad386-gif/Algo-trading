@@ -1058,9 +1058,15 @@ def _build_exit_preview(
             for role in roles:
                 leg = legs_by_role[role]
                 close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
-                raw_depth_by_role[role] = depth_levels(
-                    records.get(role), "BID" if close_action == "SELL" else "ASK",
-                )
+                record = records.get(role)
+                bid_levels = depth_levels(record, "BID")
+                ask_levels = depth_levels(record, "ASK")
+                if not bid_levels or not ask_levels or bid_levels[0][0] > ask_levels[0][0]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"fresh valid two-sided exit quote is unavailable for {role}",
+                    )
+                raw_depth_by_role[role] = bid_levels if close_action == "SELL" else ask_levels
                 limit_price = None
                 if order_type == "LIMIT" and limit_prices is not None:
                     try:
@@ -1202,7 +1208,15 @@ def _execute_exit_basket_from_row(
                 leg = legs_by_role[role]
                 close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
                 side = "BID" if close_action == "SELL" else "ASK"
-                levels = depth_levels(records.get(role), side)
+                record = records.get(role)
+                bid_levels = depth_levels(record, "BID")
+                ask_levels = depth_levels(record, "ASK")
+                if not bid_levels or not ask_levels or bid_levels[0][0] > ask_levels[0][0]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"fresh valid two-sided exit quote is unavailable for {role}; no legs were exited",
+                    )
+                levels = bid_levels if side == "BID" else ask_levels
                 limit_price = None
                 if order_type == "LIMIT" and limit_prices is not None:
                     try:
