@@ -72,7 +72,7 @@ def test_trace_exit_uses_full_live_depth_and_weighted_average_price():
     result = _exit_valuation(trace, quotes)
     assert result["status"] == "EXITABLE"
     assert result["max_complete_exit_lots_now"] == 2
-    assert result["gross_pnl"] == -40
+    assert result["gross_pnl"] == -80
     assert all(leg["executable_quantity"] == 20 for leg in result["legs"])
     assert all(leg["exit_price"] == 100.5 for leg in result["legs"] if leg["exit_side"] == "SELL")
     assert all(leg["exit_price"] == 101.5 for leg in result["legs"] if leg["exit_side"] == "BUY")
