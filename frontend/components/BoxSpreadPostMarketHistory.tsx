@@ -95,6 +95,7 @@ const quoteTime = (value: number | string | null | undefined) => {
 export default function BoxSpreadPostMarketHistory() {
   const [days, setDays] = useState(7);
   const [expiryType, setExpiryType] = useState("ALL");
+  const [selectedIndex, setSelectedIndex] = useState("ALL");
   const [rows, setRows] = useState<Snapshot[]>([]);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ WEEKLY: 0, MONTHLY: 0, UNKNOWN: 0 });
@@ -105,14 +106,30 @@ export default function BoxSpreadPostMarketHistory() {
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [sortingAll, setSortingAll] = useState(false);
-  const [sortKey, setSortKey] = useState<"profit" | "edge" | "time">("time");
+  const [sortKey, setSortKey] = useState<"profit" | "edge" | "time" | "gap" | "lots">("time");
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
+  const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
+  const executableLots = (row: Snapshot) => {
+    const isLong = String(row.direction ?? "LONG").toUpperCase() !== "SHORT";
+    const sides = [
+      isLong ? row.low_call_ask_qty : row.low_call_bid_qty,
+      isLong ? row.low_put_bid_qty : row.low_put_ask_qty,
+      isLong ? row.high_call_bid_qty : row.high_call_ask_qty,
+      isLong ? row.high_put_ask_qty : row.high_put_bid_qty,
+    ];
+    const lotSize = Number(row.lot_size);
+    if (!Number.isFinite(lotSize) || lotSize <= 0 || sides.some(q => q == null || !Number.isFinite(Number(q)))) return null;
+    return Math.floor(Math.min(...sides.map(Number)) / lotSize);
+  };
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
-    const av = sortKey === "profit" ? (a.gross_pnl ?? Number.NEGATIVE_INFINITY) : sortKey === "edge" ? (a.executable_edge ?? Number.NEGATIVE_INFINITY) : new Date(a.observed_at).getTime();
-    const bv = sortKey === "profit" ? (b.gross_pnl ?? Number.NEGATIVE_INFINITY) : sortKey === "edge" ? (b.executable_edge ?? Number.NEGATIVE_INFINITY) : new Date(b.observed_at).getTime();
-    return (sortDirection === "desc" ? -1 : 1) * (av - bv);
+    const metric = (row: Snapshot) => sortKey === "profit" ? row.gross_pnl : sortKey === "edge" ? row.executable_edge : sortKey === "gap" ? strikeGap(row) : sortKey === "lots" ? executableLots(row) : new Date(row.observed_at).getTime();
+    const av = metric(a), bv = metric(b);
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return (sortDirection === "desc" ? -1 : 1) * (Number(av) - Number(bv));
   }), [rows, sortKey, sortDirection]);
-  const selectSort = async (key: "profit" | "edge" | "time") => {
+  const selectSort = async (key: "profit" | "edge" | "time" | "gap" | "lots") => {
     const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
     setSortKey(key);
     setSortDirection(nextDirection);
@@ -126,6 +143,7 @@ export default function BoxSpreadPostMarketHistory() {
       while (more) {
         const params = new URLSearchParams({ days: String(days), limit: "5000", offset: String(nextOffset) });
         if (expiryType !== "ALL") params.set("expiry_type", expiryType);
+        if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
         const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
         if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
         const body = (await response.json()) as SnapshotResponse;
@@ -142,7 +160,7 @@ export default function BoxSpreadPostMarketHistory() {
       setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
     } finally { setSortingAll(false); }
   };
-  const sortMark = (key: "profit" | "edge" | "time") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
+  const sortMark = (key: "profit" | "edge" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
@@ -191,7 +209,7 @@ export default function BoxSpreadPostMarketHistory() {
         appendInFlight.current = false;
       }
     }
-  }, [days, expiryType]);
+  }, [days, expiryType, selectedIndex]);
 
   useEffect(() => {
     // Do not display rows from the previous expiry/window under the new filter
@@ -211,13 +229,13 @@ export default function BoxSpreadPostMarketHistory() {
   };
 
   return (
-    <Card className="scroll-mt-24 border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl sm:p-5" id="box-history">
+    <Card className="scroll-mt-24 theme-border theme-surface theme-text p-4 shadow-xl sm:p-5" id="box-history">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
           <div>
-            <h2 className="text-base font-extrabold text-white">Post-Market Box Spread Pair History</h2>
-            <p className="mt-1 text-xs text-slate-400">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
+            <h2 className="text-base font-extrabold theme-text">Post-Market Box Spread Pair History</h2>
+            <p className="mt-1 text-xs theme-muted">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
           </div>
         </div>
         <button type="button" onClick={refresh} disabled={loading || loadingMore} className="inline-flex min-h-9 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
@@ -234,6 +252,11 @@ export default function BoxSpreadPostMarketHistory() {
         <label className="text-xs theme-muted">Expiry
           <select value={expiryType} onChange={event => setExpiryType(event.target.value)} className="ml-2 min-h-9 rounded-lg border theme-border theme-surface px-2 text-xs theme-text">
             <option value="ALL">All expiries</option><option value="WEEKLY">Weekly</option><option value="MONTHLY">Monthly</option><option value="UNKNOWN">Unknown</option>
+          </select>
+        </label>
+        <label className="text-xs theme-muted">Index
+          <select value={selectedIndex} onChange={event => setSelectedIndex(event.target.value)} className="ml-2 min-h-9 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text" aria-label="Filter history by index">
+            <option value="ALL">All indices</option><option value="NIFTY">NIFTY</option><option value="BANKNIFTY">BANKNIFTY</option><option value="FINNIFTY">FINNIFTY</option><option value="MIDCPNIFTY">MIDCPNIFTY</option><option value="SENSEX">SENSEX</option><option value="BANKEX">BANKEX</option>
           </select>
         </label>
       </div>
@@ -255,27 +278,34 @@ export default function BoxSpreadPostMarketHistory() {
       {!rows.length && loading && <p className="mt-4 text-sm theme-muted">Loading saved Box Spread snapshots…</p>}
       {!rows.length && !loading && !error && <p className="mt-4 rounded-lg border theme-border p-3 text-sm theme-muted">No qualifying snapshots were saved in this window. No synthetic or sample rows are displayed.</p>}
 
+      {rows.length > 0 && <div className="mt-4 space-y-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Sort saved history">
+          {(["profit","edge","gap","lots","time"] as const).map(key => <button key={key} type="button" onClick={() => void selectSort(key)} disabled={sortingAll} aria-pressed={sortKey === key} className={"min-h-14 rounded-xl border px-3 text-sm font-bold shadow-sm disabled:opacity-50 " + (sortKey === key ? "theme-accent theme-accent-bg theme-border" : "theme-border theme-surface theme-text")}>{key === "profit" ? "Gross Profit" : key === "edge" ? "Edge" : key === "gap" ? "Strike Gap" : key === "lots" ? "Max Lots" : "Timing"}<span className="block mt-1 text-[11px] font-medium">{sortKey === key ? (sortDirection === "desc" ? "Highest first ↓" : "Lowest first ↑") : "Tap to sort ↕"}</span></button>)}
+        </div>
+        {sortingAll && <p role="status" className="text-xs theme-muted">Loading complete history for sorting…</p>}
+      </div>}
       {rows.length > 0 && <div className="mt-4 grid gap-3 md:hidden">
-        {rows.map(row => <article key={snapshotKey(row)} className="rounded-xl border theme-border theme-surface-2 p-3">
+        {sortedRows.map(row => <article key={snapshotKey(row)} className="rounded-xl border theme-border theme-surface-2 p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div><div className="flex items-center gap-2"><span className="text-sm font-bold theme-text">{row.symbol}</span><span className={"rounded-md px-2 py-0.5 text-[9px] font-bold " + (row.expiry_type === "WEEKLY" ? "bg-cyan-500/10 text-cyan-500" : row.expiry_type === "MONTHLY" ? "bg-violet-500/10 text-violet-500" : "bg-slate-500/10 theme-muted")}>{row.expiry_type || "UNKNOWN"}</span></div><p className="mt-1 text-[11px] theme-muted">Expiry {row.expiry_date || row.expiry} · {row.direction}</p></div>
             <div className="text-right"><p className="text-[9px] uppercase tracking-wide theme-muted">Executable edge</p><p className="text-lg font-extrabold tabular-nums theme-text">₹{number(row.executable_edge)}</p></div>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Strike range</p><p className="mt-1 text-xs font-semibold theme-text">{number(row.low_strike)} – {number(row.high_strike)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Strike range</p><p className="mt-1 text-xs font-semibold theme-text">{number(row.low_strike)} – {number(row.high_strike)}</p><p className="mt-1 text-[10px] theme-muted">Strike gap: {number(strikeGap(row))}</p></div>
             <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Spot price</p><p className="mt-1 text-xs font-semibold theme-text">{row.spot_price == null ? "—" : "₹" + number(row.spot_price)}</p></div>
             <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Edge / lot</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.edge_per_lot)}</p></div>
-            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Gross P&L</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.gross_pnl)}</p></div>
+            <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Gross P&L</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.gross_pnl)}</p><p className="mt-1 text-[10px] theme-muted">Max lots: {executableLots(row) == null ? "—" : executableLots(row)}</p></div>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2">{([["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const).map(([label,prefix]) => { const buy = row.direction?.toUpperCase().includes("LONG") ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); return <div key={prefix} className="rounded-lg border theme-border theme-surface p-2"><p className={"text-[10px] font-bold " + (buy ? "text-emerald-400" : "text-rose-400")}>{label} · {buy ? "BUY / ASK" : "SELL / BID"}</p><p className="mt-1 text-[10px] theme-muted">LTP {quoteField(row,prefix,"ltp")} · Bid {quoteField(row,prefix,"bid")} · Ask {quoteField(row,prefix,"ask")}</p><p className="mt-1 text-[10px] theme-muted">Bid Qty {quoteField(row,prefix,"bid_qty")} · Ask Qty {quoteField(row,prefix,"ask_qty")}</p></div>;})}</div><div className="mt-3 flex flex-wrap justify-between gap-2 border-t theme-border pt-2 text-[10px] theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
+          <div className="mt-3 grid grid-cols-2 gap-2">{([["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const).map(([label,prefix]) => { const buy = row.direction?.toUpperCase().includes("LONG") ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); return <div key={prefix} className="rounded-lg border theme-border theme-surface p-2"><p className={"text-[10px] font-bold " + (buy ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>{label} · {buy ? "BUY / ASK" : "SELL / BID"}</p><p className="mt-1 text-[10px] theme-muted">LTP {quoteField(row,prefix,"ltp")}</p><p className="mt-1 text-[10px]"><span className={buy ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-rose-600 dark:text-rose-400"}>{buy ? "ASK BUY" : "BID SELL"} {quoteField(row,prefix,buy ? "ask" : "bid")}</span></p><p className="mt-1 text-[10px] theme-muted">Bid {quoteField(row,prefix,"bid")} ({quoteField(row,prefix,"bid_qty")}) · Ask {quoteField(row,prefix,"ask")} ({quoteField(row,prefix,"ask_qty")})</p></div>;})}</div><div className="mt-3 flex flex-wrap justify-between gap-2 border-t theme-border pt-2 text-[10px] theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
         </article>)}
       </div>}
 
       {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
+        {sortingAll && <p role="status" className="px-3 py-2 text-xs theme-muted">Loading complete history for sorting…</p>}
         <table className="w-full min-w-[2600px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
-            <th className="px-3 py-2"><button type="button" onClick={() => void selectSort("time")} disabled={sortingAll}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("edge")} disabled={sortingAll}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("profit")} disabled={sortingAll}>Gross P&L{sortMark("profit")}</button></th>
-          </tr><tr>{Array.from({length:13},(_,i)=><th key={"blank"+i}></th>)}<th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr><tr>{Array.from({length:13},(_,i)=><th key={"subblank"+i}></th>)}{Array.from({length:4},(_,i)=>["LTP","Bid","Bid Qty","Ask","Ask Qty"].map(label=><th key={i+label} className="px-2 py-1">{label}</th>))}</tr></thead>
+            <th className="px-3 py-2"><button type="button" onClick={() => void selectSort("time")} disabled={sortingAll}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Strike gap</th><th className="px-3 py-2">Max lots</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("edge")} disabled={sortingAll}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("profit")} disabled={sortingAll}>Gross P&L{sortMark("profit")}</button></th>
+          </tr><tr>{Array.from({length:15},(_,i)=><th key={"blank"+i}></th>)}<th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr><tr>{Array.from({length:15},(_,i)=><th key={"subblank"+i}></th>)}{Array.from({length:4},(_,i)=>["LTP","Bid","Bid Qty","Ask","Ask Qty"].map(label=><th key={i+label} className="px-2 py-1">{label}</th>))}</tr></thead>
           <tbody>{sortedRows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{quoteTime(row.last_update_timestamp_ns)}</td>
@@ -285,12 +315,14 @@ export default function BoxSpreadPostMarketHistory() {
             <td className="px-3 py-2 theme-muted">{row.expiry_type || "UNKNOWN"}</td>
             <td className="px-3 py-2 theme-text">{number(row.low_strike)}</td>
             <td className="px-3 py-2 theme-text">{number(row.high_strike)}</td>
+            <td className="px-3 py-2 theme-text">{number(strikeGap(row))}</td>
+            <td className="px-3 py-2 theme-text">{executableLots(row) == null ? "—" : executableLots(row)}</td>
             <td className="px-3 py-2 font-semibold theme-text">{row.direction}</td>
             <td className="px-3 py-2 theme-muted">{number(row.spot_price)}</td>
             <td className="px-3 py-2 theme-text">{number(row.executable_edge)}</td>
             <td className="px-3 py-2 theme-text">{number(row.edge_per_lot)}</td>
             <td className="px-3 py-2 theme-text">{number(row.gross_pnl)}</td>
-            {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask_qty")}</td>])}
+            {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => { const isLong = row.direction?.toUpperCase().includes("LONG"); const buy = isLong ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); const buyTone = "text-emerald-600 dark:text-emerald-400 font-bold"; const sellTone = "text-rose-600 dark:text-rose-400 font-bold"; return [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask_qty")}</td>];})}
           </tr>)}</tbody>
         </table>
       </div>}

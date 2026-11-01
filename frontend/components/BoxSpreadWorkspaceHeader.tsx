@@ -22,12 +22,7 @@ export default function BoxSpreadWorkspaceHeader() {
             <div><p className="text-[9px] font-bold uppercase tracking-wider text-amber-200/70">Execution boundary</p><p className="mt-1 text-sm font-extrabold text-amber-100">Broker orders OFF</p></div>
           </div>
         </div>
-        <div className="mt-6 border-t border-slate-800 pt-4">
-          <div className="mb-2 flex items-center gap-2 text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500"><Signal size={12}/> Supported index universe</div>
-          <div className="flex flex-wrap gap-2">
-            {indices.map((symbol) => <span key={symbol} className="rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-[10px] font-bold tracking-wide text-slate-200">{symbol}</span>)}
-          </div>
-        </div>
+
       </div>
     </section>
   );
