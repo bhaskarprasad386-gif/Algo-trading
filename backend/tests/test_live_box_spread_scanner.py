@@ -534,3 +534,19 @@ def test_live_box_scanner_rejects_fractional_source_timestamp():
 
     assert result == ()
     assert scanner.diagnostics_snapshot()["counts"]["invalid_identity_or_timestamp"] == 1
+
+
+def test_box_timestamp_validation_preserves_large_nanosecond_integer_precision():
+    from app.scanner.box_spread import _positive_integer
+
+    timestamp_ns = 1_700_000_000_123_456_789
+    assert _positive_integer(timestamp_ns) == timestamp_ns
+    assert _positive_integer(str(timestamp_ns)) == timestamp_ns
+    assert _positive_integer("1700000000123456789.5") is None
+
+
+def test_live_box_timestamp_parser_preserves_large_nanosecond_integer_precision():
+    timestamp_ns = 1_700_000_000_123_456_789
+    assert LiveBoxSpreadScanner._positive_integer_timestamp(timestamp_ns) == timestamp_ns
+    assert LiveBoxSpreadScanner._positive_integer_timestamp(str(timestamp_ns)) == timestamp_ns
+    assert LiveBoxSpreadScanner._positive_integer_timestamp("1700000000123456789.5") is None
