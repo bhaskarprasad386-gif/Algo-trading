@@ -71,8 +71,40 @@ def _clear_spool():
 
 
 
+def _positive_timestamp_ns(value, field_name):
+    """Validate an exact positive integer nanosecond timestamp without truncation."""
+    from decimal import Decimal, InvalidOperation
+    try:
+        number = Decimal(str(value))
+        if not number.is_finite() or number <= 0 or number != number.to_integral_value():
+            raise ValueError
+        return int(number)
+    except (InvalidOperation, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"invalid Box Spread quote timestamp: {field_name}") from exc
+
+
 def _snapshot_payload(result, observed_at, spot_provider=None):
     low, high = result.low, result.high
+    low_ts = _positive_timestamp_ns(low.timestamp_ns, "low.timestamp_ns")
+    high_ts = _positive_timestamp_ns(high.timestamp_ns, "high.timestamp_ns")
+    # Explicit zero/fractional leg timestamps are malformed, not "missing".
+    raw_leg_timestamps = (
+        getattr(low, "call_timestamp_ns", None),
+        getattr(low, "put_timestamp_ns", None),
+        getattr(high, "call_timestamp_ns", None),
+        getattr(high, "put_timestamp_ns", None),
+    )
+    leg_timestamps = tuple(
+        _positive_timestamp_ns(value if value is not None else fallback, field)
+        for value, fallback, field in zip(
+            raw_leg_timestamps,
+            (low_ts, low_ts, high_ts, high_ts),
+            ("low.call_timestamp_ns", "low.put_timestamp_ns",
+             "high.call_timestamp_ns", "high.put_timestamp_ns"),
+        )
+    )
+    newest_timestamp = max(leg_timestamps)
+    oldest_timestamp = min(leg_timestamps)
     # Snapshot persistence is driven by the four option quotes. Spot is
     # optional context and a temporary spot-provider error must not lose it.
     try:
@@ -94,28 +126,14 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "high_strike": high.strike,
         "direction": result.direction,
         "observed_at": observed_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "timestamp_ns": int(low.timestamp_ns),
-        "high_timestamp_ns": int(high.timestamp_ns),
-        "low_call_timestamp_ns": int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-        "low_put_timestamp_ns": int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-        "high_call_timestamp_ns": int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-        "high_put_timestamp_ns": int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns),
-        "last_update_timestamp_ns": max(
-            int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-            int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-            int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-            int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns),
-        ),
-        "timestamp_skew_ms": round((
-            max(int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-                int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-                int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-                int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns))
-            - min(int(getattr(low, "call_timestamp_ns", None) or low.timestamp_ns),
-                  int(getattr(low, "put_timestamp_ns", None) or low.timestamp_ns),
-                  int(getattr(high, "call_timestamp_ns", None) or high.timestamp_ns),
-                  int(getattr(high, "put_timestamp_ns", None) or high.timestamp_ns))
-        ) / 1_000_000, 3),
+        "timestamp_ns": low_ts,
+        "high_timestamp_ns": high_ts,
+        "low_call_timestamp_ns": leg_timestamps[0],
+        "low_put_timestamp_ns": leg_timestamps[1],
+        "high_call_timestamp_ns": leg_timestamps[2],
+        "high_put_timestamp_ns": leg_timestamps[3],
+        "last_update_timestamp_ns": newest_timestamp,
+        "timestamp_skew_ms": round((newest_timestamp - oldest_timestamp) / 1_000_000, 3),
         "low_call_ltp": getattr(low, "call_ltp", None),
         "low_call_bid": low.call_bid,
         "low_call_bid_qty": getattr(low, "call_bid_qty", None),
