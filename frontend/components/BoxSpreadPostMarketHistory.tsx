@@ -15,6 +15,7 @@ type Snapshot = {
   high_strike: number;
   direction: string;
   observed_at: string;
+  timestamp_ns?: number | string | null;
   spot_price?: number | null;
   executable_edge?: number | null;
   edge_per_lot?: number | null;
@@ -54,6 +55,8 @@ const observedTime = (value: string) => {
 };
 
 const quoteField = (row: Snapshot, prefix: string, field: string) => number(row[(prefix + "_" + field) as keyof Snapshot] as number | null | undefined);
+
+const traceIdentity = (row: Snapshot) => [row.symbol, row.expiry, row.timestamp_ns ?? row.last_update_timestamp_ns ?? "", row.low_strike, row.high_strike, row.direction].join("|");
 
 const snapshotKey = (row: Snapshot) => [
   row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction,
@@ -108,6 +111,11 @@ export default function BoxSpreadPostMarketHistory() {
   const [sortingAll, setSortingAll] = useState(false);
   const [sortKey, setSortKey] = useState<"profit" | "edge" | "time" | "gap" | "lots">("time");
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
+  const [traces, setTraces] = useState<Record<string, { id: number; quantity_lots: number }>>({});
+  const [traceBusy, setTraceBusy] = useState<string | null>(null);
+  const [traceError, setTraceError] = useState<string | null>(null);
+  const [exitChecks, setExitChecks] = useState<Record<number, { status: string; gross_pnl: number | null; max_complete_exit_lots_now: number; message: string; legs: Array<{ leg: string; exit_side: string; exit_price: number | null; exit_qty: number | null; leg_gross_pnl: number | null }> }>>({});
+  const [exitBusy, setExitBusy] = useState<number | null>(null);
   const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
   const executableLots = (row: Snapshot) => {
     const isLong = String(row.direction ?? "LONG").toUpperCase() !== "SHORT";
@@ -161,6 +169,38 @@ export default function BoxSpreadPostMarketHistory() {
     } finally { setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
+  const traceApi = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread/trace";
+  useEffect(() => {
+    let active = true;
+    fetch(traceApi, { cache: "no-store" }).then(r => r.ok ? r.json() : Promise.reject(new Error("Trace API unavailable"))).then(body => {
+      if (!active || !Array.isArray(body.data)) return;
+      const next: Record<string, { id: number; quantity_lots: number }> = {};
+      for (const item of body.data) next[String(item.source_identity)] = { id: Number(item.id), quantity_lots: Number(item.quantity_lots) };
+      setTraces(next);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [traceApi]);
+  const addTrace = async (row: Snapshot) => {
+    const key = traceIdentity(row); setTraceBusy(key); setTraceError(null);
+    try {
+      const snapshot = { ...row, timestamp_ns: row.timestamp_ns ?? row.last_update_timestamp_ns };
+      const response = await fetch(traceApi, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.message || "Unable to add trace");
+      setTraces(old => ({ ...old, [String(body.data.source_identity)]: { id: Number(body.data.id), quantity_lots: Number(body.data.quantity_lots) } }));
+    } catch (e) { setTraceError(e instanceof Error ? e.message : "Unable to add trace"); }
+    finally { setTraceBusy(null); }
+  };
+  const checkExit = async (id: number) => {
+    setExitBusy(id); setTraceError(null);
+    try {
+      const response = await fetch(traceApi + "/" + id + "/exit-check", { method: "POST", cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.message || "Exit check failed");
+      setExitChecks(old => ({ ...old, [id]: body }));
+    } catch (e) { setTraceError(e instanceof Error ? e.message : "Exit check failed"); }
+    finally { setExitBusy(null); }
+  };
   const requestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
@@ -181,6 +221,7 @@ export default function BoxSpreadPostMarketHistory() {
         offset: String(nextOffset),
       });
       if (expiryType !== "ALL") params.set("expiry_type", expiryType);
+      if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
       const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), {
         cache: "no-store",
         signal: AbortSignal.timeout(12000),
@@ -272,6 +313,7 @@ export default function BoxSpreadPostMarketHistory() {
         </div>)}
       </div>
 
+      {traceError && <div role="status" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs theme-text">{traceError}</div>}
       {error && <div role="status" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs theme-text">
         History request failed ({error}). {rows.length ? "Previously loaded rows are retained." : "No verified saved history is available."}
       </div>}
@@ -297,14 +339,22 @@ export default function BoxSpreadPostMarketHistory() {
             <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Gross P&L</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.gross_pnl)}</p><p className="mt-1 text-[10px] theme-muted">Max lots: {executableLots(row) == null ? "—" : executableLots(row)}</p></div>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">{([["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const).map(([label,prefix]) => { const buy = row.direction?.toUpperCase().includes("LONG") ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); return <div key={prefix} className="rounded-lg border theme-border theme-surface p-2"><p className={"text-[10px] font-bold " + (buy ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>{label} · {buy ? "BUY / ASK" : "SELL / BID"}</p><p className="mt-1 text-[10px] theme-muted">LTP {quoteField(row,prefix,"ltp")}</p><p className="mt-1 text-[10px]"><span className={buy ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-rose-600 dark:text-rose-400"}>{buy ? "ASK BUY" : "BID SELL"} {quoteField(row,prefix,buy ? "ask" : "bid")}</span></p><p className="mt-1 text-[10px] theme-muted">Bid {quoteField(row,prefix,"bid")} ({quoteField(row,prefix,"bid_qty")}) · Ask {quoteField(row,prefix,"ask")} ({quoteField(row,prefix,"ask_qty")})</p></div>;})}</div><div className="mt-3 flex flex-wrap justify-between gap-2 border-t theme-border pt-2 text-[10px] theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
+<div className="mt-3 flex flex-wrap items-center gap-2 border-t theme-border pt-3">
+{traces[traceIdentity(row)] ? <>
+<span className="rounded-md bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-600">TRACED · {traces[traceIdentity(row)].quantity_lots} LOTS</span>
+<button type="button" onClick={() => void checkExit(traces[traceIdentity(row)].id)} disabled={exitBusy === traces[traceIdentity(row)].id} className="min-h-9 rounded-lg border border-amber-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{exitBusy === traces[traceIdentity(row)].id ? "Checking live…" : "Exit Check"}</button>
+{exitChecks[traces[traceIdentity(row)].id] && <span className="text-[11px] font-semibold theme-text">{exitChecks[traces[traceIdentity(row)].id].status} · {exitChecks[traces[traceIdentity(row)].id].gross_pnl == null ? "P&L —" : "Gross ₹" + number(exitChecks[traces[traceIdentity(row)].id].gross_pnl)} · Max exit {exitChecks[traces[traceIdentity(row)].id].max_complete_exit_lots_now} lots</span>}
+              {exitChecks[traces[traceIdentity(row)].id] && <details className="w-full rounded-lg border theme-border p-2 text-[10px] theme-text"><summary className="cursor-pointer font-semibold">Live four-leg quote details</summary><p className="mt-1">{exitChecks[traces[traceIdentity(row)].id].message}</p>{exitChecks[traces[traceIdentity(row)].id].legs.map(leg => <div key={leg.leg} className="mt-1 flex flex-wrap justify-between gap-1 border-t theme-border pt-1"><span>{leg.leg.replace("_", " ").toUpperCase()} · {leg.exit_side}</span><span>{leg.exit_price == null ? "No quote" : "₹" + number(leg.exit_price)} · Qty {number(leg.exit_qty)} · P&L {leg.leg_gross_pnl == null ? "—" : "₹" + number(leg.leg_gross_pnl)}</span></div>)}</details>}
+</> : <button type="button" onClick={() => void addTrace(row)} disabled={traceBusy === traceIdentity(row)} className="min-h-9 rounded-lg border border-cyan-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{traceBusy === traceIdentity(row) ? "Adding…" : "＋ Add to Trace"}</button>}
+</div>
         </article>)}
       </div>}
 
       {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
         {sortingAll && <p role="status" className="px-3 py-2 text-xs theme-muted">Loading complete history for sorting…</p>}
-        <table className="w-full min-w-[2600px] text-left text-xs">
+        <table className="w-full min-w-[2760px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
-            <th className="px-3 py-2"><button type="button" onClick={() => void selectSort("time")} disabled={sortingAll}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Strike gap</th><th className="px-3 py-2">Max lots</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("edge")} disabled={sortingAll}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("profit")} disabled={sortingAll}>Gross P&L{sortMark("profit")}</button></th>
+            <th className="px-3 py-2"><button type="button" onClick={() => void selectSort("time")} disabled={sortingAll}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Strike gap</th><th className="px-3 py-2">Max lots</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("edge")} disabled={sortingAll}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("profit")} disabled={sortingAll}>Gross P&L{sortMark("profit")}</button></th><th className="px-3 py-2">Trade Trace / Exit</th>
           </tr><tr>{Array.from({length:15},(_,i)=><th key={"blank"+i}></th>)}<th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr><tr>{Array.from({length:15},(_,i)=><th key={"subblank"+i}></th>)}{Array.from({length:4},(_,i)=>["LTP","Bid","Bid Qty","Ask","Ask Qty"].map(label=><th key={i+label} className="px-2 py-1">{label}</th>))}</tr></thead>
           <tbody>{sortedRows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
@@ -322,6 +372,14 @@ export default function BoxSpreadPostMarketHistory() {
             <td className="px-3 py-2 theme-text">{number(row.executable_edge)}</td>
             <td className="px-3 py-2 theme-text">{number(row.edge_per_lot)}</td>
             <td className="px-3 py-2 theme-text">{number(row.gross_pnl)}</td>
+<td className="min-w-[240px] px-3 py-2">
+{traces[traceIdentity(row)] ? <div className="flex flex-col gap-1">
+<span className="text-[10px] font-bold text-emerald-600">TRACED · {traces[traceIdentity(row)].quantity_lots} LOTS</span>
+<button type="button" onClick={() => void checkExit(traces[traceIdentity(row)].id)} disabled={exitBusy === traces[traceIdentity(row)].id} className="min-h-8 rounded-md border border-amber-500/50 px-2 text-[10px] font-bold theme-text disabled:opacity-50">{exitBusy === traces[traceIdentity(row)].id ? "Checking…" : "Exit Check"}</button>
+{exitChecks[traces[traceIdentity(row)].id] && <span className="text-[10px] theme-text">{exitChecks[traces[traceIdentity(row)].id].status} · {exitChecks[traces[traceIdentity(row)].id].gross_pnl == null ? "P&L —" : "₹" + number(exitChecks[traces[traceIdentity(row)].id].gross_pnl)}</span>}
+                {exitChecks[traces[traceIdentity(row)].id] && <details className="text-[10px] theme-text"><summary className="cursor-pointer">4-leg live quotes</summary>{exitChecks[traces[traceIdentity(row)].id].message}{exitChecks[traces[traceIdentity(row)].id].legs.map(leg => <div key={leg.leg}>{leg.leg} {leg.exit_side} ₹{number(leg.exit_price)} Qty {number(leg.exit_qty)} P&L ₹{number(leg.leg_gross_pnl)}</div>)}</details>}
+</div> : <button type="button" onClick={() => void addTrace(row)} disabled={traceBusy === traceIdentity(row)} className="min-h-8 rounded-md border border-cyan-500/50 px-2 text-[10px] font-bold theme-text disabled:opacity-50">{traceBusy === traceIdentity(row) ? "Adding…" : "＋ Add Trace"}</button>}
+</td>
             {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => { const isLong = row.direction?.toUpperCase().includes("LONG"); const buy = isLong ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); const buyTone = "text-emerald-600 dark:text-emerald-400 font-bold"; const sellTone = "text-rose-600 dark:text-rose-400 font-bold"; return [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask_qty")}</td>];})}
           </tr>)}</tbody>
         </table>
