@@ -1045,7 +1045,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       )}
 
       {slug === "box-spread" && (
-        <section className="space-y-3" aria-label="Box Spread market overview">
+        <section id="box-overview" className="scroll-mt-24 space-y-3 rounded-2xl border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl" aria-label="Box Spread market overview">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div><h2 className="text-xs font-extrabold uppercase tracking-[0.14em] theme-text">Index Spot Board</h2><p className="mt-1 text-[10px] theme-muted">Latest spot observations attached to Box Spread opportunities · 5s freshness target</p></div>
             <span className="text-[10px] theme-muted">NSE / NFO session state: {String(feedExchangeFreshness?.NSE?.status ?? "UNKNOWN")} / {String(feedExchangeFreshness?.NFO?.status ?? "UNKNOWN")}</span>
@@ -1079,7 +1079,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </section>
       )}
       {slug === "box-spread" && (
-        <Card className="theme-border theme-surface p-4" aria-label="Box Spread system health">
+        <Card className="scroll-mt-24 border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl" aria-label="Box Spread system health" id="box-system-health">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="flex items-center gap-2 text-sm font-bold theme-text"><Activity className="h-4 w-4 theme-accent" /> System Health</h2>
@@ -1243,7 +1243,21 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
-      {slug === "box-spread" && <LiveOpportunityGrid />}
+      {slug === "box-spread" && <div id="box-live-opportunities" className="scroll-mt-24"><LiveOpportunityGrid /></div>}
+      {slug === "box-spread" && (
+        <section id="box-analytics" className="scroll-mt-24 rounded-2xl border border-slate-700 bg-[#0a1423] p-4 text-slate-100 shadow-xl" aria-label="Box Spread analytics">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><h2 className="text-sm font-extrabold text-white">Scanner Analytics</h2><p className="mt-1 text-xs text-slate-400">Latest backend scanner counters · live observations, not estimated performance.</p></div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-200">Box Spread only</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {([["Eligible Boxes", metricValue("Eligible Boxes")], ["Executable Edges", metricValue("Executable Edges")], ["Signals", metricValue("Signals")], ["Last Scan", metricValue("Last Scan")]] as Array<[string, unknown]>).map(([label, raw]) => (
+              <div key={label} className="rounded-xl border border-slate-700 bg-[#101d30] p-3"><p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p><p className="mt-2 break-words text-lg font-extrabold tabular-nums text-white">{String(raw ?? "—")}</p></div>
+            ))}
+          </div>
+          <p className="mt-3 text-[10px] leading-5 text-slate-500">Edge Timing Analysis remains on Custom Alert as previously decided. This panel reports scanner counters only; it is not a backtest or profit forecast.</p>
+        </section>
+      )}
 
       {slug !== "box-spread" && (
         <Card className="overflow-hidden theme-border theme-surface">
