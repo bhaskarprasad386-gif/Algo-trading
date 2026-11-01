@@ -183,6 +183,7 @@ def test_alert_history_includes_saved_expiry_type(monkeypatch):
     payload = routes.alerts(days=30, limit=500)
     assert payload["count"] == 1
     assert payload["data"][0]["expiry_type"] == "WEEKLY"
+    assert payload["data"][0]["expiry_date"] == "2026-11-23"
 
 
 def test_alert_history_falls_back_to_current_instrument_master_classification(monkeypatch):
