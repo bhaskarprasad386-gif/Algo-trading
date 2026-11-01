@@ -323,7 +323,7 @@ def test_live_box_route_keeps_option_row_when_spot_provider_raises(monkeypatch):
 
 def test_live_route_rejects_fractional_leg_timestamp_without_truncating(monkeypatch):
     result = _result()
-    result.low.call_timestamp_ns = result.low.timestamp_ns + 0.5
+    result.low.call_timestamp_ns = str(result.low.timestamp_ns) + ".5"
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     assert routes.live(10)["count"] == 0
 
