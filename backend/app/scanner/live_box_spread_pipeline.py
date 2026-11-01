@@ -58,6 +58,37 @@ def _rewrite_spool_lines(path, lines):
             os.unlink(temporary)
 
 
+def _valid_spool_record(row):
+    """Reject structurally valid JSON records that cannot form a DB snapshot."""
+    from math import isfinite
+    required = {
+        "symbol", "expiry", "low_strike", "high_strike",
+        "direction", "observed_at", "last_update_timestamp_ns",
+    }
+    if not isinstance(row, dict) or not required.issubset(row):
+        return False
+    try:
+        if not str(row["symbol"]).strip():
+            return False
+        expiry = int(row["expiry"])
+        if expiry <= 0 or str(expiry) != str(row["expiry"]).strip():
+            return False
+        low = float(row["low_strike"])
+        high = float(row["high_strike"])
+        if not isfinite(low) or not isfinite(high) or low <= 0 or high <= low:
+            return False
+        if str(row["direction"]).strip().upper() not in {"LONG", "SHORT"}:
+            return False
+        datetime.strptime(str(row["observed_at"]), "%Y-%m-%dT%H:%M:%SZ")
+        _positive_timestamp_ns(row["last_update_timestamp_ns"], "spool.last_update_timestamp_ns")
+        for field in ("executable_edge", "edge_per_lot", "gross_pnl"):
+            if field in row and row[field] is not None and not isfinite(float(row[field])):
+                return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
 def _read_spool():
     path = _spool_path()
     if not path.exists():
@@ -73,12 +104,8 @@ def _read_spool():
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError("spool record must be a JSON object")
-                required = {
-                    "symbol", "expiry", "low_strike", "high_strike",
-                    "direction", "observed_at", "last_update_timestamp_ns",
-                }
-                if not required.issubset(row):
-                    raise ValueError("spool record is missing required snapshot fields")
+                if not _valid_spool_record(row):
+                    raise ValueError("spool record is not a valid Box Spread snapshot")
                 rows.append(row)
                 valid_lines.append(line if line.endswith("\n") else line + "\n")
             except (json.JSONDecodeError, ValueError) as exc:
