@@ -81,9 +81,19 @@ def _valid_spool_record(row):
             return False
         datetime.strptime(str(row["observed_at"]), "%Y-%m-%dT%H:%M:%SZ")
         _positive_timestamp_ns(row["last_update_timestamp_ns"], "spool.last_update_timestamp_ns")
-        for field in ("executable_edge", "edge_per_lot", "gross_pnl"):
+        for field, value in row.items():
+            if isinstance(value, float) and not isfinite(value):
+                return False
+        for field in (
+            "spot_price", "spot_age_seconds", "low_call_ltp", "low_call_bid",
+            "low_call_ask", "low_put_ltp", "low_put_bid", "low_put_ask",
+            "high_call_ltp", "high_call_bid", "high_call_ask", "high_put_ltp",
+            "high_put_bid", "high_put_ask", "executable_edge", "edge_per_lot",
+            "gross_pnl", "lot_size", "strike_distance", "timestamp_skew_ms",
+        ):
             if field in row and row[field] is not None and not isfinite(float(row[field])):
                 return False
+        json.dumps(row, separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError, OverflowError):
         return False
     return True
