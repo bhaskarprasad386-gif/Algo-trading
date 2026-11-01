@@ -168,7 +168,7 @@ class LiveBoxSpreadRunner:
                     # Reuse the same valid expiry used to seed the ATM tracker.
                     # Letting the selector infer expiry independently can pick an
                     # expired option chain from the instrument master.
-                    wanted = target.expiry or selected_expiries.get(target.underlying.strip().upper())
+                    wanted = target.expiry or next(iter(selected_expiries.get(target.underlying.strip().upper(), ())), None)
                     if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                         expiries = []
