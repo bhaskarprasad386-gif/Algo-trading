@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -6,6 +7,24 @@ from fastapi import HTTPException
 import pytest
 
 from app.scanner import box_spread_paper_routes as routes
+
+
+@contextmanager
+def _fake_paper_depth(row, roles=None):
+    fields = {
+        "LOW_CE": ("low_call_bid", "low_call_ask", "low_call_bid_qty", "low_call_ask_qty"),
+        "HIGH_CE": ("high_call_bid", "high_call_ask", "high_call_bid_qty", "high_call_ask_qty"),
+        "HIGH_PE": ("high_put_bid", "high_put_ask", "high_put_bid_qty", "high_put_ask_qty"),
+        "LOW_PE": ("low_put_bid", "low_put_ask", "low_put_bid_qty", "low_put_ask_qty"),
+    }
+    records = {}
+    for role, (bid, ask, bid_qty, ask_qty) in fields.items():
+        records[role] = SimpleNamespace(
+            bid=row.get(bid), ask=row.get(ask),
+            bid_qty=row.get(bid_qty), ask_qty=row.get(ask_qty), payload={},
+        )
+    yield records
+
 
 
 @pytest.fixture(autouse=True)
@@ -152,6 +171,7 @@ def test_simulation_rejects_malformed_live_strikes_without_server_error(monkeypa
     monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: [])
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
 
     with pytest.raises(HTTPException) as raised:
@@ -341,6 +361,7 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
     }
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "_matching_live_row", lambda contracts: row)
     monkeypatch.setattr(routes._ledger, "list_open_trades", lambda account_key: [trade_row])
     return row, trade_row
@@ -1013,6 +1034,7 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
         return contracts
 
     monkeypatch.setattr(routes, "_resolve", resolve_and_switch_off)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(
         routes._ledger, "claim_entry_attempt",
