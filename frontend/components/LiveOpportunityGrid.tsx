@@ -118,14 +118,16 @@ export default function LiveOpportunityGrid() {
             const symbol = String(row.symbol || "").toUpperCase();
             const threshold = symbol === "NIFTY" ? 5 : 10;
             if (edge === null || edge <= threshold) continue;
+            const incomingTimestamp = n(row, "last_update_timestamp_ns");
+            // Live rows must carry a valid positive integer nanosecond timestamp.
+            // Missing/malformed timestamps cannot refresh a row's liveness.
+            if (incomingTimestamp === null || incomingTimestamp <= 0 || !Number.isInteger(incomingTimestamp)) continue;
             const key = keyOf(row);
             const existing = rowsRef.current.get(key);
-            const incomingTimestamp = n(row, "last_update_timestamp_ns");
             const existingTimestamp = existing ? n(existing.row, "last_update_timestamp_ns") : null;
-            // WebSocket frames can be delayed or replayed after reconnect. Never
-            // replace a newer four-leg quote basket with an older observation.
-            if (existingTimestamp !== null && incomingTimestamp !== null
-                && incomingTimestamp < existingTimestamp) continue;
+            // Ignore duplicate and out-of-order frames. Replayed snapshots must
+            // not keep an old opportunity looking live by refreshing lastSeen.
+            if (existingTimestamp !== null && incomingTimestamp <= existingTimestamp) continue;
             rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
           }
           publishRows();
