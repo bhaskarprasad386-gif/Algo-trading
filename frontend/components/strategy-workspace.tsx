@@ -1032,6 +1032,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
             <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
             <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
+            <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
           </div>
         </Card>
       ) : (
@@ -1045,10 +1046,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       {slug === "box-spread" && (
         <section className="space-y-3" aria-label="Box Spread market overview">
-          <div className="grid gap-2 rounded-xl border theme-border theme-surface p-3 sm:grid-cols-3">
-            <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider theme-muted">Market data status</p><p className={"mt-1 text-sm font-bold " + (feedStatus === "LIVE" ? "theme-success" : "theme-warning")}>{feedStatus.replaceAll("_", " ")}</p><p className="mt-1 text-[11px] theme-muted">Exchange feed health · {feedAge == null ? "age unavailable" : feedAge.toFixed(1) + "s oldest tick"}</p></div>
-            <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider theme-muted">NSE / NFO</p><p className="mt-1 text-sm font-semibold theme-text">NSE: {String(feedExchangeFreshness?.NSE?.status ?? "UNKNOWN")} · NFO: {String(feedExchangeFreshness?.NFO?.status ?? "UNKNOWN")}</p><p className="mt-1 text-[11px] theme-muted">Market session state is not inferred from clock time.</p></div>
-            <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider theme-muted">Scanner runner</p><p className={"mt-1 text-sm font-semibold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNKNOWN"}</p><p className="mt-1 text-[11px] theme-muted">Broker orders remain OFF · {feedErrors == null ? "Error counters unavailable" : (feedErrors.delivery + feedErrors.normalizer) + " feed errors"}</p></div>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><h2 className="text-xs font-extrabold uppercase tracking-[0.14em] theme-text">Index Spot Board</h2><p className="mt-1 text-[10px] theme-muted">Latest spot observations attached to Box Spread opportunities · 5s freshness target</p></div>
+            <span className="text-[10px] theme-muted">NSE / NFO session state: {String(feedExchangeFreshness?.NSE?.status ?? "UNKNOWN")} / {String(feedExchangeFreshness?.NFO?.status ?? "UNKNOWN")}</span>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
             {["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"].map((symbol) => {
@@ -1059,8 +1059,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 return !best || stamp > bestStamp ? row : best;
               }, null);
               const spot = latest ? nullableNumber(value(latest, "spot_price", "underlying_spot_price")) : null;
-              const spotNs = latest ? nullableNumber(value(latest, "spot_timestamp_ns")) : null;
-              const spotAge = spotNs !== null && spotNs > 0 ? Math.max(0, (Date.now() * 1_000_000 - spotNs) / 1_000_000_000) : latest ? nullableNumber(value(latest, "spot_age_seconds")) : null;
+              const spotDate = latest ? parseTimestamp(value(latest, "spot_timestamp_ns")) : null;
+              const spotAge = spotDate ? Math.max(0, (Date.now() - spotDate.getTime()) / 1000) : latest ? nullableNumber(value(latest, "spot_age_seconds")) : null;
               const spotLive = spotAge !== null && spotAge <= 5;
               return <div key={symbol} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
                 <div className="flex items-center justify-between gap-1"><p className="text-[11px] font-extrabold tracking-wide theme-text">{symbol}</p><span className={"h-2 w-2 shrink-0 rounded-full " + (spotLive ? "bg-emerald-400" : spotAge === null ? "bg-slate-500" : "bg-amber-400")} aria-label={spotLive ? "Spot fresh" : spotAge === null ? "Spot unavailable" : "Spot stale"} /></div>
@@ -1070,7 +1070,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               </div>;
             })}
           </div>
-          <p className="text-[10px] theme-muted">Index cards use actual spot fields carried by current Box Spread rows. “No spot observation” means no current opportunity row supplied a spot quote; it is not treated as proof that the exchange feed is down.</p>
+          <p className="text-[10px] theme-muted">Cards are observation-based, not independent feed subscriptions. “No spot observation” means no current opportunity row supplied a spot quote; it does not prove that the exchange feed is down. Market session is not inferred from clock time.</p>
         </section>
       )}
       <Card className="theme-border theme-surface px-3 py-3">
