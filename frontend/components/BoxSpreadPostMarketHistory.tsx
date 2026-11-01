@@ -104,6 +104,7 @@ export default function BoxSpreadPostMarketHistory() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [sortingAll, setSortingAll] = useState(false);
   const [sortKey, setSortKey] = useState<"profit" | "edge" | "time">("time");
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
@@ -111,7 +112,36 @@ export default function BoxSpreadPostMarketHistory() {
     const bv = sortKey === "profit" ? (b.gross_pnl ?? Number.NEGATIVE_INFINITY) : sortKey === "edge" ? (b.executable_edge ?? Number.NEGATIVE_INFINITY) : new Date(b.observed_at).getTime();
     return (sortDirection === "desc" ? -1 : 1) * (av - bv);
   }), [rows, sortKey, sortDirection]);
-  const selectSort = (key: "profit" | "edge" | "time") => { if (sortKey === key) setSortDirection(v => v === "desc" ? "asc" : "desc"); else { setSortKey(key); setSortDirection("desc"); } };
+  const selectSort = async (key: "profit" | "edge" | "time") => {
+    const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
+    setSortKey(key);
+    setSortDirection(nextDirection);
+    if (!hasMore || sortingAll) return;
+    setSortingAll(true);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const allRows = [...rows];
+      let nextOffset = offset;
+      let more = true;
+      while (more) {
+        const params = new URLSearchParams({ days: String(days), limit: "5000", offset: String(nextOffset) });
+        if (expiryType !== "ALL") params.set("expiry_type", expiryType);
+        const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
+        if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
+        const body = (await response.json()) as SnapshotResponse;
+        if (body?.strategy !== "box-spread" || !Array.isArray(body.data)) throw new Error("Unexpected snapshot history response");
+        allRows.push(...body.data);
+        nextOffset += body.data.length;
+        more = body.has_more === true && body.data.length > 0;
+      }
+      setRows(mergeSnapshots([], allRows));
+      setOffset(nextOffset);
+      setHasMore(false);
+      setTotal(allRows.length);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
+    } finally { setSortingAll(false); }
+  };
   const sortMark = (key: "profit" | "edge" | "time") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
   const appendInFlight = useRef(false);
@@ -244,7 +274,7 @@ export default function BoxSpreadPostMarketHistory() {
       {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
         <table className="w-full min-w-[2600px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
-            <th className="px-3 py-2"><button type="button" onClick={() => selectSort("time")}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => selectSort("edge")}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => selectSort("profit")}>Gross P&L{sortMark("profit")}</button></th>
+            <th className="px-3 py-2"><button type="button" onClick={() => void selectSort("time")} disabled={sortingAll}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("edge")} disabled={sortingAll}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("profit")} disabled={sortingAll}>Gross P&L{sortMark("profit")}</button></th>
           </tr><tr>{Array.from({length:13},(_,i)=><th key={"blank"+i}></th>)}<th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr><tr>{Array.from({length:13},(_,i)=><th key={"subblank"+i}></th>)}{Array.from({length:4},(_,i)=>["LTP","Bid","Bid Qty","Ask","Ask Qty"].map(label=><th key={i+label} className="px-2 py-1">{label}</th>))}</tr></thead>
           <tbody>{sortedRows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
