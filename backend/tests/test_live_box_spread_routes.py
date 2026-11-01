@@ -319,3 +319,22 @@ def test_live_box_route_keeps_option_row_when_spot_provider_raises(monkeypatch):
     assert row["spot_price"] is None
     assert row["spot_timestamp_ns"] is None
     assert row["spot_age_seconds"] is None
+
+
+def test_live_route_rejects_fractional_leg_timestamp_without_truncating(monkeypatch):
+    result = _result()
+    result.low.call_timestamp_ns = result.low.timestamp_ns + 0.5
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    assert routes.live(10)["count"] == 0
+
+
+def test_monitor_route_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
+    result = _result()
+    result.low.call_timestamp_ns = 0
+    monkeypatch.setattr(
+        routes, "_monitor_getter",
+        lambda: {"updated_at_ns": result.low.timestamp_ns, "data": (result,), "entry_data": ()},
+    )
+    payload = routes.monitor_snapshot(max_age_seconds=5)
+    assert payload["fresh"] is True
+    assert payload["count"] == 0
