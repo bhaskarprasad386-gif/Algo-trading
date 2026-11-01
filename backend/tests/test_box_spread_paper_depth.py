@@ -77,3 +77,26 @@ def test_exit_capacity_is_limited_by_weakest_leg():
         "LOW_PE": [(70.0, 200)],
     }
     assert max_complete_lots(50, depth, roles=ROLES) == 1
+
+
+def test_sell_limit_filters_bid_levels_below_limit():
+    from app.scanner.box_spread_paper_depth import limit_eligible_depth
+    assert limit_eligible_depth([(10.5, 5), (10.0, 10), (9.5, 20)], "SELL", 10.0) == [
+        (10.5, 5), (10.0, 10),
+    ]
+
+
+def test_buy_limit_filters_ask_levels_above_limit():
+    from app.scanner.box_spread_paper_depth import limit_eligible_depth
+    assert limit_eligible_depth([(9.5, 5), (10.0, 10), (10.5, 20)], "BUY", 10.0) == [
+        (9.5, 5), (10.0, 10),
+    ]
+
+
+def test_limit_depth_rejects_non_positive_or_invalid_limits():
+    from app.scanner.box_spread_paper_depth import limit_eligible_depth
+    import pytest
+    with pytest.raises(ValueError):
+        limit_eligible_depth([(10.0, 5)], "SELL", 0)
+    with pytest.raises(ValueError):
+        limit_eligible_depth([(10.0, 5)], "HOLD", 10)
