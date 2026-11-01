@@ -241,6 +241,23 @@ def _exit_valuation(trace, quotes):
     }
 
 
+@router.get("/{trace_id}/exit-checks")
+def list_trace_exit_checks(trace_id: int, limit: int = 50):
+    limit = max(1, min(int(limit), 200))
+    with SessionLocal() as db:
+        trace = db.query(BoxSpreadTrace).filter(BoxSpreadTrace.id == trace_id).first()
+        if trace is None:
+            raise HTTPException(404, "Trace not found.")
+        rows = (db.query(BoxSpreadTraceExitCheck)
+                .filter(BoxSpreadTraceExitCheck.trace_id == trace_id)
+                .order_by(BoxSpreadTraceExitCheck.checked_at.desc())
+                .limit(limit).all())
+        return {"strategy": "box-spread", "trace_id": trace_id, "count": len(rows),
+                "data": [{"id": row.id, "checked_at": row.checked_at.isoformat(),
+                          "status": row.status, "gross_pnl": row.gross_pnl,
+                          "result": json.loads(row.exit_json)} for row in rows]}
+
+
 @router.post("/{trace_id}/exit-check")
 def check_trace_exit(trace_id: int):
     with SessionLocal() as db:
