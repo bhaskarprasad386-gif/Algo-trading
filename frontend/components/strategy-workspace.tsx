@@ -1054,19 +1054,24 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             {["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"].map((symbol) => {
               const matching = rows.filter((row) => String(row.symbol ?? row.underlying ?? "").trim().toUpperCase() === symbol);
               const latest = matching.reduce<Row | null>((best, row) => {
-                const stamp = Number(row.spot_timestamp_ns ?? row.timestamp_ns ?? 0);
-                const bestStamp = Number(best?.spot_timestamp_ns ?? best?.timestamp_ns ?? 0);
-                return !best || stamp > bestStamp ? row : best;
+                const stamp = String(row.spot_timestamp_ns ?? row.timestamp_ns ?? "0");
+                const bestStamp = String(best?.spot_timestamp_ns ?? best?.timestamp_ns ?? "0");
+                const newer = /^\\d+$/.test(stamp) && /^\\d+$/.test(bestStamp)
+                  ? BigInt(stamp) > BigInt(bestStamp)
+                  : Number(stamp) > Number(bestStamp);
+                return !best || newer ? row : best;
               }, null);
               const spot = latest ? nullableNumber(value(latest, "spot_price", "underlying_spot_price")) : null;
               const spotDate = latest ? parseTimestamp(value(latest, "spot_timestamp_ns")) : null;
               const spotAge = spotDate ? Math.max(0, (Date.now() - spotDate.getTime()) / 1000) : latest ? nullableNumber(value(latest, "spot_age_seconds")) : null;
+              const spotQuoteTime = spotDate ? spotDate.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST" : "Quote time unavailable";
               const spotLive = spotAge !== null && spotAge <= 5;
               return <div key={symbol} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
                 <div className="flex items-center justify-between gap-1"><p className="text-[11px] font-extrabold tracking-wide theme-text">{symbol}</p><span className={"h-2 w-2 shrink-0 rounded-full " + (spotLive ? "bg-emerald-400" : spotAge === null ? "bg-slate-500" : "bg-amber-400")} aria-label={spotLive ? "Spot fresh" : spotAge === null ? "Spot unavailable" : "Spot stale"} /></div>
                 <p className="mt-2 truncate text-lg font-bold tabular-nums theme-text">{spot === null ? "—" : formatValue(spot)}</p>
                 <p className={"mt-1 text-[9px] font-bold uppercase tracking-wider " + (spotLive ? "theme-success" : "theme-muted")}>{spotLive ? "SPOT LIVE" : spotAge === null ? "NO SPOT OBSERVATION" : "SPOT STALE"}</p>
                 <p className="mt-1 text-[10px] theme-muted">{spotAge === null ? "No spot quote in current rows" : spotAge.toFixed(1) + "s old"} · {matching.length} rows</p>
+                <p className="mt-1 truncate text-[9px] tabular-nums theme-muted">Tick {spotQuoteTime}</p>
               </div>;
             })}
           </div>
