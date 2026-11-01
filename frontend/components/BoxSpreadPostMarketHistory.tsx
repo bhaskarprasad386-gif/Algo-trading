@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Archive, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -59,8 +59,10 @@ export default function BoxSpreadPostMarketHistory() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const requestSequence = useRef(0);
 
   const load = useCallback(async (append = false, pageOffset = 0) => {
+    const requestId = ++requestSequence.current;
     if (append) setLoadingMore(true);
     else setLoading(true);
     try {
@@ -78,6 +80,7 @@ export default function BoxSpreadPostMarketHistory() {
       });
       if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
       const body = (await response.json()) as SnapshotResponse;
+      if (requestId !== requestSequence.current) return;
       if (body?.strategy !== "box-spread" || !Array.isArray(body.data) || !body.expiry_counts) {
         throw new Error("Unexpected snapshot history response");
       }
@@ -89,10 +92,14 @@ export default function BoxSpreadPostMarketHistory() {
       setError(null);
       setCheckedAt(new Date().toISOString());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load saved Box Spread history");
+      if (requestId === requestSequence.current) {
+        setError(e instanceof Error ? e.message : "Unable to load saved Box Spread history");
+      }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (requestId === requestSequence.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, [days, expiryType]);
 
