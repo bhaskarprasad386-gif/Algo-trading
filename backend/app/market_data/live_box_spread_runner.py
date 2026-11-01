@@ -172,7 +172,17 @@ class LiveBoxSpreadRunner:
                 if expiries: wanted = min(expiries)[1]
             if wanted:
                 selected_expiries[target.underlying.strip().upper()] = wanted
-                strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted, exchange_segment=("BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO")))
+                expiry_strikes = concrete_strikes_from_master(
+                    self.master.instruments,
+                    symbols=(target.underlying,),
+                    expiry=wanted,
+                    exchange_segment=("BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"),
+                ).get(target.underlying.strip().upper(), ())
+                symbol_key = target.underlying.strip().upper()
+                # Weekly and monthly targets share one spot/ATM tracker per
+                # underlying. Union their real strikes so the later expiry
+                # cannot overwrite the earlier expiry's ATM coverage.
+                strikes[symbol_key] = tuple(sorted(set(strikes.get(symbol_key, ())) | set(expiry_strikes)))
         # Track every configured target for spot quotes even if an option chain
         # is temporarily unavailable. Empty strike sets intentionally disable
         # ATM readiness while preserving source-backed spot snapshots.
