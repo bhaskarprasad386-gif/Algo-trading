@@ -75,7 +75,7 @@ export default function BoxSpreadTraceArea() {
       <div className="flex items-start gap-3">
         <Archive className="mt-0.5 h-5 w-5 theme-accent" />
         <div><h2 className="text-base font-extrabold theme-text">Box Spread Trace</h2>
-          <p className="mt-1 text-xs theme-muted">Alerts manually added from Post-Market History. Each saved alert remains here as its own trace record.</p>
+          <p className="mt-1 text-xs theme-muted">Alerts manually added from Post-Market History remain here as separate records. Check Status / Exit fetches fresh live quotes and available depth for all four legs; it only calculates exit status and P&L preview — it never places an order.</p>
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -94,7 +94,7 @@ export default function BoxSpreadTraceArea() {
             <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
             <p className="mt-1 text-[10px] theme-muted">Trace saved: {time(trace.created_at)} · Original alert: {time(trace.entry.observed_at)}</p>
           </div>
-          <button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-9 rounded-lg border border-amber-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{busy === trace.id ? "Checking…" : "Exit Check"}</button>
+          <button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-9 rounded-lg border border-amber-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {legs.map(([label,key],index) => {
