@@ -44,12 +44,18 @@ def _valid_quote(q: OptionQuote) -> bool:
         strike = float(q.strike)
         lot_size = float(q.lot_size)
         timestamp = int(q.timestamp_ns)
+        leg_timestamps = tuple(
+            int(value if value is not None else q.timestamp_ns)
+            for value in (q.call_timestamp_ns, q.put_timestamp_ns)
+        )
         prices = (q.call_bid, q.call_ask, q.put_bid, q.put_ask)
         if not isfinite(strike) or strike <= 0:
             return False
         if not isfinite(lot_size) or lot_size <= 0 or not lot_size.is_integer():
             return False
-        if timestamp <= 0 or any(not isfinite(float(value)) or float(value) <= 0 for value in prices):
+        if timestamp <= 0 or any(value <= 0 for value in leg_timestamps):
+            return False
+        if any(not isfinite(float(value)) or float(value) <= 0 for value in prices):
             return False
         if not _whole_nonnegative(q.volume) or not _whole_nonnegative(q.oi):
             return False
