@@ -89,3 +89,15 @@ def test_websocket_row_includes_bid_ask_quantities(monkeypatch):
     assert row["low_put_bid_qty"] == 103 and row["low_put_ask_qty"] == 104
     assert row["high_call_bid_qty"] == 201 and row["high_call_ask_qty"] == 202
     assert row["high_put_bid_qty"] == 203 and row["high_put_ask_qty"] == 204
+
+def test_websocket_row_keeps_option_row_when_spot_provider_raises(monkeypatch):
+    now_ns = time.time_ns()
+    monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
+    monkeypatch.setattr(websocket, "_spot_provider", lambda _symbol: (_ for _ in ()).throw(RuntimeError("spot feed unavailable")))
+
+    row = websocket._row(_result(now_ns))
+
+    assert row is not None
+    assert row["executable_edge"] == 6
+    assert row["spot_price"] is None
+    assert row["spot_timestamp_ns"] is None
