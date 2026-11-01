@@ -49,6 +49,23 @@ const observedTime = (value: string) => {
     : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
 };
 
+const snapshotKey = (row: Snapshot) => [
+  row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction,
+  row.last_update_timestamp_ns ?? row.observed_at,
+].join("|");
+
+const mergeSnapshots = (current: Snapshot[], incoming: Snapshot[]) => {
+  const seen = new Set(current.map(snapshotKey));
+  const merged = [...current];
+  for (const row of incoming) {
+    const key = snapshotKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(row);
+  }
+  return merged;
+};
+
 const quoteTime = (value: number | string | null | undefined) => {
   if (value == null || value === "") return "—";
   const timestamp = Number(value);
@@ -72,10 +89,15 @@ export default function BoxSpreadPostMarketHistory() {
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const requestSequence = useRef(0);
+  const appendInFlight = useRef(false);
 
   const load = useCallback(async (append = false, pageOffset = 0) => {
+    if (append && appendInFlight.current) return;
     const requestId = ++requestSequence.current;
-    if (append) setLoadingMore(true);
+    if (append) {
+      appendInFlight.current = true;
+      setLoadingMore(true);
+    }
     else setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -96,7 +118,7 @@ export default function BoxSpreadPostMarketHistory() {
       if (body?.strategy !== "box-spread" || !Array.isArray(body.data) || !body.expiry_counts) {
         throw new Error("Unexpected snapshot history response");
       }
-      setRows(current => append ? [...current, ...body.data] : body.data);
+      setRows(current => append ? mergeSnapshots(current, body.data) : mergeSnapshots([], body.data));
       setTotal(body.total_count);
       setCounts(body.expiry_counts);
       setOffset(nextOffset + body.data.length);
@@ -111,6 +133,7 @@ export default function BoxSpreadPostMarketHistory() {
       if (requestId === requestSequence.current) {
         setLoading(false);
         setLoadingMore(false);
+        appendInFlight.current = false;
       }
     }
   }, [days, expiryType]);
@@ -118,6 +141,7 @@ export default function BoxSpreadPostMarketHistory() {
   useEffect(() => {
     // Do not display rows from the previous expiry/window under the new filter
     // while its request is in flight or after that request fails.
+    appendInFlight.current = false;
     setRows([]);
     setTotal(0);
     setCounts({ WEEKLY: 0, MONTHLY: 0, UNKNOWN: 0 });
@@ -181,7 +205,7 @@ export default function BoxSpreadPostMarketHistory() {
           <thead className="theme-surface-2 theme-muted"><tr>
             <th className="px-3 py-2">Saved (IST)</th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2">Edge</th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2">Gross P&L</th>
           </tr></thead>
-          <tbody>{rows.map((row, index) => <tr key={row.symbol + "-" + row.expiry + "-" + row.low_strike + "-" + row.high_strike + "-" + row.direction + "-" + row.observed_at + "-" + index} className="border-t theme-border">
+          <tbody>{rows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{quoteTime(row.last_update_timestamp_ns)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.timestamp_skew_ms == null ? "—" : number(row.timestamp_skew_ms) + " ms"}</td>
