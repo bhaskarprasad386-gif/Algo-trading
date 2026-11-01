@@ -335,6 +335,34 @@ def test_live_route_rejects_fractional_leg_timestamp_without_truncating(monkeypa
     assert routes.live(10)["count"] == 0
 
 
+def test_live_route_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
+    result = _result()
+    result.low.call_timestamp_ns = 0
+    monkeypatch.setattr(routes, "_latest", lambda: (result,))
+    assert routes.live(10)["count"] == 0
+
+
+def test_monitor_route_reports_all_four_leg_timestamps_and_exact_skew(monkeypatch):
+    now = time.time_ns()
+    result = _result(low_ts=now - 500_000_000, high_ts=now)
+    result.low.call_timestamp_ns = now - 1_000_000_000
+    result.low.put_timestamp_ns = now - 800_000_000
+    result.high.call_timestamp_ns = now - 400_000_000
+    result.high.put_timestamp_ns = now
+    monkeypatch.setattr(
+        routes, "_monitor_getter",
+        lambda: {"updated_at_ns": now, "data": (result,), "entry_data": ()},
+    )
+
+    row = routes.monitor_snapshot(max_age_seconds=5)["data"][0]
+
+    assert row["low_call_timestamp_ns"] == now - 1_000_000_000
+    assert row["low_put_timestamp_ns"] == now - 800_000_000
+    assert row["high_call_timestamp_ns"] == now - 400_000_000
+    assert row["high_put_timestamp_ns"] == now
+    assert row["timestamp_skew_ms"] == 1000.0
+
+
 def test_monitor_route_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
     result = _result()
     result.low.call_timestamp_ns = 0
