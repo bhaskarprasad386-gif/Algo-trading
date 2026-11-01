@@ -313,3 +313,27 @@ def test_pipeline_retains_snapshots_older_than_deduplication_window(tmp_path, mo
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_snapshot_payload_persists_all_four_leg_timestamps_and_quote_skew(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    base = 1_793_084_708_000_000_000
+    result = make_result(base)
+    result.low.call_timestamp_ns = base
+    result.low.put_timestamp_ns = base + 100_000_000
+    result.high.call_timestamp_ns = base + 200_000_000
+    result.high.put_timestamp_ns = base + 300_000_000
+    pipeline = LiveBoxSpreadPipeline(
+        scanner=RepeatingScanner(result), session_factory=None, alerts=NoopAlerts(),
+    )
+
+    pipeline.observe({})
+
+    saved = json.loads((tmp_path / "pending.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert saved["low_call_timestamp_ns"] == base
+    assert saved["low_put_timestamp_ns"] == base + 100_000_000
+    assert saved["high_call_timestamp_ns"] == base + 200_000_000
+    assert saved["high_put_timestamp_ns"] == base + 300_000_000
+    assert saved["last_update_timestamp_ns"] == base + 300_000_000
+    assert saved["timestamp_skew_ms"] == 300.0
