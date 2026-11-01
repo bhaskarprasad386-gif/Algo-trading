@@ -95,6 +95,7 @@ const quoteTime = (value: number | string | null | undefined) => {
 export default function BoxSpreadPostMarketHistory() {
   const [days, setDays] = useState(7);
   const [expiryType, setExpiryType] = useState("ALL");
+  const [selectedIndex, setSelectedIndex] = useState("ALL");
   const [rows, setRows] = useState<Snapshot[]>([]);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ WEEKLY: 0, MONTHLY: 0, UNKNOWN: 0 });
@@ -142,6 +143,8 @@ export default function BoxSpreadPostMarketHistory() {
       while (more) {
         const params = new URLSearchParams({ days: String(days), limit: "5000", offset: String(nextOffset) });
         if (expiryType !== "ALL") params.set("expiry_type", expiryType);
+      if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
+        if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
         const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
         if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
         const body = (await response.json()) as SnapshotResponse;
@@ -207,7 +210,7 @@ export default function BoxSpreadPostMarketHistory() {
         appendInFlight.current = false;
       }
     }
-  }, [days, expiryType]);
+  }, [days, expiryType, selectedIndex]);
 
   useEffect(() => {
     // Do not display rows from the previous expiry/window under the new filter
@@ -250,6 +253,11 @@ export default function BoxSpreadPostMarketHistory() {
         <label className="text-xs theme-muted">Expiry
           <select value={expiryType} onChange={event => setExpiryType(event.target.value)} className="ml-2 min-h-9 rounded-lg border theme-border theme-surface px-2 text-xs theme-text">
             <option value="ALL">All expiries</option><option value="WEEKLY">Weekly</option><option value="MONTHLY">Monthly</option><option value="UNKNOWN">Unknown</option>
+          </select>
+        </label>
+        <label className="text-xs theme-muted">Index
+          <select value={selectedIndex} onChange={event => setSelectedIndex(event.target.value)} className="ml-2 min-h-9 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text" aria-label="Filter history by index">
+            <option value="ALL">All indices</option><option value="NIFTY">NIFTY</option><option value="BANKNIFTY">BANKNIFTY</option><option value="FINNIFTY">FINNIFTY</option><option value="MIDCPNIFTY">MIDCPNIFTY</option><option value="SENSEX">SENSEX</option><option value="BANKEX">BANKEX</option>
           </select>
         </label>
       </div>
