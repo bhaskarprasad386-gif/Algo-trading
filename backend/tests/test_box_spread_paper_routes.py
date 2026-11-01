@@ -121,7 +121,7 @@ def test_paper_error_handler_preserves_http_status():
 def test_matching_live_row_skips_malformed_strikes_without_crashing(monkeypatch):
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25, lot_size=25,
     )
     malformed = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
@@ -152,7 +152,7 @@ def test_simulation_rejects_malformed_live_strikes_without_server_error(monkeypa
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
@@ -196,7 +196,7 @@ def test_simulation_rejects_missing_fresh_backend_opportunity_before_execution(m
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
@@ -262,7 +262,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -282,6 +282,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     monkeypatch.setattr(routes._ledger, "complete_entry_attempt", lambda **kwargs: None)
     monkeypatch.setattr(routes._ledger, "get_entry_claim", lambda **kwargs: None)
     monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", lambda contracts: _fake_paper_depth(row))
     monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
     monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "FILLED"})
 
@@ -336,7 +337,7 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -895,7 +896,7 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -1003,7 +1004,7 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     row = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
@@ -1208,7 +1209,7 @@ def test_mark_price_rejects_invalid_two_sided_quote():
 def test_matching_live_row_reuses_supplied_snapshot_without_scanner_request(monkeypatch):
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000.0, high_strike=25100.0, direction="LONG",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
     )
     matching = {
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
@@ -1251,7 +1252,7 @@ def test_fresh_marks_can_use_preloaded_trade_and_snapshot(monkeypatch):
         routes, "_resolve",
         lambda request: SimpleNamespace(
             underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-            low_strike=25000.0, high_strike=25100.0, direction="LONG",
+            low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
         ),
     )
     marks = routes._fresh_mark_prices_for_trade(
