@@ -250,6 +250,7 @@ export default function LiveOpportunityGrid() {
                     <span>Quote {quoteTime(row.last_update_timestamp_ns)}</span>
                     <span>4-leg skew {(() => { const skew = n(row, "timestamp_skew_ms"); return skew === null || skew < 0 ? "—" : fmt(skew, 3) + " ms"; })()}</span>
                     <span>Received {new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })} IST</span>
+                    <span className={status === "LIVE" ? "text-emerald-400" : "text-amber-300"}>{status === "LIVE" ? "Updated" : "No update"} {Math.max(0, (Date.now() - lastSeen) / 1000).toFixed(1)}s ago</span>
                   </div>
                 </div>
               </div>
