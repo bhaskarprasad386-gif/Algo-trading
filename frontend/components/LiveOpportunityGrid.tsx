@@ -199,7 +199,7 @@ export default function LiveOpportunityGrid() {
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[11px]">
             <span role="status" aria-live="polite" aria-atomic="true" className={"inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 font-bold " + (streamHealthy ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-200")}>
-              {streamHealthy ? <Wifi size={13} aria-hidden="true"/> : <WifiOff size={13} aria-hidden="true"/>} {streamLabel}
+              {streamHealthy ? <Wifi size={13} aria-hidden="true"/> : <WifiOff size={13} aria-hidden="true"/>} {streamLabel} · {lastMessageAt === null ? "last frame —" : "last frame " + Math.max(0, (Date.now() - lastMessageAt) / 1000).toFixed(1) + "s ago"}
             </span>
             <span className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-300">{liveCount} live <span className="text-slate-500">/ {expiryRows.length} retained</span></span>
           </div>
