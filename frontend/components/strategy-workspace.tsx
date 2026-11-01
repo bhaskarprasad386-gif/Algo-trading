@@ -1042,18 +1042,18 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       </div>
       )}
 
-      <Card className="theme-border theme-surface p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_auto]">
+      <Card className="theme-border theme-surface px-3 py-3">
+        <div className="flex items-center gap-2 text-xs font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(160px,0.7fr)_auto]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 theme-muted" />
             <span className="sr-only">Search</span>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 pl-9 text-sm theme-text" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 pl-9 text-xs theme-text" />
           </label>
-          <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-sm theme-text">
+          <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 text-xs theme-text">
             {c.controls.map((x) => <option key={x} value={x}>{slug === "synthetic-arbitrage" && x === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS (15)" : x}</option>)}
           </select>
-          <button type="button" onClick={refresh} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border">
+          <button type="button" onClick={refresh} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text hover:theme-border">
             <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> Refresh
           </button>
         </div>
@@ -1089,6 +1089,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         )}
       </Card>
 
+      {slug !== "box-spread" && (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {c.metrics.map((metric) => (
           <Card key={metric} className="theme-border theme-surface p-4">
@@ -1097,7 +1098,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </Card>
         ))}
       </div>
+      )}
 
+      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <div><p className="text-xs theme-muted">Common Feed Ticks</p><p className="mt-1 text-lg font-semibold theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p><p className="text-[11px] theme-muted">Actual cumulative feed counter</p></div>
@@ -1109,6 +1112,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div><p className="text-xs theme-muted">Normalizer Errors</p><p className="mt-1 text-lg font-semibold theme-text">{feedErrors?.normalizer ?? "—"}</p></div>
         </div>
       </Card>
+      )}
 
       {slug === "synthetic-arbitrage" && (
         <Card className="theme-border theme-surface p-4">
