@@ -353,3 +353,31 @@ def test_snapshot_payload_rejects_explicit_zero_leg_timestamp(tmp_path, monkeypa
         pipeline.observe({})
 
     assert not (tmp_path / "pending.jsonl").exists()
+
+
+
+def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_path, monkeypatch):
+    import json
+    from app.scanner import live_box_spread_pipeline as pipeline_module
+
+    spool = tmp_path / "pending.jsonl"
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(spool))
+    valid_one = {"symbol": "NIFTY", "last_update_timestamp_ns": 100}
+    valid_two = {"symbol": "SENSEX", "last_update_timestamp_ns": 200}
+    corrupt_json = '{"symbol": "BROKEN",\n'
+    non_object = '[]\n'
+    spool.write_text(
+        json.dumps(valid_one) + "\n" + corrupt_json + non_object + json.dumps(valid_two) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = pipeline_module._read_spool()
+
+    assert rows == [valid_one, valid_two]
+    assert spool.read_text(encoding="utf-8").splitlines() == [
+        json.dumps(valid_one), json.dumps(valid_two),
+    ]
+    quarantine = tmp_path / "pending.jsonl.corrupt"
+    assert quarantine.read_text(encoding="utf-8").splitlines() == [
+        corrupt_json.rstrip("\n"), non_object.rstrip("\n"),
+    ]
