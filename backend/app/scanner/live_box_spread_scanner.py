@@ -37,6 +37,14 @@ class LiveBoxSpreadScanner:
             return None
 
     @staticmethod
+    def _nonnegative_integer(value):
+        try:
+            number = float(value)
+            return int(number) if number >= 0 and number.is_integer() else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
     def _expiry(v):
         text=str(v or "").strip().upper()
         for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d","%d-%m-%Y"):
@@ -119,9 +127,17 @@ class LiveBoxSpreadScanner:
                     continue
                 try:
                     ce_expiry=self._expiry(ce.get("expiry")); pe_expiry=self._expiry(pe.get("expiry"))
-                    ce_lot=int(float(ce.get("lot_size") or 0)); pe_lot=int(float(pe.get("lot_size") or 0))
-                    if ce_expiry != pe_expiry or ce_lot <= 0 or ce_lot != pe_lot:
+                    ce_lot=self._nonnegative_integer(ce.get("lot_size"))
+                    pe_lot=self._nonnegative_integer(pe.get("lot_size"))
+                    if ce_expiry != pe_expiry or ce_lot is None or pe_lot is None or ce_lot <= 0 or ce_lot != pe_lot:
                         self._diagnostic_counts["expiry_or_lot_mismatch"] += 1
+                        continue
+                    ce_volume=self._nonnegative_integer(ce.get("volume") or 0)
+                    pe_volume=self._nonnegative_integer(pe.get("volume") or 0)
+                    ce_oi=self._nonnegative_integer(ce.get("oi") or 0)
+                    pe_oi=self._nonnegative_integer(pe.get("oi") or 0)
+                    if None in (ce_volume, pe_volume, ce_oi, pe_oi):
+                        self._diagnostic_counts["malformed_leg_pair"] += 1
                         continue
                     ce_bid,ce_ask=self._price(ce.get("bid")),self._price(ce.get("ask"))
                     pe_bid,pe_ask=self._price(pe.get("bid")),self._price(pe.get("ask"))
@@ -131,8 +147,8 @@ class LiveBoxSpreadScanner:
                     ce_ts=int(ce.get("source_timestamp_ns") or 0); pe_ts=int(pe.get("source_timestamp_ns") or 0)
                     grouped.append(OptionQuote(
                         max(ce_ts,pe_ts),symbol,ce_expiry,s,ce_bid,ce_ask,pe_bid,pe_ask,ce_lot,cls,
-                        min(int(float(ce.get("volume") or 0)),int(float(pe.get("volume") or 0))),
-                        min(int(float(ce.get("oi") or 0)),int(float(pe.get("oi") or 0))),
+                        min(ce_volume, pe_volume),
+                        min(ce_oi, pe_oi),
                         self._price(ce.get("ltp")),self._price(pe.get("ltp")),ce_ts,pe_ts,
                         self._quantity(ce.get("bid_qty")),self._quantity(ce.get("ask_qty")),
                         self._quantity(pe.get("bid_qty")),self._quantity(pe.get("ask_qty")),
