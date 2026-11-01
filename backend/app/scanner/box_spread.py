@@ -128,9 +128,10 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
         max_spread = float(config.max_option_spread_pct)
     except (TypeError, ValueError, OverflowError):
         raise ValueError("invalid Box Spread scan configuration")
-    if (not isfinite(atm_value) or atm_value <= 0 or not isfinite(fees)
+    if (not isfinite(atm_value) or atm_value <= 0 or not isfinite(fees) or fees < 0
             or not isfinite(min_edge) or not isfinite(max_spread)
-            or config.min_option_volume < 0 or config.min_option_oi < 0 or max_spread < 0):
+            or not _whole_nonnegative(config.min_option_volume)
+            or not _whole_nonnegative(config.min_option_oi) or max_spread < 0):
         raise ValueError("invalid Box Spread scan configuration")
     first = quotes[0]
     if any(q.underlying != first.underlying or q.expiry != first.expiry or q.instrument_class != cls for q in quotes):
