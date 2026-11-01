@@ -112,6 +112,7 @@ export default function BoxSpreadPostMarketHistory() {
   const [sortKey, setSortKey] = useState<"profit" | "edge" | "time" | "gap" | "lots">("time");
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [traces, setTraces] = useState<Record<string, { id: number; quantity_lots: number }>>({});
+  const [traceRecords, setTraceRecords] = useState<Array<{ id: number; created_at: string; symbol: string; expiry: string; direction: string; quantity_lots: number; lot_size: number; quantity: number; entry: Snapshot; source_identity: string }>>([]);
   const [traceBusy, setTraceBusy] = useState<string | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
   const [exitChecks, setExitChecks] = useState<Record<number, { status: string; gross_pnl: number | null; max_complete_exit_lots_now: number; message: string; legs: Array<{ leg: string; exit_side: string; exit_price: number | null; exit_qty: number | null; leg_gross_pnl: number | null }> }>>({});
@@ -177,6 +178,7 @@ export default function BoxSpreadPostMarketHistory() {
       const next: Record<string, { id: number; quantity_lots: number }> = {};
       for (const item of body.data) next[String(item.source_identity)] = { id: Number(item.id), quantity_lots: Number(item.quantity_lots) };
       setTraces(next);
+      setTraceRecords(body.data);
     }).catch(() => {});
     return () => { active = false; };
   }, [traceApi]);
@@ -188,6 +190,7 @@ export default function BoxSpreadPostMarketHistory() {
       const body = await response.json();
       if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.message || "Unable to add trace");
       setTraces(old => ({ ...old, [String(body.data.source_identity)]: { id: Number(body.data.id), quantity_lots: Number(body.data.quantity_lots) } }));
+      setTraceRecords(old => [body.data, ...old.filter(item => Number(item.id) !== Number(body.data.id))]);
     } catch (e) { setTraceError(e instanceof Error ? e.message : "Unable to add trace"); }
     finally { setTraceBusy(null); }
   };
@@ -393,6 +396,49 @@ export default function BoxSpreadPostMarketHistory() {
           {loadingMore ? "Loading…" : "Load more"}
         </button>}
       </div>}
+      <section id="box-trace-column" className="mt-6 rounded-xl border-2 border-cyan-500/30 theme-surface p-3 sm:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b theme-border pb-3">
+          <div>
+            <h3 className="text-base font-extrabold theme-text">Box Spread Trace</h3>
+            <p className="mt-1 text-xs theme-muted">Only alerts explicitly added with Add to Trace appear here. Saved entries retain their original alert quotes.</p>
+          </div>
+          <span className="rounded-lg border theme-border theme-surface-2 px-3 py-1.5 text-xs font-bold theme-text">{traceRecords.length} saved</span>
+        </div>
+        {!traceRecords.length ? <p className="mt-3 rounded-lg border theme-border theme-surface-2 p-3 text-sm theme-muted">No trades added to Trace yet. Post-Market History में किसी alert पर Add to Trace दबाएँ; वह entry यहाँ दिखाई देगी.</p> : <div className="mt-3 space-y-3">
+          {traceRecords.map(trace => <article key={trace.id} className="rounded-xl border theme-border theme-surface-2 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-extrabold theme-text">{trace.symbol}</span>
+                  <span className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:text-cyan-300">{trace.direction}</span>
+                  <span className="text-[10px] font-semibold theme-muted">{trace.expiry}</span>
+                </div>
+                <p className="mt-1 text-xs theme-muted">Strikes {number(trace.entry.low_strike)} – {number(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {number(trace.quantity)}</p>
+                <p className="mt-1 text-[10px] theme-muted">Added {observedTime(trace.created_at)} · Alert time {observedTime(trace.entry.observed_at)}</p>
+              </div>
+              <button type="button" onClick={() => void checkExit(trace.id)} disabled={exitBusy === trace.id} className="min-h-9 rounded-lg border border-amber-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{exitBusy === trace.id ? "Checking…" : "Exit Check"}</button>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {([["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const).map(([label,leg]) => {
+                const side = trace.entry.trace_entry_sides?.[leg] || "—";
+                const price = trace.entry.trace_entry_prices?.[leg];
+                const depth = trace.entry.trace_entry_depth?.[leg];
+                return <div key={leg} className="rounded-lg border theme-border theme-surface p-2">
+                  <p className="text-[10px] font-bold theme-text">{label} · {side}</p>
+                  <p className="mt-1 text-xs font-semibold theme-text">Entry ₹{number(price)}</p>
+                  <p className="mt-1 text-[10px] theme-muted">Saved depth {number(depth)}</p>
+                </div>;
+              })}
+            </div>
+            {exitChecks[trace.id] && <div className="mt-3 rounded-lg border theme-border theme-surface p-2 text-xs theme-text">
+              <p className="font-bold">{exitChecks[trace.id].status} · {exitChecks[trace.id].gross_pnl == null ? "Gross P&L —" : "Gross P&L ₹" + number(exitChecks[trace.id].gross_pnl)} · Max exit {exitChecks[trace.id].max_complete_exit_lots_now} lots</p>
+              <p className="mt-1 theme-muted">{exitChecks[trace.id].message}</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">{exitChecks[trace.id].legs.map(leg => <p key={leg.leg} className="text-[10px] theme-muted">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+number(leg.exit_price)} · Qty {number(leg.exit_qty)}</p>)}</div>
+            </div>}
+          </article>)}
+        </div>}
+      </section>
+
       {checkedAt && <p className="mt-2 text-[11px] theme-muted">Last checked: {new Date(checkedAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST</p>}
     </Card>
   );
