@@ -1,17 +1,17 @@
 import json
 from datetime import datetime, timedelta, timezone
-
-import pytest
 from types import SimpleNamespace
 
-from app.market_data import box_spread_instrument_cache as cache_module
+import pytest
 
+from app.market_data import box_spread_instrument_cache as cache_module
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 
 
 class FakeMaster:
     _cached_instruments = None
     _cached_snapshot_date = None
+
     def __init__(self, rows=None, error=None):
         self.instruments = []
         self._loaded = False
@@ -29,6 +29,14 @@ class FakeMaster:
 
 def _rows():
     return [{"symbol": "NIFTY26OCT25000CE", "exch_seg": "NFO", "token": "123"}]
+
+
+def _fail_alternate_host(monkeypatch):
+    monkeypatch.setattr(
+        cache_module.requests,
+        "get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("alternate timeout")),
+    )
 
 
 def test_box_spread_writes_its_own_cache_after_success(monkeypatch, tmp_path):
@@ -49,6 +57,7 @@ def test_box_spread_uses_recent_own_cache_on_download_failure(monkeypatch, tmp_p
         "instruments": rows,
     }))
     master = FakeMaster(error=RuntimeError("provider timeout"))
+    _fail_alternate_host(monkeypatch)
     assert download_box_spread_instruments(master) == rows
     assert master.instruments == rows
     assert master._loaded is True
@@ -63,10 +72,9 @@ def test_box_spread_rejects_stale_cache_and_preserves_download_error(monkeypatch
         "instruments": _rows(),
     }))
     master = FakeMaster(error=RuntimeError("provider timeout"))
-    monkeypatch.setattr(cache_module.requests, "get", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("alternate timeout")))
+    _fail_alternate_host(monkeypatch)
     with pytest.raises(RuntimeError, match="provider timeout"):
         download_box_spread_instruments(master)
-
 
 
 def test_box_spread_tries_alternate_angel_one_host_before_disk_cache(monkeypatch, tmp_path):
