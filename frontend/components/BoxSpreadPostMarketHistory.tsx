@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { Archive, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -23,6 +23,10 @@ type Snapshot = {
   freshness?: string;
   last_update_timestamp_ns?: number | string | null;
   timestamp_skew_ms?: number | null;
+  low_call_ltp?: number | null; low_call_bid?: number | null; low_call_ask?: number | null; low_call_bid_qty?: number | null; low_call_ask_qty?: number | null;
+  low_put_ltp?: number | null; low_put_bid?: number | null; low_put_ask?: number | null; low_put_bid_qty?: number | null; low_put_ask_qty?: number | null;
+  high_call_ltp?: number | null; high_call_bid?: number | null; high_call_ask?: number | null; high_call_bid_qty?: number | null; high_call_ask_qty?: number | null;
+  high_put_ltp?: number | null; high_put_bid?: number | null; high_put_ask?: number | null; high_put_bid_qty?: number | null; high_put_ask_qty?: number | null;
 };
 
 type SnapshotResponse = {
@@ -48,6 +52,8 @@ const observedTime = (value: string) => {
     ? value
     : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
 };
+
+const quoteField = (row: Snapshot, prefix: string, field: string) => number(row[(prefix + "_" + field) as keyof Snapshot] as number | null | undefined);
 
 const snapshotKey = (row: Snapshot) => [
   row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction,
@@ -98,6 +104,45 @@ export default function BoxSpreadPostMarketHistory() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [sortingAll, setSortingAll] = useState(false);
+  const [sortKey, setSortKey] = useState<"profit" | "edge" | "time">("time");
+  const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
+  const sortedRows = useMemo(() => [...rows].sort((a, b) => {
+    const av = sortKey === "profit" ? (a.gross_pnl ?? Number.NEGATIVE_INFINITY) : sortKey === "edge" ? (a.executable_edge ?? Number.NEGATIVE_INFINITY) : new Date(a.observed_at).getTime();
+    const bv = sortKey === "profit" ? (b.gross_pnl ?? Number.NEGATIVE_INFINITY) : sortKey === "edge" ? (b.executable_edge ?? Number.NEGATIVE_INFINITY) : new Date(b.observed_at).getTime();
+    return (sortDirection === "desc" ? -1 : 1) * (av - bv);
+  }), [rows, sortKey, sortDirection]);
+  const selectSort = async (key: "profit" | "edge" | "time") => {
+    const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
+    setSortKey(key);
+    setSortDirection(nextDirection);
+    if (!hasMore || sortingAll) return;
+    setSortingAll(true);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const allRows = [...rows];
+      let nextOffset = offset;
+      let more = true;
+      while (more) {
+        const params = new URLSearchParams({ days: String(days), limit: "5000", offset: String(nextOffset) });
+        if (expiryType !== "ALL") params.set("expiry_type", expiryType);
+        const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
+        if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
+        const body = (await response.json()) as SnapshotResponse;
+        if (body?.strategy !== "box-spread" || !Array.isArray(body.data)) throw new Error("Unexpected snapshot history response");
+        allRows.push(...body.data);
+        nextOffset += body.data.length;
+        more = body.has_more === true && body.data.length > 0;
+      }
+      setRows(mergeSnapshots([], allRows));
+      setOffset(nextOffset);
+      setHasMore(false);
+      setTotal(allRows.length);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
+    } finally { setSortingAll(false); }
+  };
+  const sortMark = (key: "profit" | "edge" | "time") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
@@ -222,16 +267,16 @@ export default function BoxSpreadPostMarketHistory() {
             <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Edge / lot</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.edge_per_lot)}</p></div>
             <div className="rounded-lg border theme-border theme-surface p-2"><p className="text-[9px] theme-muted">Gross P&L</p><p className="mt-1 text-xs font-semibold theme-text">₹{number(row.gross_pnl)}</p></div>
           </div>
-          <div className="mt-3 flex flex-wrap justify-between gap-2 border-t theme-border pt-2 text-[10px] theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
+          <div className="mt-3 grid grid-cols-2 gap-2">{([["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const).map(([label,prefix]) => { const buy = row.direction?.toUpperCase().includes("LONG") ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); return <div key={prefix} className="rounded-lg border theme-border theme-surface p-2"><p className={"text-[10px] font-bold " + (buy ? "text-emerald-400" : "text-rose-400")}>{label} · {buy ? "BUY / ASK" : "SELL / BID"}</p><p className="mt-1 text-[10px] theme-muted">LTP {quoteField(row,prefix,"ltp")} · Bid {quoteField(row,prefix,"bid")} · Ask {quoteField(row,prefix,"ask")}</p><p className="mt-1 text-[10px] theme-muted">Bid Qty {quoteField(row,prefix,"bid_qty")} · Ask Qty {quoteField(row,prefix,"ask_qty")}</p></div>;})}</div><div className="mt-3 flex flex-wrap justify-between gap-2 border-t theme-border pt-2 text-[10px] theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
         </article>)}
       </div>}
 
       {rows.length > 0 && <div className="mt-4 hidden overflow-x-auto rounded-xl border theme-border md:block">
-        <table className="w-full min-w-[1120px] text-left text-xs">
+        <table className="w-full min-w-[2600px] text-left text-xs">
           <thead className="theme-surface-2 theme-muted"><tr>
-            <th className="px-3 py-2">Saved (IST)</th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2">Edge</th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2">Gross P&L</th>
-          </tr></thead>
-          <tbody>{rows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
+            <th className="px-3 py-2"><button type="button" onClick={() => void selectSort("time")} disabled={sortingAll}>Saved (IST){sortMark("time")}</button></th><th className="px-3 py-2">Quote time (IST)</th><th className="px-3 py-2">Quote skew</th><th className="px-3 py-2">Underlying</th><th className="px-3 py-2">Expiry</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Low strike</th><th className="px-3 py-2">High strike</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Spot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("edge")} disabled={sortingAll}>Edge{sortMark("edge")}</button></th><th className="px-3 py-2">Edge / lot</th><th className="px-3 py-2"><button type="button" onClick={() => void selectSort("profit")} disabled={sortingAll}>Gross P&L{sortMark("profit")}</button></th>
+          </tr><tr>{Array.from({length:13},(_,i)=><th key={"blank"+i}></th>)}<th className="px-2 py-1" colSpan={5}>Low CE</th><th className="px-2 py-1" colSpan={5}>Low PE</th><th className="px-2 py-1" colSpan={5}>High CE</th><th className="px-2 py-1" colSpan={5}>High PE</th></tr><tr>{Array.from({length:13},(_,i)=><th key={"subblank"+i}></th>)}{Array.from({length:4},(_,i)=>["LTP","Bid","Bid Qty","Ask","Ask Qty"].map(label=><th key={i+label} className="px-2 py-1">{label}</th>))}</tr></thead>
+          <tbody>{sortedRows.map(row => <tr key={snapshotKey(row)} className="border-t theme-border">
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{observedTime(row.observed_at)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{quoteTime(row.last_update_timestamp_ns)}</td>
             <td className="whitespace-nowrap px-3 py-2 theme-muted">{row.timestamp_skew_ms == null ? "—" : number(row.timestamp_skew_ms) + " ms"}</td>
@@ -245,6 +290,7 @@ export default function BoxSpreadPostMarketHistory() {
             <td className="px-3 py-2 theme-text">{number(row.executable_edge)}</td>
             <td className="px-3 py-2 theme-text">{number(row.edge_per_lot)}</td>
             <td className="px-3 py-2 theme-text">{number(row.gross_pnl)}</td>
+            {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ask_qty")}</td>])}
           </tr>)}</tbody>
         </table>
       </div>}
