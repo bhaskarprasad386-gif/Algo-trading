@@ -114,7 +114,7 @@ export default function BoxSpreadPostMarketHistory() {
   const [traces, setTraces] = useState<Record<string, { id: number; quantity_lots: number }>>({});
   const [traceBusy, setTraceBusy] = useState<string | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
-  const [exitChecks, setExitChecks] = useState<Record<number, { status: string; gross_pnl: number | null; max_complete_exit_lots_now: number }>>({});
+  const [exitChecks, setExitChecks] = useState<Record<number, { status: string; gross_pnl: number | null; max_complete_exit_lots_now: number; message: string; legs: Array<{ leg: string; exit_side: string; exit_price: number | null; exit_qty: number | null; leg_gross_pnl: number | null }> }>>({});
   const [exitBusy, setExitBusy] = useState<number | null>(null);
   const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
   const executableLots = (row: Snapshot) => {
@@ -344,6 +344,7 @@ export default function BoxSpreadPostMarketHistory() {
 <span className="rounded-md bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-600">TRACED · {traces[traceIdentity(row)].quantity_lots} LOTS</span>
 <button type="button" onClick={() => void checkExit(traces[traceIdentity(row)].id)} disabled={exitBusy === traces[traceIdentity(row)].id} className="min-h-9 rounded-lg border border-amber-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{exitBusy === traces[traceIdentity(row)].id ? "Checking live…" : "Exit Check"}</button>
 {exitChecks[traces[traceIdentity(row)].id] && <span className="text-[11px] font-semibold theme-text">{exitChecks[traces[traceIdentity(row)].id].status} · {exitChecks[traces[traceIdentity(row)].id].gross_pnl == null ? "P&L —" : "Gross ₹" + number(exitChecks[traces[traceIdentity(row)].id].gross_pnl)} · Max exit {exitChecks[traces[traceIdentity(row)].id].max_complete_exit_lots_now} lots</span>}
+              {exitChecks[traces[traceIdentity(row)].id] && <details className="w-full rounded-lg border theme-border p-2 text-[10px] theme-text"><summary className="cursor-pointer font-semibold">Live four-leg quote details</summary><p className="mt-1">{exitChecks[traces[traceIdentity(row)].id].message}</p>{exitChecks[traces[traceIdentity(row)].id].legs.map(leg => <div key={leg.leg} className="mt-1 flex flex-wrap justify-between gap-1 border-t theme-border pt-1"><span>{leg.leg.replace("_", " ").toUpperCase()} · {leg.exit_side}</span><span>{leg.exit_price == null ? "No quote" : "₹" + number(leg.exit_price)} · Qty {number(leg.exit_qty)} · P&L {leg.leg_gross_pnl == null ? "—" : "₹" + number(leg.leg_gross_pnl)}</span></div>)}</details>}
 </> : <button type="button" onClick={() => void addTrace(row)} disabled={traceBusy === traceIdentity(row)} className="min-h-9 rounded-lg border border-cyan-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{traceBusy === traceIdentity(row) ? "Adding…" : "＋ Add to Trace"}</button>}
 </div>
         </article>)}
