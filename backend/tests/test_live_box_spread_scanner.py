@@ -317,3 +317,38 @@ def test_custom_entry_scan_can_see_positive_edge_below_global_scanner_threshold(
     long_rows = [row for row in custom_candidates if row.direction == "LONG"]
     assert len(long_rows) == 1
     assert long_rows[0].executable_edge == 1
+
+
+
+def test_pipeline_persists_option_snapshot_when_spot_provider_raises(monkeypatch, tmp_path):
+    import json
+    from app.backtesting.arbitrage_backtester import OptionQuote
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+    from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
+
+    low = OptionQuote(1, "ABC", 20261231, 100, 9, 10, 3, 8, 10, "STOCK", 100, 100)
+    high = OptionQuote(1, "ABC", 20261231, 110, 5, 6, 6, 7, 10, "STOCK", 100, 100)
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="STOCK",
+        config=BoxSpreadScanConfig(
+            min_executable_edge=-100, allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=200,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    assert results
+
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    pipeline = LiveBoxSpreadPipeline(
+        scanner=type("Scanner", (), {"observe": lambda self, _payload: results})(),
+        spot_provider=lambda _symbol: (_ for _ in ()).throw(RuntimeError("spot feed unavailable")),
+    )
+
+    pipeline.observe({"ignored": True})
+
+    saved = [json.loads(line) for line in (tmp_path / "pending.jsonl").read_text().splitlines()]
+    assert len(saved) == len(results)
+    assert all(row["spot_price"] is None for row in saved)
+    assert all(row["spot_timestamp_ns"] is None for row in saved)
+    assert all(row["executable_edge"] > 0 for row in saved)
