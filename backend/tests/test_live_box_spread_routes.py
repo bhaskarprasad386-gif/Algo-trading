@@ -39,6 +39,10 @@ def test_live_box_route_serializes_bid_ask_snapshot(monkeypatch):
     assert row["freshness"] == "LIVE"
     assert row["quote_age_seconds"] >= 0
     assert row["timestamp_skew_ms"] == 0
+    assert row["low_call_timestamp_ns"] == result.low.timestamp_ns
+    assert row["low_put_timestamp_ns"] == result.low.timestamp_ns
+    assert row["high_call_timestamp_ns"] == result.high.timestamp_ns
+    assert row["high_put_timestamp_ns"] == result.high.timestamp_ns
 
 
 def test_live_box_route_preserves_bse_index_identity(monkeypatch):
@@ -292,6 +296,9 @@ def test_raw_monitor_route_returns_fresh_edge_even_when_normal_entry_threshold_w
     assert payload["entry_count"] == 1
     assert payload["entry_data"][0]["freshness"] == "LIVE_RULE_CANDIDATE"
     assert payload["data"][0]["low_call_bid"] == 10
+    assert payload["data"][0]["low_call_timestamp_ns"] == result.low.timestamp_ns
+    assert payload["data"][0]["high_put_timestamp_ns"] == result.high.timestamp_ns
+    assert payload["data"][0]["timestamp_skew_ms"] == 0
     assert payload["data"][0]["high_put_ask"] == 3
 
 
