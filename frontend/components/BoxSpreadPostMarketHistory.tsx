@@ -267,8 +267,8 @@ export default function BoxSpreadPostMarketHistory() {
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
           <div>
-            <h2 className="text-base font-extrabold theme-text">Post-Market Box Spread Pair History</h2>
-            <p className="mt-1 text-xs theme-muted">Persisted qualifying observations · saved snapshot prices and edge · read-only history, not live quotes</p>
+            <h2 className="text-base font-extrabold theme-text">Historical Box Spread Scanner Snapshots</h2>
+            <p className="mt-1 text-xs theme-muted">Historical qualifying scanner observations · saved snapshot prices and edge · selected history window · read-only, not live quotes or today’s alert list</p>
           </div>
         </div>
         <button type="button" onClick={refresh} disabled={loading || loadingMore} className="inline-flex min-h-9 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
