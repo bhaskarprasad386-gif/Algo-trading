@@ -1040,8 +1040,6 @@ def _build_exit_preview(
         raise HTTPException(status_code=422, detail="MARKET preview must not include limit_prices")
     request = _load_trade_request(trade_id, account_key)
     contracts = _resolve(request)
-
-    contracts = _resolve(request)
     trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     if limit_prices is not None and set(limit_prices) != set(roles):
@@ -1250,6 +1248,7 @@ def _execute_exit_basket_from_row(
             "idempotent_replay": True,
         }
 
+    contracts = _resolve(request)
     trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
     total_quantity = quantities[roles[0]]
     lot_size = int(contracts.lot_size)
