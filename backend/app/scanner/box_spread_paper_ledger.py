@@ -749,10 +749,8 @@ class BoxSpreadPaperLedger:
         settlement_date: date | str,
         account_key: str = "default",
     ) -> dict[str, object]:
-        """Settle on/after expiry using explicit official settlement prices, never stale LTP."""
+        """Claim expiry settlement under the account lock, then resume durable legs."""
         key = self._account_key(account_key)
-        # datetime subclasses date, but comparing it with the parsed expiry date
-        # raises TypeError. Settlement is date-based, so reject timestamps explicitly.
         if isinstance(settlement_date, datetime):
             raise ValueError("settlement_date must be an ISO date (YYYY-MM-DD)")
         try:
@@ -760,19 +758,23 @@ class BoxSpreadPaperLedger:
                 actual_date = settlement_date
             else:
                 settlement_text = str(settlement_date).strip()
-                if (
-                    len(settlement_text) != 10
-                    or settlement_text[4] != "-"
-                    or settlement_text[7] != "-"
-                ):
+                if len(settlement_text) != 10 or settlement_text[4] != "-" or settlement_text[7] != "-":
                     raise ValueError
                 actual_date = date.fromisoformat(settlement_text)
         except (TypeError, ValueError):
             raise ValueError("settlement_date must be an ISO date (YYYY-MM-DD)") from None
-        with self._session_factory() as session:
+
+        # Commit this interlock before individual settlement legs. A process
+        # interruption leaves SETTLING durable, blocking manual exits while
+        # allowing the same dated/price-checked settlement to resume.
+        self.ensure_account(key)
+        with self._session_factory() as session, session.begin():
+            self._lock_account_for_write(session, key)
             trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
             if trade is None or trade.account_key != key:
                 raise ValueError("paper trade not found for account")
+            if trade.status == "CANCELLED":
+                raise ValueError("cancelled paper trade cannot be settled")
             try:
                 expiry_date = date.fromisoformat(trade.expiry[:10])
             except ValueError:
@@ -784,83 +786,74 @@ class BoxSpreadPaperLedger:
                 BoxSpreadPaperLedgerEntry.account_key == key,
             )).all()
 
-        # A partially committed settlement may be retried after a process
-        # interruption. Keep every leg on one settlement date and one price
-        # snapshot; otherwise a retry could silently mix settlement values.
-        settlement_prefix = "SETTLE:"
-        prior_settlements = [
-            row for row in rows if row.fill_id.startswith(settlement_prefix)
-        ]
-        prior_dates = {
-            row.fill_id.split(":", 2)[1]
-            for row in prior_settlements
-            if len(row.fill_id.split(":", 2)) == 3
-        }
-        requested_date = actual_date.isoformat()
-        if prior_dates and prior_dates != {requested_date}:
-            raise ValueError("expiry settlement was already started for a different date")
-        for row in prior_settlements:
-            previous_price = Decimal(row.fill_price)
-            if row.role not in settlement_prices:
-                raise ValueError(
-                    f"settlement_prices must include previously settled leg {row.role}"
-                )
-            requested_price = _money(
-                settlement_prices[row.role],
-                field=f"settlement price for {row.role}",
-            )
-            if requested_price != previous_price:
-                raise ValueError(
-                    f"settlement price mismatch for previously settled leg {row.role}"
-                )
+            prior_settlements = [row for row in rows if row.fill_id.startswith("SETTLE:")]
+            prior_dates = {
+                row.fill_id.split(":", 2)[1]
+                for row in prior_settlements
+                if len(row.fill_id.split(":", 2)) == 3
+            }
+            requested_date = actual_date.isoformat()
+            if prior_dates and prior_dates != {requested_date}:
+                raise ValueError("expiry settlement was already started for a different date")
+            for row in prior_settlements:
+                if row.role not in settlement_prices:
+                    raise ValueError(f"settlement_prices must include previously settled leg {row.role}")
+                requested_price = _money(settlement_prices[row.role], field=f"settlement price for {row.role}")
+                if requested_price != Decimal(row.fill_price):
+                    raise ValueError(f"settlement price mismatch for previously settled leg {row.role}")
 
-        positions: dict[str, int] = {}
-        for row in rows:
-            positions[row.role] = positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
-        open_roles = {role for role, quantity in positions.items() if quantity != 0}
-        if not open_roles:
-            # A client may retry after the original settlement committed but
-            # its response was lost. Return the durable receipts for that same
-            # settlement date instead of reporting a misleading no-position
-            # error. A normally exited trade (or a different date) is not
-            # treated as a settlement retry.
-            settlement_prefix = f"SETTLE:{actual_date.isoformat()}:"
-            settled_rows = [
-                row for row in rows
-                if row.fill_id.startswith(settlement_prefix)
-            ]
-            if trade.status == "CLOSED" and settled_rows:
-                balance = self.get_account_summary(key)["virtual_balance"]
-                receipts = tuple(
-                    self._receipt(row, Decimal(balance))
-                    for row in sorted(settled_rows, key=lambda item: item.id)
+            positions: dict[str, int] = {}
+            for row in rows:
+                positions[row.role] = positions.get(row.role, 0) + row.quantity * (
+                    1 if row.action == "BUY" else -1
                 )
-                return {
-                    "trade_id": trade_id,
-                    "settlement_date": actual_date.isoformat(),
-                    "settled_legs": len(receipts),
-                    "status": "CLOSED",
-                    "receipts": receipts,
-                }
-            raise ValueError("no open positions to settle")
-        if open_roles - set(settlement_prices):
-            raise ValueError("settlement_prices must include every open leg role")
-        # Validate every open leg price before writing any settlement fill. Each
-        # record_exit_fill call commits independently, so validating lazily in the
-        # loop could leave a partially settled trade if a later price is invalid.
-        validated_prices = {
-            role: _money(settlement_prices[role], field=f"settlement price for {role}")
-            for role in sorted(open_roles)
-        }
+            open_roles = {role for role, quantity in positions.items() if quantity != 0}
+            if not open_roles:
+                settled_rows = [
+                    row for row in rows
+                    if row.fill_id.startswith(f"SETTLE:{actual_date.isoformat()}:")
+                ]
+                if trade.status == "CLOSED" and settled_rows:
+                    balance_value = session.scalar(
+                        select(BoxSpreadPaperAccount.virtual_balance).where(
+                            BoxSpreadPaperAccount.account_key == key
+                        )
+                    )
+                    balance = Decimal(balance_value)
+                    receipts = tuple(
+                        self._receipt(row, balance)
+                        for row in sorted(settled_rows, key=lambda item: item.id)
+                    )
+                    return {
+                        "trade_id": trade_id,
+                        "settlement_date": actual_date.isoformat(),
+                        "settled_legs": len(receipts),
+                        "status": "CLOSED",
+                        "receipts": receipts,
+                    }
+                raise ValueError("no open positions to settle")
+            if open_roles - set(settlement_prices):
+                raise ValueError("settlement_prices must include every open leg role")
+            validated_prices = {
+                role: _money(settlement_prices[role], field=f"settlement price for {role}")
+                for role in sorted(open_roles)
+            }
+            trade.status = "SETTLING"
+
         receipts = []
         for role in sorted(open_roles):
             receipts.append(self.record_exit_fill(
-                trade_id=trade_id, fill_id=f"{actual_date.isoformat()}:{role}",
-                role=role, quantity=abs(positions[role]), fill_price=validated_prices[role],
-                account_key=key, settlement=True,
+                trade_id=trade_id,
+                fill_id=f"{actual_date.isoformat()}:{role}",
+                role=role,
+                quantity=abs(positions[role]),
+                fill_price=validated_prices[role],
+                account_key=key,
+                settlement=True,
             ))
         return {
-            "trade_id": trade_id, "settlement_date": actual_date.isoformat(),
+            "trade_id": trade_id,
+            "settlement_date": actual_date.isoformat(),
             "settled_legs": len(receipts),
             "status": self.get_trade_summary(trade_id, account_key=key)["status"],
             "receipts": tuple(receipts),
