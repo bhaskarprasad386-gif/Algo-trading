@@ -404,7 +404,7 @@ class BoxSpreadPaperLedger:
                         raise ValueError("entry basket fill_id reused with different fill data")
                     receipts.append(self._receipt(row, Decimal(account.virtual_balance)))
                 return receipts
-            if trade.status in {"CLOSED", "CANCELLED", "FILLED", "PARTIALLY_FILLED"}:
+            if trade.status in {"CLOSED", "CANCELLED", "FILLED", "PARTIALLY_FILLED", "EXITING", "SETTLING"}:
                 raise ValueError("trade is not eligible for a new entry basket")
             prior = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
                 BoxSpreadPaperLedgerEntry.account_key == key,
@@ -503,8 +503,8 @@ class BoxSpreadPaperLedger:
                 return receipt
             if trade.status in {"CLOSED", "CANCELLED"}:
                 raise ValueError("cannot add a fill to a closed or cancelled trade")
-            if trade.status == "EXITING":
-                raise ValueError("cannot add entry fills while exits are in progress")
+            if trade.status in {"EXITING", "SETTLING"}:
+                raise ValueError("cannot add entry fills while exits or expiry settlement are in progress")
             expected_actions = (
                 {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
                 if trade.direction == "LONG"
@@ -593,6 +593,10 @@ class BoxSpreadPaperLedger:
                 return self._receipt(existing, Decimal(account.virtual_balance))
             if trade.status in {"CLOSED", "CANCELLED"}:
                 raise ValueError("paper trade is already closed or cancelled")
+            if trade.status == "SETTLING" and not settlement:
+                raise ValueError("expiry settlement is in progress")
+            if settlement and trade.status != "SETTLING":
+                raise ValueError("expiry settlement is not claimed")
             rows = session.scalars(select(BoxSpreadPaperLedgerEntry).where(
                 BoxSpreadPaperLedgerEntry.trade_id == trade_id,
                 BoxSpreadPaperLedgerEntry.account_key == key,
@@ -625,7 +629,12 @@ class BoxSpreadPaperLedger:
             )).all()
             for row in all_rows:
                 positions[row.role] = positions.get(row.role, 0) + row.quantity * (1 if row.action == "BUY" else -1)
-            trade.status = "CLOSED" if all(position == 0 for position in positions.values()) else "EXITING"
+            if all(position == 0 for position in positions.values()):
+                trade.status = "CLOSED"
+            elif settlement:
+                trade.status = "SETTLING"
+            else:
+                trade.status = "EXITING"
             return self._receipt(entry, Decimal(account.virtual_balance))
 
     def record_exit_basket(
@@ -696,6 +705,8 @@ class BoxSpreadPaperLedger:
 
             if trade.status in {"CLOSED", "CANCELLED"}:
                 raise ValueError("paper trade is already closed or cancelled")
+            if trade.status == "SETTLING":
+                raise ValueError("expiry settlement is in progress")
 
             positions: dict[str, int] = {}
             for role in roles:
