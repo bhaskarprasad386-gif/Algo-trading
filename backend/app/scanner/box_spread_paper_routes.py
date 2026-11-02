@@ -1216,7 +1216,6 @@ def _execute_exit_basket_from_row(
                 status_code=409,
                 detail="prior basket exit quantities are inconsistent; manual review required",
             )
-        lot_size = _ledger.get_trade_lot_size(trade_id, account_key=account_key)
         snapshot = _ledger.get_exit_basket_position_snapshot(
             trade_id, fill_id=f"exit:{fill_digest}:BASKET", account_key=account_key,
         )
