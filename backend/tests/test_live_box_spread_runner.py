@@ -268,3 +268,84 @@ def test_box_runner_unions_atm_strikes_across_weekly_and_monthly_targets(monkeyp
 
     assert seeded["NIFTY"] == (100.0, 110.0, 120.0)
     assert selected == ["05NOV2026"]
+
+
+def test_box_runner_depth_shadow_is_disabled_by_default(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+
+    monkeypatch.setattr(mod.settings, "LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED", False)
+    runner = mod.LiveBoxSpreadRunner(
+        object(), [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(), future_master=object(), auth=object(),
+    )
+    state = runner.snapshot()["depth_shadow"]
+    assert state["enabled"] is False
+    assert state["running"] is False
+    assert state["record_count"] == 0
+
+
+def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+    from app.market_data.contracts import InstrumentKey
+    from app.market_data.registry import InstrumentDescriptor
+
+    monkeypatch.setattr(mod.settings, "LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED", True)
+    descriptor = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", "123"), symbol="NIFTY06NOV2625000CE",
+        instrument_type="option", exchange="NFO", segment="NFO",
+        expiry="06NOV2026", strike=25000, option_type="CE", lot_size=65,
+        underlying="NIFTY",
+    )
+    selected = []
+
+    class Master:
+        _loaded = True
+        instruments = []
+        def download(self): pass
+
+    class Tracker:
+        def __init__(self, *args, **kwargs): pass
+        def atm(self, symbol, now_ns, **kwargs): return 25000.0
+
+    class Feed:
+        def __init__(self, *args, **kwargs): pass
+        def run_forever(self): pass
+        def stop(self): pass
+
+    class Shadow:
+        def __init__(self, *, enabled):
+            self.enabled = enabled
+            self.started = []
+            self.stopped = 0
+        def start(self, descriptors):
+            self.started.append(tuple(descriptors))
+        def stop(self):
+            self.stopped += 1
+        def snapshot(self):
+            return {"running": bool(self.started), "record_count": 0, "counts": {}}
+        def compare_opportunity(self, opportunity):
+            return {"status": "INCOMPLETE", "reason": "MISSING_LEG"}
+
+    monkeypatch.setattr(mod, "BoxLiveDepthShadowFeed", Shadow)
+    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"NIFTY": (25000.0,)})
+    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "select_box_contracts", lambda *a, **k: BoxContractSelection((descriptor,), "06NOV2026", 25000.0))
+    monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: ()})())
+
+    class Recorder:
+        def __init__(self, *args, **kwargs): pass
+        def run_forever(self):
+            runner.stop_event.set()
+        def stop(self): pass
+        def snapshot(self): return {"running": True}
+
+    monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
+    monkeypatch.setattr(mod, "sleep", lambda _seconds: None)
+    runner = mod.LiveBoxSpreadRunner(
+        object(), [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(), future_master=Master(), auth=object(),
+    )
+    runner._run_session()
+    assert runner.depth_shadow.started == [(descriptor,)]
+    assert runner.depth_shadow.stopped >= 1

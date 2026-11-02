@@ -1,10 +1,11 @@
 """Production Box Spread live runner using Angel One option ticks."""
 from __future__ import annotations
-from threading import Thread, Event
+from threading import Thread, Event, Lock
 from time import time_ns, sleep, monotonic
 from sqlalchemy import select
 from app.algo.auth import AngelOneAuth
 from app.core.database import SessionLocal
+from app.core.config import settings
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
@@ -16,6 +17,7 @@ from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSp
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
 from app.scanner.box_spread import BoxSpreadScanConfig
+from app.scanner.box_spread_live_depth_shadow import BoxLiveDepthShadowFeed
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
@@ -58,6 +60,9 @@ class LiveBoxSpreadRunner:
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
+        self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED))
+        self._depth_shadow_lock = Lock()
+        self._depth_shadow_last_comparisons = []
         self._feed_thread = None
         self._last_feed_log_signature = None
         self._readiness = {
@@ -345,7 +350,17 @@ class LiveBoxSpreadRunner:
                 refresh_requested = Event()
 
                 def observe(payload):
-                    pipeline.observe(payload)
+                    results = pipeline.observe(payload)
+                    if self.depth_shadow.enabled and results:
+                        comparisons = []
+                        for opportunity in results:
+                            try:
+                                comparisons.append(self.depth_shadow.compare_opportunity(opportunity))
+                            except Exception:
+                                app_logger.exception("Box Spread depth shadow comparison failed")
+                        if comparisons:
+                            with self._depth_shadow_lock:
+                                self._depth_shadow_last_comparisons = comparisons[-20:]
                     symbol=str(payload.get("underlying") or "").strip().upper()
                     current=self.tracker.atm(symbol,time_ns(),max_age_seconds=10.0)
                     coverage = subscribed_strikes.get(symbol, set())
@@ -369,6 +384,11 @@ class LiveBoxSpreadRunner:
                             str(payload.get("underlying") or "").strip().upper(),
                         )
                         self.recorder.stop()
+                if self.depth_shadow.enabled:
+                    try:
+                        self.depth_shadow.start(subs)
+                    except Exception:
+                        app_logger.exception("Box Spread depth shadow consumer failed to start; live scanner remains unchanged")
                 self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
@@ -404,6 +424,7 @@ class LiveBoxSpreadRunner:
             recorder, self.recorder = self.recorder, None
             if recorder is not None:
                 recorder.stop()
+            self.depth_shadow.stop()
             if feed is not None:
                 feed.stop()
             if feed_thread is not None and callable(getattr(feed_thread, "is_alive", None)) and feed_thread.is_alive():
@@ -411,6 +432,9 @@ class LiveBoxSpreadRunner:
 
     def snapshot(self):
         """Return lightweight runtime state for shared-feed diagnostics."""
+        depth_snapshot = self.depth_shadow.snapshot()
+        with self._depth_shadow_lock:
+            last_comparisons = list(self._depth_shadow_last_comparisons)
         return {
             "running": not self.stop_event.is_set(),
             "targets": len(self.targets),
@@ -423,11 +447,19 @@ class LiveBoxSpreadRunner:
             "option_recorder": _safe_snapshot(self.recorder),
             "readiness": dict(self._readiness),
             "scanner_diagnostics": None if self.scanner is None else self.scanner.diagnostics_snapshot(),
+            "depth_shadow": {
+                "enabled": self.depth_shadow.enabled,
+                "running": depth_snapshot.get("running", False),
+                "record_count": depth_snapshot.get("record_count", 0),
+                "counts": depth_snapshot.get("counts", {}),
+                "last_comparisons": last_comparisons,
+            },
         }
 
     def stop(self):
         self.stop_event.set()
         if self.feed:self.feed.stop()
         if self.recorder:self.recorder.stop()
+        self.depth_shadow.stop()
 
 __all__=["BoxSpreadLiveTarget","LiveBoxSpreadRunner"]
