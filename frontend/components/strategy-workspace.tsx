@@ -583,6 +583,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
   const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
+  const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
@@ -938,6 +939,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const alternate = slug === "synthetic-arbitrage" ? body?.runners?.synthetic_arbitrage : slug === "box-spread" ? body?.runners?.box_spread : body?.runners?.calendar_spread;
         const selected = rawRunner ?? alternate;
         setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+        setBoxDepthShadow(slug === "box-spread" && selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
         const rawDepthShadow = slug === "box-spread" ? selected?.depth_shadow : null;
         setBoxDepthShadow(rawDepthShadow && typeof rawDepthShadow === "object" ? rawDepthShadow : null);
       } catch {
@@ -1094,6 +1096,23 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
             <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
             <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
+            <div className="w-full rounded-lg border theme-border theme-surface p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-semibold theme-text">Five-Level Depth Shadow</span>
+                <span className={"rounded-md border theme-border px-2 py-1 text-[10px] font-bold " + (boxDepthShadow?.enabled ? "theme-success" : "theme-muted")}>
+                  {boxDepthShadow?.enabled ? (boxDepthShadow.running ? "ENABLED · RUNNING" : "ENABLED · IDLE") : "DISABLED"}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] theme-muted">Shadow-only comparison; live scanner Edge and paper execution remain unchanged.</p>
+              {boxDepthShadow?.enabled ? (
+                <div className="mt-2 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4">
+                  <div><span className="theme-muted">Depth records</span><p className="font-semibold theme-text">{Number(boxDepthShadow.record_count ?? 0).toLocaleString("en-IN")}</p></div>
+                  <div><span className="theme-muted">Complete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.COMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
+                  <div><span className="theme-muted">Incomplete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.INCOMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
+                  <div><span className="theme-muted">Mean depth − L1 / unit</span><p className="font-semibold theme-text">{typeof boxDepthShadow.comparison_diagnostics?.complete_difference_sample?.mean_per_unit === "number" ? boxDepthShadow.comparison_diagnostics.complete_difference_sample.mean_per_unit.toFixed(2) : "—"}</p></div>
+                </div>
+              ) : <p className="mt-1 text-[11px] theme-muted">No additional depth subscription is active.</p>}
+            </div>
             <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
           </div>
         </Card>
