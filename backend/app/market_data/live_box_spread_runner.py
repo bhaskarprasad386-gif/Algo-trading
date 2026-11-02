@@ -406,7 +406,7 @@ class LiveBoxSpreadRunner:
                 recorder.stop()
             if feed is not None:
                 feed.stop()
-            if feed_thread is not None and feed_thread.is_alive():
+            if feed_thread is not None and callable(getattr(feed_thread, "is_alive", None)) and feed_thread.is_alive():
                 feed_thread.join(timeout=2.0)
 
     def snapshot(self):
@@ -414,7 +414,11 @@ class LiveBoxSpreadRunner:
         return {
             "running": not self.stop_event.is_set(),
             "targets": len(self.targets),
-            "underlying_feed_thread_alive": bool(self._feed_thread and self._feed_thread.is_alive()),
+            "underlying_feed_thread_alive": bool(
+                self._feed_thread
+                and callable(getattr(self._feed_thread, "is_alive", None))
+                and self._feed_thread.is_alive()
+            ),
             "underlying_feed": _safe_snapshot(self.feed),
             "option_recorder": _safe_snapshot(self.recorder),
             "readiness": dict(self._readiness),
