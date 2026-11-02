@@ -1238,58 +1238,35 @@ def _execute_exit_basket_from_row(
                     detail="insufficient fresh depth for even one complete four-leg lot; no legs were exited",
                 )
 
-            remaining_depth = {
-                role: list(levels) for role, levels in depth_by_role.items()
-            }
-            receipts = []
-            batch_count = int(selected["lots"])
-            for batch_number in range(1, batch_count + 1):
-                batch_legs: dict[str, dict[str, object]] = {}
-                consumed_by_role = {}
-                for role in roles:
-                    leg = legs_by_role[role]
-                    close_action = "SELL" if leg["open_position_action"] == "BUY" else "BUY"
-                    allocation = allocate_depth(remaining_depth[role], lot_size)
-                    if not allocation["complete"]:
-                        # This should be unreachable after the four-leg
-                        # capacity check, but keep the ledger fail-closed.
-                        raise HTTPException(
-                            status_code=409,
-                            detail=f"depth changed during batch validation for {role}; no further batch recorded",
-                        )
-                    executable = float(allocation["vwap"])
-                    if order_type == "LIMIT":
-                        try:
-                            limit_price = executable if limit_prices is None else float(limit_prices[role])
-                        except (TypeError, ValueError, OverflowError):
-                            raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
-                        if not math.isfinite(limit_price) or limit_price <= 0:
-                            raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
-                    batch_legs[role] = {"quantity": lot_size, "fill_price": executable}
-                    consumed_by_role[role] = lot_size
+            # Persist the selected quantity as ONE four-leg basket. The ledger
+            # commits all four legs in one transaction, including multi-lot
+            # exits. Splitting lots into separate ledger calls can leave a
+            # partially exited position after a later batch fails and makes
+            # retry sequencing ambiguous.
+            exit_quantity = int(selected["quantity"])
+            batch_legs: dict[str, dict[str, object]] = {}
+            for role in roles:
+                allocation = selected["allocations"][role]
+                executable = float(allocation["vwap"])
+                if order_type == "LIMIT":
+                    try:
+                        limit_price = executable if limit_prices is None else float(limit_prices[role])
+                    except (TypeError, ValueError, OverflowError):
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}") from None
+                    if not math.isfinite(limit_price) or limit_price <= 0:
+                        raise HTTPException(status_code=422, detail=f"valid positive limit price required for {role}")
+                batch_legs[role] = {"quantity": exit_quantity, "fill_price": executable}
 
-                # All four roles have been validated before any ledger write.
-                # Keep the ledger key within its 96-character contract even when
-                # callers supply a maximum-length idempotency key.
-                fill_digest = hashlib.sha256(str(fill_id).encode("utf-8")).hexdigest()[:40]
-                batch_fill_id = f"exit:{fill_digest}:LOT:{batch_number}"
-                receipts.extend(_ledger.record_exit_basket(
-                    trade_id=trade_id, fill_id=batch_fill_id, legs=batch_legs,
-                    account_key=account_key,
-                ))
-                # Consume this batch from the local snapshot so the next batch
-                # cannot reuse the same displayed market depth.
-                for role in roles:
-                    to_consume = float(consumed_by_role[role])
-                    levels = remaining_depth[role]
-                    updated = []
-                    for price, available in levels:
-                        take = min(to_consume, available)
-                        to_consume -= take
-                        left = available - take
-                        if left > 1e-9:
-                            updated.append((price, left))
-                    remaining_depth[role] = updated
+            # Stable request-level idempotency: a retry replays this exact basket,
+            # never a sequence of partially committed per-lot batches.
+            fill_digest = hashlib.sha256(str(fill_id).encode("utf-8")).hexdigest()[:40]
+            basket_fill_id = f"exit:{fill_digest}:BASKET"
+            receipts = _ledger.record_exit_basket(
+                trade_id=trade_id, fill_id=basket_fill_id, legs=batch_legs,
+                account_key=account_key,
+            )
+            batch_count = 1
+            exited_lots = int(selected["lots"])
 
     except BoxPaperDepthFeedError as exc:
         raise HTTPException(
@@ -1301,8 +1278,8 @@ def _execute_exit_basket_from_row(
     return {
         "mode": "PAPER_ONLY", "broker_orders_enabled": False,
         "order_type": order_type, "trade_id": trade_id, "status": summary["status"],
-        "requested_exit_lots": target_lots, "exited_lots": batch_count,
-        "remaining_open_lots": target_lots - batch_count,
+        "requested_exit_lots": target_lots, "exited_lots": exited_lots,
+        "remaining_open_lots": target_lots - exited_lots,
         "batch_count": batch_count,
         "receipts": [{
             "fill_id": receipt.fill_id, "role": receipt.role, "action": receipt.action,
