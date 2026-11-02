@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import inspect, text
 
 from app.core.database import engine
@@ -190,6 +192,48 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
         live_box_tables = set(inspect(connection).get_table_names())
+        if "live_box_spread_snapshots" in live_box_tables:
+            snapshot_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("live_box_spread_snapshots")
+            }
+            if "expiry_type" not in snapshot_columns:
+                connection.execute(text(
+                    "ALTER TABLE live_box_spread_snapshots ADD COLUMN expiry_type VARCHAR(8)"
+                ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_box_snapshot_symbol_expiry_time "
+                "ON live_box_spread_snapshots (symbol, expiry_type, observed_at)"
+            ))
+
+            # Backfill only classifications already persisted in JSON. This startup
+            # migration deliberately does not guess from an instrument master that
+            # is initialized later; unclassified legacy rows remain NULL and are
+            # resolved by the API's compatibility path.
+            last_id = 0
+            while True:
+                batch = connection.execute(text(
+                    "SELECT id, payload_json FROM live_box_spread_snapshots "
+                    "WHERE id > :last_id AND expiry_type IS NULL "
+                    "ORDER BY id LIMIT 500"
+                ), {"last_id": last_id}).fetchall()
+                if not batch:
+                    break
+                updates = []
+                for snapshot_id, payload_json in batch:
+                    last_id = snapshot_id
+                    try:
+                        payload = json.loads(payload_json or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    kind = str(payload.get("expiry_type") or "").strip().upper()
+                    if kind in {"WEEKLY", "MONTHLY", "UNKNOWN"}:
+                        updates.append({"snapshot_id": snapshot_id, "kind": kind})
+                if updates:
+                    connection.execute(text(
+                        "UPDATE live_box_spread_snapshots SET expiry_type = :kind "
+                        "WHERE id = :snapshot_id AND expiry_type IS NULL"
+                    ), updates)
         if "live_box_spread_alert_history" in live_box_tables:
             box_alert_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_alert_history")}
             for name in (
