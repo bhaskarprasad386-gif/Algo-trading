@@ -64,3 +64,50 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+
+def test_snapshot_endpoint_applies_symbol_filter_before_pagination(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    now = datetime.utcnow()
+
+    try:
+        monkeypatch.setattr(routes, "_expiry_types", {})
+        with Session() as db:
+            for index, symbol in enumerate(("SENSEX", "NIFTY", "SENSEX", "NIFTY")):
+                db.add(LiveBoxSpreadSnapshot(
+                    observed_at=now - timedelta(seconds=index),
+                    timestamp_ns=1_790_000_000_000_000_000 + index,
+                    symbol=symbol,
+                    expiry=20261103,
+                    low_strike=22000 + index * 100,
+                    high_strike=23000 + index * 100,
+                    direction="LONG",
+                    payload_json=json.dumps({"sequence": index}),
+                ))
+            db.commit()
+
+        monkeypatch.setattr(routes, "SessionLocal", Session)
+        nifty = routes.snapshots(days=1, limit=1, offset=0, expiry_type=None, symbol="NIFTY")
+        nifty_next = routes.snapshots(days=1, limit=1, offset=1, expiry_type=None, symbol="NIFTY")
+        sensex = routes.snapshots(days=1, limit=5, offset=0, expiry_type=None, symbol="SENSEX")
+
+        assert nifty["symbol"] == "NIFTY"
+        assert nifty["total_count"] == 2
+        assert nifty["count"] == 1
+        assert nifty["data"][0]["symbol"] == "NIFTY"
+        assert nifty["data"][0]["sequence"] == 1
+        assert nifty_next["total_count"] == 2
+        assert nifty_next["data"][0]["sequence"] == 3
+        assert sensex["total_count"] == 2
+        assert [row["symbol"] for row in sensex["data"]] == ["SENSEX", "SENSEX"]
+        assert sensex["expiry_counts"] == {"WEEKLY": 0, "MONTHLY": 0, "UNKNOWN": 2}
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
