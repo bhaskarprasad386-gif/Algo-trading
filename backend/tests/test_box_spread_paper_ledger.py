@@ -693,6 +693,80 @@ def test_expiry_settlement_retries_after_partial_commit_without_duplicate_fills(
     assert recovered.get_account_summary()["fill_count"] == initial_fill_count + 4
 
 
+
+
+def test_expiry_settlement_interlocks_manual_four_leg_exit(paper_ledger, monkeypatch):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    original_record_exit_fill = paper_ledger.record_exit_fill
+    rejected = []
+
+    def attempt_manual_exit_during_settlement(**kwargs):
+        if kwargs.get("settlement"):
+            assert paper_ledger.get_trade_summary(trade.id)["status"] == "SETTLING"
+            manual_legs = {
+                role: {"quantity": 25, "fill_price": 99}
+                for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+            }
+            with pytest.raises(ValueError, match="expiry settlement is in progress"):
+                paper_ledger.record_exit_basket(
+                    trade_id=trade.id, fill_id="manual-during-settlement", legs=manual_legs,
+                )
+            rejected.append(True)
+        return original_record_exit_fill(**kwargs)
+
+    monkeypatch.setattr(paper_ledger, "record_exit_fill", attempt_manual_exit_during_settlement)
+    result = paper_ledger.settle_expiry(
+        trade_id=trade.id,
+        settlement_prices={"LOW_CE": 10, "HIGH_CE": 0.5, "HIGH_PE": 2, "LOW_PE": 8},
+        settlement_date="2026-10-29",
+    )
+
+    assert rejected
+    assert result["status"] == "CLOSED"
+    assert len([fill for fill in paper_ledger.list_fills(trade.id) if fill.fill_id.startswith("SETTLE:")]) == 4
+    assert not any(fill.fill_id.startswith("EXIT:BASKET:manual-during-settlement") for fill in paper_ledger.list_fills(trade.id))
+
+
+def test_manual_exit_remains_blocked_after_interrupted_expiry_settlement(paper_ledger, monkeypatch):
+    trade = _trade(paper_ledger)
+    _fill_all_legs(paper_ledger, trade)
+    original_record_exit_fill = paper_ledger.record_exit_fill
+    calls = 0
+
+    def interrupt_after_first_settlement_leg(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated settlement interruption")
+        return original_record_exit_fill(**kwargs)
+
+    prices = {"LOW_CE": 10, "HIGH_CE": 0.5, "HIGH_PE": 2, "LOW_PE": 8}
+    monkeypatch.setattr(paper_ledger, "record_exit_fill", interrupt_after_first_settlement_leg)
+    with pytest.raises(RuntimeError, match="simulated settlement interruption"):
+        paper_ledger.settle_expiry(
+            trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+        )
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "SETTLING"
+
+    monkeypatch.setattr(paper_ledger, "record_exit_fill", original_record_exit_fill)
+    manual_legs = {
+        role: {"quantity": 25, "fill_price": 99}
+        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    }
+    with pytest.raises(ValueError, match="expiry settlement is in progress"):
+        paper_ledger.record_exit_basket(
+            trade_id=trade.id, fill_id="manual-after-interruption", legs=manual_legs,
+        )
+
+    recovered = BoxSpreadPaperLedger(paper_ledger._session_factory)
+    result = recovered.settle_expiry(
+        trade_id=trade.id, settlement_prices=prices, settlement_date="2026-10-29",
+    )
+    assert result["status"] == "CLOSED"
+    assert len([fill for fill in recovered.list_fills(trade.id) if fill.fill_id.startswith("SETTLE:")]) == 4
+
+
 def test_open_trade_recovery_isolated_by_account(paper_ledger):
     alpha_trade = _trade(
         paper_ledger, account_key="alpha-recovery", idempotency_key="alpha-open",
