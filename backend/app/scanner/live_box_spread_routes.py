@@ -264,10 +264,12 @@ def snapshots(
         ).filter(LiveBoxSpreadSnapshot.observed_at >= cutoff)
         if symbol is not None:
             grouped = grouped.filter(LiveBoxSpreadSnapshot.symbol == symbol)
-        for kind, count in grouped.group_by(LiveBoxSpreadSnapshot.expiry_type):
-            normalized = str(kind or "").strip().upper()
-            if normalized in {"WEEKLY", "MONTHLY", "UNKNOWN"}:
-                expiry_counts[normalized] += int(count)
+        group_by = getattr(grouped, "group_by", None)
+        if callable(group_by):
+            for kind, count in group_by(LiveBoxSpreadSnapshot.expiry_type):
+                normalized = str(kind or "").strip().upper()
+                if normalized in {"WEEKLY", "MONTHLY", "UNKNOWN"}:
+                    expiry_counts[normalized] += int(count)
 
         legacy = base.filter(LiveBoxSpreadSnapshot.expiry_type.is_(None)).order_by(
             LiveBoxSpreadSnapshot.observed_at.desc(), LiveBoxSpreadSnapshot.id.desc()
