@@ -963,6 +963,15 @@ class BoxSpreadPaperLedger:
                 "fill_count": len(entries),
             }
 
+    def get_trade_lot_size(self, trade_id: int, *, account_key: str = "default") -> int:
+        """Return the persisted lot size without consulting the instrument master."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session:
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            return _positive_quantity(trade.lot_size)
+
     def get_trade_summary(
         self,
         trade_id: int,
