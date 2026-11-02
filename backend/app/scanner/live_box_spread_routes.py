@@ -286,8 +286,10 @@ def snapshots(
                 except (TypeError, ValueError):
                     saved = {}
                 saved_kind = str(saved.get("expiry_type") or "").strip().upper()
-                if saved_kind in {"WEEKLY", "MONTHLY"}:
-                    expiry_counts[saved_kind] += 1
+                current_kind = classify_expiry_type(legacy_row.symbol, legacy_row.expiry)
+                resolved_kind = saved_kind if saved_kind in {"WEEKLY", "MONTHLY"} else current_kind
+                if resolved_kind in {"WEEKLY", "MONTHLY"}:
+                    expiry_counts[resolved_kind] += 1
                 else:
                     expiry_counts["UNKNOWN"] += 1
         else:
@@ -310,9 +312,8 @@ def snapshots(
                     continue
                 kind = str(getattr(row, "expiry_type", None) or item.get("expiry_type") or "").strip().upper()
                 if kind not in {"WEEKLY", "MONTHLY"}:
-                    kind = "UNKNOWN"
-                elif getattr(row, "expiry_type", None) is None:
-                    expiry_counts[kind] += 1
+                    current_kind = classify_expiry_type(row.symbol, row.expiry)
+                    kind = current_kind if current_kind in {"WEEKLY", "MONTHLY"} else "UNKNOWN"
                 item["expiry_type"] = kind
                 item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 item["freshness"] = "SAVED SNAPSHOT"
