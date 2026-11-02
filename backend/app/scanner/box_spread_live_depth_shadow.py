@@ -11,6 +11,7 @@ from math import isfinite
 from threading import RLock
 from time import monotonic, time_ns
 from typing import Any, Iterable, Mapping
+from datetime import datetime
 
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.registry import InstrumentDescriptor
@@ -75,8 +76,12 @@ class BoxLiveDepthShadowFeed:
         self._feed = feed or CommonStrategyMarketFeed(_CONSUMER, mode=mode)
         self._lock = RLock()
         self._records: OrderedDict[Any, dict[str, Any]] = OrderedDict()
+        self._metadata: dict[Any, dict[str, Any]] = {}
         self._started = False
-        self._counts = {"received": 0, "depth_full": 0, "depth_partial": 0, "l1_only": 0, "invalid_timestamp": 0}
+        self._counts = {
+            "received": 0, "depth_full": 0, "depth_partial": 0,
+            "l1_only": 0, "depth_invalid": 0, "invalid_timestamp": 0,
+        }
 
     def start(self, descriptors: Iterable[InstrumentDescriptor]) -> bool:
         """Subscribe only when explicitly enabled; otherwise make no feed changes."""
@@ -87,14 +92,160 @@ class BoxLiveDepthShadowFeed:
             raise ValueError("at least one Box Spread option descriptor is required")
         if any(str(item.instrument_type).strip().lower() != "option" for item in items):
             raise ValueError("Box Live Depth Shadow accepts option descriptors only")
+        metadata = {}
+        for item in items:
+            expiry = self._expiry_key(item.expiry)
+            metadata[item.key] = {
+                "underlying": str(item.underlying or "").strip().upper(),
+                "expiry": expiry,
+                "strike": float(item.strike) if item.strike is not None else None,
+                "option_type": str(item.option_type or "").strip().upper(),
+                "lot_size": item.lot_size,
+            }
         with self._lock:
             if self._started:
                 return True
             self._records.clear()
+            self._metadata = metadata
         self._feed.start(items, self._on_record)
         with self._lock:
             self._started = True
         return True
+
+    @staticmethod
+    def _expiry_key(value: Any) -> int | None:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        if text.isdigit():
+            try:
+                return int(text)
+            except ValueError:
+                return None
+        for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return int(datetime.strptime(text, fmt).strftime("%Y%m%d"))
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _allocate(levels: list[tuple[float, float]], quantity: int) -> float | None:
+        remaining = float(quantity)
+        notional = 0.0
+        filled = 0.0
+        for price, available in levels:
+            take = min(remaining, available)
+            if take > 0:
+                notional += take * price
+                filled += take
+                remaining -= take
+            if remaining <= 1e-9:
+                break
+        if remaining > 1e-9 or filled <= 0:
+            return None
+        return notional / filled
+
+    def compare_opportunity(
+        self,
+        opportunity: Any,
+        *,
+        now_ns: int | None = None,
+        now_monotonic: float | None = None,
+        max_leg_skew_seconds: float = 2.0,
+    ) -> dict[str, Any]:
+        """Compare the scanner L1 edge with a complete four-leg depth VWAP edge."""
+        wall_now = time_ns() if now_ns is None else int(now_ns)
+        arrival_now = monotonic() if now_monotonic is None else float(now_monotonic)
+        low, high = opportunity.low, opportunity.high
+        direction = str(opportunity.direction).strip().upper()
+        if direction not in {"LONG", "SHORT"}:
+            return {"status": "INCOMPLETE", "reason": "INVALID_DIRECTION"}
+        lot_size = getattr(low, "lot_size", None)
+        if isinstance(lot_size, bool) or not isinstance(lot_size, int) or lot_size <= 0:
+            return {"status": "INCOMPLETE", "reason": "INVALID_LOT_SIZE"}
+        if getattr(high, "lot_size", None) != lot_size:
+            return {"status": "INCOMPLETE", "reason": "LOT_SIZE_MISMATCH"}
+
+        if direction == "LONG":
+            legs = (
+                ("LOW_CE", low.strike, "CE", "ASK", low.call_timestamp_ns or low.timestamp_ns),
+                ("HIGH_CE", high.strike, "CE", "BID", high.call_timestamp_ns or high.timestamp_ns),
+                ("HIGH_PE", high.strike, "PE", "ASK", high.put_timestamp_ns or high.timestamp_ns),
+                ("LOW_PE", low.strike, "PE", "BID", low.put_timestamp_ns or low.timestamp_ns),
+            )
+        else:
+            legs = (
+                ("LOW_CE", low.strike, "CE", "BID", low.call_timestamp_ns or low.timestamp_ns),
+                ("HIGH_CE", high.strike, "CE", "ASK", high.call_timestamp_ns or high.timestamp_ns),
+                ("HIGH_PE", high.strike, "PE", "BID", high.put_timestamp_ns or high.timestamp_ns),
+                ("LOW_PE", low.strike, "PE", "ASK", low.put_timestamp_ns or low.timestamp_ns),
+            )
+
+        with self._lock:
+            cached = list(self._records.values())
+            metadata = dict(self._metadata)
+        selected = []
+        for role, strike, option_type, side, quote_timestamp in legs:
+            candidates = []
+            for item in cached:
+                meta = metadata.get(item.get("key"), {})
+                if (
+                    meta.get("underlying") == str(low.underlying).strip().upper()
+                    and meta.get("expiry") == int(low.expiry)
+                    and meta.get("strike") == float(strike)
+                    and meta.get("option_type") == option_type
+                ):
+                    candidates.append(item)
+            if not candidates:
+                return {"status": "INCOMPLETE", "reason": f"MISSING_{role}"}
+            item = max(candidates, key=lambda row: row["timestamp_ns"])
+            provider_age = (wall_now - item["timestamp_ns"]) / 1e9
+            arrival_age = arrival_now - item["arrival_monotonic"]
+            if not (-1.0 <= provider_age <= self.max_provider_age_seconds):
+                return {"status": "INCOMPLETE", "reason": f"STALE_PROVIDER_{role}"}
+            if not (0.0 <= arrival_age <= self.max_arrival_age_seconds):
+                return {"status": "INCOMPLETE", "reason": f"STALE_ARRIVAL_{role}"}
+            if item["depth_status"] == "DEPTH_INVALID":
+                return {"status": "INCOMPLETE", "reason": f"INVALID_DEPTH_{role}"}
+            if abs(item["timestamp_ns"] - int(quote_timestamp)) > max_leg_skew_seconds * 1e9:
+                return {"status": "INCOMPLETE", "reason": f"QUOTE_DEPTH_SKEW_{role}"}
+            levels = item["asks"] if side == "ASK" else item["bids"]
+            vwap = self._allocate(levels, lot_size)
+            if vwap is None:
+                return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{role}"}
+            selected.append({
+                "role": role, "side": side, "vwap": vwap,
+                "timestamp_ns": item["timestamp_ns"],
+                "depth_status": item["depth_status"],
+            })
+
+        timestamps = [item["timestamp_ns"] for item in selected]
+        if max(timestamps) - min(timestamps) > max_leg_skew_seconds * 1e9:
+            return {"status": "INCOMPLETE", "reason": "FOUR_LEG_TIMESTAMP_SKEW"}
+
+        prices = {item["role"]: item["vwap"] for item in selected}
+        width = float(high.strike) - float(low.strike)
+        if direction == "LONG":
+            net_debit = prices["LOW_CE"] + prices["HIGH_PE"] - prices["HIGH_CE"] - prices["LOW_PE"]
+            depth_edge = width - net_debit
+        else:
+            net_credit = prices["LOW_CE"] + prices["HIGH_PE"] - prices["HIGH_CE"] - prices["LOW_PE"]
+            depth_edge = net_credit - width
+        l1_edge = float(opportunity.executable_edge)
+        return {
+            "status": "COMPLETE",
+            "direction": direction,
+            "quantity": lot_size,
+            "l1_edge_per_unit": l1_edge,
+            "depth_edge_per_unit": depth_edge,
+            "difference_per_unit": depth_edge - l1_edge,
+            "l1_edge_per_lot": l1_edge * lot_size,
+            "depth_edge_per_lot": depth_edge * lot_size,
+            "difference_per_lot": (depth_edge - l1_edge) * lot_size,
+            "legs": selected,
+            "max_timestamp_skew_seconds": round((max(timestamps) - min(timestamps)) / 1e9, 3),
+        }
 
     def _on_record(self, record: Any) -> None:
         instrument = getattr(record, "instrument", None)
@@ -121,6 +272,7 @@ class BoxLiveDepthShadowFeed:
             state = "DEPTH_INVALID"
 
         entry = {
+            "key": instrument,
             "instrument": instrument.value,
             "symbol": str(getattr(record, "symbol", "")),
             "timestamp_ns": timestamp_ns,
@@ -131,8 +283,9 @@ class BoxLiveDepthShadowFeed:
         }
         with self._lock:
             self._counts["received"] += 1
-            if state in self._counts:
-                self._counts[state.lower()] += 1
+            counter_key = state.lower()
+            if counter_key in self._counts:
+                self._counts[counter_key] += 1
             self._records[instrument] = entry
             self._records.move_to_end(instrument)
             while len(self._records) > self.max_records:
@@ -180,6 +333,7 @@ class BoxLiveDepthShadowFeed:
             self._feed.stop()
         with self._lock:
             self._records.clear()
+            self._metadata.clear()
 
     def close(self) -> None:
         self.stop()
