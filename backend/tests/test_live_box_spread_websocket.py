@@ -121,3 +121,33 @@ def test_websocket_row_rejects_zero_leg_timestamp_without_fallback(monkeypatch):
     result.low.call_timestamp_ns = 0
     monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
     assert websocket._row(result) is None
+
+
+
+def test_publish_emits_empty_frame_when_scan_has_no_qualifying_rows(monkeypatch):
+    class FakeLoop:
+        def is_running(self):
+            return True
+
+        def call_soon_threadsafe(self, callback):
+            callback()
+
+    class FakeQueue:
+        def __init__(self):
+            self.items = []
+
+        def full(self):
+            return False
+
+        def put_nowait(self, item):
+            self.items.append(item)
+
+    queue = FakeQueue()
+    monkeypatch.setattr(websocket, "_loop", FakeLoop())
+    monkeypatch.setattr(websocket, "_subscribers", {queue})
+
+    websocket.publish([])
+
+    assert len(queue.items) == 1
+    assert queue.items[0]["type"] == "opportunities"
+    assert queue.items[0]["data"] == []
