@@ -1216,28 +1216,16 @@ def _execute_exit_basket_from_row(
                 status_code=409,
                 detail="prior basket exit quantities are inconsistent; manual review required",
             )
-        all_fills = _ledger.list_fills(trade_id, account_key=account_key)
-        signed_positions = {role: 0 for role in roles}
-        for item in all_fills:
-            if item.role in signed_positions:
-                signed_positions[item.role] += item.quantity * (1 if item.action == "BUY" else -1)
-        remaining_values = {abs(value) for value in signed_positions.values()}
-        if len(remaining_values) != 1:
-            raise HTTPException(
-                status_code=409,
-                detail="remaining paper position is inconsistent across four legs; manual review required",
-            )
+        snapshot = _ledger.get_exit_basket_position_snapshot(
+            trade_id, fill_id=f"exit:{fill_digest}:BASKET", account_key=account_key,
+        )
         summary = _ledger.get_trade_summary(trade_id, account_key=account_key)
-        lot_size = _ledger.get_trade_lot_size(trade_id, account_key=account_key)
-        exited_quantity = prior_fills[0].quantity
-        exited_lots = exited_quantity // lot_size
-        remaining_quantity = next(iter(remaining_values))
         return {
             "mode": "PAPER_ONLY", "broker_orders_enabled": False,
-            "order_type": order_type, "trade_id": trade_id, "status": summary["status"],
-            "requested_exit_lots": exited_lots + remaining_quantity // lot_size,
-            "exited_lots": exited_lots,
-            "remaining_open_lots": remaining_quantity // lot_size,
+            "order_type": order_type, "trade_id": trade_id, "status": snapshot["status"],
+            "requested_exit_lots": snapshot["requested_exit_lots"],
+            "exited_lots": snapshot["exited_lots"],
+            "remaining_open_lots": snapshot["remaining_open_lots"],
             "batch_count": 1,
             "receipts": [{
                 "fill_id": item.fill_id, "role": item.role, "action": item.action,
