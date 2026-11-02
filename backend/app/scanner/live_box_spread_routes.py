@@ -238,7 +238,7 @@ def snapshots(
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     expiry_type: str | None = Query(None, pattern="^(WEEKLY|MONTHLY|UNKNOWN)$"),
-    symbol: str | None = Query(None, pattern="^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|BANKEX)$"),
+    symbol: Annotated[str | None, Query(pattern="^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|BANKEX)$")] = None,
 ):
     """Return expiry-filtered persisted observations with counts for every class."""
     from collections import Counter
@@ -249,15 +249,17 @@ def snapshots(
     selected_count = 0
     expiry_counts = Counter()
     with SessionLocal() as db:
-        rows = (
-            db.query(LiveBoxSpreadSnapshot)
-            .filter(LiveBoxSpreadSnapshot.observed_at >= cutoff)
-            .order_by(
-                LiveBoxSpreadSnapshot.observed_at.desc(),
-                LiveBoxSpreadSnapshot.id.desc(),
-            )
-            .yield_per(1000)
+        rows = db.query(LiveBoxSpreadSnapshot).filter(
+            LiveBoxSpreadSnapshot.observed_at >= cutoff
         )
+        # The composite symbol/time index makes this filter cheap and avoids
+        # decoding unrelated underlyings when the caller requests one index.
+        if symbol is not None:
+            rows = rows.filter(LiveBoxSpreadSnapshot.symbol == symbol)
+        rows = rows.order_by(
+            LiveBoxSpreadSnapshot.observed_at.desc(),
+            LiveBoxSpreadSnapshot.id.desc(),
+        ).yield_per(1000)
         for row in rows:
             try:
                 item = json.loads(row.payload_json)
