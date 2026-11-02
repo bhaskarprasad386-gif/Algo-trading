@@ -227,7 +227,7 @@ def run_schema_migrations() -> None:
                     except (TypeError, ValueError):
                         continue
                     kind = str(payload.get("expiry_type") or "").strip().upper()
-                    if kind in {"WEEKLY", "MONTHLY", "UNKNOWN"}:
+                    if kind in {"WEEKLY", "MONTHLY"}:
                         updates.append({"snapshot_id": snapshot_id, "kind": kind})
                 if updates:
                     connection.execute(text(
