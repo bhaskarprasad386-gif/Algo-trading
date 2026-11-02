@@ -1481,6 +1481,73 @@ def test_all_or_none_exit_requires_full_executable_depth_on_every_leg(
     assert writes == []
 
 
+
+def test_exit_retry_replays_original_remaining_lots_after_a_later_exit(monkeypatch):
+    import hashlib
+
+    fill_id = "first-exit-retry"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    entry_actions = {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+    exit_actions = {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+    fills = [
+        SimpleNamespace(role=role, action=entry_actions[role], quantity=75, fill_id=f"ENTRY:{role}",
+                        fill_price=Decimal("10"), charges=Decimal("1"), cash_delta=Decimal("0"))
+        for role in roles
+    ]
+    fills += [
+        SimpleNamespace(role=role, action=exit_actions[role], quantity=25,
+                        fill_id=f"EXIT:BASKET:exit:{digest}:BASKET:{role}",
+                        fill_price=Decimal("11"), charges=Decimal("1"), cash_delta=Decimal("0"))
+        for role in roles
+    ]
+    # A later, distinct successful basket has since closed another lot.
+    fills += [
+        SimpleNamespace(role=role, action=exit_actions[role], quantity=25,
+                        fill_id=f"EXIT:BASKET:later-exit:{role}",
+                        fill_price=Decimal("12"), charges=Decimal("1"), cash_delta=Decimal("0"))
+        for role in roles
+    ]
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=3,
+        idempotency_key="historical-retry-trade", account_key="historical-retry-account",
+    )
+    monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
+    monkeypatch.setattr(routes, "_resolve", lambda payload: pytest.fail("durable retry must not resolve instrument master"))
+    monkeypatch.setattr(routes._ledger, "get_trade_lot_size", lambda *args, **kwargs: 25)
+    monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: fills)
+    monkeypatch.setattr(
+        routes._ledger, "get_exit_basket_position_snapshot",
+        lambda *args, **kwargs: {
+            "requested_exit_lots": 3, "exited_lots": 1,
+            "remaining_open_lots": 2, "status": "EXITING",
+        },
+    )
+    monkeypatch.setattr(
+        routes, "fresh_box_paper_depth",
+        lambda *args, **kwargs: pytest.fail("durable retry must not request market depth"),
+    )
+    monkeypatch.setattr(
+        routes, "_paper_open_basket_state",
+        lambda *args, **kwargs: pytest.fail("durable retry must not inspect current open position"),
+    )
+    monkeypatch.setattr(
+        routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: {"status": "CLOSED", "realized_pnl": Decimal("24.00")},
+    )
+
+    result = routes._execute_exit_basket_from_row(
+        789, "historical-retry-account", {}, order_type="MARKET", fill_id=fill_id,
+    )
+
+    assert result["idempotent_replay"] is True
+    assert result["requested_exit_lots"] == 3
+    assert result["exited_lots"] == 1
+    assert result["remaining_open_lots"] == 2
+    assert result["status"] == "EXITING"
+    assert len(result["receipts"]) == 4
+
 def test_exit_retry_replays_durable_four_leg_basket_without_market_depth(monkeypatch):
     import hashlib
 
