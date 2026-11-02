@@ -583,6 +583,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
   const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
+  const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
@@ -938,6 +939,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const alternate = slug === "synthetic-arbitrage" ? body?.runners?.synthetic_arbitrage : slug === "box-spread" ? body?.runners?.box_spread : body?.runners?.calendar_spread;
         const selected = rawRunner ?? alternate;
         setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+        const rawDepthShadow = slug === "box-spread" ? selected?.depth_shadow : null;
+        setBoxDepthShadow(rawDepthShadow && typeof rawDepthShadow === "object" ? rawDepthShadow : null);
         const rawDepthShadow = slug === "box-spread" ? selected?.depth_shadow : null;
         setBoxDepthShadow(rawDepthShadow && typeof rawDepthShadow === "object" ? rawDepthShadow : null);
       } catch {
