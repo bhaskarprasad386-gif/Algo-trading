@@ -111,3 +111,52 @@ def test_snapshot_endpoint_applies_symbol_filter_before_pagination(monkeypatch):
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+
+def test_snapshot_endpoint_uses_indexed_expiry_and_keeps_legacy_null_rows(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    now = datetime.utcnow()
+
+    try:
+        monkeypatch.setattr(routes, "_expiry_types", {})
+        with Session() as db:
+            db.add(LiveBoxSpreadSnapshot(
+                observed_at=now,
+                timestamp_ns=1_790_000_000_000_000_001,
+                symbol="NIFTY",
+                expiry=20261103,
+                low_strike=22000,
+                high_strike=23000,
+                direction="LONG",
+                expiry_type="WEEKLY",
+                payload_json='{"sequence": "indexed"}',
+            ))
+            db.add(LiveBoxSpreadSnapshot(
+                observed_at=now - timedelta(seconds=1),
+                timestamp_ns=1_790_000_000_000_000_002,
+                symbol="NIFTY",
+                expiry=20261103,
+                low_strike=22100,
+                high_strike=23100,
+                direction="LONG",
+                expiry_type=None,
+                payload_json='{"sequence": "legacy", "expiry_type": "WEEKLY"}',
+            ))
+            db.commit()
+
+        monkeypatch.setattr(routes, "SessionLocal", Session)
+        weekly = routes.snapshots(days=1, limit=10, offset=0, expiry_type="WEEKLY")
+
+        assert weekly["total_count"] == 2
+        assert weekly["expiry_counts"] == {"WEEKLY": 2, "MONTHLY": 0, "UNKNOWN": 0}
+        assert [row["sequence"] for row in weekly["data"]] == ["indexed", "legacy"]
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
