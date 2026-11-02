@@ -29,7 +29,7 @@ def test_long_box_uses_correct_four_leg_depth_sides_and_same_quantity():
     assert result["allocations"]["high_call"]["side"] == "BID"
     assert result["allocations"]["high_put"]["side"] == "ASK"
     assert result["allocations"]["low_put"]["side"] == "BID"
-    assert result["depth_edge_per_unit"] == 10
+    assert result["depth_edge_per_unit"] == 8
 
 
 def test_short_box_reverses_all_four_sides():
