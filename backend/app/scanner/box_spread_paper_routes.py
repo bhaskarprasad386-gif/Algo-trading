@@ -1041,6 +1041,7 @@ def _build_exit_preview(
     request = _load_trade_request(trade_id, account_key)
     contracts = _resolve(request)
 
+    contracts = _resolve(request)
     trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     if limit_prices is not None and set(limit_prices) != set(roles):
@@ -1193,8 +1194,9 @@ def _execute_exit_basket_from_row(
         raise HTTPException(status_code=422, detail="limit_prices must contain exactly all four leg roles")
 
     request = _load_trade_request(trade_id, account_key)
-    contracts = _resolve(request)
-    # Idempotent API retry recovery must happen before checking current open
+    # Idempotent API retry recovery must happen before instrument-master access,
+    # current open quantity, or market-depth checks. The persisted trade owns
+    # its original lot size; a provider outage must not block receipt replay.
     # quantity or market depth: a prior successful exit may have closed the
     # position, but the caller is entitled to the original durable receipts.
     fill_digest = hashlib.sha256(str(fill_id).encode("utf-8")).hexdigest()[:40]
@@ -1228,15 +1230,16 @@ def _execute_exit_basket_from_row(
                 detail="remaining paper position is inconsistent across four legs; manual review required",
             )
         summary = _ledger.get_trade_summary(trade_id, account_key=account_key)
+        lot_size = _ledger.get_trade_lot_size(trade_id, account_key=account_key)
         exited_quantity = prior_fills[0].quantity
-        exited_lots = exited_quantity // int(contracts.lot_size)
+        exited_lots = exited_quantity // lot_size
         remaining_quantity = next(iter(remaining_values))
         return {
             "mode": "PAPER_ONLY", "broker_orders_enabled": False,
             "order_type": order_type, "trade_id": trade_id, "status": summary["status"],
-            "requested_exit_lots": exited_lots + remaining_quantity // int(contracts.lot_size),
+            "requested_exit_lots": exited_lots + remaining_quantity // lot_size,
             "exited_lots": exited_lots,
-            "remaining_open_lots": remaining_quantity // int(contracts.lot_size),
+            "remaining_open_lots": remaining_quantity // lot_size,
             "batch_count": 1,
             "receipts": [{
                 "fill_id": item.fill_id, "role": item.role, "action": item.action,
