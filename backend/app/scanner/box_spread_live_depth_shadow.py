@@ -11,6 +11,7 @@ from math import isfinite
 from threading import RLock
 from time import monotonic, time_ns
 from typing import Any, Iterable, Mapping
+from datetime import datetime
 
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.registry import InstrumentDescriptor
@@ -75,8 +76,12 @@ class BoxLiveDepthShadowFeed:
         self._feed = feed or CommonStrategyMarketFeed(_CONSUMER, mode=mode)
         self._lock = RLock()
         self._records: OrderedDict[Any, dict[str, Any]] = OrderedDict()
+        self._metadata: dict[Any, dict[str, Any]] = {}
         self._started = False
-        self._counts = {"received": 0, "depth_full": 0, "depth_partial": 0, "l1_only": 0, "invalid_timestamp": 0}
+        self._counts = {
+            "received": 0, "depth_full": 0, "depth_partial": 0,
+            "l1_only": 0, "depth_invalid": 0, "invalid_timestamp": 0,
+        }
 
     def start(self, descriptors: Iterable[InstrumentDescriptor]) -> bool:
         """Subscribe only when explicitly enabled; otherwise make no feed changes."""
@@ -87,10 +92,21 @@ class BoxLiveDepthShadowFeed:
             raise ValueError("at least one Box Spread option descriptor is required")
         if any(str(item.instrument_type).strip().lower() != "option" for item in items):
             raise ValueError("Box Live Depth Shadow accepts option descriptors only")
+        metadata = {}
+        for item in items:
+            expiry = self._expiry_key(item.expiry)
+            metadata[item.key] = {
+                "underlying": str(item.underlying or "").strip().upper(),
+                "expiry": expiry,
+                "strike": float(item.strike) if item.strike is not None else None,
+                "option_type": str(item.option_type or "").strip().upper(),
+                "lot_size": item.lot_size,
+            }
         with self._lock:
             if self._started:
                 return True
             self._records.clear()
+            self._metadata = metadata
         self._feed.start(items, self._on_record)
         with self._lock:
             self._started = True
