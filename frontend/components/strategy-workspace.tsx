@@ -1131,7 +1131,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </Card>
       ) : (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card className={"theme-border theme-surface p-4 " + (slug === "box-spread" ? "box-history-contrast" : "")}><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
+        <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Common Market Data Feed</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Activity className="h-4 w-4" />{feedTicks == null ? "CHECKING" : feedTicks.toLocaleString("en-IN") + " ticks"}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{runnerLabel(slug)}</p><p className={"mt-2 text-sm font-semibold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNAVAILABLE"}</p></Card>
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Broker Orders</p><p className="mt-2 text-sm font-semibold theme-warning">OFF</p></Card>
@@ -1529,7 +1529,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       )}
 
       {slug !== "box-spread" && (
-      <Card className="theme-border theme-surface p-4">
+      <Card className={"theme-border theme-surface p-4 " + (slug === "box-spread" ? "box-history-contrast" : "")}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
           <div className="flex flex-wrap items-center gap-2">
