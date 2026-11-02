@@ -140,3 +140,20 @@ def test_shadow_rejects_non_option_subscription():
     with pytest.raises(ValueError, match="option descriptors only"):
         shadow.start([future])
     assert feed.started == []
+
+
+def test_shadow_start_failure_clears_only_its_consumer_and_cache():
+    import pytest
+
+    class FailingFeed(FakeFeed):
+        def start(self, descriptors, callback):
+            self.started.append((tuple(descriptors), callback))
+            raise RuntimeError("subscribe failed")
+
+    feed = FailingFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    with pytest.raises(RuntimeError, match="subscribe failed"):
+        shadow.start([_descriptor()])
+    assert feed.stopped == 1
+    assert shadow.snapshot()["record_count"] == 0
+    assert shadow.snapshot()["running"] is False
