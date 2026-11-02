@@ -379,6 +379,8 @@ class LiveBoxSpreadRunner:
                 }
                 down_since = None
                 while not self.stop_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
+                    self._log_feed_state_change()
+                    self._readiness["underlying_websocket"] = _safe_snapshot(self.feed)
                     recorder_snapshot = _safe_snapshot(recorder)
                     self._readiness["option_websocket"] = recorder_snapshot
                     feed_snapshot = recorder_snapshot.get("feed")
