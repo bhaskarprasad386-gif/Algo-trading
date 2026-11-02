@@ -361,3 +361,31 @@ html[data-theme="white"] .box-live-opportunities [class*="text-slate-500"],
 html[data-theme="white"] .box-workspace-header .text-slate-400 {
   color: #0f172a !important;
 }
+
+/* High-contrast typography and borders for the two Box Spread history panels. */
+.box-history-contrast {
+  --box-history-border: #94a3b8;
+  --box-history-muted: #334155;
+}
+.box-history-contrast .theme-border {
+  border-color: var(--box-history-border) !important;
+  border-width: 1.5px !important;
+}
+.box-history-contrast .theme-muted,
+.box-history-contrast .theme-subtle {
+  color: var(--box-history-muted) !important;
+  font-weight: 600 !important;
+}
+.box-history-contrast th,
+.box-history-contrast td,
+.box-history-contrast label {
+  font-weight: 600;
+}
+html[data-theme="black"] .box-history-contrast {
+  --box-history-border: #64748b;
+  --box-history-muted: #cbd5e1;
+}
+html[data-theme="blue"] .box-history-contrast {
+  --box-history-border: #64748b;
+  --box-history-muted: #cbd5e1;
+}
