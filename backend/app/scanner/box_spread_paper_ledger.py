@@ -972,6 +972,68 @@ class BoxSpreadPaperLedger:
                 raise ValueError("paper trade not found for account")
             return _positive_quantity(trade.lot_size)
 
+    def get_exit_basket_position_snapshot(
+        self,
+        trade_id: int,
+        *,
+        fill_id: str,
+        account_key: str = "default",
+    ) -> dict[str, int | str]:
+        """Reconstruct four-leg position immediately after one durable exit basket."""
+        key = self._account_key(account_key)
+        raw_id = str(fill_id or "").strip()
+        if not raw_id or len(raw_id) > 96:
+            raise ValueError("basket exit fill_id is required and must be at most 96 characters")
+        prefix = f"EXIT:BASKET:{raw_id}:"
+        roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        with self._session_factory() as session:
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            rows = session.scalars(
+                select(BoxSpreadPaperLedgerEntry)
+                .where(
+                    BoxSpreadPaperLedgerEntry.trade_id == trade_id,
+                    BoxSpreadPaperLedgerEntry.account_key == key,
+                )
+                .order_by(BoxSpreadPaperLedgerEntry.id)
+            ).all()
+            basket_rows = [row for row in rows if row.fill_id.startswith(prefix)]
+            if len(basket_rows) != 4 or {row.role for row in basket_rows} != set(roles):
+                raise ValueError("incomplete prior basket exit record requires manual review")
+            if len({row.quantity for row in basket_rows}) != 1:
+                raise ValueError("prior basket exit quantities are inconsistent")
+            first_id = min(row.id for row in basket_rows)
+            last_id = max(row.id for row in basket_rows)
+            before = {role: 0 for role in roles}
+            after = {role: 0 for role in roles}
+            for row in rows:
+                if row.role not in before:
+                    continue
+                signed = row.quantity * (1 if row.action == "BUY" else -1)
+                if row.id < first_id:
+                    before[row.role] += signed
+                if row.id <= last_id:
+                    after[row.role] += signed
+            before_values = {abs(value) for value in before.values()}
+            after_values = {abs(value) for value in after.values()}
+            if len(before_values) != 1 or len(after_values) != 1:
+                raise ValueError("historical paper position is inconsistent across four legs")
+            lot_size = _positive_quantity(trade.lot_size)
+            before_quantity = next(iter(before_values))
+            after_quantity = next(iter(after_values))
+            exited_quantity = basket_rows[0].quantity
+            if before_quantity - after_quantity != exited_quantity:
+                raise ValueError("prior basket exit does not reconcile with historical position")
+            if any(quantity % lot_size for quantity in (before_quantity, after_quantity, exited_quantity)):
+                raise ValueError("historical paper position is not a whole number of lots")
+            return {
+                "requested_exit_lots": before_quantity // lot_size,
+                "exited_lots": exited_quantity // lot_size,
+                "remaining_open_lots": after_quantity // lot_size,
+                "status": "CLOSED" if after_quantity == 0 else "EXITING",
+            }
+
     def get_trade_summary(
         self,
         trade_id: int,
