@@ -145,8 +145,9 @@ def publish(results):
                 rows.append(row)
         except (AttributeError, TypeError, ValueError, OverflowError):
             continue
-    if not rows:
-        return
+    # Publish an empty frame too. The scanner callback itself is the heartbeat:
+    # an empty result means the scan ran but found no qualifying executable box.
+    # Silently dropping it makes a healthy, quiet scanner look like a dead stream.
     message = {"type": "opportunities", "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "data": rows}
 
     def deliver():
