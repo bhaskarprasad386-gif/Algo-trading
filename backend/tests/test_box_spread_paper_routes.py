@@ -378,7 +378,7 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test", op
 
 def test_multi_lot_exit_uses_one_atomic_four_leg_write_for_available_lots(monkeypatch):
     row, _ = _exit_basket_route_fixtures(
-        monkeypatch, open_quantity=50, 25=25,
+        monkeypatch, open_quantity=50, depth_quantity=25,
     )
     captured = []
     receipts = [
@@ -495,7 +495,7 @@ def test_exit_preview_returns_all_four_executable_depth_quotes_without_writing(m
     assert quotes["HIGH_CE"]["executable_vwap"] == 21
     assert quotes["HIGH_PE"]["executable_vwap"] == 30
     assert quotes["LOW_PE"]["executable_vwap"] == 41
-    assert all(leg["available_25"] == 25 for leg in result["legs"])
+    assert all(leg["available_depth_quantity"] == 25 for leg in result["legs"])
     assert result["all_legs_marketable"] is True
     assert result["full_position_executable"] is True
     assert result["preview_is_executable"] is True
