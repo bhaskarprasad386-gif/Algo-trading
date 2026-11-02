@@ -47,6 +47,12 @@ def test_live_scanner_requires_executable_two_sided_quotes():
     assert signal is not None
     assert signal.cash_ask is None
     assert signal.eligible is False
+    health = scanner.health()
+    assert health["missing_cash_ask"] == 1
+    assert health["missing_cash_bid"] == 0
+    assert health["missing_future_bid"] == 0
+    assert health["missing_future_ask"] == 0
+    assert health["pairs_missing_quotes"] == 1
 
 
 def test_live_scanner_advanced_metrics(monkeypatch):
