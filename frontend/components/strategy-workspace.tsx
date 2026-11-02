@@ -539,6 +539,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState("");
   const [historyExpiryView, setHistoryExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
+  const [historySymbol, setHistorySymbol] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
   const [historyHealth, setHistoryHealth] = useState<{ last_save_at?: string | null; last_saved_count?: number; last_error?: string | null; storage?: string } | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
@@ -782,7 +783,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     setHistoryLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const historyUrl = slug === "box-spread" ? c.historyEndpoint + "&expiry_type=" + encodeURIComponent(historyExpiryView) : c.historyEndpoint;
+      const historyUrl = slug === "box-spread"
+        ? c.historyEndpoint + "&expiry_type=" + encodeURIComponent(historyExpiryView) + (historySymbol ? "&symbol=" + encodeURIComponent(historySymbol) : "")
+        : c.historyEndpoint;
       const response = await fetch(base + historyUrl, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
@@ -822,7 +825,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     void loadHistory();
     const timer = window.setInterval(() => void loadHistory(), 10000);
     return () => window.clearInterval(timer);
-  }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : ""]);
+  }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : ""]);
 
   useEffect(() => {
     if (isCustom || c.pairEndpoint) return;
@@ -1008,7 +1011,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const normalizedHistoryFilter = historyFilter.trim().toUpperCase();
   const filteredHistoryRows = historyRows.filter((row) => {
     const symbol = String(row.underlying ?? row.symbol ?? "").toUpperCase();
-    const symbolMatches = !normalizedHistoryFilter || symbol.includes(normalizedHistoryFilter);
+    const symbolMatches = slug === "box-spread"
+      ? (!historySymbol || symbol === historySymbol)
+      : (!normalizedHistoryFilter || symbol.includes(normalizedHistoryFilter));
     const expiryType = String(row.expiry_type ?? "").trim().toUpperCase();
     const expiryMatches = slug !== "box-spread" || expiryType === historyExpiryView;
     return symbolMatches && expiryMatches;
@@ -1510,6 +1515,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         {slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Post-market opportunity expiry type">
           <button type="button" onClick={() => { setHistoryExpiryView("MONTHLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
           <button type="button" onClick={() => { setHistoryExpiryView("WEEKLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
+          <label className="flex min-h-9 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs theme-muted">Underlying<select value={historySymbol} onChange={(event) => { setHistorySymbol(event.target.value); setHistoryPage(1); }} className="bg-transparent font-semibold theme-text outline-none" aria-label="Filter Box Spread history by underlying"><option value="">All indices</option><option value="NIFTY">NIFTY</option><option value="BANKNIFTY">BANKNIFTY</option><option value="FINNIFTY">FINNIFTY</option><option value="MIDCPNIFTY">MIDCPNIFTY</option><option value="SENSEX">SENSEX</option><option value="BANKEX">BANKEX</option></select></label>
           <span className="self-center text-xs theme-muted">{filteredHistoryRows.length.toLocaleString("en-IN")} saved {historyExpiryView.toLowerCase()} rows</span>
         </div>}
         {slug === "synthetic-arbitrage" && <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
