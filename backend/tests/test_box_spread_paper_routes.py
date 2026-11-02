@@ -1607,3 +1607,65 @@ def test_exit_retry_replays_durable_four_leg_basket_without_market_depth(monkeyp
     assert result["remaining_open_lots"] == 0
     assert len(result["receipts"]) == 4
     assert result["broker_orders_enabled"] is False
+
+
+
+def test_exit_basket_route_replays_durable_receipts_before_instrument_resolution(monkeypatch):
+    import hashlib
+
+    _exit_basket_route_fixtures(monkeypatch)
+    fill_id = "route-retry-after-provider-outage"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    exit_actions = {
+        "LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY",
+    }
+    prior_fills = [
+        SimpleNamespace(
+            role=role, action=exit_actions[role], quantity=25,
+            fill_id=f"EXIT:BASKET:exit:{digest}:BASKET:{role}",
+            fill_price=Decimal("11"), charges=Decimal("1"), cash_delta=Decimal("0"),
+        )
+        for role in roles
+    ]
+    monkeypatch.setattr(
+        routes, "_resolve",
+        lambda payload: pytest.fail("durable route retry must not resolve instrument master"),
+    )
+    monkeypatch.setattr(
+        routes, "_matching_live_row",
+        lambda contracts: pytest.fail("durable route retry must not request current scanner row"),
+    )
+    monkeypatch.setattr(
+        routes._ledger, "list_fills",
+        lambda *args, **kwargs: prior_fills,
+    )
+    monkeypatch.setattr(
+        routes._ledger, "get_exit_basket_position_snapshot",
+        lambda *args, **kwargs: {
+            "requested_exit_lots": 1, "exited_lots": 1,
+            "remaining_open_lots": 0, "status": "CLOSED",
+        },
+    )
+    monkeypatch.setattr(
+        routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: {"status": "CLOSED", "realized_pnl": Decimal("12.00")},
+    )
+    monkeypatch.setattr(
+        routes, "fresh_box_paper_depth",
+        lambda *args, **kwargs: pytest.fail("durable route retry must not request market depth"),
+    )
+
+    result = routes.exit_basket(456, routes.ExitBasket(
+        account_key="basket-route-test", fill_id=fill_id, order_type="MARKET",
+    ))
+
+    assert result["idempotent_replay"] is True
+    assert result["status"] == "CLOSED"
+    assert result["requested_exit_lots"] == 1
+    assert result["exited_lots"] == 1
+    assert result["remaining_open_lots"] == 0
+    assert len(result["receipts"]) == 4
