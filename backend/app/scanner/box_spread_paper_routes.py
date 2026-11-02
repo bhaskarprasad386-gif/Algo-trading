@@ -1040,6 +1040,50 @@ def _build_exit_preview(
         raise HTTPException(status_code=422, detail="MARKET preview must not include limit_prices")
     request = _load_trade_request(trade_id, account_key)
     contracts = _resolve(request)
+
+    # Idempotent API retry recovery must happen before checking current open
+    # quantity or market depth: a prior successful exit may have closed the
+    # position, but the caller is entitled to the original durable receipts.
+    fill_digest = hashlib.sha256(str(fill_id).encode("utf-8")).hexdigest()[:40]
+    basket_prefix = f"EXIT:BASKET:exit:{fill_digest}:BASKET:"
+    prior_fills = [
+        item for item in _ledger.list_fills(trade_id, account_key=account_key)
+        if str(item.fill_id).startswith(basket_prefix)
+    ]
+    if prior_fills:
+        roles_found = {item.role for item in prior_fills}
+        roles = {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+        if len(prior_fills) != 4 or roles_found != roles:
+            raise HTTPException(
+                status_code=409,
+                detail="incomplete prior basket exit record requires manual review; no new exit was attempted",
+            )
+        if len({item.quantity for item in prior_fills}) != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="prior basket exit quantities are inconsistent; manual review required",
+            )
+        summary = _ledger.get_trade_summary(trade_id, account_key=account_key)
+        exited_quantity = prior_fills[0].quantity
+        exited_lots = exited_quantity // int(contracts.lot_size)
+        open_state = _paper_open_basket_state(trade_id, account_key)
+        remaining_quantity = open_state[1]["LOW_CE"]
+        return {
+            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+            "order_type": order_type, "trade_id": trade_id, "status": summary["status"],
+            "requested_exit_lots": exited_lots + remaining_quantity // int(contracts.lot_size),
+            "exited_lots": exited_lots,
+            "remaining_open_lots": remaining_quantity // int(contracts.lot_size),
+            "batch_count": 1,
+            "receipts": [{
+                "fill_id": item.fill_id, "role": item.role, "action": item.action,
+                "quantity": item.quantity, "fill_price": str(item.fill_price),
+                "charges": str(item.charges), "cash_delta": str(item.cash_delta),
+            } for item in prior_fills],
+            "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
+            "idempotent_replay": True,
+        }
+
     trade_row, quantities = _paper_open_basket_state(trade_id, account_key)
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     if limit_prices is not None and set(limit_prices) != set(roles):
