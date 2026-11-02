@@ -1150,3 +1150,68 @@ def test_concurrent_distinct_exit_baskets_cannot_overclose_position(tmp_path):
         assert ledger.list_open_trades() == []
     finally:
         engine.dispose()
+
+
+
+def test_concurrent_distinct_partial_exit_baskets_close_only_available_lots(tmp_path):
+    # Two workers close disjoint one-lot portions of a two-lot position.
+    # Both should succeed serially without exceeding the original quantity.
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-ledger-partial-exit-concurrency.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperAccount.__table__,
+        BoxSpreadPaperTradeRecord.__table__,
+        BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    ledger = BoxSpreadPaperLedger(factory)
+    trade = _trade(ledger, lots=2)
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL",
+        "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    for role, action in entry_actions.items():
+        ledger.record_fill(
+            trade_id=trade.id, fill_id=f"partial-exit-entry-{role}",
+            role=role, action=action, quantity=trade.quantity, fill_price=100,
+        )
+
+    partial_quantity = trade.quantity // 2
+    assert partial_quantity > 0
+    exit_legs = {
+        role: {"quantity": partial_quantity, "fill_price": 105}
+        for role in entry_actions
+    }
+    barrier = Barrier(2)
+
+    def submit_exit(request_id):
+        barrier.wait(timeout=5)
+        return ledger.record_exit_basket(
+            trade_id=trade.id, fill_id=request_id, legs=exit_legs,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(
+                submit_exit, ("partial-exit-request-A", "partial-exit-request-B"),
+            ))
+
+        assert [len(receipts) for receipts in outcomes] == [4, 4]
+        assert all(
+            {receipt.role for receipt in receipts} == set(entry_actions)
+            and {receipt.quantity for receipt in receipts} == {partial_quantity}
+            for receipts in outcomes
+        )
+        fills = ledger.list_fills(trade.id)
+        exit_fills = [fill for fill in fills if fill.fill_id.startswith("EXIT:BASKET:")]
+        assert len(fills) == 12
+        assert len(exit_fills) == 8
+        assert {fill.quantity for fill in exit_fills} == {partial_quantity}
+        assert ledger.get_account_summary()["fill_count"] == 12
+        assert ledger.get_trade_summary(trade.id)["status"] == "CLOSED"
+        assert ledger.list_open_trades() == []
+    finally:
+        engine.dispose()
