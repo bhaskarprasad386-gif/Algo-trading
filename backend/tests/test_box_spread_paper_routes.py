@@ -88,13 +88,13 @@ def test_empty_paper_portfolio_summary_is_zeroed_and_paper_only(monkeypatch):
 def test_paper_quote_selector_uses_ask_for_buys_and_bid_for_sells():
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
         # LTP values intentionally disagree with the executable quote sides.
         # Entry pricing must never fall back to last-traded prices.
         "low_call_price": 999, "high_call_price": 888,
@@ -166,13 +166,13 @@ def test_simulation_rejects_malformed_live_strikes_without_server_error(monkeypa
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     row[strike_field] = raw_strike
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
@@ -276,13 +276,13 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
@@ -351,13 +351,13 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test", op
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     actions = {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
@@ -944,13 +944,13 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     durable_fills = []
     claim_state = {"claimed": False}
@@ -1058,13 +1058,13 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     monkeypatch.setattr(routes, "_paper_execution_enabled", True)
     monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
@@ -1098,13 +1098,13 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
 def test_entry_quote_selector_rejects_invalid_prices_before_entry_claim(bad_price):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     row["low_call_ask"] = bad_price
 
@@ -1140,13 +1140,13 @@ def test_entry_quote_selector_rejects_missing_executable_quote():
 def test_entry_quote_selector_rejects_invalid_two_sided_market(field, value):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     row[field] = value
 
@@ -1173,13 +1173,13 @@ def test_entry_quote_selector_rejects_invalid_two_sided_market(field, value):
 def test_exit_quote_selector_uses_valid_executable_side(direction, role, expected):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
 
     assert routes._exit_reference_price(row, direction, role) == expected
@@ -1199,13 +1199,13 @@ def test_exit_quote_selector_rejects_invalid_two_sided_market(
 ):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     row[bid_field] = bid
     row[ask_field] = ask
@@ -1230,13 +1230,13 @@ def test_exit_quote_selector_rejects_invalid_two_sided_market(
 def test_mark_price_uses_executable_close_side_for_each_signed_leg(direction, role, expected):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     assert routes._exit_reference_price(row, direction, role) == expected
 
@@ -1284,13 +1284,13 @@ def test_fresh_marks_can_use_preloaded_trade_and_snapshot(monkeypatch):
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-10-29",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     monkeypatch.setattr(
         routes, "_load_trade_request",
@@ -1369,13 +1369,13 @@ def test_shared_exit_executor_validates_and_records_all_four_legs_for_market(mon
         456, "basket-route-test",
         {
             "low_call_bid": 10, "low_call_ask": 11,
-            "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+            "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
             "high_call_bid": 20, "high_call_ask": 21,
-            "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+            "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
             "high_put_bid": 30, "high_put_ask": 31,
-            "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+            "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
             "low_put_bid": 40, "low_put_ask": 41,
-            "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+            "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
         },
         order_type="MARKET", fill_id="shared-market-exit",
     )
@@ -1428,13 +1428,13 @@ def test_all_or_none_exit_rejects_basket_if_any_one_leg_is_not_marketable(
     )
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": ${depth_quantity}, "low_call_ask_qty": ${depth_quantity},
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": ${depth_quantity}, "high_call_ask_qty": ${depth_quantity},
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": ${depth_quantity}, "high_put_ask_qty": ${depth_quantity},
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": ${depth_quantity}, "low_put_ask_qty": ${depth_quantity},
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
 
     with pytest.raises(HTTPException) as raised:
