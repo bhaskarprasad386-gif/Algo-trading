@@ -69,7 +69,7 @@ def test_shadow_subscribes_only_option_descriptors_and_reads_five_levels():
     callback(_record(
         timestamp_ns=now,
         payload={
-            "best_5_buy_data": _five_levels(100),
+            "best_5_buy_data": _five_levels(95),
             "best_5_sell_data": _five_levels(101),
         },
     ))
@@ -79,7 +79,7 @@ def test_shadow_subscribes_only_option_descriptors_and_reads_five_levels():
     assert row["depth_status"] == "DEPTH_FULL"
     assert row["freshness"] == "FRESH"
     assert len(row["bids"]) == len(row["asks"]) == 5
-    assert row["bids"][0] == (104.0, 25.0)
+    assert row["bids"][0] == (99.0, 25.0)
     assert row["asks"][0] == (101.0, 25.0)
 
 
