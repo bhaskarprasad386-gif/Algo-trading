@@ -37,6 +37,17 @@ def _atm_outside_subscribed_range(atm_strike, subscribed_strikes):
     return float(atm_strike) < min(subscribed_strikes) or float(atm_strike) > max(subscribed_strikes)
 
 
+def _safe_snapshot(component):
+    """Return a stable diagnostic payload while feed components are starting/stopping."""
+    if component is None:
+        return {"state": "not_started"}
+    try:
+        snapshot = component.snapshot()
+        return snapshot if isinstance(snapshot, dict) else {"state": "snapshot_unavailable"}
+    except Exception as exc:
+        return {"state": "snapshot_error", "reason": str(exc)[:240]}
+
+
 class BoxSpreadLiveTarget:
     def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None):
         self.underlying=underlying.strip().upper(); self.instrument_class=instrument_class.strip().upper(); self.expiry=expiry
@@ -47,7 +58,16 @@ class LiveBoxSpreadRunner:
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
-        self._readiness = {"state": "starting", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
+        self._feed_thread = None
+        self._last_feed_log_signature = None
+        self._readiness = {
+            "state": "starting",
+            "ready_symbols": [],
+            "waiting_symbols": [],
+            "unavailable_symbols": [],
+            "underlying_websocket": {"state": "not_started"},
+            "option_websocket": {"state": "not_started"},
+        }
 
     @staticmethod
     def _feed_is_down(feed_snapshot) -> bool:
@@ -63,6 +83,28 @@ class LiveBoxSpreadRunner:
         if connected is None or connected or pending:
             return False
         return bool(disconnected) or int(snapshot.get("socket_groups", 0) or 0) == 0
+
+    def _log_feed_state_change(self):
+        """Log only meaningful underlying WebSocket transitions, not every poll."""
+        if self.feed is None:
+            return
+        snapshot = _safe_snapshot(self.feed)
+        feed_detail = snapshot.get("feed") or {}
+        signature = (
+            str(snapshot.get("state") or "UNKNOWN"),
+            str(snapshot.get("state_reason") or ""),
+            str(feed_detail.get("connected")),
+            str(feed_detail.get("disconnected_groups")),
+            str(feed_detail.get("last_error")),
+        )
+        if signature == self._last_feed_log_signature:
+            return
+        self._last_feed_log_signature = signature
+        app_logger.info(
+            "Box Spread underlying WebSocket state={} reason={} connected={} disconnected_groups={} last_error={}",
+            signature[0], signature[1], feed_detail.get("connected"),
+            feed_detail.get("disconnected_groups"), feed_detail.get("last_error"),
+        )
 
     def run_forever(self):
         retry_delay = 5.0
@@ -125,7 +167,10 @@ class LiveBoxSpreadRunner:
                 )
         return subscriptions
     def _run_session(self):
-        download_box_spread_instruments(self.master)
+        # main.py prepares the shared master before starting this runner. Reuse
+        # that validated snapshot instead of triggering a second network refresh.
+        if not getattr(self.master, "_loaded", False) or not getattr(self.master, "instruments", None):
+            download_box_spread_instruments(self.master)
         symbols=tuple(dict.fromkeys(t.underlying for t in self.targets))
         from datetime import datetime
         today = datetime.now().date()
@@ -194,9 +239,12 @@ class LiveBoxSpreadRunner:
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
         self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer="box-underlyings")
-        Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed").start()
+        self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
+        self._feed_thread.start()
         try:
             while not self.stop_event.is_set():
+                self._log_feed_state_change()
+                underlying_snapshot = _safe_snapshot(self.feed)
                 atms = {symbol: self.tracker.atm(symbol, time_ns(), max_age_seconds=10.0) for symbol in symbols}
                 ready_targets = tuple(target for target in self.targets if atms.get(target.underlying) is not None)
                 ready_symbols = sorted({target.underlying for target in ready_targets})
@@ -209,6 +257,8 @@ class LiveBoxSpreadRunner:
                     "selected_expiries": dict(selected_expiries),
                     "contract_expiries": {},
                     "subscription_counts": {},
+                    "underlying_websocket": underlying_snapshot,
+                    "option_websocket": _safe_snapshot(self.recorder),
                 }
                 if not ready_targets:
                     sleep(.25)
@@ -323,9 +373,17 @@ class LiveBoxSpreadRunner:
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
                 recorder_thread.start()
+                self._readiness["option_websocket"] = {
+                    "state": "starting",
+                    "subscription_count": len(subs),
+                }
                 down_since = None
                 while not self.stop_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
-                    feed_snapshot = recorder.snapshot().get("feed")
+                    self._log_feed_state_change()
+                    self._readiness["underlying_websocket"] = _safe_snapshot(self.feed)
+                    recorder_snapshot = _safe_snapshot(recorder)
+                    self._readiness["option_websocket"] = recorder_snapshot
+                    feed_snapshot = recorder_snapshot.get("feed")
                     if self._feed_is_down(feed_snapshot):
                         if down_since is None:
                             down_since = monotonic()
@@ -342,19 +400,27 @@ class LiveBoxSpreadRunner:
                 self.recorder=None
         finally:
             feed, self.feed = self.feed, None
+            feed_thread, self._feed_thread = self._feed_thread, None
             recorder, self.recorder = self.recorder, None
             if recorder is not None:
                 recorder.stop()
             if feed is not None:
                 feed.stop()
+            if feed_thread is not None and callable(getattr(feed_thread, "is_alive", None)) and feed_thread.is_alive():
+                feed_thread.join(timeout=2.0)
 
     def snapshot(self):
         """Return lightweight runtime state for shared-feed diagnostics."""
         return {
             "running": not self.stop_event.is_set(),
             "targets": len(self.targets),
-            "underlying_feed": None if self.feed is None else self.feed.snapshot(),
-            "option_recorder": None if self.recorder is None else self.recorder.snapshot(),
+            "underlying_feed_thread_alive": bool(
+                self._feed_thread
+                and callable(getattr(self._feed_thread, "is_alive", None))
+                and self._feed_thread.is_alive()
+            ),
+            "underlying_feed": _safe_snapshot(self.feed),
+            "option_recorder": _safe_snapshot(self.recorder),
             "readiness": dict(self._readiness),
             "scanner_diagnostics": None if self.scanner is None else self.scanner.diagnostics_snapshot(),
         }
