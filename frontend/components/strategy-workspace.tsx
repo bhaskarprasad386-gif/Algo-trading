@@ -242,6 +242,31 @@ function syntheticEdgeExplanation(row: Row, raw: unknown) {
   return formatValue(raw) + " pts (" + comparison + ")";
 }
 
+function isOutsideNseRegularHours(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  const weekday = values.weekday;
+  const minutes = Number(values.hour) * 60 + Number(values.minute);
+  // NSE/NFO regular session window; exchange holidays are intentionally not
+  // inferred here, so a stale feed during a holiday remains visibly stale.
+  return ["Sat", "Sun"].includes(weekday) || minutes < 9 * 60 + 15 || minutes >= 15 * 60 + 30;
+}
+
+function boxExchangeStatus(status: unknown) {
+  const normalized = String(status ?? "UNKNOWN").toUpperCase();
+  return normalized === "STALE" && isOutsideNseRegularHours()
+    ? "OUTSIDE REGULAR HOURS"
+    : normalized;
+}
+
+function boxFeedDisplayStatus(status: string) {
+  return status === "STALE" && isOutsideNseRegularHours()
+    ? "OUTSIDE REGULAR HOURS"
+    : status.replaceAll("_", " ");
+}
+
 function formatValue(raw: unknown) {
   if (raw === undefined || raw === null || raw === "") return "—";
   if (typeof raw === "boolean") return raw ? "YES" : "NO";
@@ -1036,7 +1061,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <span className={"inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold " +
           (loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" :
           feedStatus === "LIVE" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>
-          {loading ? "CONNECTING" : error ? "BACKEND ERROR" : feedStatus === "LIVE" ? "LIVE FEED" : feedStatus === "UNAVAILABLE" ? "FEED UNAVAILABLE" : feedStatus.replaceAll("_", " ")}
+          {loading ? "CONNECTING" : error ? "BACKEND ERROR" : feedStatus === "LIVE" ? "LIVE FEED" : feedStatus === "UNAVAILABLE" ? "FEED UNAVAILABLE" : slug === "box-spread" ? boxFeedDisplayStatus(feedStatus) : feedStatus.replaceAll("_", " ")}
         </span>
       </div>
 
@@ -1052,8 +1077,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <span className="theme-muted">Edges <b className="theme-text">{metricValue("Executable Edges")}</b></span>
             <span className="theme-muted">Last Scan <b className="theme-text">{metricValue("Last Scan")}</b></span>
             <span className="theme-muted">Feed age <b className="theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</b></span>
-            <span className="theme-muted">NSE <b className="theme-text">{String(feedExchangeFreshness?.NSE?.status ?? "—")}</b></span>
-            <span className="theme-muted">NFO <b className="theme-text">{String(feedExchangeFreshness?.NFO?.status ?? "—")}</b></span>
+            <span className="theme-muted">NSE <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)}</b></span>
+            <span className="theme-muted">NFO <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</b></span>
             <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
             <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
             <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
@@ -1117,7 +1142,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             </div>
             <div className="rounded-lg border theme-border theme-surface-2 p-3">
               <p className="text-[10px] uppercase tracking-wide theme-muted">NSE / NFO</p>
-              <p className="mt-1 text-sm font-bold theme-text">{String(feedExchangeFreshness?.NSE?.status ?? "UNKNOWN")} / {String(feedExchangeFreshness?.NFO?.status ?? "UNKNOWN")}</p>
+              <p className="mt-1 text-sm font-bold theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)} / {boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</p>
               <p className="text-[10px] theme-muted">NSE {typeof feedExchangeFreshness?.NSE?.age_seconds === "number" ? feedExchangeFreshness.NSE.age_seconds.toFixed(1) + "s" : "—"} · NFO {typeof feedExchangeFreshness?.NFO?.age_seconds === "number" ? feedExchangeFreshness.NFO.age_seconds.toFixed(1) + "s" : "—"}</p>
             </div>
             <div className="rounded-lg border theme-border theme-surface-2 p-3">
