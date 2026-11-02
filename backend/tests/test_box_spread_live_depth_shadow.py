@@ -1,0 +1,142 @@
+from types import SimpleNamespace
+
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import InstrumentDescriptor
+from app.scanner.box_spread_live_depth_shadow import BoxLiveDepthShadowFeed
+
+
+class FakeFeed:
+    def __init__(self):
+        self.started = []
+        self.stopped = 0
+
+    def start(self, descriptors, callback):
+        self.started.append((tuple(descriptors), callback))
+
+    def stop(self):
+        self.stopped += 1
+
+
+def _descriptor(token="123"):
+    return InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", token),
+        symbol="NIFTY",
+        instrument_type="option",
+        exchange="NFO",
+        segment="NFO",
+        expiry="06NOV2026",
+        strike=25000,
+        option_type="CE",
+        lot_size=65,
+        underlying="NIFTY",
+    )
+
+
+def _record(*, timestamp_ns, token="123", payload=None, bid=100.0, ask=101.0):
+    return SimpleNamespace(
+        instrument=InstrumentKey("NFO", "NFO", token),
+        symbol="NIFTY06NOV2625000CE",
+        timestamp_ns=timestamp_ns,
+        bid=bid,
+        ask=ask,
+        bid_qty=10,
+        ask_qty=10,
+        payload=payload or {},
+    )
+
+
+def _five_levels(start):
+    return [{"price": str((start + i) * 100), "quantity": "25"} for i in range(5)]
+
+
+def test_disabled_shadow_does_not_register_a_feed_consumer():
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(feed=feed)
+    assert shadow.start([_descriptor()]) is False
+    assert feed.started == []
+    assert shadow.snapshot()["enabled"] is False
+
+
+def test_shadow_subscribes_only_option_descriptors_and_reads_five_levels():
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    descriptor = _descriptor()
+    assert shadow.start([descriptor]) is True
+    assert len(feed.started) == 1
+    callback = feed.started[0][1]
+
+    now = __import__("time").time_ns()
+    callback(_record(
+        timestamp_ns=now,
+        payload={
+            "best_5_buy_data": _five_levels(100),
+            "best_5_sell_data": _five_levels(101),
+        },
+    ))
+    snapshot = shadow.snapshot(now_ns=now)
+    assert snapshot["record_count"] == 1
+    row = snapshot["records"][0]
+    assert row["depth_status"] == "DEPTH_FULL"
+    assert row["freshness"] == "FRESH"
+    assert len(row["bids"]) == len(row["asks"]) == 5
+    assert row["bids"][0] == (104.0, 25.0)
+    assert row["asks"][0] == (101.0, 25.0)
+
+
+def test_l1_only_is_never_mislabelled_as_full_depth_or_falls_back_to_l1():
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    shadow.start([_descriptor()])
+    now = __import__("time").time_ns()
+    feed.started[0][1](_record(timestamp_ns=now, payload={}))
+    row = shadow.snapshot(now_ns=now)["records"][0]
+    assert row["depth_status"] == "L1_ONLY"
+    assert row["bids"] == []
+    assert row["asks"] == []
+
+
+def test_shadow_rejects_crossed_depth_and_marks_old_provider_ticks_stale():
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    shadow.start([_descriptor()])
+    now = __import__("time").time_ns()
+    feed.started[0][1](_record(
+        timestamp_ns=now - 10_000_000_000,
+        payload={
+            "best_5_buy_data": _five_levels(102),
+            "best_5_sell_data": _five_levels(101),
+        },
+    ))
+    row = shadow.snapshot(now_ns=now)["records"][0]
+    assert row["depth_status"] == "DEPTH_INVALID"
+    assert row["freshness"] == "STALE"
+
+
+def test_shadow_cache_is_bounded_and_stop_detaches_only_its_consumer():
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, max_records=1, feed=feed)
+    shadow.start([_descriptor("123")])
+    callback = feed.started[0][1]
+    now = __import__("time").time_ns()
+    callback(_record(timestamp_ns=now, token="123", payload={}))
+    callback(_record(timestamp_ns=now, token="456", payload={}))
+    assert shadow.snapshot(now_ns=now)["record_count"] == 1
+    shadow.stop()
+    assert feed.stopped == 1
+    assert shadow.snapshot()["record_count"] == 0
+
+
+def test_shadow_rejects_non_option_subscription():
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    future = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", "999"),
+        symbol="NIFTY",
+        instrument_type="future",
+        exchange="NFO",
+        segment="NFO",
+    )
+    import pytest
+    with pytest.raises(ValueError, match="option descriptors only"):
+        shadow.start([future])
+    assert feed.started == []
