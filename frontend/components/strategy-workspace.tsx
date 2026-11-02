@@ -555,6 +555,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const rowsRef = useRef<Row[]>([]);
   const loadRequestRef = useRef(0);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
   const [hiddenPairColumns, setHiddenPairColumns] = useState<string[]>([]);
@@ -808,14 +809,22 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     setHistoryLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const historyUrl = slug === "box-spread"
-        ? c.historyEndpoint + "&expiry_type=" + encodeURIComponent(historyExpiryView) + (historySymbol ? "&symbol=" + encodeURIComponent(historySymbol) : "")
-        : c.historyEndpoint;
+      let historyUrl = c.historyEndpoint;
+      if (slug === "box-spread") {
+        const query = new URLSearchParams(c.historyEndpoint.split("?")[1] || "");
+        query.set("limit", "25");
+        query.set("offset", String((historyPage - 1) * 25));
+        query.set("expiry_type", historyExpiryView);
+        if (historySymbol) query.set("symbol", historySymbol);
+        else query.delete("symbol");
+        historyUrl = c.historyEndpoint.split("?")[0] + "?" + query.toString();
+      }
       const response = await fetch(base + historyUrl, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
       setHistoryRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      setHistoryTotalCount(slug === "box-spread" && Number.isFinite(Number(body?.total_count)) ? Math.max(0, Number(body.total_count)) : data.length);
       setHistoryHealth(body?.persistence && typeof body.persistence === "object" ? body.persistence : null);
       setHistoryError(null);
     } catch (e) {
@@ -850,7 +859,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     void loadHistory();
     const timer = window.setInterval(() => void loadHistory(), 10000);
     return () => window.clearInterval(timer);
-  }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : ""]);
+  }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : "", slug === "box-spread" ? historyPage : 1]);
 
   useEffect(() => {
     if (isCustom || c.pairEndpoint) return;
@@ -1044,9 +1053,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     return symbolMatches && expiryMatches;
   });
   const historyPageSize = 25;
-  const historyPageCount = Math.max(1, Math.ceil(filteredHistoryRows.length / historyPageSize));
+  const historyPageCount = Math.max(1, Math.ceil((slug === "box-spread" ? historyTotalCount : filteredHistoryRows.length) / historyPageSize));
   const safeHistoryPage = Math.min(historyPage, historyPageCount);
-  const visibleHistoryRows = filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
+  const visibleHistoryRows = slug === "box-spread" ? filteredHistoryRows : filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
 
   return (
     <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
@@ -1541,7 +1550,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <button type="button" onClick={() => { setHistoryExpiryView("MONTHLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
           <button type="button" onClick={() => { setHistoryExpiryView("WEEKLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
           <label className="flex min-h-9 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs theme-muted">Underlying<select value={historySymbol} onChange={(event) => { setHistorySymbol(event.target.value); setHistoryPage(1); }} className="bg-transparent font-semibold theme-text outline-none" aria-label="Filter Box Spread history by underlying"><option value="">All indices</option><option value="NIFTY">NIFTY</option><option value="BANKNIFTY">BANKNIFTY</option><option value="FINNIFTY">FINNIFTY</option><option value="MIDCPNIFTY">MIDCPNIFTY</option><option value="SENSEX">SENSEX</option><option value="BANKEX">BANKEX</option></select></label>
-          <span className="self-center text-xs theme-muted">{filteredHistoryRows.length.toLocaleString("en-IN")} saved {historyExpiryView.toLowerCase()} rows</span>
+          <span className="self-center text-xs theme-muted">{historyTotalCount.toLocaleString("en-IN")} saved {historyExpiryView.toLowerCase()} rows</span>
         </div>}
         {slug === "synthetic-arbitrage" && <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <label className="flex min-h-10 flex-1 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3">
@@ -1554,7 +1563,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         {historyError && <div role="status" className="mt-3 rounded-lg border theme-border theme-warning-bg p-3 text-xs theme-warning">History refresh failed: {historyError}. Previously loaded rows are retained.</div>}
         {slug === "synthetic-arbitrage" && historyHealth && <p className="mt-2 text-xs theme-muted">Storage: {historyHealth.storage || "UNKNOWN"} · Last saved: {historyHealth.last_save_at || "not reported"} · Last batch: {historyHealth.last_saved_count ?? 0} rows{historyHealth.last_error ? " · Save error: " + historyHealth.last_error : ""}</p>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Saved observations</p><p className="mt-1 text-lg font-semibold theme-text">{historyRows.length.toLocaleString("en-IN")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Saved observations</p><p className="mt-1 text-lg font-semibold theme-text">{(slug === "box-spread" ? historyTotalCount : historyRows.length).toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live monitor</p><p className={"mt-1 text-lg font-semibold " + (pairMonitorStatus === "LIVE" ? "theme-success" : "theme-muted")}>{pairMonitorStatus}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "synthetic-arbitrage" ? "Saved live pair snapshots (5s sampling)" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
@@ -1578,7 +1587,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             </tbody>
           </table>
         </div>
-        {slug === "synthetic-arbitrage" && historyPageCount > 1 && <div className="mt-4 flex items-center justify-between gap-3">
+        {(slug === "synthetic-arbitrage" || slug === "box-spread") && historyPageCount > 1 && <div className="mt-4 flex items-center justify-between gap-3">
           <button type="button" disabled={safeHistoryPage <= 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Previous</button>
           <span className="text-xs theme-muted">Page {safeHistoryPage} of {historyPageCount} · 25 rows/page</span>
           <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
