@@ -1338,13 +1338,12 @@ def _execute_exit_basket_from_row(
 def exit_basket(trade_id: int, payload: ExitBasket):
     """Manual paper exit delegates to the shared four-leg execution path."""
     try:
-        request = _load_trade_request(trade_id, payload.account_key)
-        contracts = _resolve(request)
-        row = _matching_live_row(contracts)
-        if row is None:
-            raise HTTPException(status_code=409, detail="matching fresh four-leg quotes are unavailable; no exit recorded")
+        # The shared executor checks for a durable idempotent receipt replay
+        # before resolving contracts or requesting current market quotes/depth.
+        # Passing an empty row is safe: new exits obtain all execution inputs
+        # from the fresh shared depth feed inside the executor.
         return _execute_exit_basket_from_row(
-            trade_id, payload.account_key, row,
+            trade_id, payload.account_key, {},
             order_type=payload.order_type, limit_prices=payload.limit_prices,
             fill_id=payload.fill_id,
         )
