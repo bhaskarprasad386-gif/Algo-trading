@@ -1024,3 +1024,61 @@ def test_trade_summary_requires_marks_for_every_open_role(paper_ledger):
     )
     with pytest.raises(ValueError, match="every open leg role"):
         paper_ledger.get_trade_summary(trade.id, mark_prices={"HIGH_CE": 10})
+
+
+def test_concurrent_duplicate_four_leg_basket_exit_is_idempotent(tmp_path):
+    # Independent SQLite connections model two API workers racing the same
+    # request-level exit idempotency key.
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-ledger-exit-concurrency.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperAccount.__table__,
+        BoxSpreadPaperTradeRecord.__table__,
+        BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    ledger = BoxSpreadPaperLedger(factory)
+    trade = _trade(ledger, lots=1)
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL",
+        "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    for role, action in entry_actions.items():
+        ledger.record_fill(
+            trade_id=trade.id, fill_id=f"concurrent-exit-entry-{role}",
+            role=role, action=action, quantity=trade.quantity, fill_price=100,
+        )
+
+    exit_legs = {
+        role: {"quantity": trade.quantity, "fill_price": 105}
+        for role in entry_actions
+    }
+    barrier = Barrier(2)
+
+    def submit_exit():
+        barrier.wait(timeout=5)
+        return ledger.record_exit_basket(
+            trade_id=trade.id, fill_id="same-concurrent-exit-request",
+            legs=exit_legs,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: submit_exit(), range(2)))
+
+        assert [len(receipts) for receipts in outcomes] == [4, 4]
+        assert all(
+            {receipt.role for receipt in receipts} == set(entry_actions)
+            for receipts in outcomes
+        )
+        fills = ledger.list_fills(trade.id)
+        assert len(fills) == 8
+        assert sum(fill.fill_id.startswith("EXIT:BASKET:") for fill in fills) == 4
+        assert ledger.get_account_summary()["fill_count"] == 8
+        assert ledger.get_trade_summary(trade.id)["status"] == "CLOSED"
+        assert ledger.list_open_trades() == []
+    finally:
+        engine.dispose()
