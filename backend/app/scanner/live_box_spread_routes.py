@@ -283,7 +283,7 @@ def snapshots(
                     item = json.loads(row.payload_json)
                 except (TypeError, ValueError):
                     continue
-                kind = str(getattr(row, "expiry_type", None) or "").strip().upper()
+                kind = str(getattr(row, "expiry_type", None) or item.get("expiry_type") or "").strip().upper()
                 if kind not in {"WEEKLY", "MONTHLY"}:
                     kind = "UNKNOWN"
                 item["expiry_type"] = kind
