@@ -282,6 +282,8 @@ def test_box_runner_depth_shadow_is_disabled_by_default(monkeypatch):
     assert state["enabled"] is False
     assert state["running"] is False
     assert state["record_count"] == 0
+    assert state["comparison_diagnostics"]["status_counts"] == {}
+    assert state["comparison_diagnostics"]["complete_difference_sample"]["count"] == 0
 
 
 def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(monkeypatch):
