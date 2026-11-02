@@ -1063,11 +1063,21 @@ def _build_exit_preview(
                 status_code=409,
                 detail="prior basket exit quantities are inconsistent; manual review required",
             )
+        all_fills = _ledger.list_fills(trade_id, account_key=account_key)
+        signed_positions = {role: 0 for role in roles}
+        for item in all_fills:
+            if item.role in signed_positions:
+                signed_positions[item.role] += item.quantity * (1 if item.action == "BUY" else -1)
+        remaining_values = {abs(value) for value in signed_positions.values()}
+        if len(remaining_values) != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="remaining paper position is inconsistent across four legs; manual review required",
+            )
         summary = _ledger.get_trade_summary(trade_id, account_key=account_key)
         exited_quantity = prior_fills[0].quantity
         exited_lots = exited_quantity // int(contracts.lot_size)
-        open_state = _paper_open_basket_state(trade_id, account_key)
-        remaining_quantity = open_state[1]["LOW_CE"]
+        remaining_quantity = next(iter(remaining_values))
         return {
             "mode": "PAPER_ONLY", "broker_orders_enabled": False,
             "order_type": order_type, "trade_id": trade_id, "status": summary["status"],
