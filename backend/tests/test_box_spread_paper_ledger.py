@@ -66,6 +66,42 @@ def _entry_basket():
     }
 
 
+
+def test_exit_basket_snapshot_replays_historical_remaining_lots_after_later_exit(paper_ledger):
+    trade = _trade(paper_ledger, lots=3)
+    entry_legs = _entry_basket()
+    for leg in entry_legs.values():
+        leg["quantity"] = 75
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    paper_ledger.record_entry_basket(trade_id=trade.id, legs=entry_legs)
+
+    first_exit = {
+        role: {"quantity": 25, "fill_price": "101"}
+        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    }
+    second_exit = {
+        role: {"quantity": 25, "fill_price": "102"}
+        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    }
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id, fill_id="exit:first", legs=first_exit,
+    )
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id, fill_id="exit:second", legs=second_exit,
+    )
+
+    snapshot = paper_ledger.get_exit_basket_position_snapshot(
+        trade.id, fill_id="exit:first",
+    )
+
+    assert snapshot == {
+        "requested_exit_lots": 3,
+        "exited_lots": 1,
+        "remaining_open_lots": 2,
+        "status": "EXITING",
+    }
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "EXITING"
+
 def test_four_leg_entry_basket_commits_all_legs_atomically_and_is_idempotent(paper_ledger):
     trade = _trade(paper_ledger)
     paper_ledger.claim_entry_attempt(trade_id=trade.id)
