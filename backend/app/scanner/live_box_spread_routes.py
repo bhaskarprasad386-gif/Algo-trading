@@ -261,12 +261,37 @@ def snapshots(
         ).filter(LiveBoxSpreadSnapshot.observed_at >= cutoff)
         if symbol is not None:
             grouped = grouped.filter(LiveBoxSpreadSnapshot.symbol == symbol)
-        for kind, count in grouped.group_by(LiveBoxSpreadSnapshot.expiry_type):
-            normalized = str(kind or "").strip().upper()
-            if normalized in {"WEEKLY", "MONTHLY"}:
-                expiry_counts[normalized] += int(count)
-            elif normalized in {"", "UNKNOWN"}:
-                expiry_counts["UNKNOWN"] += int(count)
+        group_by = getattr(grouped, "group_by", None)
+        null_count = 0
+        if callable(group_by):
+            for kind, count in group_by(LiveBoxSpreadSnapshot.expiry_type):
+                normalized = str(kind or "").strip().upper()
+                if normalized in {"WEEKLY", "MONTHLY"}:
+                    expiry_counts[normalized] += int(count)
+                else:
+                    null_count += int(count)
+        else:
+            # Lightweight query doubles in route tests may not implement group_by.
+            null_count = base.filter(LiveBoxSpreadSnapshot.expiry_type.is_(None)).count()
+
+        # Startup migration backfills all persisted WEEKLY/MONTHLY labels. For
+        # small legacy sets, retain exact compatibility with pre-migration rows
+        # whose JSON label exists but indexed column is NULL. Avoid a full-table
+        # Python walk once that residual legacy set becomes large.
+        if null_count <= 1000:
+            legacy_rows = base.filter(LiveBoxSpreadSnapshot.expiry_type.is_(None)).yield_per(500)
+            for legacy_row in legacy_rows:
+                try:
+                    saved = json.loads(legacy_row.payload_json or "{}")
+                except (TypeError, ValueError):
+                    saved = {}
+                saved_kind = str(saved.get("expiry_type") or "").strip().upper()
+                if saved_kind in {"WEEKLY", "MONTHLY"}:
+                    expiry_counts[saved_kind] += 1
+                else:
+                    expiry_counts["UNKNOWN"] += 1
+        else:
+            expiry_counts["UNKNOWN"] += null_count
 
         if expiry_type is None:
             # The common "All expiries" history view must not deserialize every
