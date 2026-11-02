@@ -1102,6 +1102,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               </div>
               <p className="mt-1 text-[11px] theme-muted">Shadow-only comparison; live scanner Edge and paper execution remain unchanged.</p>
               {boxDepthShadow?.enabled ? (
+                <>
                 <div className="mt-2 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4">
                   <div><span className="theme-muted">Depth records</span><p className="font-semibold theme-text">{Number(boxDepthShadow.record_count ?? 0).toLocaleString("en-IN")}</p></div>
                   <div><span className="theme-muted">Complete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.COMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
@@ -1122,6 +1123,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                     </div>
                   </div>
                 )}
+                </>
               ) : <p className="mt-1 text-[11px] theme-muted">No additional depth subscription is active.</p>}
             </div>
             <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
