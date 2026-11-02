@@ -18,6 +18,7 @@ from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
 from app.scanner.box_spread import BoxSpreadScanConfig
 from app.scanner.box_spread_live_depth_shadow import BoxLiveDepthShadowFeed
+from app.scanner.box_spread_depth_shadow_diagnostics import BoxDepthShadowDiagnostics
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
@@ -63,6 +64,7 @@ class LiveBoxSpreadRunner:
         self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED))
         self._depth_shadow_lock = Lock()
         self._depth_shadow_last_comparisons = []
+        self.depth_shadow_diagnostics = BoxDepthShadowDiagnostics()
         self._feed_thread = None
         self._last_feed_log_signature = None
         self._readiness = {
@@ -355,7 +357,9 @@ class LiveBoxSpreadRunner:
                         comparisons = []
                         for opportunity in results:
                             try:
-                                comparisons.append(self.depth_shadow.compare_opportunity(opportunity))
+                                comparison = self.depth_shadow.compare_opportunity(opportunity)
+                                self.depth_shadow_diagnostics.record(comparison)
+                                comparisons.append(comparison)
                             except Exception:
                                 app_logger.exception("Box Spread depth shadow comparison failed")
                         if comparisons:
@@ -453,6 +457,7 @@ class LiveBoxSpreadRunner:
                 "record_count": depth_snapshot.get("record_count", 0),
                 "counts": depth_snapshot.get("counts", {}),
                 "last_comparisons": last_comparisons,
+                "comparison_diagnostics": self.depth_shadow_diagnostics.snapshot(),
             },
         }
 
