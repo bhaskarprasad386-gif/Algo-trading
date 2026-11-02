@@ -1082,3 +1082,67 @@ def test_concurrent_duplicate_four_leg_basket_exit_is_idempotent(tmp_path):
         assert ledger.list_open_trades() == []
     finally:
         engine.dispose()
+
+
+
+def test_concurrent_distinct_exit_baskets_cannot_overclose_position(tmp_path):
+    # Two workers submit different request IDs for the same full open quantity.
+    # The account write lock must serialize them and the second must re-read
+    # positions after the first basket commits.
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-ledger-distinct-exit-concurrency.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        BoxSpreadPaperAccount.__table__,
+        BoxSpreadPaperTradeRecord.__table__,
+        BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
+    ])
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    ledger = BoxSpreadPaperLedger(factory)
+    trade = _trade(ledger, lots=2)
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL",
+        "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    for role, action in entry_actions.items():
+        ledger.record_fill(
+            trade_id=trade.id, fill_id=f"distinct-exit-entry-{role}",
+            role=role, action=action, quantity=trade.quantity, fill_price=100,
+        )
+
+    exit_legs = {
+        role: {"quantity": trade.quantity, "fill_price": 105}
+        for role in entry_actions
+    }
+    barrier = Barrier(2)
+
+    def submit_exit(request_id):
+        barrier.wait(timeout=5)
+        try:
+            return ("success", ledger.record_exit_basket(
+                trade_id=trade.id, fill_id=request_id, legs=exit_legs,
+            ))
+        except ValueError as exc:
+            return ("rejected", str(exc))
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(
+                submit_exit, ("distinct-exit-request-A", "distinct-exit-request-B"),
+            ))
+
+        assert sorted(outcome[0] for outcome in outcomes) == ["rejected", "success"]
+        successful = next(outcome[1] for outcome in outcomes if outcome[0] == "success")
+        rejected = next(outcome[1] for outcome in outcomes if outcome[0] == "rejected")
+        assert len(successful) == 4
+        assert "open position" in rejected or "open quantity" in rejected
+        fills = ledger.list_fills(trade.id)
+        assert len(fills) == 8
+        assert sum(fill.fill_id.startswith("EXIT:BASKET:") for fill in fills) == 4
+        assert ledger.get_account_summary()["fill_count"] == 8
+        assert ledger.get_trade_summary(trade.id)["status"] == "CLOSED"
+        assert ledger.list_open_trades() == []
+    finally:
+        engine.dispose()
