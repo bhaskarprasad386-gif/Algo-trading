@@ -330,7 +330,7 @@ def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(m
     monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"NIFTY": (25000.0,)})
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
     monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
-    monkeypatch.setattr(mod, "select_box_contracts", lambda *a, **k: mod.BoxContractSelection((descriptor,), "06NOV2026", 25000.0))
+    monkeypatch.setattr(mod, "select_box_contracts", lambda *a, **k: BoxContractSelection((descriptor,), "06NOV2026", 25000.0))
     monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: ()})())
 
     class Recorder:
