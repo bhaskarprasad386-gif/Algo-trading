@@ -432,6 +432,9 @@ class LiveBoxSpreadRunner:
 
     def snapshot(self):
         """Return lightweight runtime state for shared-feed diagnostics."""
+        depth_snapshot = self.depth_shadow.snapshot()
+        with self._depth_shadow_lock:
+            last_comparisons = list(self._depth_shadow_last_comparisons)
         return {
             "running": not self.stop_event.is_set(),
             "targets": len(self.targets),
@@ -446,10 +449,10 @@ class LiveBoxSpreadRunner:
             "scanner_diagnostics": None if self.scanner is None else self.scanner.diagnostics_snapshot(),
             "depth_shadow": {
                 "enabled": self.depth_shadow.enabled,
-                "running": self.depth_shadow.snapshot().get("running", False),
-                "record_count": self.depth_shadow.snapshot().get("record_count", 0),
-                "counts": self.depth_shadow.snapshot().get("counts", {}),
-                "last_comparisons": list(self._depth_shadow_last_comparisons),
+                "running": depth_snapshot.get("running", False),
+                "record_count": depth_snapshot.get("record_count", 0),
+                "counts": depth_snapshot.get("counts", {}),
+                "last_comparisons": last_comparisons,
             },
         }
 
