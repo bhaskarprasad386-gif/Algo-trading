@@ -711,8 +711,8 @@ class BoxSpreadPaperLedger:
                 raise ValueError("basket exit requires an open position in all four legs")
             if len({abs(position) for position in positions.values()}) != 1:
                 raise ValueError("basket exit requires equal open quantity on all four legs")
-            if any(abs(position) != qty for position in positions.values()):
-                raise ValueError("basket exit quantity must exactly match all four open leg quantities")
+            if any(qty > abs(position) for position in positions.values()):
+                raise ValueError("basket exit quantity cannot exceed the open quantity on any leg")
 
             receipts = []
             balance = Decimal(account.virtual_balance)
@@ -737,7 +737,8 @@ class BoxSpreadPaperLedger:
                 receipts.append(self._receipt(entry, balance))
 
             account.virtual_balance = balance
-            trade.status = "CLOSED"
+            remaining_quantities = {abs(position) - qty for position in positions.values()}
+            trade.status = "CLOSED" if remaining_quantities == {0} else "EXITING"
             return receipts
 
     def settle_expiry(
