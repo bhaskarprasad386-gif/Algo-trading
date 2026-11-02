@@ -222,7 +222,7 @@ export default function HomePage() {
     const loadRuntimeHealth = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store", signal: AbortSignal.timeout(1200) });
+        const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store", signal: AbortSignal.timeout(5000) });
         if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
         if (cancelled) return;
@@ -345,7 +345,7 @@ export default function HomePage() {
       }
     };
     void loadRuntimeHealth();
-    const timer = window.setInterval(loadRuntimeHealth, 1500);
+    const timer = window.setInterval(loadRuntimeHealth, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
