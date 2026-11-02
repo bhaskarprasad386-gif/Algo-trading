@@ -1537,13 +1537,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       )}
 
-      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> {"Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
-            <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
+            <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : (slug === "box-spread" ? historyTotalCount : historyRows.length).toLocaleString("en-IN") + " saved"}</span>
           </div>
         </div>
         {slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Post-market opportunity expiry type">
@@ -1568,7 +1567,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "synthetic-arbitrage" ? "Saved live pair snapshots (5s sampling)" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
-          {filteredHistoryRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{historyRows.length === 0 ? "No saved pair snapshots yet. Keep this page open while the live pair monitor runs." : "No history rows match this symbol filter."}</div> : visibleHistoryRows.map((row, index) => {
+          {filteredHistoryRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{(slug === "box-spread" ? historyTotalCount === 0 : historyRows.length === 0) ? "No saved pair snapshots yet. Keep this page open while the live pair monitor runs." : "No history rows match this filter or page."}</div> : visibleHistoryRows.map((row, index) => {
             const cols = c.pairColumns;
             return <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{historyCell(slug, cols[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{cols.filter((column) => column !== cols[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{historyCell(slug, column, row)}</div></div>)}</div></div>;
           })}
@@ -1577,7 +1576,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <table className="min-w-[1100px] w-full text-left text-sm">
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{visiblePairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
-              {filteredHistoryRows.length === 0 ? <tr><td colSpan={Math.max(visiblePairColumns.length, 1)} className="px-4 py-10 text-center theme-muted">{historyRows.length === 0 ? "No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled." : "No history rows match this symbol filter."}</td></tr> :
+              {filteredHistoryRows.length === 0 ? <tr><td colSpan={Math.max(visiblePairColumns.length, 1)} className="px-4 py-10 text-center theme-muted">{(slug === "box-spread" ? historyTotalCount === 0 : historyRows.length === 0) ? "No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled." : "No history rows match this filter or page."}</td></tr> :
               visibleHistoryRows.map((row, index) => {
                 const cols = c.pairColumns;
                 return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
@@ -1593,7 +1592,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
         </div>}
       </Card>
-      )}
 
       {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
       {copyFallbackText && <div className="space-y-2 rounded-xl border theme-border theme-surface p-3">
