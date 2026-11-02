@@ -756,6 +756,50 @@ def test_exit_is_never_blocked_by_low_virtual_balance():
     engine.dispose()
 
 
+def test_four_leg_basket_exit_can_atomically_close_only_available_complete_lots(paper_ledger):
+    trade = _trade(paper_ledger, lots=2)
+    entry_actions = {
+        "LOW_CE": "BUY", "HIGH_CE": "SELL",
+        "HIGH_PE": "BUY", "LOW_PE": "SELL",
+    }
+    for role, action in entry_actions.items():
+        paper_ledger.record_fill(
+            trade_id=trade.id, fill_id=f"partial-basket-entry-{role}", role=role,
+            action=action, quantity=trade.quantity, fill_price=100,
+        )
+
+    legs = {
+        role: {"quantity": trade.quantity // 2, "fill_price": 105}
+        for role in entry_actions
+    }
+    first = paper_ledger.record_exit_basket(
+        trade_id=trade.id, fill_id="partial-basket-first", legs=legs,
+    )
+    assert len(first) == 4
+    summary = paper_ledger.get_trade_summary(trade.id)
+    assert summary["status"] == "EXITING"
+    open_rows = paper_ledger.list_open_trades()
+    assert len(open_rows) == 1
+    assert {leg["open_position_quantity"] for leg in open_rows[0]["legs"]} == {trade.quantity // 2}
+
+    replay = paper_ledger.record_exit_basket(
+        trade_id=trade.id, fill_id="partial-basket-first", legs=legs,
+    )
+    assert len(replay) == 4
+    assert {leg["open_position_quantity"] for leg in paper_ledger.list_open_trades()[0]["legs"]} == {trade.quantity // 2}
+
+    remaining_legs = {
+        role: {"quantity": trade.quantity // 2, "fill_price": 104}
+        for role in entry_actions
+    }
+    second = paper_ledger.record_exit_basket(
+        trade_id=trade.id, fill_id="partial-basket-second", legs=remaining_legs,
+    )
+    assert len(second) == 4
+    assert paper_ledger.get_trade_summary(trade.id)["status"] == "CLOSED"
+    assert paper_ledger.list_open_trades() == []
+
+
 def test_four_leg_basket_exit_commits_all_legs_atomically_and_is_idempotent(paper_ledger):
     trade = _trade(paper_ledger)
     entry_actions = {

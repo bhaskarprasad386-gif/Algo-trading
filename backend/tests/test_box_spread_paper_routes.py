@@ -337,7 +337,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
 
 
 
-def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
+def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test", open_quantity=25, depth_quantity=25):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
         low_strike=25000, high_strike=25100, direction="LONG", lots=1,
@@ -351,20 +351,20 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "low_call_bid_qty": depth_quantity, "low_call_ask_qty": depth_quantity,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_call_bid_qty": depth_quantity, "high_call_ask_qty": depth_quantity,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "high_put_bid_qty": depth_quantity, "high_put_ask_qty": depth_quantity,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+        "low_put_bid_qty": depth_quantity, "low_put_ask_qty": depth_quantity,
     }
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     actions = {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
     trade_row = {
         "trade_id": 456,
         "legs": [{
-            "role": role, "open_position_quantity": 25,
+            "role": role, "open_position_quantity": open_quantity,
             "open_position_action": actions[role],
         } for role in roles],
     }
@@ -374,6 +374,40 @@ def _exit_basket_route_fixtures(monkeypatch, account_key="basket-route-test"):
     monkeypatch.setattr(routes, "_matching_live_row", lambda contracts: row)
     monkeypatch.setattr(routes._ledger, "list_open_trades", lambda account_key: [trade_row])
     return row, trade_row
+
+
+def test_multi_lot_exit_uses_one_atomic_four_leg_write_for_available_lots(monkeypatch):
+    row, _ = _exit_basket_route_fixtures(
+        monkeypatch, open_quantity=50, depth_quantity=25,
+    )
+    captured = []
+    receipts = [
+        SimpleNamespace(
+            fill_id=f"exit-{role}", role=role,
+            action="SELL" if role in {"LOW_CE", "HIGH_PE"} else "BUY",
+            quantity=25, fill_price=price, charges=0, cash_delta=0,
+        )
+        for role, price in (("LOW_CE", 10), ("HIGH_CE", 21), ("HIGH_PE", 30), ("LOW_PE", 41))
+    ]
+
+    def record_exit_basket(**kwargs):
+        captured.append(kwargs)
+        return receipts
+
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", record_exit_basket)
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", lambda *args, **kwargs: {"status": "EXITING"})
+
+    result = routes._execute_exit_basket_from_row(
+        456, "basket-route-test", row,
+        order_type="MARKET", fill_id="multi-lot-partial",
+    )
+
+    assert len(captured) == 1
+    assert set(captured[0]["legs"]) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+    assert {leg["quantity"] for leg in captured[0]["legs"].values()} == {25}
+    assert result["exited_lots"] == 1
+    assert result["remaining_open_lots"] == 1
+    assert result["broker_orders_enabled"] is False
 
 
 def test_duplicate_open_leg_role_blocks_preview_and_exit_before_any_write(monkeypatch):
