@@ -299,7 +299,7 @@ def snapshots(
             LiveBoxSpreadSnapshot.id.desc(),
         ).yield_per(1000)
         for row in candidates:
-            kind = str(row.expiry_type or "").strip().upper()
+            kind = str(getattr(row, "expiry_type", None) or "").strip().upper()
             if kind not in {"WEEKLY", "MONTHLY", "UNKNOWN"}:
                 try:
                     item = json.loads(row.payload_json)
