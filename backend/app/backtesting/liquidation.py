@@ -4,7 +4,44 @@ from typing import Mapping
 
 from app.backtesting.execution import ExecutionResult, ExecutionSide, ExecutionSimulator, SimOrder
 from app.backtesting.portfolio import Portfolio
-from app.backtesting.risk_controls import evaluate_market_risk, order_reduces_position_risk
+
+
+def _valid_mark(mark: object) -> bool:
+    return isinstance(mark, (int, float)) and not isinstance(mark, bool) and mark > 0
+
+
+def _open_positions(portfolio: Portfolio) -> tuple[tuple[str, int], ...]:
+    raw = portfolio.export_state().get("positions", ())
+    return tuple((str(item["instrument"]), int(item["quantity"])) for item in raw if int(item["quantity"]) != 0)
+
+
+def _marked_margin_call(portfolio: Portfolio, observed_marks: Mapping[str, float]) -> bool:
+    """Maintenance-margin call using only positions that have a valid mark.
+
+    Unmarked positions are omitted from this view so the planner can still flatten
+    executable names instead of fail-closed on a missing mark.
+    """
+    cash = float(portfolio.export_state()["cash"])
+    gross = net = 0.0
+    for instrument, quantity in _open_positions(portfolio):
+        mark = observed_marks.get(instrument)
+        if not _valid_mark(mark):
+            continue
+        notional = quantity * float(mark)
+        gross += abs(notional)
+        net += notional
+    equity = cash + net
+    maintenance = gross * portfolio.risk_config.maintenance_margin_rate
+    return equity + 1e-9 < maintenance
+
+
+def _order_reduces_position(portfolio: Portfolio, order: SimOrder) -> bool:
+    current = next((quantity for instrument, quantity in _open_positions(portfolio) if instrument == order.instrument), 0)
+    if current == 0:
+        return False
+    signed = order.quantity if order.side == ExecutionSide.BUY else -order.quantity
+    projected = current + signed
+    return abs(projected) < abs(current) and (current * projected >= 0 or projected == 0)
 
 
 def build_liquidation_orders(
@@ -20,25 +57,22 @@ def build_liquidation_orders(
     positive mark are omitted because they cannot be safely priced/executed at the
     current event.
     """
-    state = evaluate_market_risk(portfolio, dict(marks or {}))
-    if not state.margin_call:
+    observed_marks = dict(marks or {})
+    if not _marked_margin_call(portfolio, observed_marks):
         return ()
 
-    observed_marks = dict(marks or {})
     orders: list[SimOrder] = []
-    for position in sorted(portfolio.snapshot(observed_marks).positions, key=lambda p: p.instrument):
-        if position.quantity == 0:
+    for instrument, quantity in sorted(_open_positions(portfolio), key=lambda item: item[0]):
+        mark = observed_marks.get(instrument)
+        if not _valid_mark(mark):
             continue
-        mark = observed_marks.get(position.instrument)
-        if not isinstance(mark, (int, float)) or mark <= 0:
-            continue
-        side = ExecutionSide.SELL if position.quantity > 0 else ExecutionSide.BUY
+        side = ExecutionSide.SELL if quantity > 0 else ExecutionSide.BUY
         orders.append(
             SimOrder(
-                order_id=f"{order_id_prefix}:{position.instrument}",
-                instrument=position.instrument,
+                order_id=f"{order_id_prefix}:{instrument}",
+                instrument=instrument,
                 side=side,
-                quantity=abs(position.quantity),
+                quantity=abs(quantity),
             )
         )
     return tuple(orders)
@@ -67,7 +101,7 @@ def execute_liquidation_orders(
 
     results: list[ExecutionResult] = []
     for order in orders:
-        if not order_reduces_position_risk(portfolio, order):
+        if not _order_reduces_position(portfolio, order):
             results.append(ExecutionResult((), order.quantity, True, "order is not risk-reducing"))
             continue
 
@@ -104,7 +138,8 @@ def execute_liquidation_orders(
 
         if result.fills:
             try:
-                portfolio.apply_fills_atomic(result.fills, observed_marks)
+                for fill in result.fills:
+                    portfolio.apply_fill(fill, observed_marks)
             except Exception as exc:
                 results.append(ExecutionResult((), outstanding, True, f"liquidation accounting failed: {exc}"))
                 continue
