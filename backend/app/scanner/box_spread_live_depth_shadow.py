@@ -107,7 +107,18 @@ class BoxLiveDepthShadowFeed:
                 return True
             self._records.clear()
             self._metadata = metadata
-        self._feed.start(items, self._on_record)
+        try:
+            self._feed.start(items, self._on_record)
+        except Exception:
+            # CommonStrategyMarketFeed may have registered the callback before a
+            # subscription error; clear only this consumer to avoid a leaked route.
+            try:
+                self._feed.stop()
+            finally:
+                with self._lock:
+                    self._records.clear()
+                    self._metadata.clear()
+            raise
         with self._lock:
             self._started = True
         return True
