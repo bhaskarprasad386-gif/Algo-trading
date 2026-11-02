@@ -89,7 +89,7 @@ def test_snapshot_endpoint_applies_symbol_filter_before_pagination(monkeypatch):
                     low_strike=22000 + index * 100,
                     high_strike=23000 + index * 100,
                     direction="LONG",
-                    payload_json=json.dumps({"sequence": index}),
+                    payload_json=json.dumps({"sequence": index, "symbol": symbol}),
                 ))
             db.commit()
 
