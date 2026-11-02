@@ -390,3 +390,61 @@ html[data-theme="blue"] .box-history-contrast {
   --box-history-border: #64748b;
   --box-history-muted: #cbd5e1;
 }
+
+
+/* Consistent readable typography and clear section boundaries across the full Box Scanner page. */
+.box-spread-page {
+  color: var(--app-text);
+  font-size: 15px;
+}
+.box-spread-page :is(h1, h2, h3) {
+  font-weight: 800 !important;
+  letter-spacing: -0.015em;
+}
+.box-spread-page :is(p, label, button, a, select, input, th, td, span) {
+  text-rendering: optimizeLegibility;
+}
+.box-spread-page :is([class~="text-[9px]"], [class~="text-[10px]"], [class~="text-[11px]"], [class~="text-xs"]) {
+  font-size: 0.875rem !important;
+  line-height: 1.35rem !important;
+}
+.box-spread-page :is([class~="text-sm"]) {
+  font-size: 0.9375rem !important;
+  line-height: 1.45rem !important;
+}
+.box-spread-page :is(button, select, input, textarea) {
+  font-weight: 700;
+}
+.box-spread-page :is(article, section, [class*="rounded-xl"], [class*="rounded-2xl"]) {
+  border-color: color-mix(in srgb, var(--app-border) 68%, var(--app-text)) !important;
+}
+.box-spread-page :is(article, section, [class*="rounded-xl"], [class*="rounded-2xl"])[class*="border"] {
+  border-width: 1.5px !important;
+}
+.box-spread-page table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.box-spread-page thead th {
+  font-size: 0.875rem !important;
+  font-weight: 800 !important;
+  border-bottom: 2px solid var(--app-border) !important;
+}
+.box-spread-page tbody td {
+  font-size: 0.875rem !important;
+  font-weight: 600;
+  border-bottom: 1px solid var(--app-border);
+}
+.box-spread-page tbody tr:last-child td {
+  border-bottom: 0;
+}
+.box-spread-page :is(button, select, input, textarea):not([class*="border-0"]) {
+  border-color: color-mix(in srgb, var(--app-border) 65%, var(--app-text)) !important;
+}
+html[data-theme="white"] .box-spread-page {
+  --app-border: #94a3b8;
+}
+html[data-theme="black"] .box-spread-page,
+html[data-theme="blue"] .box-spread-page {
+  --app-border: #64748b;
+}
