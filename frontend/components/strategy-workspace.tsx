@@ -1119,6 +1119,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <p className="mt-2 text-[11px] theme-muted">No additional market-depth subscription is active.</p>
           )}
         </Card>
+        <Card className="theme-border theme-surface-2 px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold theme-text">Five-Level Depth Shadow</p>
+            <span className={"rounded-md border theme-border px-2 py-1 text-[10px] font-bold " + (boxDepthShadow?.enabled ? "theme-success" : "theme-muted")}>
+              {boxDepthShadow?.enabled ? (boxDepthShadow.running ? "ENABLED · RUNNING" : "ENABLED · IDLE") : "DISABLED"}
+            </span>
+          </div>
+          <p className="mt-2 text-[11px] theme-muted">Shadow-only comparison; it does not change scanner edges or paper orders.</p>
+          {boxDepthShadow?.enabled ? (
+            <div className="mt-3 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4">
+              <div><span className="theme-muted">Depth records</span><p className="mt-1 font-semibold theme-text">{Number(boxDepthShadow.record_count ?? 0).toLocaleString("en-IN")}</p></div>
+              <div><span className="theme-muted">Complete</span><p className="mt-1 font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.COMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
+              <div><span className="theme-muted">Incomplete</span><p className="mt-1 font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.INCOMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
+              <div><span className="theme-muted">Mean depth − L1 / unit</span><p className="mt-1 font-semibold theme-text">{typeof boxDepthShadow.comparison_diagnostics?.complete_difference_sample?.mean_per_unit === "number" ? boxDepthShadow.comparison_diagnostics.complete_difference_sample.mean_per_unit.toFixed(2) : "—"}</p></div>
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] theme-muted">No additional market-depth subscription is active.</p>
+          )}
+        </Card>
       ) : (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
