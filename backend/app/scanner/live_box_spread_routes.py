@@ -286,6 +286,8 @@ def snapshots(
                 kind = str(getattr(row, "expiry_type", None) or item.get("expiry_type") or "").strip().upper()
                 if kind not in {"WEEKLY", "MONTHLY"}:
                     kind = "UNKNOWN"
+                elif getattr(row, "expiry_type", None) is None:
+                    expiry_counts[kind] += 1
                 item["expiry_type"] = kind
                 item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 item["freshness"] = "SAVED SNAPSHOT"
