@@ -1102,12 +1102,28 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               </div>
               <p className="mt-1 text-[11px] theme-muted">Shadow-only comparison; live scanner Edge and paper execution remain unchanged.</p>
               {boxDepthShadow?.enabled ? (
+                <>
                 <div className="mt-2 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4">
                   <div><span className="theme-muted">Depth records</span><p className="font-semibold theme-text">{Number(boxDepthShadow.record_count ?? 0).toLocaleString("en-IN")}</p></div>
                   <div><span className="theme-muted">Complete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.COMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
                   <div><span className="theme-muted">Incomplete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.INCOMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
                   <div><span className="theme-muted">Mean depth − L1 / unit</span><p className="font-semibold theme-text">{typeof boxDepthShadow.comparison_diagnostics?.complete_difference_sample?.mean_per_unit === "number" ? boxDepthShadow.comparison_diagnostics.complete_difference_sample.mean_per_unit.toFixed(2) : "—"}</p></div>
                 </div>
+                {Object.keys(boxDepthShadow.comparison_diagnostics?.incomplete_reasons ?? {}).length > 0 && (
+                  <div className="mt-3 border-t theme-border pt-2">
+                    <span className="text-[11px] font-semibold theme-muted">Incomplete comparison reasons</span>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {Object.entries(boxDepthShadow.comparison_diagnostics.incomplete_reasons as Record<string, number>)
+                        .sort((a, b) => Number(b[1]) - Number(a[1]))
+                        .map(([reason, count]) => (
+                          <span key={reason} className="rounded-md border theme-border px-2 py-1 text-[10px] theme-muted">
+                            {reason.replaceAll("_", " ")} <b className="theme-text">{Number(count).toLocaleString("en-IN")}</b>
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                )}
+                </>
               ) : <p className="mt-1 text-[11px] theme-muted">No additional depth subscription is active.</p>}
             </div>
             <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
