@@ -1515,14 +1515,6 @@ def test_exit_retry_replays_original_remaining_lots_after_a_later_exit(monkeypat
     )
     monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: pytest.fail("durable retry must not resolve instrument master"))
-    monkeypatch.setattr(routes._ledger, "get_trade_lot_size", lambda *args, **kwargs: 25)
-    monkeypatch.setattr(
-        routes._ledger, "get_exit_basket_position_snapshot",
-        lambda *args, **kwargs: {
-            "requested_exit_lots": 1, "exited_lots": 1,
-            "remaining_open_lots": 0, "status": "CLOSED",
-        },
-    )
     monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: fills)
     monkeypatch.setattr(
         routes._ledger, "get_exit_basket_position_snapshot",
@@ -1584,8 +1576,14 @@ def test_exit_retry_replays_durable_four_leg_basket_without_market_depth(monkeyp
     contracts = SimpleNamespace(lot_size=25)
     monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
     monkeypatch.setattr(routes, "_resolve", lambda payload: pytest.fail("durable retry must not resolve the instrument master"))
-    monkeypatch.setattr(routes._ledger, "get_trade_lot_size", lambda *args, **kwargs: 25)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: fills)
+    monkeypatch.setattr(
+        routes._ledger, "get_exit_basket_position_snapshot",
+        lambda *args, **kwargs: {
+            "requested_exit_lots": 1, "exited_lots": 1,
+            "remaining_open_lots": 0, "status": "CLOSED",
+        },
+    )
     monkeypatch.setattr(
         routes, "fresh_box_paper_depth",
         lambda *args, **kwargs: pytest.fail("successful retry must replay before requesting market depth"),
