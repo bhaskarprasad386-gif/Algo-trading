@@ -1479,3 +1479,58 @@ def test_all_or_none_exit_requires_full_executable_depth_on_every_leg(
     assert raised.value.status_code == 409
     assert "no legs were exited" in raised.value.detail
     assert writes == []
+
+
+def test_exit_retry_replays_durable_four_leg_basket_without_market_depth(monkeypatch):
+    import hashlib
+
+    fill_id = "retry-after-success"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    entry_actions = {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+    exit_actions = {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+    fills = [
+        SimpleNamespace(role=role, action=entry_actions[role], quantity=25, fill_id=f"ENTRY:{role}",
+                        fill_price=Decimal("10"), charges=Decimal("1"), cash_delta=Decimal("0"))
+        for role in roles
+    ]
+    fills += [
+        SimpleNamespace(
+            role=role, action=exit_actions[role], quantity=25,
+            fill_id=f"EXIT:BASKET:exit:{digest}:BASKET:{role}",
+            fill_price=Decimal("11"), charges=Decimal("1"), cash_delta=Decimal("0"),
+        )
+        for role in roles
+    ]
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="retry-trade", account_key="retry-account",
+    )
+    contracts = SimpleNamespace(lot_size=25)
+    monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
+    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: fills)
+    monkeypatch.setattr(
+        routes, "fresh_box_paper_depth",
+        lambda *args, **kwargs: pytest.fail("successful retry must replay before requesting market depth"),
+    )
+    monkeypatch.setattr(
+        routes, "_paper_open_basket_state",
+        lambda *args, **kwargs: pytest.fail("closed retry must not require an open position"),
+    )
+    monkeypatch.setattr(
+        routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: {"status": "CLOSED", "realized_pnl": Decimal("12.00")},
+    )
+
+    result = routes._execute_exit_basket_from_row(
+        456, "retry-account", {}, order_type="MARKET", fill_id=fill_id,
+    )
+
+    assert result["idempotent_replay"] is True
+    assert result["status"] == "CLOSED"
+    assert result["exited_lots"] == 1
+    assert result["remaining_open_lots"] == 0
+    assert len(result["receipts"]) == 4
+    assert result["broker_orders_enabled"] is False
