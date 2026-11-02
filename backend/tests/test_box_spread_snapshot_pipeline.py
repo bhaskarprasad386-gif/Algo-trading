@@ -133,6 +133,7 @@ def test_pipeline_persists_weekly_expiry_classification(tmp_path, monkeypatch):
             row = db.query(LiveBoxSpreadSnapshot).one()
             payload = __import__("json").loads(row.payload_json)
             assert payload["expiry_type"] == "WEEKLY"
+            assert row.expiry_type == "WEEKLY"
             assert payload["low_call_bid_qty"] == 11
             assert payload["low_call_ask_qty"] == 12
             assert payload["low_put_bid_qty"] == 13

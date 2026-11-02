@@ -344,6 +344,7 @@ class LiveBoxSpreadPipeline:
                                                 low_strike=float(row["low_strike"]),
                                                 high_strike=float(row["high_strike"]),
                                                 direction=str(row["direction"]).strip().upper(),
+                                                expiry_type=(str(row.get("expiry_type") or "").strip().upper() if str(row.get("expiry_type") or "").strip().upper() in {"WEEKLY", "MONTHLY"} else None),
                                                 payload_json=json.dumps({k: v for k, v in row.items() if k != "_snapshot_identity"}, separators=(",", ":"), allow_nan=False),
                                             ))
                                             db.flush()

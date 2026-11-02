@@ -240,31 +240,45 @@ def snapshots(
     expiry_type: str | None = Query(None, pattern="^(WEEKLY|MONTHLY|UNKNOWN)$"),
     symbol: Annotated[str | None, Query(pattern="^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|BANKEX)$")] = None,
 ):
-    """Return expiry-filtered persisted observations with counts for every class."""
+    """Return persisted observations using indexed expiry classification with legacy fallback."""
     from collections import Counter
     from datetime import datetime, timedelta, timezone
+    from sqlalchemy import func, or_
 
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     page = []
     selected_count = 0
     expiry_counts = Counter()
     with SessionLocal() as db:
-        rows = db.query(LiveBoxSpreadSnapshot).filter(
+        base = db.query(LiveBoxSpreadSnapshot).filter(
             LiveBoxSpreadSnapshot.observed_at >= cutoff
         )
-        # The composite symbol/time index makes this filter cheap and avoids
-        # decoding unrelated underlyings when the caller requests one index.
         if symbol is not None:
-            rows = rows.filter(LiveBoxSpreadSnapshot.symbol == symbol)
-        rows = rows.order_by(
-            LiveBoxSpreadSnapshot.observed_at.desc(),
-            LiveBoxSpreadSnapshot.id.desc(),
+            base = base.filter(LiveBoxSpreadSnapshot.symbol == symbol)
+
+        # New and backfilled rows are counted by SQL. Only NULL legacy rows need
+        # JSON parsing and instrument-master fallback classification.
+        grouped = db.query(
+            LiveBoxSpreadSnapshot.expiry_type,
+            func.count(LiveBoxSpreadSnapshot.id),
+        ).filter(LiveBoxSpreadSnapshot.observed_at >= cutoff)
+        if symbol is not None:
+            grouped = grouped.filter(LiveBoxSpreadSnapshot.symbol == symbol)
+        group_by = getattr(grouped, "group_by", None)
+        if callable(group_by):
+            for kind, count in group_by(LiveBoxSpreadSnapshot.expiry_type):
+                normalized = str(kind or "").strip().upper()
+                if normalized in {"WEEKLY", "MONTHLY", "UNKNOWN"}:
+                    expiry_counts[normalized] += int(count)
+
+        legacy = base.filter(LiveBoxSpreadSnapshot.expiry_type.is_(None)).order_by(
+            LiveBoxSpreadSnapshot.observed_at.desc(), LiveBoxSpreadSnapshot.id.desc()
         ).yield_per(1000)
-        for row in rows:
+        for row in legacy:
             try:
                 item = json.loads(row.payload_json)
             except (TypeError, ValueError):
-                continue
+                item = {}
             saved_type = str(item.get("expiry_type") or "").strip().upper()
             current_type = classify_expiry_type(row.symbol, row.expiry)
             kind = (
@@ -273,9 +287,38 @@ def snapshots(
                 else "UNKNOWN"
             )
             expiry_counts[kind] += 1
+
+        candidates = base
+        if expiry_type is not None:
+            candidates = candidates.filter(or_(
+                LiveBoxSpreadSnapshot.expiry_type == expiry_type,
+                LiveBoxSpreadSnapshot.expiry_type.is_(None),
+            ))
+        candidates = candidates.order_by(
+            LiveBoxSpreadSnapshot.observed_at.desc(),
+            LiveBoxSpreadSnapshot.id.desc(),
+        ).yield_per(1000)
+        for row in candidates:
+            kind = str(getattr(row, "expiry_type", None) or "").strip().upper()
+            if kind not in {"WEEKLY", "MONTHLY", "UNKNOWN"}:
+                try:
+                    item = json.loads(row.payload_json)
+                except (TypeError, ValueError):
+                    item = {}
+                saved_type = str(item.get("expiry_type") or "").strip().upper()
+                current_type = classify_expiry_type(row.symbol, row.expiry)
+                kind = (
+                    saved_type if saved_type in {"WEEKLY", "MONTHLY"}
+                    else current_type if current_type in {"WEEKLY", "MONTHLY"}
+                    else "UNKNOWN"
+                )
             if expiry_type is not None and kind != expiry_type:
                 continue
             if offset <= selected_count < offset + limit:
+                try:
+                    item = json.loads(row.payload_json)
+                except (TypeError, ValueError):
+                    continue
                 item["expiry_type"] = kind
                 item["observed_at"] = row.observed_at.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 item["freshness"] = "SAVED SNAPSHOT"

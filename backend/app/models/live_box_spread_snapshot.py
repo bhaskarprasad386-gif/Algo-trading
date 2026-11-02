@@ -10,6 +10,7 @@ class LiveBoxSpreadSnapshot(Base):
     __table_args__ = (
         Index("ix_box_snapshot_observed_at", "observed_at"),
         Index("ix_box_snapshot_symbol_time", "symbol", "observed_at"),
+        Index("ix_box_snapshot_symbol_expiry_time", "symbol", "expiry_type", "observed_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -20,6 +21,7 @@ class LiveBoxSpreadSnapshot(Base):
     low_strike: Mapped[float] = mapped_column(Float, nullable=False)
     high_strike: Mapped[float] = mapped_column(Float, nullable=False)
     direction: Mapped[str] = mapped_column(String(8), nullable=False)
+    expiry_type: Mapped[str | None] = mapped_column(String(8), nullable=True)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
