@@ -5,7 +5,7 @@ import BoxSpreadTraceArea from "@/components/BoxSpreadTraceArea";
 
 export default function BoxSpreadWorkspacePage() {
   return (
-    <main className="space-y-4">
+    <main className="box-spread-page space-y-4">
       <BoxSpreadWorkspaceHeader />
       <nav aria-label="Box Spread workspace sections" className="box-workspace-nav sticky top-2 z-20 flex gap-1 overflow-x-auto rounded-xl border border-slate-700 bg-[#091321]/95 p-1.5 shadow-lg backdrop-blur">
         {[
