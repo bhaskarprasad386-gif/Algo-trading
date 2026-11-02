@@ -367,6 +367,7 @@ html[data-theme="white"] .box-workspace-header .text-slate-400 {
   --box-history-border: #94a3b8;
   --box-history-muted: #334155;
 }
+.box-history-contrast.theme-border,
 .box-history-contrast .theme-border {
   border-color: var(--box-history-border) !important;
   border-width: 1.5px !important;
