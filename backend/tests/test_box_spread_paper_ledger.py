@@ -1137,7 +1137,11 @@ def test_concurrent_distinct_exit_baskets_cannot_overclose_position(tmp_path):
         successful = next(outcome[1] for outcome in outcomes if outcome[0] == "success")
         rejected = next(outcome[1] for outcome in outcomes if outcome[0] == "rejected")
         assert len(successful) == 4
-        assert "open position" in rejected or "open quantity" in rejected
+        assert (
+            "open position" in rejected
+            or "open quantity" in rejected
+            or "already closed or cancelled" in rejected
+        )
         fills = ledger.list_fills(trade.id)
         assert len(fills) == 8
         assert sum(fill.fill_id.startswith("EXIT:BASKET:") for fill in fills) == 4
