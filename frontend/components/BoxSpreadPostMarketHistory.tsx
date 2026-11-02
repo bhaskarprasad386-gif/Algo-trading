@@ -262,7 +262,7 @@ export default function BoxSpreadPostMarketHistory() {
   };
 
   return (
-    <Card className="scroll-mt-24 theme-border theme-surface theme-text p-4 shadow-xl sm:p-5" id="box-history">
+    <Card className="scroll-mt-24 theme-border theme-surface theme-text box-history-contrast p-4 shadow-xl sm:p-5" id="box-history">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
