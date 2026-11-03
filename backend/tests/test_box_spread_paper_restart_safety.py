@@ -37,6 +37,7 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
         trade = before_restart.create_trade(
             account_key="restart-partial",
             idempotency_key="restart-partial-entry",
+            alert_edge=8,
             underlying="NIFTY",
             instrument_class="INDEX",
             expiry="2026-10-29",
@@ -45,6 +46,7 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
             direction="LONG",
             lots=1,
             lot_size=25,
+            alert_edge=8,
         )
         before_restart.claim_entry_attempt(
             trade_id=trade.id, account_key="restart-partial",
