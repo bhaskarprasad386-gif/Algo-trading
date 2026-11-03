@@ -242,6 +242,14 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "gross_pnl": result.gross_pnl,
         "lot_size": low.lot_size,
         "max_executable_lots": getattr(result, "max_executable_lots", 0),
+        "tradability_status": getattr(result, "tradability_status", "UNVERIFIED"),
+        "tradability_reason": getattr(result, "tradability_reason", None),
+        "l1_reference_edge": getattr(result, "l1_reference_edge", None),
+        "depth_edge_per_unit": getattr(result, "depth_edge_per_unit", None),
+        "depth_edge_per_lot": getattr(result, "depth_edge_per_lot", None),
+        "depth_executable_lots": getattr(result, "depth_executable_lots", 0),
+        "depth_quantity": getattr(result, "depth_quantity", 0),
+        "depth_legs": list(getattr(result, "depth_legs", ()) or ()),
         "strike_distance": result.strike_distance,
         "freshness": "LIVE",
     }
@@ -260,15 +268,19 @@ def _snapshot_key(row):
 
 
 class LiveBoxSpreadPipeline:
-    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None):
+    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None):
         self.scanner = scanner
         self.session_factory = session_factory
         self.alerts = alerts or BoxSpreadAlertService()
         self.on_results = on_results
         self.spot_provider = spot_provider
+        self.result_transform = result_transform
 
     def observe(self, payload):
         results = self.scanner.observe(payload)
+        if results and callable(self.result_transform):
+            # Gate and price opportunities before any publisher, snapshot or alert sees them.
+            results = tuple(self.result_transform(results))
         if results and self.on_results:
             try:
                 self.on_results(results)
