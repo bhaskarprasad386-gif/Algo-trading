@@ -118,7 +118,7 @@ def _row(result):
         "high_call_ltp": getattr(high, "call_ltp", None), "high_call_bid": high.call_bid, "high_call_bid_qty": getattr(high, "call_bid_qty", None), "high_call_ask": high.call_ask, "high_call_ask_qty": getattr(high, "call_ask_qty", None),
         "high_put_ltp": getattr(high, "put_ltp", None), "high_put_bid": high.put_bid, "high_put_bid_qty": getattr(high, "put_bid_qty", None), "high_put_ask": high.put_ask, "high_put_ask_qty": getattr(high, "put_ask_qty", None),
         "executable_edge": result.executable_edge, "edge_per_lot": result.edge_per_lot,
-        "gross_pnl": result.gross_pnl, "lot_size": low.lot_size, "max_executable_lots": result.max_executable_lots, "strike_distance": result.strike_distance,
+        "gross_pnl": result.gross_pnl, "lot_size": low.lot_size, "max_executable_lots": getattr(result, "max_executable_lots", 0), "strike_distance": result.strike_distance,
         "low_call_price": low.call_ask if result.direction == "LONG" else low.call_bid,
         "low_put_price": low.put_ask if result.direction == "LONG" else low.put_bid,
         "high_call_price": high.call_bid if result.direction == "LONG" else high.call_ask,
