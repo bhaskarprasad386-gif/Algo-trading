@@ -274,6 +274,7 @@ class BoxLiveDepthShadowFeed:
             },
             "l1_edge_per_unit": l1_edge,
             "depth_edge_per_unit": depth_edge,
+            "net_entry_price": net_debit if direction == "LONG" else net_credit,
             "difference_per_unit": depth_edge - l1_edge,
             "l1_edge_per_lot": l1_edge * lot_size,
             "depth_edge_per_lot": depth_edge * lot_size,
