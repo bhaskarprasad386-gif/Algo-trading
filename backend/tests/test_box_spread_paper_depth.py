@@ -38,10 +38,10 @@ def test_depth_levels_normalize_rupees_and_sort_price_priority():
     assert depth_levels(record, "ASK") == [(101.0, 6.0), (102.0, 4.0)]
 
 
-def test_depth_levels_fall_back_to_canonical_l1_only():
+def test_depth_levels_reject_canonical_l1_only_quotes():
     record = SimpleNamespace(bid=99.5, ask=100.5, bid_qty=20, ask_qty=15, payload={})
-    assert depth_levels(record, "BID") == [(99.5, 20.0)]
-    assert depth_levels(record, "ASK") == [(100.5, 15.0)]
+    assert depth_levels(record, "BID") == []
+    assert depth_levels(record, "ASK") == []
 
 
 def test_allocate_depth_calculates_weighted_average_across_levels():
