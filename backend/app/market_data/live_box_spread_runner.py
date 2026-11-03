@@ -1,6 +1,7 @@
 """Production Box Spread live runner using Angel One option ticks."""
 from __future__ import annotations
 from threading import Thread, Event, Lock
+from dataclasses import replace
 from time import time_ns, sleep, monotonic
 from sqlalchemy import select
 from app.algo.auth import AngelOneAuth
@@ -377,7 +378,37 @@ class LiveBoxSpreadRunner:
                     policy=self.policy,
                 )
                 self.scanner = scanner
-                pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results,spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None)
+                def apply_depth_gate(opportunities):
+                    from math import isfinite
+                    gated = []
+                    comparisons = []
+                    minimum_lots = max(1, int(settings.LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS))
+                    for opportunity in opportunities:
+                        try:
+                            comparison = self.depth_shadow.compare_opportunity(opportunity) if self.depth_shadow.enabled else {"status": "INCOMPLETE", "reason": "DEPTH_FEED_DISABLED"}
+                            self.depth_shadow_diagnostics.record(comparison)
+                            comparisons.append(comparison)
+                            if comparison.get("status") != "COMPLETE":
+                                gated.append(replace(opportunity, executable_edge=0.0, edge_per_lot=0.0, gross_pnl=0.0, max_executable_lots=0, tradability_status="NOT_TRADABLE", tradability_reason=str(comparison.get("reason") or "DEPTH_INCOMPLETE"), l1_reference_edge=float(opportunity.executable_edge), depth_executable_lots=0, depth_quantity=0))
+                                continue
+                            lots = int(comparison.get("max_executable_lots") or 0)
+                            depth_edge = float(comparison.get("depth_edge_per_unit"))
+                            quantity = int(comparison.get("quantity") or 0)
+                            lot_size = int(opportunity.low.lot_size)
+                            if not isfinite(depth_edge) or lots < minimum_lots or quantity != lots * lot_size:
+                                reason = "BELOW_MINIMUM_EXECUTABLE_LOTS" if lots < minimum_lots else "INVALID_DEPTH_ALLOCATION"
+                                gated.append(replace(opportunity, executable_edge=0.0, edge_per_lot=0.0, gross_pnl=0.0, max_executable_lots=0, tradability_status="NOT_TRADABLE", tradability_reason=reason, l1_reference_edge=float(opportunity.executable_edge), depth_executable_lots=lots, depth_quantity=quantity))
+                                continue
+                            gated.append(replace(opportunity, executable_edge=depth_edge, edge_per_lot=depth_edge * lot_size, gross_pnl=depth_edge * quantity, max_executable_lots=lots, tradability_status="TRADABLE", tradability_reason=None, l1_reference_edge=float(opportunity.executable_edge), depth_edge_per_unit=depth_edge, depth_edge_per_lot=depth_edge * lot_size, depth_executable_lots=lots, depth_quantity=quantity, depth_legs=tuple(comparison.get("legs") or ())))
+                        except Exception:
+                            app_logger.exception("Box Spread four-leg depth gate failed closed")
+                            gated.append(replace(opportunity, executable_edge=0.0, edge_per_lot=0.0, gross_pnl=0.0, max_executable_lots=0, tradability_status="NOT_TRADABLE", tradability_reason="DEPTH_EVALUATION_ERROR", l1_reference_edge=float(opportunity.executable_edge), depth_executable_lots=0, depth_quantity=0))
+                    if comparisons:
+                        with self._depth_shadow_lock:
+                            self._depth_shadow_last_comparisons = comparisons[-20:]
+                    return tuple(gated)
+
+                pipeline=LiveBoxSpreadPipeline(scanner, SessionLocal, on_results=self.on_results, spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None, result_transform=apply_depth_gate)
                 subscribed_strikes = {}
                 for sub in subs:
                     symbol = str(getattr(sub, "underlying", "") or "").strip().upper()
@@ -394,18 +425,6 @@ class LiveBoxSpreadRunner:
 
                 def observe(payload):
                     results = pipeline.observe(payload)
-                    if self.depth_shadow.enabled and results:
-                        comparisons = []
-                        for opportunity in results:
-                            try:
-                                comparison = self.depth_shadow.compare_opportunity(opportunity)
-                                self.depth_shadow_diagnostics.record(comparison)
-                                comparisons.append(comparison)
-                            except Exception:
-                                app_logger.exception("Box Spread depth shadow comparison failed")
-                        if comparisons:
-                            with self._depth_shadow_lock:
-                                self._depth_shadow_last_comparisons = comparisons[-20:]
                     symbol=str(payload.get("underlying") or "").strip().upper()
                     current=self.tracker.atm(symbol,time_ns(),max_age_seconds=10.0)
                     coverage = subscribed_strikes.get(symbol, set())
@@ -429,11 +448,10 @@ class LiveBoxSpreadRunner:
                             str(payload.get("underlying") or "").strip().upper(),
                         )
                         self.recorder.stop()
-                if self.depth_shadow.enabled:
-                    try:
-                        self.depth_shadow.start(subs)
-                    except Exception:
-                        app_logger.exception("Box Spread depth shadow consumer failed to start; live scanner remains unchanged")
+                if not self.depth_shadow.enabled:
+                    raise RuntimeError("Box Spread live paper opportunities require the dedicated five-level depth feed")
+                # Fail closed: never start an L1-only live opportunity publisher.
+                self.depth_shadow.start(subs)
                 self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
