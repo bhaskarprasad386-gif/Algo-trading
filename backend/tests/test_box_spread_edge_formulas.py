@@ -126,3 +126,34 @@ def test_live_box_spread_capacity_fails_closed_on_mismatched_leg_lot_sizes():
         put_bid_qty=55, put_ask_qty=40,
     )
     assert _max_executable_lots(low, high, "LONG") == 0
+
+
+def test_live_box_spread_capacity_fails_closed_for_invalid_depth_quantities():
+    from dataclasses import replace
+    import pytest
+    from app.scanner.box_spread import _max_executable_lots
+
+    low = replace(
+        quote(100, call_bid=10, call_ask=12, put_bid=8, put_ask=9),
+        lot_size=10, call_bid_qty=50, call_ask_qty=25,
+        put_bid_qty=30, put_ask_qty=60,
+    )
+    high = replace(
+        quote(120, call_bid=3, call_ask=4, put_bid=18, put_ask=18),
+        lot_size=10, call_bid_qty=19, call_ask_qty=45,
+        put_bid_qty=55, put_ask_qty=40,
+    )
+
+    for invalid in (0, -1, 1.5, "not-a-number", None):
+        broken_low = replace(low, call_ask_qty=invalid)
+        broken_high = replace(high, call_ask_qty=invalid)
+        assert _max_executable_lots(broken_low, high, "LONG") == 0
+        assert _max_executable_lots(low, broken_high, "SHORT") == 0
+
+
+def test_live_box_spread_capacity_fails_closed_for_invalid_direction():
+    from app.scanner.box_spread import _max_executable_lots
+
+    low = quote(100, call_bid=10, call_ask=12, put_bid=8, put_ask=9)
+    high = quote(120, call_bid=3, call_ask=4, put_bid=18, put_ask=18)
+    assert _max_executable_lots(low, high, "UNKNOWN") == 0
