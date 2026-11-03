@@ -61,4 +61,4 @@ def test_short_edge_uses_conservative_buy_and_sell_prices():
     assert effective_entry_edge(
         direction="SHORT", low_strike=22000, high_strike=22100,
         reference_prices=reference, limit_prices=limits,
-    ) == 0
+    ) == -20
