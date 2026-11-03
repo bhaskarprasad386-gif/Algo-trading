@@ -85,7 +85,18 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def stop(self): pass
         def snapshot(self): return {"running": True}
     monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
-    monkeypatch.setattr(mod.settings, "LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED", False)
+
+    class Shadow:
+        def __init__(self, *, enabled):
+            self.enabled = enabled
+        def start(self, descriptors): pass
+        def stop(self): pass
+        def snapshot(self): return {"running": True, "record_count": 0, "counts": {}}
+        def compare_opportunity(self, opportunity):
+            return {"status": "INCOMPLETE", "reason": "MISSING_LEG"}
+
+    monkeypatch.setattr(mod.settings, "LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED", True)
+    monkeypatch.setattr(mod, "BoxLiveDepthShadowFeed", Shadow)
 
     runner = mod.LiveBoxSpreadRunner(
         object(),
