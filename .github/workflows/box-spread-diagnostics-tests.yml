@@ -1,0 +1,43 @@
+name: Box Spread Diagnostics Tests
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/box-spread-diagnostics-tests.yml"
+      - "backend/app/scanner/live_box_spread_scanner.py"
+      - "backend/tests/test_box_spread_diagnostics.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: box-spread-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  box-spread-diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend test dependencies
+        run: pip install -r backend/requirements.txt pytest pytest-timeout
+
+      - name: Run Box Spread diagnostics regression tests
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          PYTHONPATH: backend
+          DATABASE_URL: "sqlite:///:memory:"
+          LIVE_CASH_FUTURE_DATA_ENABLED: "false"
+          LIVE_CALENDAR_SPREAD_DATA_ENABLED: "false"
+          LIVE_SYNTHETIC_DATA_ENABLED: "false"
+          LIVE_BOX_SPREAD_DATA_ENABLED: "false"
+          LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
+        run: >-
+          python -m pytest backend/tests/test_box_spread_diagnostics.py
+          -q --tb=short --timeout=60 --timeout-method=thread
