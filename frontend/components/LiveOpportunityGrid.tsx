@@ -98,7 +98,7 @@ function LegQuote({ row, name, price, qty, side, depthKey }: { row: Opportunity;
             <span className="flex justify-between gap-1 text-rose-300"><span>{bids[index] ? fmt(bids[index].price) : "—"}</span><span className="theme-muted">{bids[index] ? fmt(bids[index].quantity, 0) : "—"}</span></span>
             <span className="flex justify-between gap-1 text-emerald-300"><span>{asks[index] ? fmt(asks[index].price) : "—"}</span><span className="theme-muted">{asks[index] ? fmt(asks[index].quantity, 0) : "—"}</span></span>
           </div>
-        )) : <div className="text-[9px] theme-muted">Five-level depth unavailable / stale</div>}
+        )) : <div className="text-[9px] theme-muted">Depth unavailable / stale</div>}
       </div>
     </div>
   );
@@ -316,7 +316,7 @@ export default function LiveOpportunityGrid() {
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t theme-border theme-surface-2 px-4 py-3 text-[10px] theme-muted">
-        <span>Executable edge uses synchronized five-level VWAP; Max Executable Lots is common four-leg depth capacity. Displayed ladders are live snapshots, not a fill guarantee.</span>
+        <span>Executable edge uses synchronized VWAP across up to five available depth levels; each leg may contribute a different number of levels. Max Executable Lots is common four-leg depth capacity. Displayed ladders are live snapshots, not a fill guarantee.</span>
         <span>Four-leg quote sides follow LONG/SHORT direction; green = BUY/ASK, red = SELL/BID.</span>
         <span>Rows become STALE after 1.5s and expire after 60s without updates.</span>
       </div>
