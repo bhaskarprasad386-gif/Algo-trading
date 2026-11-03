@@ -57,7 +57,7 @@ const configs: Record<string, WorkspaceConfig> = {
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Spot Price", "Spot Quote Time / Age", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)", "Box Edge", "Lot Size", "Direction", "Freshness"],
+    pairColumns: ["Time", "Underlying", "Spot Price", "Spot Quote Time / Age", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)", "Box Edge", "Lot Size", "Max Executable Lots", "Direction", "Freshness"],
     historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=5000",
   },
   "custom-strategy": {
@@ -341,6 +341,10 @@ function formatCell(slug: string, column: string, row: Row) {
     return "LTP " + formatValue(value(row, key + "_ltp")) + " · Bid " + formatValue(value(row, key + "_bid")) + " (" + formatValue(value(row, key + "_bid_qty")) + ") · Ask " + formatValue(value(row, key + "_ask")) + " (" + formatValue(value(row, key + "_ask_qty")) + ")";
   }
   if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
+  if (slug === "box-spread" && column === "Max Executable Lots") {
+    const lots = nullableNumber(raw);
+    return lots === null || lots < 0 || !Number.isInteger(lots) ? "—" : lots.toLocaleString("en-IN") + " lots";
+  }
   if (slug === "box-spread" && column === "Freshness") {
     const age = nullableNumber(value(row, "quote_age_seconds"));
     const supplied = String(raw ?? "").trim().toUpperCase();
@@ -413,7 +417,7 @@ function pairCell(slug: string, column: string, row: Row) {
       "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
       "Low Call (LTP/Bid Qty/Ask Qty)": ["low_call_ltp"], "Low Put (LTP/Bid Qty/Ask Qty)": ["low_put_ltp"],
       "High Call (LTP/Bid Qty/Ask Qty)": ["high_call_ltp"], "High Put (LTP/Bid Qty/Ask Qty)": ["high_put_ltp"],
-      "Box Edge": ["executable_edge"], "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
+      "Box Edge": ["executable_edge"], "Lot Size": ["lot_size"], "Max Executable Lots": ["max_executable_lots"], Direction: ["direction"], State: ["executable_edge"],
     },
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
@@ -1567,7 +1571,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             </tbody>
           </table>
         </div>
-        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Common feed:</span> {feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"} • {feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN") + " instruments"} • runner {runner?.running ? "RUNNING" : "STOPPED"}.</div>
+        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Max Executable Lots:</span> top-of-book displayed-quantity estimate only; not full-depth aggregation and not a guarantee that all four legs fill together. <span className="font-semibold theme-text">Common feed:</span> {feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"} • {feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN") + " instruments"} • runner {runner?.running ? "RUNNING" : "STOPPED"}.</div>
       </Card>
 
       )}
