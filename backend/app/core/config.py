@@ -68,8 +68,10 @@ class Settings(BaseSettings):
     LIVE_SYNTHETIC_FEES_PER_UNIT: float = 1.0
     LIVE_SYNTHETIC_RESULT_RETENTION_DAYS: int = 90
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = False
-    # Shadow-only five-level depth comparison; never affects live opportunities or paper orders.
-    LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED: bool = False
+    # Dedicated Box Spread five-level depth feed is required for executable live paper opportunities.
+    LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED: bool = True
+    # Require at least two common whole lots across all four option legs.
+    LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS: int = 2
     LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS: float = 0.0
     LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS: int = 90
     LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
