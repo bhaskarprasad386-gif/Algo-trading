@@ -99,3 +99,67 @@ def test_trace_exit_partial_depth_reports_weighted_price_only_for_available_quan
     assert result["max_complete_exit_lots_now"] == 1
     assert result["gross_pnl"] is None
     assert all(leg["executable_quantity"] == 10 for leg in result["legs"])
+
+
+
+def test_trace_exit_reports_saved_entry_edge_and_recomputed_latest_long_edge():
+    trace = SimpleNamespace(
+        id=11, direction="LONG", quantity_lots=1, lot_size=10,
+        entry_json=json.dumps({
+            "low_strike": 100, "high_strike": 120, "executable_edge": 1,
+            "trace_entry_prices": {
+                "low_call": 100, "low_put": 100, "high_call": 100, "high_put": 100,
+            },
+        }),
+    )
+    result = _exit_valuation(trace, {
+        "low_call": _quote(105, 106),
+        "low_put": _quote(49, 50),
+        "high_call": _quote(79, 80),
+        "high_put": _quote(45, 46),
+    })
+    assert result["entry_edge"] == 1
+    assert result["latest_edge"] == -4
+
+
+def test_trace_exit_reports_recomputed_latest_short_edge():
+    trace = SimpleNamespace(
+        id=12, direction="SHORT", quantity_lots=1, lot_size=10,
+        entry_json=json.dumps({
+            "low_strike": 100, "high_strike": 120, "executable_edge": 6,
+            "trace_entry_prices": {
+                "low_call": 100, "low_put": 100, "high_call": 100, "high_put": 100,
+            },
+        }),
+    )
+    result = _exit_valuation(trace, {
+        "low_call": _quote(15, 16),
+        "low_put": _quote(10, 11),
+        "high_call": _quote(2, 3),
+        "high_put": _quote(25, 26),
+    })
+    assert result["entry_edge"] == 6
+    assert result["latest_edge"] == 6
+
+
+def test_trace_exit_latest_edge_is_unavailable_when_any_leg_is_stale():
+    from time import time_ns
+    trace = SimpleNamespace(
+        id=13, direction="LONG", quantity_lots=1, lot_size=10,
+        entry_json=json.dumps({
+            "low_strike": 100, "high_strike": 120, "executable_edge": 1,
+            "trace_entry_prices": {
+                "low_call": 100, "low_put": 100, "high_call": 100, "high_put": 100,
+            },
+        }),
+    )
+    stale = SimpleNamespace(timestamp_ns=time_ns() - 10_000_000_000,
+                            bid=79, ask=80, bid_qty=20, ask_qty=20)
+    result = _exit_valuation(trace, {
+        "low_call": _quote(105, 106),
+        "low_put": _quote(49, 50),
+        "high_call": stale,
+        "high_put": _quote(45, 46),
+    })
+    assert result["entry_edge"] == 1
+    assert result["latest_edge"] is None
