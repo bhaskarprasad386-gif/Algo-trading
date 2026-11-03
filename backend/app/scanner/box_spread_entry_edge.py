@@ -20,9 +20,9 @@ def minimum_entry_edge(alert_edge: object) -> float:
         raise ValueError("alert edge must be a finite number") from None
     if not math.isfinite(edge):
         raise ValueError("alert edge must be a finite number")
-    if 5.0 <= edge <= 10.0:
+    if 5.0 <= edge < 11.0:
         return edge - 1.0
-    if 11.0 <= edge <= 20.0:
+    if 11.0 <= edge < 21.0:
         return edge - 2.0
     if edge >= 21.0:
         return edge - 3.0
