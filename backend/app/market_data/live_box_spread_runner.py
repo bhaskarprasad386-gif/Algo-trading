@@ -22,6 +22,8 @@ from app.scanner.box_spread_depth_shadow_diagnostics import BoxDepthShadowDiagno
 from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+# Temporarily excluded from the Box Spread scanner universe and all its feeds.
+BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset({"FINNIFTY", "BANKEX"})
 WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
