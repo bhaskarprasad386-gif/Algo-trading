@@ -160,8 +160,8 @@ def test_shadow_start_failure_clears_only_its_consumer_and_cache():
 
 
 
-def test_four_leg_edge_uses_available_partial_depth_and_common_quantity():
-    """Four levels on one leg are valid when all four legs have enough liquidity."""
+def test_four_leg_edge_accepts_one_level_on_weakest_leg_for_two_lots():
+    """One level on one leg is valid when its quantity supports two common lots."""
     from dataclasses import replace
     import time
 
@@ -187,9 +187,10 @@ def test_four_leg_edge_uses_available_partial_depth_and_common_quantity():
     now = time.time_ns()
 
     for index, (token, strike, option_type) in enumerate(specs):
-        count = 4 if index == 0 else 5
-        bids = [{"price": str((100 - level) * 100), "quantity": "50"} for level in range(count)]
-        asks = [{"price": str((110 + level) * 100), "quantity": "50"} for level in range(count)]
+        count = 1 if index == 0 else (4 if index == 1 else 5)
+        level_quantity = "130" if index == 0 else "50"
+        bids = [{"price": str((100 - level) * 100), "quantity": level_quantity} for level in range(count)]
+        asks = [{"price": str((110 + level) * 100), "quantity": level_quantity} for level in range(count)]
         callback(_record(
             timestamp_ns=now,
             token=token,
@@ -208,9 +209,9 @@ def test_four_leg_edge_uses_available_partial_depth_and_common_quantity():
 
     result = shadow.compare_opportunity(opportunity, now_ns=now)
     assert result["status"] == "COMPLETE"
-    assert result["max_executable_lots"] == 3
-    assert result["quantity"] == 195
-    assert min(result["depth_capacity_by_leg"].values()) == 200
+    assert result["max_executable_lots"] == 2
+    assert result["quantity"] == 130
+    assert min(result["depth_capacity_by_leg"].values()) == 130
     assert len(result["legs"]) == 4
-    assert all(leg["selected_quantity"] == 195 for leg in result["legs"])
+    assert all(leg["selected_quantity"] == 130 for leg in result["legs"])
     assert result["depth_edge_per_unit"] > 0
