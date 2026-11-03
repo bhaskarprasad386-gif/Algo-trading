@@ -307,7 +307,7 @@ export default function LiveOpportunityGrid() {
                   <div className="rounded-xl border theme-border theme-surface-2 p-3">
                     <p className="text-[9px] font-bold uppercase tracking-wider theme-muted">Max Executable Lots</p>
                     <p className="mt-1 text-lg font-extrabold tabular-nums theme-text">{(() => { const lots = n(row, "max_executable_lots"); return lots === null || lots < 0 || !Number.isInteger(lots) ? "—" : lots.toLocaleString("en-IN") + " lots"; })()}</p>
-                    <p className="mt-1 text-[9px] theme-muted">Top-of-book estimate · not a fill guarantee</p>
+                    <p className="mt-1 text-[9px] theme-muted">Common four-leg depth capacity · not a fill guarantee</p>
                   </div>
                 </div>
               </div>
@@ -316,7 +316,7 @@ export default function LiveOpportunityGrid() {
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t theme-border theme-surface-2 px-4 py-3 text-[10px] theme-muted">
-        <span>Live edge and Max Executable Lots remain L1-based; five-level ladders are displayed for depth inspection only.</span>
+        <span>Executable edge uses synchronized five-level VWAP; Max Executable Lots is common four-leg depth capacity. Displayed ladders are live snapshots, not a fill guarantee.</span>
         <span>Four-leg quote sides follow LONG/SHORT direction; green = BUY/ASK, red = SELL/BID.</span>
         <span>Rows become STALE after 1.5s and expire after 60s without updates.</span>
       </div>
