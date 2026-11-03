@@ -17,7 +17,9 @@ class LiveBoxSpreadScanner:
         self.policy=policy
         self._lock=Lock(); self._buckets={}
         self._diagnostic_counts=Counter()
-        self._last_diagnostics={}
+        self._symbol_diagnostic_counts={}
+        self._symbol_last_diagnostics={}
+        self._set_last_diagnostics({}
         self._monitor_snapshots={}; self._atm_error_buckets=set()
 
     @staticmethod
@@ -61,12 +63,33 @@ class LiveBoxSpreadScanner:
             except ValueError:pass
         raise ValueError(f"invalid option expiry: {v!r}")
 
+    def _increment_diagnostic(self, name, amount=1, *, symbol=None):
+        """Increment aggregate and bounded per-underlying diagnostic counters."""
+        self._diagnostic_counts[name] += amount
+        if symbol:
+            counts = self._symbol_diagnostic_counts.setdefault(symbol, Counter())
+            counts[name] += amount
+
+    def _set_last_diagnostics(self, details):
+        self._last_diagnostics = dict(details)
+        symbol = str(details.get("symbol") or "").strip().upper()
+        if symbol:
+            self._symbol_last_diagnostics[symbol] = dict(details)
+
     def diagnostics_snapshot(self):
         """Return bounded counters and the last scan outcome; never includes raw quote payloads."""
         with self._lock:
+            symbols = set(self._symbol_diagnostic_counts) | set(self._symbol_last_diagnostics)
             return {
                 "counts": dict(self._diagnostic_counts),
                 "last_scan": dict(self._last_diagnostics),
+                "by_symbol": {
+                    symbol: {
+                        "counts": dict(self._symbol_diagnostic_counts.get(symbol, {})),
+                        "last_scan": dict(self._symbol_last_diagnostics.get(symbol, {})),
+                    }
+                    for symbol in sorted(symbols)
+                },
                 "active_buckets": len(self._buckets),
             }
 
@@ -183,16 +206,16 @@ class LiveBoxSpreadScanner:
                 if key not in self._atm_error_buckets:
                     self._increment_diagnostic("atm_provider_errors", symbol=symbol)
                     self._atm_error_buckets.add(key)
-                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"}
+                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"})
                 self._prune(ts); return ()
             self._atm_error_buckets.discard(key)
             if atm is None:
                 self._increment_diagnostic("atm_unavailable", symbol=symbol)
-                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"}
+                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"})
                 self._prune(ts); return ()
             if not grouped:
                 self._increment_diagnostic("no_executable_grouped_strikes", symbol=symbol)
-                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"}
+                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"})
                 self._prune(ts); return ()
             scan_stats={}
             scan_config = self.config_provider(symbol)
@@ -244,7 +267,7 @@ class LiveBoxSpreadScanner:
                 "grouped_strikes":len(grouped),"result_count":len(results),
                 "min_executable_edge":float(scan_config.min_executable_edge),
                 "outcome":"qualified" if results else "no_qualifying_box",
-                "scan":scan_stats}
+                "scan":scan_stats})
             self._prune(ts)
         if results and self.on_result is not None:self.on_result(results)
         return results
