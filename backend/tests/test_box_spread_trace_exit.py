@@ -27,6 +27,7 @@ def test_long_trace_exit_uses_opposite_executable_sides_and_saved_entry_prices()
     })
     assert result["status"] == "EXITABLE"
     assert result["gross_pnl"] == 200
+    assert result["exit_edge"] == 20
     assert result["can_exit_full_quantity_now"] is True
     assert result["orders_placed"] is False
 
