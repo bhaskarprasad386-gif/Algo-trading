@@ -21,11 +21,11 @@ def _fake_paper_depth(row, roles=None):
     for role, (bid, ask, bid_qty, ask_qty) in fields.items():
         payload = {
             "best_5_buy_data": ([
-                {"price": float(row[bid]) * 100 - level, "quantity": row.get(bid_qty)}
+                {"price": float(row[bid]) * 100 - level, "quantity": row.get(bid_qty) if level == 0 else 0}
                 for level in range(5)
             ] if row.get(bid) is not None and row.get(bid_qty) is not None else []),
             "best_5_sell_data": ([
-                {"price": float(row[ask]) * 100 + level, "quantity": row.get(ask_qty)}
+                {"price": float(row[ask]) * 100 + level, "quantity": row.get(ask_qty) if level == 0 else 0}
                 for level in range(5)
             ] if row.get(ask) is not None and row.get(ask_qty) is not None else []),
         }
@@ -300,7 +300,7 @@ def test_simulation_blocks_duplicate_replay_when_durable_fills_exist(monkeypatch
 def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        low_strike=25000, high_strike=25100, direction="LONG", lots=2,
         idempotency_key="backend-prices-only", alert_edge=8, account_key="isolated-test",
     )
     contracts = SimpleNamespace(
@@ -311,13 +311,13 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
     }
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
@@ -332,8 +332,8 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     captured = {}
 
     fills = [
-        SimpleNamespace(role=role, action=action, quantity=25, fill_price=price,
-                         reference_price=price, slippage=0, notional=price * 25, charges=0)
+        SimpleNamespace(role=role, action=action, quantity=50, fill_price=price,
+                         reference_price=price, slippage=0, notional=price * 50, charges=0)
         for role, action, price in (
             ("LOW_CE", "BUY", 11), ("HIGH_CE", "SELL", 20),
             ("HIGH_PE", "BUY", 31), ("LOW_PE", "SELL", 40),
@@ -1093,13 +1093,13 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
     }
     monkeypatch.setattr(routes, "_paper_execution_enabled", True)
     monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
