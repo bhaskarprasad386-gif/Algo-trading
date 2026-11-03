@@ -1082,7 +1082,7 @@ def test_simulate_entry_is_blocked_before_ledger_or_quote_access_when_switch_off
 def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        low_strike=25000, high_strike=25100, direction="LONG", lots=2,
         idempotency_key="toggle-race-test", alert_edge=8, account_key="toggle-race-test",
     )
     contracts = SimpleNamespace(
