@@ -57,9 +57,20 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def stop(self): pass
 
     captured = []
+    from app.market_data.contracts import InstrumentKey
+    from app.market_data.registry import InstrumentDescriptor
+
     def select(*args, **kwargs):
-        captured.append(kwargs["underlying"])
-        return BoxContractSelection((object(),), "26NOV2026", 100.0)
+        underlying = kwargs["underlying"]
+        captured.append(underlying)
+        descriptor = InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", underlying),
+            symbol=f"{underlying}26NOV26100CE",
+            instrument_type="option", exchange="NFO", segment="NFO",
+            expiry="26NOV2026", strike=100, option_type="CE", lot_size=25,
+            underlying=underlying,
+        )
+        return BoxContractSelection((descriptor,), "26NOV2026", 100.0)
 
     monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"READY": (100.0, 110.0), "WAITING": (100.0, 110.0)})
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
