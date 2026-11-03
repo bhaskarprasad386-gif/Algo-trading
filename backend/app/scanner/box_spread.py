@@ -109,7 +109,8 @@ def _max_executable_lots(low: OptionQuote, high: OptionQuote, direction: str) ->
     else:
         return 0
     lot_size = _positive_integer(low.lot_size)
-    if lot_size is None:
+    high_lot_size = _positive_integer(high.lot_size)
+    if lot_size is None or high_lot_size is None or high_lot_size != lot_size:
         return 0
     parsed = []
     for value in quantities:
