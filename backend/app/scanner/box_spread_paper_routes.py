@@ -326,12 +326,12 @@ def _fresh_entry_depth_selection(contracts, target_lots: int):
                     )
                 depth[role] = bid_levels if _entry_depth_side(contracts.direction, role) == "BID" else ask_levels
             selected = select_complete_lots(
-                target_lots, contracts.lot_size, depth, roles=roles,
+                target_lots, contracts.lot_size, depth, roles=roles, minimum_lots=2,
             )
             if selected is None:
                 raise HTTPException(
                     status_code=409,
-                    detail="insufficient fresh four-leg market depth for even one complete lot; no entry created",
+                    detail="fresh four-leg depth must support at least two complete lots; no entry created",
                 )
             prices = {
                 role: float(selected["allocations"][role]["vwap"])
