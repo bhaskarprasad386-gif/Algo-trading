@@ -252,7 +252,8 @@ class BoxSpreadPaperLedger:
                             low, high, direction, lots_value, lot_value, alert_edge_value)
                 actual = (existing.underlying, existing.instrument_class, existing.expiry,
                           Decimal(existing.low_strike), Decimal(existing.high_strike),
-                          existing.direction, existing.lots, existing.lot_size,\n                          Decimal(existing.alert_edge) if existing.alert_edge is not None else None)
+                          existing.direction, existing.lots, existing.lot_size,
+                          Decimal(existing.alert_edge) if existing.alert_edge is not None else None)
                 if expected != actual:
                     raise ValueError("idempotency_key reused for a different trade")
                 session.expunge(existing)
