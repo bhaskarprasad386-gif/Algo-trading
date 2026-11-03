@@ -264,6 +264,9 @@ class BoxLiveDepthShadowFeed:
             "direction": direction,
             "quantity": executable_quantity,
             "max_executable_lots": max_executable_lots,
+            "depth_capacity_by_leg": {
+                item["role"]: item["available_quantity"] for item in selected
+            },
             "l1_edge_per_unit": l1_edge,
             "depth_edge_per_unit": depth_edge,
             "difference_per_unit": depth_edge - l1_edge,
