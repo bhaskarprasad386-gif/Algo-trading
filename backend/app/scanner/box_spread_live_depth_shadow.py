@@ -321,6 +321,48 @@ class BoxLiveDepthShadowFeed:
             while len(self._records) > self.max_records:
                 self._records.popitem(last=False)
 
+    def depth_for_opportunity(self, opportunity: Any) -> dict[str, Any]:
+        """Return fresh five-level bid/ask ladders for the opportunity's four contracts."""
+        now_ns = time_ns()
+        now_arrival = monotonic()
+        low, high = opportunity.low, opportunity.high
+        roles = (
+            ("low_call", low.strike, "CE"),
+            ("low_put", low.strike, "PE"),
+            ("high_call", high.strike, "CE"),
+            ("high_put", high.strike, "PE"),
+        )
+        output = {}
+        with self._lock:
+            cached = list(self._records.values())
+            metadata = dict(self._metadata)
+        for role, strike, option_type in roles:
+            matches = [
+                item for item in cached
+                if (meta := metadata.get(item.get("key"), {})).get("underlying") == str(low.underlying).strip().upper()
+                and meta.get("expiry") == int(low.expiry)
+                and meta.get("strike") == float(strike)
+                and meta.get("option_type") == option_type
+            ]
+            if not matches:
+                output[role] = {"status": "UNAVAILABLE", "bids": [], "asks": []}
+                continue
+            item = max(matches, key=lambda row: row["timestamp_ns"])
+            provider_age = (now_ns - item["timestamp_ns"]) / 1e9
+            arrival_age = now_arrival - item["arrival_monotonic"]
+            fresh = (
+                -1.0 <= provider_age <= self.max_provider_age_seconds
+                and 0.0 <= arrival_age <= self.max_arrival_age_seconds
+                and item["depth_status"] in {"DEPTH_FULL", "DEPTH_PARTIAL"}
+            )
+            output[role] = {
+                "status": "LIVE" if fresh else item["depth_status"],
+                "timestamp_ns": item["timestamp_ns"],
+                "bids": [{"price": price, "quantity": quantity} for price, quantity in item["bids"]],
+                "asks": [{"price": price, "quantity": quantity} for price, quantity in item["asks"]],
+            }
+        return output
+
     def snapshot(self, *, now_ns: int | None = None, now_monotonic: float | None = None) -> dict[str, Any]:
         """Return fresh in-memory observations; never persists or changes scanner data."""
         wall_now = time_ns() if now_ns is None else int(now_ns)
