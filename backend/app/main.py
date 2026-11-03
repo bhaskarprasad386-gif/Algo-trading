@@ -54,7 +54,7 @@ from app.scanner.live_box_spread_routes import router as live_box_spread_router,
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
-from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, set_expiry_types as set_live_box_websocket_expiry_types
+from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, set_expiry_types as set_live_box_websocket_expiry_types
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -124,6 +124,12 @@ def _live_box_spread_spot_snapshot(symbol: str):
 
 configure_live_box_spread_spot(_live_box_spread_spot_snapshot)
 configure_live_box_spread_websocket_spot(_live_box_spread_spot_snapshot)
+configure_live_box_spread_websocket_depth(
+    lambda opportunity: (
+        live_box_spread_runner.depth_shadow.depth_for_opportunity(opportunity)
+        if live_box_spread_runner is not None else {}
+    )
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
