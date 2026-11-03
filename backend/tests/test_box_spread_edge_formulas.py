@@ -112,16 +112,17 @@ def test_live_box_spread_short_capacity_uses_opposite_four_leg_sides():
 
 
 def test_live_box_spread_capacity_fails_closed_on_mismatched_leg_lot_sizes():
+    from dataclasses import replace
     from app.scanner.box_spread import _max_executable_lots
 
-    low = quote(100, call_bid=10, call_ask=12, put_bid=8, put_ask=9)
-    high = quote(120, call_bid=3, call_ask=4, put_bid=18, put_ask=18)
-    low = low.model_copy(update={
-        "lot_size": 10, "call_bid_qty": 50, "call_ask_qty": 25,
-        "put_bid_qty": 30, "put_ask_qty": 60,
-    })
-    high = high.model_copy(update={
-        "lot_size": 20, "call_bid_qty": 19, "call_ask_qty": 45,
-        "put_bid_qty": 55, "put_ask_qty": 40,
-    })
+    low = replace(
+        quote(100, call_bid=10, call_ask=12, put_bid=8, put_ask=9),
+        lot_size=10, call_bid_qty=50, call_ask_qty=25,
+        put_bid_qty=30, put_ask_qty=60,
+    )
+    high = replace(
+        quote(120, call_bid=3, call_ask=4, put_bid=18, put_ask=18),
+        lot_size=20, call_bid_qty=19, call_ask_qty=45,
+        put_bid_qty=55, put_ask_qty=40,
+    )
     assert _max_executable_lots(low, high, "LONG") == 0
