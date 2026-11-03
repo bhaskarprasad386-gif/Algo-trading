@@ -209,10 +209,23 @@ def test_four_leg_edge_uses_partial_depth_when_one_leg_has_four_levels():
     opportunity = SimpleNamespace(low=low, high=high, direction="LONG", executable_edge=5.0)
 
     result = shadow.compare_opportunity(opportunity, now_ns=now)
+    assert result["status"] == "INCOMPLETE"
+    assert result["reason"] == "INCOMPLETE_FIVE_LEVELS_LOW_CE"
+
+    # Once the missing fifth level arrives, the same four-leg basket becomes
+    # eligible and every leg is priced at the same common whole-lot quantity.
+    bids = [{"price": str((100 - level) * 100), "quantity": "50"} for level in range(5)]
+    asks = [{"price": str((110 + level) * 100), "quantity": "50"} for level in range(5)]
+    callback(_record(
+        timestamp_ns=now,
+        token="101",
+        payload={"best_5_buy_data": bids, "best_5_sell_data": asks},
+    ))
+    result = shadow.compare_opportunity(opportunity, now_ns=now)
     assert result["status"] == "COMPLETE"
     assert result["max_executable_lots"] == 3
     assert result["quantity"] == 195
-    assert min(result["depth_capacity_by_leg"].values()) == 200
+    assert min(result["depth_capacity_by_leg"].values()) == 250
     assert len(result["legs"]) == 4
     assert all(leg["selected_quantity"] == 195 for leg in result["legs"])
     assert result["depth_edge_per_unit"] > 0
