@@ -19,6 +19,7 @@ type TraceEntry = {
     low_strike: number;
     high_strike: number;
     observed_at: string;
+    executable_edge?: number | null;
     expiry_type?: string;
     trace_entry_sides?: Record<string, string>;
     trace_entry_prices?: Record<string, number | null>;
@@ -27,6 +28,9 @@ type TraceEntry = {
 };
 type ExitResult = {
   status: string;
+  checked_at: string;
+  entry_edge: number | null;
+  latest_edge: number | null;
   gross_pnl: number | null;
   max_complete_exit_lots_now: number;
   message: string;
@@ -106,6 +110,12 @@ export default function BoxSpreadTraceArea() {
         </div>
         {results[trace.id] && <div className="mt-3 rounded-lg border theme-border theme-surface p-3 text-xs theme-text">
           <p className="font-bold">{results[trace.id].status} · Gross P&L {results[trace.id].gross_pnl == null ? "—" : "₹"+fmt(results[trace.id].gross_pnl)} · Max exit {results[trace.id].max_complete_exit_lots_now} lots</p>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] theme-muted">Entry Edge (saved alert)</p><p className="mt-1 font-bold">₹{fmt(trace.entry.executable_edge)}</p></div>
+            <div className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] theme-muted">Latest Edge (fresh bid/ask)</p><p className="mt-1 font-bold">₹{fmt(results[trace.id].latest_edge)}</p></div>
+            <div className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] theme-muted">Latest quote check</p><p className="mt-1 font-bold">{time(results[trace.id].checked_at)}</p></div>
+          </div>
+          <p className="mt-2 theme-muted">Entry Edge is saved from the original alert. Latest Edge is recalculated from fresh four-leg executable bid/ask; unavailable/stale quotes show —. Gross P&amp;L is the full-quantity exit preview, not edge.</p>
           <p className="mt-1 theme-muted">{results[trace.id].message}</p>
           <div className="mt-2 grid grid-cols-2 gap-2">{results[trace.id].legs.map(leg => <p key={leg.leg} className="text-[10px] theme-muted">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+fmt(leg.exit_price)} · Qty {fmt(leg.exit_qty)}</p>)}</div>
         </div>}
