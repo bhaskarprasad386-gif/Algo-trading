@@ -31,6 +31,7 @@ type ExitResult = {
   checked_at: string;
   entry_edge: number | null;
   latest_edge: number | null;
+  exit_edge: number | null;
   gross_pnl: number | null;
   max_complete_exit_lots_now: number;
   message: string;
@@ -108,14 +109,16 @@ export default function BoxSpreadTraceArea() {
             return <div key={key} className="rounded-lg border theme-border theme-surface p-2"><p className="text-[10px] font-bold theme-text">{label} · {side}</p><p className="mt-1 text-xs font-semibold theme-text">Entry ₹{fmt(price)}</p><p className="mt-1 text-[10px] theme-muted">Saved depth {fmt(depth)}</p></div>;
           })}
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Entry Edge (saved alert)</p><p className="mt-1 text-xs font-extrabold theme-text">₹{fmt(trace.entry.executable_edge)}</p></div>
+          <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Latest Edge (same direction)</p><p className="mt-1 text-xs font-extrabold theme-text">{results[trace.id] ? "₹"+fmt(results[trace.id].latest_edge) : "—"}</p></div>
+          <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Exit Edge (close P&amp;L / unit)</p><p className="mt-1 text-xs font-extrabold theme-text">{results[trace.id] ? "₹"+fmt(results[trace.id].exit_edge) : "—"}</p></div>
+          <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Gross P&amp;L (full quantity)</p><p className="mt-1 text-xs font-extrabold theme-text">{results[trace.id]?.gross_pnl == null ? "—" : "₹"+fmt(results[trace.id].gross_pnl)}</p></div>
+        </div>
         {results[trace.id] && <div className="mt-3 rounded-lg border theme-border theme-surface p-3 text-xs theme-text">
           <p className="font-bold">{results[trace.id].status} · Gross P&L {results[trace.id].gross_pnl == null ? "—" : "₹"+fmt(results[trace.id].gross_pnl)} · Max exit {results[trace.id].max_complete_exit_lots_now} lots</p>
-          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <div className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] theme-muted">Entry Edge (saved alert)</p><p className="mt-1 font-bold">₹{fmt(trace.entry.executable_edge)}</p></div>
-            <div className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] theme-muted">Latest Edge (fresh bid/ask)</p><p className="mt-1 font-bold">₹{fmt(results[trace.id].latest_edge)}</p></div>
-            <div className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] theme-muted">Latest quote check</p><p className="mt-1 font-bold">{time(results[trace.id].checked_at)}</p></div>
-          </div>
-          <p className="mt-2 theme-muted">Entry Edge is saved from the original alert. Latest Edge is recalculated from fresh four-leg executable bid/ask; unavailable/stale quotes show —. Gross P&amp;L is the full-quantity exit preview, not edge.</p>
+          <p className="mt-2 theme-muted">Latest Edge is the fresh same-direction scanner edge. Exit Edge is the realized close P&amp;L per unit from fresh four-leg depth VWAP versus saved entry prices; it is shown only when all four legs support the full traced quantity.</p>
+          <p className="mt-1 theme-muted">Latest quote check: {time(results[trace.id].checked_at)}</p>
           <p className="mt-1 theme-muted">{results[trace.id].message}</p>
           <div className="mt-2 grid grid-cols-2 gap-2">{results[trace.id].legs.map(leg => <p key={leg.leg} className="text-[10px] theme-muted">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+fmt(leg.exit_price)} · Qty {fmt(leg.exit_qty)}</p>)}</div>
         </div>}
