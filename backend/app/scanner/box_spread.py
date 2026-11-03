@@ -31,6 +31,7 @@ class BoxSpreadScanResult:
     edge_per_lot: float
     gross_pnl: float
     strike_distance: int
+    max_executable_lots: int = 0
 
 def _whole_nonnegative(value) -> bool:
     try:
@@ -98,6 +99,26 @@ def _liquid_box_pairs(quotes: dict[float, OptionQuote], *, atm_strike: float,
         if 1 <= distance <= allowed_max:
             pairs.append((low, high, distance))
     return tuple(pairs)
+
+def _max_executable_lots(low: OptionQuote, high: OptionQuote, direction: str) -> int:
+    """Return top-of-book executable lots across all four legs; fail closed on missing depth."""
+    if direction == "LONG":
+        quantities = (low.call_ask_qty, high.call_bid_qty, high.put_ask_qty, low.put_bid_qty)
+    elif direction == "SHORT":
+        quantities = (low.call_bid_qty, high.call_ask_qty, high.put_bid_qty, low.put_ask_qty)
+    else:
+        return 0
+    lot_size = _positive_integer(low.lot_size)
+    if lot_size is None:
+        return 0
+    parsed = []
+    for value in quantities:
+        quantity = _positive_integer(value)
+        if quantity is None:
+            return 0
+        parsed.append(quantity)
+    return min(parsed) // lot_size
+
 
 def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float,
                       instrument_class: str, config: BoxSpreadScanConfig | None = None,
@@ -213,7 +234,8 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
                     continue
                 edge_per_lot = edge * low.lot_size
                 results.append(BoxSpreadScanResult(
-                    low, high, direction, edge, edge_per_lot, edge_per_lot, distance
+                    low, high, direction, edge, edge_per_lot, edge_per_lot, distance,
+                    _max_executable_lots(low, high, direction),
                 ))
                 continue
             if opp.executable_edge < config.min_executable_edge:
@@ -221,7 +243,8 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
                 continue
             stats["qualified_directions"] += 1
             results.append(BoxSpreadScanResult(
-                low, high, direction, opp.executable_edge, opp.edge_per_lot, opp.gross_pnl, distance
+                low, high, direction, opp.executable_edge, opp.edge_per_lot, opp.gross_pnl, distance,
+                _max_executable_lots(low, high, direction),
             ))
     results.sort(key=lambda x: (x.executable_edge, x.edge_per_lot, x.gross_pnl), reverse=True)
     return tuple(results)
