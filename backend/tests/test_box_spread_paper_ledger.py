@@ -51,6 +51,7 @@ def _trade(ledger, *, account_key="default", idempotency_key="paper-1", lots=1):
         direction="LONG",
         lots=lots,
         lot_size=25,
+        alert_edge=10,
     )
 
 
@@ -150,7 +151,7 @@ def test_paper_trade_creation_rejects_non_iso_expiry(paper_ledger, expiry):
             idempotency_key="bad-expiry", underlying="NIFTY",
             instrument_class="INDEX", expiry=expiry,
             low_strike=25000, high_strike=25100, direction="LONG",
-            lots=1, lot_size=25,
+            lots=1, lot_size=25, alert_edge=10,
         )
     assert paper_ledger.list_open_trades() == []
 
