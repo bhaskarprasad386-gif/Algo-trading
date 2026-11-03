@@ -241,7 +241,7 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "edge_per_lot": result.edge_per_lot,
         "gross_pnl": result.gross_pnl,
         "lot_size": low.lot_size,
-        "max_executable_lots": result.max_executable_lots,
+        "max_executable_lots": getattr(result, "max_executable_lots", 0),
         "strike_distance": result.strike_distance,
         "freshness": "LIVE",
     }
