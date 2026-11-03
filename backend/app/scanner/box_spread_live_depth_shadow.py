@@ -364,7 +364,8 @@ class BoxLiveDepthShadowFeed:
             fresh = (
                 -1.0 <= provider_age <= self.max_provider_age_seconds
                 and 0.0 <= arrival_age <= self.max_arrival_age_seconds
-                and item["depth_status"] == "DEPTH_FULL"
+                and item["depth_status"] in {"DEPTH_FULL", "DEPTH_PARTIAL"}
+                and bool(item["bids"]) and bool(item["asks"])
             )
             output[role] = {
                 "status": "LIVE" if fresh else item["depth_status"],
