@@ -26,6 +26,9 @@ def test_live_box_spread_diagnostics_explain_incomplete_call_put_pair():
     assert snapshot["counts"]["ticks_accepted_for_assembly"] == 1
     assert snapshot["counts"]["no_executable_grouped_strikes"] == 1
     assert snapshot["last_scan"]["outcome"] == "waiting_for_complete_executable_call_put_pairs"
+    assert snapshot["by_symbol"]["NIFTY"]["counts"]["ticks_seen"] == 1
+    assert snapshot["by_symbol"]["NIFTY"]["counts"]["ticks_accepted_for_assembly"] == 1
+    assert snapshot["by_symbol"]["NIFTY"]["last_scan"]["outcome"] == "waiting_for_complete_executable_call_put_pairs"
 
 
 def test_live_box_spread_diagnostics_count_stale_epoch_quote():
@@ -42,4 +45,7 @@ def test_live_box_spread_diagnostics_count_stale_epoch_quote():
     }
 
     assert scanner.observe(payload) == ()
-    assert scanner.diagnostics_snapshot()["counts"]["stale_timestamp"] == 1
+    snapshot = scanner.diagnostics_snapshot()
+    assert snapshot["counts"]["stale_timestamp"] == 1
+    assert snapshot["by_symbol"]["NIFTY"]["counts"]["stale_timestamp"] == 1
+    assert snapshot["by_symbol"]["NIFTY"]["counts"]["ticks_seen"] == 1
