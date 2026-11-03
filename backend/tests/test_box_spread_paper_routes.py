@@ -266,7 +266,7 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
         low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="backend-prices-only", account_key="isolated-test",
+        idempotency_key="backend-prices-only", alert_edge=8, account_key="isolated-test",
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
@@ -934,7 +934,7 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
         low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="partial-ledger-write", account_key="partial-write-test",
+        idempotency_key="partial-ledger-write", alert_edge=8, account_key="partial-write-test",
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
@@ -1048,7 +1048,7 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
         low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="toggle-race-test", account_key="toggle-race-test",
+        idempotency_key="toggle-race-test", alert_edge=8, account_key="toggle-race-test",
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
