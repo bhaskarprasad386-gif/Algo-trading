@@ -85,6 +85,7 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def stop(self): pass
         def snapshot(self): return {"running": True}
     monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
+    monkeypatch.setattr(mod.settings, "LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED", False)
 
     runner = mod.LiveBoxSpreadRunner(
         object(),
