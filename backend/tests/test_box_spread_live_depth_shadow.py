@@ -157,3 +157,62 @@ def test_shadow_start_failure_clears_only_its_consumer_and_cache():
     assert feed.stopped == 1
     assert shadow.snapshot()["record_count"] == 0
     assert shadow.snapshot()["running"] is False
+
+
+
+def test_four_leg_edge_uses_partial_depth_when_one_leg_has_four_levels():
+    """A missing fifth level on one leg must not discard usable four-leg depth."""
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [
+        ("101", 25000, "CE"),
+        ("102", 26000, "CE"),
+        ("103", 26000, "PE"),
+        ("104", 25000, "PE"),
+    ]
+    descriptors = [
+        replace(
+            _descriptor(token),
+            key=InstrumentKey("NFO", "NFO", token),
+            strike=strike,
+            option_type=option_type,
+        )
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+
+    for index, (token, strike, option_type) in enumerate(specs):
+        # Each level carries 50 units. One required leg has four levels
+        # (200 units); the other three have five (250 units).
+        count = 4 if index == 0 else 5
+        bids = [{"price": str((100 - level) * 100), "quantity": "50"} for level in range(count)]
+        asks = [{"price": str((110 + level) * 100), "quantity": "50"} for level in count]
+        callback(_record(
+            timestamp_ns=now,
+            token=token,
+            payload={"best_5_buy_data": bids, "best_5_sell_data": asks},
+        ))
+
+    low = SimpleNamespace(
+        underlying="NIFTY", expiry=20261106, strike=25000, lot_size=65,
+        call_timestamp_ns=now, put_timestamp_ns=now, timestamp_ns=now,
+    )
+    high = SimpleNamespace(
+        underlying="NIFTY", expiry=20261106, strike=26000, lot_size=65,
+        call_timestamp_ns=now, put_timestamp_ns=now, timestamp_ns=now,
+    )
+    opportunity = SimpleNamespace(low=low, high=high, direction="LONG", executable_edge=5.0)
+
+    result = shadow.compare_opportunity(opportunity, now_ns=now)
+    assert result["status"] == "COMPLETE"
+    assert result["max_executable_lots"] == 3
+    assert result["quantity"] == 195
+    assert min(result["depth_capacity_by_leg"].values()) == 200
+    assert len(result["legs"]) == 4
+    assert all(leg["selected_quantity"] == 195 for leg in result["legs"])
+    assert result["depth_edge_per_unit"] > 0
