@@ -316,7 +316,10 @@ def _fresh_entry_depth_selection(contracts, target_lots: int):
                 record = records.get(role)
                 bid_levels = depth_levels(record, "BID")
                 ask_levels = depth_levels(record, "ASK")
-                if not bid_levels or not ask_levels or bid_levels[0][0] > ask_levels[0][0]:
+                # L1 fallback is useful for legacy diagnostics, but never for
+                # executable paper entries: every contract must provide all five
+                # broker bid and ask levels before the four-leg basket is eligible.
+                if len(bid_levels) != 5 or len(ask_levels) != 5 or bid_levels[0][0] > ask_levels[0][0]:
                     raise HTTPException(
                         status_code=409,
                         detail=f"fresh valid two-sided five-level depth is unavailable for {role}; no entry created",
