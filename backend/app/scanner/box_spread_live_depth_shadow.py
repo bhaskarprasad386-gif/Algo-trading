@@ -222,14 +222,29 @@ class BoxLiveDepthShadowFeed:
             if abs(item["timestamp_ns"] - int(quote_timestamp)) > max_leg_skew_seconds * 1e9:
                 return {"status": "INCOMPLETE", "reason": f"QUOTE_DEPTH_SKEW_{role}"}
             levels = item["asks"] if side == "ASK" else item["bids"]
-            vwap = self._allocate(levels, lot_size)
-            if vwap is None:
+            available_quantity = int(sum(quantity for _, quantity in levels))
+            if available_quantity < lot_size:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{role}"}
             selected.append({
-                "role": role, "side": side, "vwap": vwap,
+                "role": role, "side": side, "levels": levels,
+                "available_quantity": available_quantity,
                 "timestamp_ns": item["timestamp_ns"],
                 "depth_status": item["depth_status"],
             })
+
+        # A basket is executable only up to the common whole-lot capacity
+        # across all four required sides. Price every leg at that same quantity.
+        max_executable_lots = min(
+            item["available_quantity"] // lot_size for item in selected
+        )
+        if max_executable_lots < 1:
+            return {"status": "INCOMPLETE", "reason": "INSUFFICIENT_FOUR_LEG_DEPTH"}
+        executable_quantity = max_executable_lots * lot_size
+        for item in selected:
+            item["vwap"] = self._allocate(item.pop("levels"), executable_quantity)
+            if item["vwap"] is None:
+                return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{item['role']}"}
+            item["available_quantity"] = int(sum(quantity for _, quantity in item.get("levels", []))) if "levels" in item else max_executable_lots * lot_size
 
         timestamps = [item["timestamp_ns"] for item in selected]
         if max(timestamps) - min(timestamps) > max_leg_skew_seconds * 1e9:
@@ -247,7 +262,8 @@ class BoxLiveDepthShadowFeed:
         return {
             "status": "COMPLETE",
             "direction": direction,
-            "quantity": lot_size,
+            "quantity": executable_quantity,
+            "max_executable_lots": max_executable_lots,
             "l1_edge_per_unit": l1_edge,
             "depth_edge_per_unit": depth_edge,
             "difference_per_unit": depth_edge - l1_edge,
