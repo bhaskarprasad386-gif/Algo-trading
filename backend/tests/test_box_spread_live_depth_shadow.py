@@ -160,8 +160,8 @@ def test_shadow_start_failure_clears_only_its_consumer_and_cache():
 
 
 
-def test_four_leg_edge_uses_partial_depth_when_one_leg_has_four_levels():
-    """A missing fifth level on one leg must not discard usable four-leg depth."""
+def test_four_leg_edge_rejects_partial_depth_until_all_five_levels_arrive():
+    """A missing fifth level blocks the basket until the complete book arrives."""
     from dataclasses import replace
     import time
 
