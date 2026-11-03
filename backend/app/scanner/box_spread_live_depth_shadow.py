@@ -221,11 +221,12 @@ class BoxLiveDepthShadowFeed:
                 return {"status": "INCOMPLETE", "reason": f"INVALID_DEPTH_{role}"}
             if abs(item["timestamp_ns"] - int(quote_timestamp)) > max_leg_skew_seconds * 1e9:
                 return {"status": "INCOMPLETE", "reason": f"QUOTE_DEPTH_SKEW_{role}"}
-            # The executable basket requires a complete five-level book on
-            # both sides of every contract; partial depth is diagnostic only.
-            if item["depth_status"] != "DEPTH_FULL":
-                return {"status": "INCOMPLETE", "reason": f"INCOMPLETE_FIVE_LEVELS_{role}"}
+            # Five levels is the maximum depth window, not a minimum.
+            # A partial book is usable: size the basket from its actual selected-
+            # side liquidity, then cap all four legs to the common whole-lot qty.
             levels = item["asks"] if side == "ASK" else item["bids"]
+            if not levels:
+                return {"status": "INCOMPLETE", "reason": f"NO_EXECUTABLE_LEVELS_{role}"}
             available_quantity = int(sum(quantity for _, quantity in levels))
             if available_quantity < lot_size:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{role}"}
