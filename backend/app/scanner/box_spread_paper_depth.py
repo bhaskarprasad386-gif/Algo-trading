@@ -50,15 +50,8 @@ def depth_levels(record: Any, side: str) -> list[tuple[float, float]]:
         if price is not None and quantity is not None:
             levels.append((price / 100.0, quantity))
 
-    # Legacy/canonical records may have only L1 fields. Never extrapolate beyond L1.
-    if not levels:
-        price = _positive(getattr(record, "bid" if normalized_side == "BID" else "ask", None))
-        quantity = _positive(
-            getattr(record, "bid_qty" if normalized_side == "BID" else "ask_qty", None)
-        )
-        if price is not None and quantity is not None:
-            levels = [(price, quantity)]
-
+    # Paper execution requires broker-supplied depth levels. L1 is not depth
+    # and must never be promoted into a five-level executable basket.
     levels.sort(key=lambda item: item[0], reverse=(normalized_side == "BID"))
     return levels
 
