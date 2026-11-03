@@ -36,7 +36,7 @@ def _fake_paper_depth(row, roles=None):
     yield records
 
 
-def test_paper_entry_uses_four_available_levels_when_quantity_is_sufficient(monkeypatch):
+def test_paper_entry_accepts_one_level_on_weakest_leg_when_two_lots_are_available(monkeypatch):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
         "low_call_bid_qty": 25, "low_call_ask_qty": 25,
@@ -52,17 +52,21 @@ def test_paper_entry_uses_four_available_levels_when_quantity_is_sufficient(monk
     @contextmanager
     def partial_depth(_contracts):
         with _fake_paper_depth(row) as records:
-            # HIGH_PE is an entry BUY for LONG, so its four ASK levels are used.
-            records["HIGH_PE"].payload["best_5_sell_data"] = records["HIGH_PE"].payload["best_5_sell_data"][:4]
+            # HIGH_PE is an entry BUY for LONG. One ASK level alone has
+            # exactly two lots; the other legs expose five available levels.
+            records["HIGH_PE"].payload["best_5_sell_data"] = [
+                {"price": 3100, "quantity": 50},
+            ]
             yield records
 
     monkeypatch.setattr(routes, "fresh_box_paper_depth", partial_depth)
-    selected = routes._fresh_entry_depth_selection(contracts, target_lots=1)
+    selected = routes._fresh_entry_depth_selection(contracts, target_lots=5)
 
-    assert selected["lots"] == 1
-    assert selected["quantity"] == 25
+    assert selected["lots"] == 2
+    assert selected["quantity"] == 50
     assert set(selected["prices"]) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
-    assert selected["allocations"]["HIGH_PE"]["quantity"] == 25
+    assert selected["allocations"]["HIGH_PE"]["quantity"] == 50
+    assert selected["allocations"]["HIGH_PE"]["complete"] is True
 
 
 
