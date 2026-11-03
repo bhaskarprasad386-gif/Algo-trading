@@ -72,6 +72,8 @@ class LiveBoxSpreadScanner:
 
     def observe(self,payload):
         symbol=str(payload.get("underlying") or "").strip().upper()
+        with self._lock:
+            self._increment_diagnostic("ticks_seen", symbol=symbol)
         cls=str(payload.get("instrument_class") or "").strip().upper()
         ts = self._positive_integer_timestamp(payload.get("source_timestamp_ns"))
         if ts is None:
@@ -101,7 +103,7 @@ class LiveBoxSpreadScanner:
                 for side, value, raw in (("bid", bid, payload.get("bid")), ("ask", ask, payload.get("ask"))):
                     if value is None:
                         key = "missing_" + side + "_quote" if raw is None or str(raw).strip() == "" else "invalid_" + side + "_quote"
-                        self._diagnostic_counts[key] += 1
+                        self._increment_diagnostic(key, symbol=symbol)
             return ()
         if ask < bid:
             with self._lock:
@@ -111,7 +113,7 @@ class LiveBoxSpreadScanner:
             try:
                 expiry = self._expiry(payload.get("expiry"))
             except (TypeError, ValueError):
-                self._diagnostic_counts["invalid_expiry"] += 1
+                self._increment_diagnostic("invalid_expiry", symbol=symbol)
                 return ()
             self._diagnostic_counts["ticks_accepted_for_assembly"] += 1
             key=self._matching_bucket_key(symbol,ts,expiry)
@@ -121,7 +123,7 @@ class LiveBoxSpreadScanner:
             if previous is not None:
                 previous_ts = self._positive_integer_timestamp(previous.get("source_timestamp_ns"))
                 if previous_ts is not None and previous_ts > ts:
-                    self._diagnostic_counts["out_of_order_ticks"] += 1
+                    self._increment_diagnostic("out_of_order_ticks", symbol=symbol)
                     self._prune(ts)
                     return ()
             bucket[leg_key]=payload
@@ -235,7 +237,7 @@ class LiveBoxSpreadScanner:
                 "data": tuple(monitor_results),
                 "entry_data": tuple(entry_results),
             }
-            self._diagnostic_counts["snapshots_scanned"] += 1
+            self._increment_diagnostic("snapshots_scanned", symbol=symbol)
             for name,value in scan_stats.items():
                 self._diagnostic_counts["scan_"+name] += int(value)
             self._last_diagnostics={"symbol":symbol,"expiry":expiry,"atm_strike":float(atm),
