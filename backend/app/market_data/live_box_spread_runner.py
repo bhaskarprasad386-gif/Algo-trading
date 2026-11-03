@@ -382,7 +382,8 @@ class LiveBoxSpreadRunner:
                     from math import isfinite
                     gated = []
                     comparisons = []
-                    minimum_lots = max(1, int(settings.LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS))
+                    # Never permit configuration to weaken the two-common-lot safety floor.
+                    minimum_lots = max(2, int(settings.LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS))
                     for opportunity in opportunities:
                         try:
                             comparison = self.depth_shadow.compare_opportunity(opportunity) if self.depth_shadow.enabled else {"status": "INCOMPLETE", "reason": "DEPTH_FEED_DISABLED"}
