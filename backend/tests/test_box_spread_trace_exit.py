@@ -163,3 +163,22 @@ def test_trace_exit_latest_edge_is_unavailable_when_any_leg_is_stale():
     })
     assert result["entry_edge"] == 1
     assert result["latest_edge"] is None
+
+
+
+def test_trace_exit_legacy_record_without_strikes_keeps_exit_preview_and_no_latest_edge():
+    trace = SimpleNamespace(
+        id=14, direction="LONG", quantity_lots=1, lot_size=10,
+        entry_json=json.dumps({"trace_entry_prices": {
+            "low_call": 100, "low_put": 100, "high_call": 100, "high_put": 100,
+        }}),
+    )
+    result = _exit_valuation(trace, {
+        "low_call": _quote(105, 106),
+        "low_put": _quote(49, 50),
+        "high_call": _quote(79, 80),
+        "high_put": _quote(45, 46),
+    })
+    assert result["status"] == "EXITABLE"
+    assert result["gross_pnl"] == 200
+    assert result["latest_edge"] is None
