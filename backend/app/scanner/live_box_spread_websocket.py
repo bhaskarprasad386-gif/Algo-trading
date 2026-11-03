@@ -112,7 +112,17 @@ def _row(result):
         market_depth = _depth_provider(result) if callable(_depth_provider) else None
     except Exception:
         market_depth = None
+    if getattr(result, "tradability_status", "UNVERIFIED") != "TRADABLE":
+        return None
     return {
+        "tradability_status": result.tradability_status,
+        "tradability_reason": getattr(result, "tradability_reason", None),
+        "l1_reference_edge": getattr(result, "l1_reference_edge", None),
+        "depth_edge_per_unit": getattr(result, "depth_edge_per_unit", None),
+        "depth_edge_per_lot": getattr(result, "depth_edge_per_lot", None),
+        "depth_executable_lots": getattr(result, "depth_executable_lots", 0),
+        "depth_quantity": getattr(result, "depth_quantity", 0),
+        "depth_legs": list(getattr(result, "depth_legs", ()) or ()),
         "market_depth": market_depth if isinstance(market_depth, dict) else {},
         "symbol": low.underlying, "instrument_class": low.instrument_class,
         "expiry": low.expiry, "expiry_type": _expiry_types.get((str(low.underlying).strip().upper(), _expiry_key(low.expiry)), "UNKNOWN"), "low_strike": low.strike, "high_strike": high.strike,
