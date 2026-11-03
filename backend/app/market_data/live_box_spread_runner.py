@@ -40,6 +40,43 @@ def _atm_outside_subscribed_range(atm_strike, subscribed_strikes):
     return float(atm_strike) < min(subscribed_strikes) or float(atm_strike) > max(subscribed_strikes)
 
 
+
+def _box_underlying_health_snapshot(snapshot):
+    """Expose aggregate health for Box Spread without changing the shared feed."""
+    result = dict(snapshot or {})
+    symbols = result.get("symbols")
+    if not isinstance(symbols, dict) or not symbols:
+        return result
+    states = [
+        str(item.get("state") or "UNKNOWN").upper()
+        if isinstance(item, dict) else "UNKNOWN"
+        for item in symbols.values()
+    ]
+    if not states:
+        return result
+    fresh_count = sum(state == "LIVE" for state in states)
+    stale_count = sum(state == "STALE" for state in states)
+    waiting_count = sum(state not in {"LIVE", "STALE"} for state in states)
+    if fresh_count == len(states):
+        result["state"] = "LIVE"
+        result["state_reason"] = "all_configured_underlyings_have_fresh_ticks"
+    elif fresh_count:
+        result["state"] = "DEGRADED"
+        result["state_reason"] = "one_or_more_configured_underlyings_are_not_fresh"
+    elif str(result.get("state") or "").upper() in {"FAILED", "TOKEN_RESOLUTION_FAILED"}:
+        pass
+    elif stale_count:
+        result["state"] = "STALE"
+        result["state_reason"] = "all_observed_underlying_ticks_exceeded_freshness_threshold"
+    elif waiting_count:
+        result["state"] = "WAITING_FOR_TICKS"
+        result["state_reason"] = "no_configured_underlying_has_a_fresh_tick"
+    result["fresh_symbol_count"] = fresh_count
+    result["stale_symbol_count"] = stale_count
+    result["waiting_symbol_count"] = waiting_count
+    result["configured_symbol_count"] = len(states)
+    return result
+
 def _safe_snapshot(component):
     """Return a stable diagnostic payload while feed components are starting/stopping."""
     if component is None:
@@ -95,7 +132,7 @@ class LiveBoxSpreadRunner:
         """Log only meaningful underlying WebSocket transitions, not every poll."""
         if self.feed is None:
             return
-        snapshot = _safe_snapshot(self.feed)
+        snapshot = _box_underlying_health_snapshot(_safe_snapshot(self.feed))
         feed_detail = snapshot.get("feed") or {}
         signature = (
             str(snapshot.get("state") or "UNKNOWN"),
@@ -251,8 +288,10 @@ class LiveBoxSpreadRunner:
         try:
             while not self.stop_event.is_set():
                 self._log_feed_state_change()
-                underlying_snapshot = _safe_snapshot(self.feed)
-                atms = {symbol: self.tracker.atm(symbol, time_ns(), max_age_seconds=10.0) for symbol in symbols}
+                underlying_snapshot = _box_underlying_health_snapshot(_safe_snapshot(self.feed))
+                # Box Spread accepts only source-fresh underlying prices. Keep this
+                # stricter than the generic tracker lookup used by other consumers.
+                atms = {symbol: self.tracker.atm(symbol, time_ns(), max_age_seconds=5.0) for symbol in symbols}
                 ready_targets = tuple(target for target in self.targets if atms.get(target.underlying) is not None)
                 ready_symbols = sorted({target.underlying for target in ready_targets})
                 waiting_symbols = sorted(set(symbols) - set(ready_symbols))
@@ -404,7 +443,7 @@ class LiveBoxSpreadRunner:
                 down_since = None
                 while not self.stop_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
                     self._log_feed_state_change()
-                    self._readiness["underlying_websocket"] = _safe_snapshot(self.feed)
+                    self._readiness["underlying_websocket"] = _box_underlying_health_snapshot(_safe_snapshot(self.feed))
                     recorder_snapshot = _safe_snapshot(recorder)
                     self._readiness["option_websocket"] = recorder_snapshot
                     feed_snapshot = recorder_snapshot.get("feed")
@@ -447,7 +486,7 @@ class LiveBoxSpreadRunner:
                 and callable(getattr(self._feed_thread, "is_alive", None))
                 and self._feed_thread.is_alive()
             ),
-            "underlying_feed": _safe_snapshot(self.feed),
+            "underlying_feed": _box_underlying_health_snapshot(_safe_snapshot(self.feed)),
             "option_recorder": _safe_snapshot(self.recorder),
             "readiness": dict(self._readiness),
             "scanner_diagnostics": None if self.scanner is None else self.scanner.diagnostics_snapshot(),
