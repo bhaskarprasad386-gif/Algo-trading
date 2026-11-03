@@ -112,23 +112,16 @@ def test_live_box_spread_short_capacity_uses_opposite_four_leg_sides():
 
 
 def test_live_box_spread_capacity_fails_closed_on_mismatched_leg_lot_sizes():
-    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
-    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import _max_executable_lots
 
-    low = OptionQuote(
-        1_800_000_000_000_000_000, "NIFTY", 20261029, 100,
-        10, 12, 8, 9, 10, "INDEX", 100, 100,
-        call_bid_qty=50, call_ask_qty=25, put_bid_qty=30, put_ask_qty=60,
-    )
-    high = OptionQuote(
-        1_800_000_000_000_000_000, "NIFTY", 20261029, 120,
-        3, 4, 18, 18, 20, "INDEX", 100, 100,
-        call_bid_qty=19, call_ask_qty=45, put_bid_qty=55, put_ask_qty=40,
-    )
-    results = scan_box_snapshot(
-        (low, high), atm_strike=100, instrument_class="INDEX",
-        config=BoxSpreadScanConfig(min_executable_edge=0, max_option_spread_pct=100),
-        policy=ScanPolicy(index_box_distances=(1,)),
-    )
-    long_result = next(row for row in results if row.direction == "LONG")
-    assert long_result.max_executable_lots == 0
+    low = quote(100, call_bid=10, call_ask=12, put_bid=8, put_ask=9)
+    high = quote(120, call_bid=3, call_ask=4, put_bid=18, put_ask=18)
+    low = low.model_copy(update={
+        "lot_size": 10, "call_bid_qty": 50, "call_ask_qty": 25,
+        "put_bid_qty": 30, "put_ask_qty": 60,
+    })
+    high = high.model_copy(update={
+        "lot_size": 20, "call_bid_qty": 19, "call_ask_qty": 45,
+        "put_bid_qty": 55, "put_ask_qty": 40,
+    })
+    assert _max_executable_lots(low, high, "LONG") == 0
