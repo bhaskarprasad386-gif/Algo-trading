@@ -32,7 +32,7 @@ def test_limit_prices_cannot_reduce_long_edge_below_alert_floor():
     ) == 40
     with pytest.raises(ValueError, match="all four paper legs rejected"):
         validate_entry_edge(
-            alert_edge=41, direction="LONG", low_strike=22000,
+            alert_edge=44, direction="LONG", low_strike=22000,
             high_strike=22100, reference_prices=reference, limit_prices=limits,
         )
 
@@ -46,7 +46,7 @@ def test_limit_prices_equal_or_better_than_reference_do_not_overstate_edge():
     )
     assert edge == 60
     result = validate_entry_edge(
-        alert_edge=61, direction="LONG", low_strike=22000,
+        alert_edge=63, direction="LONG", low_strike=22000,
         high_strike=22100, reference_prices=reference, limit_prices=favorable_limits,
     )
     assert result["minimum_entry_edge"] == 60
