@@ -32,6 +32,15 @@ class BoxSpreadScanResult:
     gross_pnl: float
     strike_distance: int
     max_executable_lots: int = 0
+    # Live-only execution gate; raw L1 values are retained for diagnostics.
+    tradability_status: str = "UNVERIFIED"
+    tradability_reason: str | None = None
+    l1_reference_edge: float | None = None
+    depth_edge_per_unit: float | None = None
+    depth_edge_per_lot: float | None = None
+    depth_executable_lots: int = 0
+    depth_quantity: int = 0
+    depth_legs: tuple = ()
 
 def _whole_nonnegative(value) -> bool:
     try:
