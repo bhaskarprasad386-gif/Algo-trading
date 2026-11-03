@@ -241,10 +241,15 @@ class BoxLiveDepthShadowFeed:
             return {"status": "INCOMPLETE", "reason": "INSUFFICIENT_FOUR_LEG_DEPTH"}
         executable_quantity = max_executable_lots * lot_size
         for item in selected:
-            item["vwap"] = self._allocate(item.pop("levels"), executable_quantity)
+            # Preserve the full original per-leg capacity before consuming levels
+            # for the common executable quantity's VWAP allocation.
+            original_capacity = item["available_quantity"]
+            levels = item.pop("levels")
+            item["vwap"] = self._allocate(levels, executable_quantity)
             if item["vwap"] is None:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{item['role']}"}
-            item["available_quantity"] = int(sum(quantity for _, quantity in item.get("levels", []))) if "levels" in item else max_executable_lots * lot_size
+            item["available_quantity"] = original_capacity
+            item["selected_quantity"] = executable_quantity
 
         timestamps = [item["timestamp_ns"] for item in selected]
         if max(timestamps) - min(timestamps) > max_leg_skew_seconds * 1e9:
