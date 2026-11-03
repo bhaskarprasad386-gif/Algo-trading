@@ -307,10 +307,17 @@ def _fresh_entry_depth_selection(contracts, target_lots: int):
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     try:
         with fresh_box_paper_depth(contracts) as records:
-            depth = {
-                role: depth_levels(records.get(role), _entry_depth_side(contracts.direction, role))
-                for role in roles
-            }
+            depth = {}
+            for role in roles:
+                record = records.get(role)
+                bid_levels = depth_levels(record, "BID")
+                ask_levels = depth_levels(record, "ASK")
+                if not bid_levels or not ask_levels or bid_levels[0][0] > ask_levels[0][0]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"fresh valid two-sided five-level depth is unavailable for {role}; no entry created",
+                    )
+                depth[role] = bid_levels if _entry_depth_side(contracts.direction, role) == "BID" else ask_levels
             selected = select_complete_lots(
                 target_lots, contracts.lot_size, depth, roles=roles,
             )
