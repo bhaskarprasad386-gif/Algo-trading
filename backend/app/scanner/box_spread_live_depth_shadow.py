@@ -221,6 +221,10 @@ class BoxLiveDepthShadowFeed:
                 return {"status": "INCOMPLETE", "reason": f"INVALID_DEPTH_{role}"}
             if abs(item["timestamp_ns"] - int(quote_timestamp)) > max_leg_skew_seconds * 1e9:
                 return {"status": "INCOMPLETE", "reason": f"QUOTE_DEPTH_SKEW_{role}"}
+            # The executable basket requires a complete five-level book on
+            # both sides of every contract; partial depth is diagnostic only.
+            if item["depth_status"] != "DEPTH_FULL":
+                return {"status": "INCOMPLETE", "reason": f"INCOMPLETE_FIVE_LEVELS_{role}"}
             levels = item["asks"] if side == "ASK" else item["bids"]
             available_quantity = int(sum(quantity for _, quantity in levels))
             if available_quantity < lot_size:
@@ -359,7 +363,7 @@ class BoxLiveDepthShadowFeed:
             fresh = (
                 -1.0 <= provider_age <= self.max_provider_age_seconds
                 and 0.0 <= arrival_age <= self.max_arrival_age_seconds
-                and item["depth_status"] in {"DEPTH_FULL", "DEPTH_PARTIAL"}
+                and item["depth_status"] == "DEPTH_FULL"
             )
             output[role] = {
                 "status": "LIVE" if fresh else item["depth_status"],
