@@ -304,10 +304,14 @@ def _exit_valuation(trace, quotes):
     # Recompute the current directional Box Edge from fresh executable bid/ask,
     # using the same four-leg formula as the scanner. Never fall back to LTP.
     latest_edge = None
-    if all_fresh and all(quotes.get(leg) is not None for leg in _leg_names):
+    low_strike = _finite_positive(entry.get("low_strike"))
+    high_strike = _finite_positive(entry.get("high_strike"))
+    if (all_fresh and all(quotes.get(leg) is not None for leg in _leg_names)
+            and low_strike is not None and high_strike is not None
+            and high_strike > low_strike):
         low_call, low_put = quotes["low_call"], quotes["low_put"]
         high_call, high_put = quotes["high_call"], quotes["high_put"]
-        gap = float(entry["high_strike"]) - float(entry["low_strike"])
+        gap = high_strike - low_strike
         if trace.direction == "LONG":
             values = (low_call.ask, high_put.ask, low_put.bid, high_call.bid)
             if all(_finite_positive(value) is not None for value in values):
