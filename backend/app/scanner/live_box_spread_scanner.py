@@ -78,25 +78,25 @@ class LiveBoxSpreadScanner:
         ts = self._positive_integer_timestamp(payload.get("source_timestamp_ns"))
         if ts is None:
             with self._lock:
-                self._diagnostic_counts["invalid_identity_or_timestamp"] += 1
+                self._increment_diagnostic("invalid_identity_or_timestamp", symbol=symbol)
             return ()
         import time
         if ts >= 1_000_000_000_000_000:
             age_ns = time.time_ns() - ts
             if age_ns > 5_000_000_000:
                 with self._lock:
-                    self._diagnostic_counts["stale_timestamp"] += 1
+                    self._increment_diagnostic("stale_timestamp", symbol=symbol)
                 return ()
             if age_ns < -1_000_000_000:
                 with self._lock:
-                    self._diagnostic_counts["future_timestamp"] += 1
+                    self._increment_diagnostic("future_timestamp", symbol=symbol)
                 return ()
         typ=str(payload.get("option_type") or "").strip().upper()
         strike=self._price(payload.get("strike"))
         bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))
         if not symbol or cls not in {"STOCK","INDEX"} or ts<=0 or typ not in {"CE","PE"} or strike is None:
             with self._lock:
-                self._diagnostic_counts["invalid_identity_or_timestamp"] += 1
+                self._increment_diagnostic("invalid_identity_or_timestamp", symbol=symbol)
             return ()
         if bid is None or ask is None:
             with self._lock:
@@ -107,7 +107,7 @@ class LiveBoxSpreadScanner:
             return ()
         if ask < bid:
             with self._lock:
-                self._diagnostic_counts["crossed_market_quote"] += 1
+                self._increment_diagnostic("crossed_market_quote", symbol=symbol)
             return ()
         with self._lock:
             try:
@@ -115,7 +115,7 @@ class LiveBoxSpreadScanner:
             except (TypeError, ValueError):
                 self._increment_diagnostic("invalid_expiry", symbol=symbol)
                 return ()
-            self._diagnostic_counts["ticks_accepted_for_assembly"] += 1
+            self._increment_diagnostic("ticks_accepted_for_assembly", symbol=symbol)
             key=self._matching_bucket_key(symbol,ts,expiry)
             bucket=self._buckets.setdefault(key,{})
             leg_key=(strike,typ)
@@ -139,14 +139,14 @@ class LiveBoxSpreadScanner:
                     ce_lot=self._nonnegative_integer(ce.get("lot_size"))
                     pe_lot=self._nonnegative_integer(pe.get("lot_size"))
                     if ce_expiry != pe_expiry or ce_lot is None or pe_lot is None or ce_lot <= 0 or ce_lot != pe_lot:
-                        self._diagnostic_counts["expiry_or_lot_mismatch"] += 1
+                        self._increment_diagnostic("expiry_or_lot_mismatch", symbol=symbol)
                         continue
                     ce_volume=self._nonnegative_integer(ce.get("volume") or 0)
                     pe_volume=self._nonnegative_integer(pe.get("volume") or 0)
                     ce_oi=self._nonnegative_integer(ce.get("oi") or 0)
                     pe_oi=self._nonnegative_integer(pe.get("oi") or 0)
                     if None in (ce_volume, pe_volume, ce_oi, pe_oi):
-                        self._diagnostic_counts["malformed_leg_pair"] += 1
+                        self._increment_diagnostic("malformed_leg_pair", symbol=symbol)
                         continue
                     ce_bid,ce_ask=self._price(ce.get("bid")),self._price(ce.get("ask"))
                     pe_bid,pe_ask=self._price(pe.get("bid")),self._price(pe.get("ask"))
@@ -156,7 +156,7 @@ class LiveBoxSpreadScanner:
                     ce_ts=self._positive_integer_timestamp(ce.get("source_timestamp_ns"))
                     pe_ts=self._positive_integer_timestamp(pe.get("source_timestamp_ns"))
                     if ce_ts is None or pe_ts is None:
-                        self._diagnostic_counts["malformed_leg_pair"] += 1
+                        self._increment_diagnostic("malformed_leg_pair", symbol=symbol)
                         continue
                     grouped.append(OptionQuote(
                         max(ce_ts,pe_ts),symbol,ce_expiry,s,ce_bid,ce_ask,pe_bid,pe_ask,ce_lot,cls,
@@ -167,10 +167,10 @@ class LiveBoxSpreadScanner:
                         self._quantity(pe.get("bid_qty")),self._quantity(pe.get("ask_qty")),
                     ))
                 except (ValueError,TypeError):
-                    self._diagnostic_counts["malformed_leg_pair"] += 1
+                    self._increment_diagnostic("malformed_leg_pair", symbol=symbol)
                     continue
             if missing_or_non_executable_pairs:
-                self._diagnostic_counts["missing_or_non_executable_strike_pairs"] += missing_or_non_executable_pairs
+                self._increment_diagnostic("missing_or_non_executable_strike_pairs", missing_or_non_executable_pairs, symbol=symbol)
             timestamps=[int(value.get("source_timestamp_ns") or 0) for value in bucket.values() if isinstance(value,dict)]
             if not timestamps:
                 self._prune(ts); return ()
@@ -181,17 +181,17 @@ class LiveBoxSpreadScanner:
                 # A transient spot/ATM source failure must not escape the quote
                 # callback and interrupt option-feed assembly for this runner.
                 if key not in self._atm_error_buckets:
-                    self._diagnostic_counts["atm_provider_errors"] += 1
+                    self._increment_diagnostic("atm_provider_errors", symbol=symbol)
                     self._atm_error_buckets.add(key)
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"}
                 self._prune(ts); return ()
             self._atm_error_buckets.discard(key)
             if atm is None:
-                self._diagnostic_counts["atm_unavailable"] += 1
+                self._increment_diagnostic("atm_unavailable", symbol=symbol)
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"}
                 self._prune(ts); return ()
             if not grouped:
-                self._diagnostic_counts["no_executable_grouped_strikes"] += 1
+                self._increment_diagnostic("no_executable_grouped_strikes", symbol=symbol)
                 self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"}
                 self._prune(ts); return ()
             scan_stats={}
@@ -239,7 +239,7 @@ class LiveBoxSpreadScanner:
             }
             self._increment_diagnostic("snapshots_scanned", symbol=symbol)
             for name,value in scan_stats.items():
-                self._diagnostic_counts["scan_"+name] += int(value)
+                self._increment_diagnostic("scan_"+name, int(value), symbol=symbol)
             self._last_diagnostics={"symbol":symbol,"expiry":expiry,"atm_strike":float(atm),
                 "grouped_strikes":len(grouped),"result_count":len(results),
                 "min_executable_edge":float(scan_config.min_executable_edge),
