@@ -49,14 +49,14 @@ def _box_underlying_health_snapshot(snapshot):
         return result
     states = [
         str(item.get("state") or "UNKNOWN").upper()
+        if isinstance(item, dict) else "UNKNOWN"
         for item in symbols.values()
-        if isinstance(item, dict)
     ]
     if not states:
         return result
     fresh_count = sum(state == "LIVE" for state in states)
     stale_count = sum(state == "STALE" for state in states)
-    waiting_count = sum(state in {"WAITING_FOR_TICK", "TOKEN_MISSING"} for state in states)
+    waiting_count = sum(state not in {"LIVE", "STALE"} for state in states)
     if fresh_count == len(states):
         result["state"] = "LIVE"
         result["state_reason"] = "all_configured_underlyings_have_fresh_ticks"
