@@ -44,6 +44,14 @@ def test_depth_levels_reject_canonical_l1_only_quotes():
     assert depth_levels(record, "ASK") == []
 
 
+def test_depth_levels_are_limited_to_top_five_price_levels():
+    bids = [(100 - index, 10) for index in range(7)]
+    asks = [(101 + index, 10) for index in range(7)]
+    record = _record(bids, asks)
+    assert len(depth_levels(record, "BID")) == 5
+    assert len(depth_levels(record, "ASK")) == 5
+
+
 def test_allocate_depth_calculates_weighted_average_across_levels():
     result = allocate_depth([(100.0, 10), (99.0, 20)], 15)
     assert result == {"quantity": 15.0, "vwap": pytest.approx((1000 + 495) / 15), "complete": True}
