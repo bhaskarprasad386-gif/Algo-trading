@@ -250,6 +250,9 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "depth_executable_lots": getattr(result, "depth_executable_lots", 0),
         "depth_quantity": getattr(result, "depth_quantity", 0),
         "depth_legs": list(getattr(result, "depth_legs", ()) or ()),
+            "depth_entry_prices": dict(getattr(result, "depth_entry_prices", {}) or {}),
+            "depth_entry_type": getattr(result, "depth_entry_type", None),
+            "depth_net_entry_price": getattr(result, "depth_net_entry_price", None),
         "strike_distance": result.strike_distance,
         "freshness": "LIVE",
     }
