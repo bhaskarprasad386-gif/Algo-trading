@@ -84,3 +84,51 @@ def test_live_box_spread_max_lots_fails_closed_when_one_leg_depth_is_missing():
     )
     long_result = next(row for row in results if row.direction == "LONG")
     assert long_result.max_executable_lots == 0
+
+
+
+def test_live_box_spread_short_capacity_uses_opposite_four_leg_sides():
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+
+    low = OptionQuote(
+        1_800_000_000_000_000_000, "NIFTY", 20261029, 100,
+        15, 16, 10, 11, 10, "INDEX", 100, 100,
+        call_bid_qty=50, call_ask_qty=25, put_bid_qty=30, put_ask_qty=60,
+    )
+    high = OptionQuote(
+        1_800_000_000_000_000_000, "NIFTY", 20261029, 120,
+        2, 3, 25, 26, 10, "INDEX", 100, 100,
+        call_bid_qty=19, call_ask_qty=45, put_bid_qty=55, put_ask_qty=40,
+    )
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="INDEX",
+        config=BoxSpreadScanConfig(min_executable_edge=0, max_option_spread_pct=100),
+        policy=ScanPolicy(index_box_distances=(1,)),
+    )
+    short_result = next(row for row in results if row.direction == "SHORT")
+    # SHORT sells low CE/high PE at bid and buys high CE/low PE at ask.
+    assert short_result.max_executable_lots == min(50, 45, 55, 60) // 10 == 4
+
+
+def test_live_box_spread_capacity_fails_closed_on_mismatched_leg_lot_sizes():
+    from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+
+    low = OptionQuote(
+        1_800_000_000_000_000_000, "NIFTY", 20261029, 100,
+        10, 12, 8, 9, 10, "INDEX", 100, 100,
+        call_bid_qty=50, call_ask_qty=25, put_bid_qty=30, put_ask_qty=60,
+    )
+    high = OptionQuote(
+        1_800_000_000_000_000_000, "NIFTY", 20261029, 120,
+        3, 4, 18, 18, 20, "INDEX", 100, 100,
+        call_bid_qty=19, call_ask_qty=45, put_bid_qty=55, put_ask_qty=40,
+    )
+    results = scan_box_snapshot(
+        (low, high), atm_strike=100, instrument_class="INDEX",
+        config=BoxSpreadScanConfig(min_executable_edge=0, max_option_spread_pct=100),
+        policy=ScanPolicy(index_box_distances=(1,)),
+    )
+    long_result = next(row for row in results if row.direction == "LONG")
+    assert long_result.max_executable_lots == 0
