@@ -220,11 +220,6 @@ class BoxSpreadPaperLedger:
         low, high = _money(low_strike, field="low strike"), _money(high_strike, field="high strike")
         if low >= high:
             raise ValueError("low strike must be below high strike")
-        if alert_edge is None:
-            raise ValueError("alert_edge is required for a new Box Spread paper trade")
-        alert_edge_value = Decimal(str(alert_edge))
-        if not alert_edge_value.is_finite() or alert_edge_value < 5:
-            raise ValueError("alert_edge must be finite and at least 5")
         if not str(underlying).strip() or not str(expiry).strip() or not str(instrument_class).strip():
             raise ValueError("underlying, instrument_class and expiry are required")
         # Persist a canonical date so recovery/expiry settlement never has to
@@ -241,6 +236,11 @@ class BoxSpreadPaperLedger:
         except (TypeError, ValueError):
             raise ValueError("expiry must be an ISO date (YYYY-MM-DD)") from None
         canonical_expiry = expiry_date.isoformat()
+        if alert_edge is None:
+            raise ValueError("alert_edge is required for a new Box Spread paper trade")
+        alert_edge_value = Decimal(str(alert_edge))
+        if not alert_edge_value.is_finite() or alert_edge_value < 5:
+            raise ValueError("alert_edge must be finite and at least 5")
         with self._session_factory() as session, session.begin():
             self._ensure_account_in_session(session, account)
             existing = session.scalar(select(BoxSpreadPaperTradeRecord).where(
