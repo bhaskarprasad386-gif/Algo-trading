@@ -36,7 +36,7 @@ def _fake_paper_depth(row, roles=None):
     yield records
 
 
-def test_paper_entry_rejects_any_leg_without_all_five_bid_and_ask_levels(monkeypatch):
+def test_paper_entry_uses_four_available_levels_when_quantity_is_sufficient(monkeypatch):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
         "low_call_bid_qty": 25, "low_call_ask_qty": 25,
@@ -47,23 +47,22 @@ def test_paper_entry_rejects_any_leg_without_all_five_bid_and_ask_levels(monkeyp
         "low_put_bid": 40, "low_put_ask": 41,
         "low_put_bid_qty": 25, "low_put_ask_qty": 25,
     }
-    contracts = SimpleNamespace(
-        direction="LONG", lot_size=25,
-    )
+    contracts = SimpleNamespace(direction="LONG", lot_size=25)
 
     @contextmanager
-    def incomplete_depth(_contracts):
+    def partial_depth(_contracts):
         with _fake_paper_depth(row) as records:
-            # One missing fifth ASK level must reject the whole basket.
+            # HIGH_PE is an entry BUY for LONG, so its four ASK levels are used.
             records["HIGH_PE"].payload["best_5_sell_data"] = records["HIGH_PE"].payload["best_5_sell_data"][:4]
             yield records
 
-    monkeypatch.setattr(routes, "fresh_box_paper_depth", incomplete_depth)
-    with pytest.raises(HTTPException) as raised:
-        routes._fresh_entry_depth_selection(contracts, target_lots=1)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", partial_depth)
+    selected = routes._fresh_entry_depth_selection(contracts, target_lots=1)
 
-    assert raised.value.status_code == 409
-    assert "five-level depth is unavailable for HIGH_PE" in raised.value.detail
+    assert selected["lots"] == 1
+    assert selected["quantity"] == 25
+    assert set(selected["prices"]) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+    assert selected["allocations"]["HIGH_PE"]["quantity"] == 25
 
 
 
