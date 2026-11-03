@@ -33,7 +33,7 @@ from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
-from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS
+from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
@@ -837,7 +837,7 @@ async def _live_box_spread_loop() -> None:
                 # Futures are not live-subscribed for Box Spread; option-only rows
                 # must remain eligible even when a future row is missing or renamed.
                 # Live Box Spread is intentionally index-only; stock contracts are not subscribed.
-                if typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS:
+                if typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS and name not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS:
                     expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
                     if segment == expected_segment:
                         index_symbols.add(name)
@@ -896,7 +896,7 @@ async def _live_box_spread_loop() -> None:
             # currently exposes an eligible expiry/strike chain. Ensure every
             # supported NSE/BSE index remains subscribed for spot-only updates.
             targeted_symbols = {target.underlying.strip().upper() for target in targets_list}
-            for symbol in sorted(OPTION_STRATEGY_INDEX_SYMBOLS - targeted_symbols):
+            for symbol in sorted(OPTION_STRATEGY_INDEX_SYMBOLS - targeted_symbols - BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS):
                 targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
 
             set_live_box_expiry_types(expiry_types)

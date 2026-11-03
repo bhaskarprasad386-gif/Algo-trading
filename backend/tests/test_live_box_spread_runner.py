@@ -406,3 +406,13 @@ def test_box_underlying_health_never_promotes_a_feed_with_no_fresh_symbols():
     assert snapshot["fresh_symbol_count"] == 0
     assert snapshot["stale_symbol_count"] == 1
     assert snapshot["waiting_symbol_count"] == 1
+
+
+
+def test_box_spread_excludes_finnifty_and_bankex_from_scanner_universe():
+    from app.market_data.live_box_spread_runner import BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
+
+    assert BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS == frozenset({"FINNIFTY", "BANKEX"})
+    configured = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+    subscribed = configured - BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
+    assert subscribed == {"NIFTY", "BANKNIFTY", "MIDCPNIFTY", "SENSEX"}
