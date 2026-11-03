@@ -351,3 +351,58 @@ def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(m
     runner._run_session()
     assert runner.depth_shadow.started == [(descriptor,)]
     assert runner.depth_shadow.stopped >= 1
+
+
+def test_box_underlying_health_is_degraded_when_any_configured_symbol_is_stale():
+    from app.market_data.live_box_spread_runner import _box_underlying_health_snapshot
+
+    snapshot = _box_underlying_health_snapshot({
+        "state": "LIVE",
+        "state_reason": "at_least_one_underlying_has_a_fresh_tick",
+        "symbols": {
+            "NIFTY": {"state": "LIVE"},
+            "BANKNIFTY": {"state": "LIVE"},
+            "FINNIFTY": {"state": "LIVE"},
+            "MIDCPNIFTY": {"state": "LIVE"},
+            "SENSEX": {"state": "STALE"},
+            "BANKEX": {"state": "STALE"},
+        },
+    })
+
+    assert snapshot["state"] == "DEGRADED"
+    assert snapshot["state_reason"] == "one_or_more_configured_underlyings_are_not_fresh"
+    assert snapshot["fresh_symbol_count"] == 4
+    assert snapshot["stale_symbol_count"] == 2
+    assert snapshot["configured_symbol_count"] == 6
+
+
+def test_box_underlying_health_is_live_only_when_every_configured_symbol_is_fresh():
+    from app.market_data.live_box_spread_runner import _box_underlying_health_snapshot
+
+    snapshot = _box_underlying_health_snapshot({
+        "state": "DEGRADED",
+        "symbols": {name: {"state": "LIVE"} for name in (
+            "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"
+        )},
+    })
+
+    assert snapshot["state"] == "LIVE"
+    assert snapshot["state_reason"] == "all_configured_underlyings_have_fresh_ticks"
+    assert snapshot["fresh_symbol_count"] == 6
+
+
+def test_box_underlying_health_never_promotes_a_feed_with_no_fresh_symbols():
+    from app.market_data.live_box_spread_runner import _box_underlying_health_snapshot
+
+    snapshot = _box_underlying_health_snapshot({
+        "state": "LIVE",
+        "symbols": {
+            "SENSEX": {"state": "STALE"},
+            "BANKEX": {"state": "WAITING_FOR_TICK"},
+        },
+    })
+
+    assert snapshot["state"] == "STALE"
+    assert snapshot["fresh_symbol_count"] == 0
+    assert snapshot["stale_symbol_count"] == 1
+    assert snapshot["waiting_symbol_count"] == 1
