@@ -301,8 +301,27 @@ def _exit_valuation(trace, quotes):
     min_lots = min(available_lots) if available_lots else 0
     can_exit = all_fresh and all(item["can_fill_required_quantity"] for item in legs)
     status = "EXITABLE" if can_exit else "PARTIAL_DEPTH" if all_fresh and min_lots > 0 else "NOT_EXITABLE"
+    # Recompute the current directional Box Edge from fresh executable bid/ask,
+    # using the same four-leg formula as the scanner. Never fall back to LTP.
+    latest_edge = None
+    if all_fresh and all(quotes.get(leg) is not None for leg in _leg_names):
+        low_call, low_put = quotes["low_call"], quotes["low_put"]
+        high_call, high_put = quotes["high_call"], quotes["high_put"]
+        gap = float(entry["high_strike"]) - float(entry["low_strike"])
+        if trace.direction == "LONG":
+            values = (low_call.ask, high_put.ask, low_put.bid, high_call.bid)
+            if all(_finite_positive(value) is not None for value in values):
+                latest_edge = gap - ((float(low_call.ask) + float(high_put.ask)) -
+                                     (float(low_put.bid) + float(high_call.bid)))
+        elif trace.direction == "SHORT":
+            values = (low_call.bid, high_put.bid, low_put.ask, high_call.ask)
+            if all(_finite_positive(value) is not None for value in values):
+                latest_edge = ((float(low_call.bid) + float(high_put.bid)) -
+                               (float(low_put.ask) + float(high_call.ask))) - gap
     return {
         "status": status, "checked_at": datetime.now(timezone.utc).isoformat(),
+        "entry_edge": _finite_positive(entry.get("executable_edge")),
+        "latest_edge": round(latest_edge, 4) if latest_edge is not None else None,
         "trace_id": trace.id, "direction": trace.direction,
         "quantity_lots": trace.quantity_lots, "quantity": qty, "lot_size": trace.lot_size,
         "gross_pnl": round(gross, 2) if can_exit and all(item["leg_gross_pnl"] is not None for item in legs) else None,
