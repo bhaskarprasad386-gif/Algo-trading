@@ -14,9 +14,11 @@ def run_schema_migrations() -> None:
 
     if "box_spread_paper_trades" in tables:
         paper_columns = {column["name"] for column in inspector.get_columns("box_spread_paper_trades")}
-        if "entry_spot_price" not in paper_columns:
-            with engine.begin() as connection:
+        with engine.begin() as connection:
+            if "entry_spot_price" not in paper_columns:
                 connection.execute(text("ALTER TABLE box_spread_paper_trades ADD COLUMN entry_spot_price NUMERIC(18, 4)"))
+            if "alert_edge" not in paper_columns:
+                connection.execute(text("ALTER TABLE box_spread_paper_trades ADD COLUMN alert_edge NUMERIC(18, 6)"))
 
     columns = {column["name"] for column in inspector.get_columns("users")}
     user_columns = columns
