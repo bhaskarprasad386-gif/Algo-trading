@@ -39,21 +39,31 @@ def _fake_paper_depth(row, roles=None):
 def test_paper_entry_accepts_one_level_on_weakest_leg_when_two_lots_are_available(monkeypatch):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
     }
     contracts = SimpleNamespace(direction="LONG", lot_size=25)
 
     @contextmanager
     def partial_depth(_contracts):
         with _fake_paper_depth(row) as records:
-            # HIGH_PE is an entry BUY for LONG. One ASK level alone has
-            # exactly two lots; the other legs expose five available levels.
+            # The three other legs spread 50 units across five levels.
+            # HIGH_PE is an entry BUY for LONG and has only one ASK level,
+            # but that single level alone supports the same two-lot basket.
+            for role, record in records.items():
+                if role != "HIGH_PE":
+                    for side in ("best_5_buy_data", "best_5_sell_data"):
+                        base = record.payload[side][0]["price"]
+                        record.payload[side] = [
+                            {"price": base + (level if side == "best_5_buy_data" else -level),
+                             "quantity": 10}
+                            for level in range(5)
+                        ]
             records["HIGH_PE"].payload["best_5_sell_data"] = [
                 {"price": 3100, "quantity": 50},
             ]
