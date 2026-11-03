@@ -89,7 +89,7 @@ def _valid_spool_record(row):
             "low_call_ask", "low_put_ltp", "low_put_bid", "low_put_ask",
             "high_call_ltp", "high_call_bid", "high_call_ask", "high_put_ltp",
             "high_put_bid", "high_put_ask", "executable_edge", "edge_per_lot",
-            "gross_pnl", "lot_size", "strike_distance", "timestamp_skew_ms",
+            "gross_pnl", "lot_size", "strike_distance", "timestamp_skew_ms", "max_executable_lots",
         ):
             if field in row and row[field] is not None and not isfinite(float(row[field])):
                 return False
@@ -241,6 +241,7 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "edge_per_lot": result.edge_per_lot,
         "gross_pnl": result.gross_pnl,
         "lot_size": low.lot_size,
+        "max_executable_lots": getattr(result, "max_executable_lots", 0),
         "strike_distance": result.strike_distance,
         "freshness": "LIVE",
     }

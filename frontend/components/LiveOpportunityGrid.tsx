@@ -8,7 +8,7 @@ type Opportunity = Record<string, unknown> & {
   symbol?: string; expiry?: string | number; expiry_type?: string; low_strike?: number; high_strike?: number;
   spot_price?: number | null; spot_timestamp_ns?: number | string | null; spot_age_seconds?: number | null;
   direction?: string; executable_edge?: number; last_update_timestamp_ns?: number | string; timestamp_skew_ms?: number | null;
-  edge_per_lot?: number; gross_pnl?: number; lot_size?: number;
+  edge_per_lot?: number; gross_pnl?: number; lot_size?: number; max_executable_lots?: number;
 };
 type TrackedRow = { key: string; row: Opportunity; lastSeen: number; status: "LIVE" | "STALE" };
 
@@ -288,6 +288,11 @@ export default function LiveOpportunityGrid() {
                     <p className="text-[9px] font-bold uppercase tracking-wider theme-muted">Edge / lot · Gross P&amp;L</p>
                     <p className="mt-1 text-sm font-bold tabular-nums theme-text">₹{fmt(row.edge_per_lot)} <span className="theme-muted">·</span> ₹{fmt(row.gross_pnl)}</p>
                   </div>
+                  <div className="rounded-xl border theme-border theme-surface-2 p-3">
+                    <p className="text-[9px] font-bold uppercase tracking-wider theme-muted">Max Executable Lots</p>
+                    <p className="mt-1 text-lg font-extrabold tabular-nums theme-text">{(() => { const lots = n(row, "max_executable_lots"); return lots === null || lots < 0 || !Number.isInteger(lots) ? "—" : lots.toLocaleString("en-IN") + " lots"; })()}</p>
+                    <p className="mt-1 text-[9px] theme-muted">Top-of-book estimate · not a fill guarantee</p>
+                  </div>
                 </div>
               </div>
             </article>
@@ -295,6 +300,7 @@ export default function LiveOpportunityGrid() {
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t theme-border theme-surface-2 px-4 py-3 text-[10px] theme-muted">
+        <span>Max Executable Lots is a top-of-book estimate, not full-depth capacity or a four-leg fill guarantee.</span>
         <span>Four-leg quote sides follow LONG/SHORT direction; green = BUY/ASK, red = SELL/BID.</span>
         <span>Rows become STALE after 1.5s and expire after 60s without updates.</span>
       </div>
