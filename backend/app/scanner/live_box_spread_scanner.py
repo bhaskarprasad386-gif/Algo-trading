@@ -19,7 +19,7 @@ class LiveBoxSpreadScanner:
         self._diagnostic_counts=Counter()
         self._symbol_diagnostic_counts={}
         self._symbol_last_diagnostics={}
-        self._set_last_diagnostics({}
+        self._last_diagnostics={}
         self._monitor_snapshots={}; self._atm_error_buckets=set()
 
     @staticmethod
@@ -206,16 +206,16 @@ class LiveBoxSpreadScanner:
                 if key not in self._atm_error_buckets:
                     self._increment_diagnostic("atm_provider_errors", symbol=symbol)
                     self._atm_error_buckets.add(key)
-                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"})
+                self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"})
                 self._prune(ts); return ()
             self._atm_error_buckets.discard(key)
             if atm is None:
                 self._increment_diagnostic("atm_unavailable", symbol=symbol)
-                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"})
+                self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"})
                 self._prune(ts); return ()
             if not grouped:
                 self._increment_diagnostic("no_executable_grouped_strikes", symbol=symbol)
-                self._last_diagnostics={"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"})
+                self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"})
                 self._prune(ts); return ()
             scan_stats={}
             scan_config = self.config_provider(symbol)
@@ -263,7 +263,7 @@ class LiveBoxSpreadScanner:
             self._increment_diagnostic("snapshots_scanned", symbol=symbol)
             for name,value in scan_stats.items():
                 self._increment_diagnostic("scan_"+name, int(value), symbol=symbol)
-            self._last_diagnostics={"symbol":symbol,"expiry":expiry,"atm_strike":float(atm),
+            self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"atm_strike":float(atm),
                 "grouped_strikes":len(grouped),"result_count":len(results),
                 "min_executable_edge":float(scan_config.min_executable_edge),
                 "outcome":"qualified" if results else "no_qualifying_box",
