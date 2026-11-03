@@ -20,18 +20,50 @@ def _fake_paper_depth(row, roles=None):
     records = {}
     for role, (bid, ask, bid_qty, ask_qty) in fields.items():
         payload = {
-            "best_5_buy_data": ([{
-                "price": float(row[bid]) * 100, "quantity": row.get(bid_qty),
-            }] if row.get(bid) is not None and row.get(bid_qty) is not None else []),
-            "best_5_sell_data": ([{
-                "price": float(row[ask]) * 100, "quantity": row.get(ask_qty),
-            }] if row.get(ask) is not None and row.get(ask_qty) is not None else []),
+            "best_5_buy_data": ([
+                {"price": float(row[bid]) * 100 - level, "quantity": row.get(bid_qty)}
+                for level in range(5)
+            ] if row.get(bid) is not None and row.get(bid_qty) is not None else []),
+            "best_5_sell_data": ([
+                {"price": float(row[ask]) * 100 + level, "quantity": row.get(ask_qty)}
+                for level in range(5)
+            ] if row.get(ask) is not None and row.get(ask_qty) is not None else []),
         }
         records[role] = SimpleNamespace(
             bid=row.get(bid), ask=row.get(ask),
             bid_qty=row.get(bid_qty), ask_qty=row.get(ask_qty), payload=payload,
         )
     yield records
+
+
+def test_paper_entry_rejects_any_leg_without_all_five_bid_and_ask_levels(monkeypatch):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "low_put_bid": 40, "low_put_ask": 41,
+        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+    }
+    contracts = SimpleNamespace(
+        direction="LONG", lot_size=25,
+    )
+
+    @contextmanager
+    def incomplete_depth(_contracts):
+        with _fake_paper_depth(row) as records:
+            # One missing fifth ASK level must reject the whole basket.
+            records["HIGH_PE"].payload["best_5_sell_data"] = records["HIGH_PE"].payload["best_5_sell_data"][:4]
+            yield records
+
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", incomplete_depth)
+    with pytest.raises(HTTPException) as raised:
+        routes._fresh_entry_depth_selection(contracts, target_lots=1)
+
+    assert raised.value.status_code == 409
+    assert "five-level depth is unavailable for HIGH_PE" in raised.value.detail
 
 
 
