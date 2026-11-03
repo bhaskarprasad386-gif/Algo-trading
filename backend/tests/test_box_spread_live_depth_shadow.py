@@ -191,7 +191,7 @@ def test_four_leg_edge_uses_partial_depth_when_one_leg_has_four_levels():
         # (200 units); the other three have five (250 units).
         count = 4 if index == 0 else 5
         bids = [{"price": str((100 - level) * 100), "quantity": "50"} for level in range(count)]
-        asks = [{"price": str((110 + level) * 100), "quantity": "50"} for level in count]
+        asks = [{"price": str((110 + level) * 100), "quantity": "50"} for level in range(count)]
         callback(_record(
             timestamp_ns=now,
             token=token,
