@@ -37,7 +37,6 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
         trade = before_restart.create_trade(
             account_key="restart-partial",
             idempotency_key="restart-partial-entry",
-            alert_edge=8,
             underlying="NIFTY",
             instrument_class="INDEX",
             expiry="2026-10-29",
@@ -109,6 +108,7 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
             lots=1,
             idempotency_key="restart-partial-entry",
             account_key="restart-partial",
+            alert_edge=8,
         )
         # This test targets durable replay protection, not the independent
         # manual execution switch. Enable the switch to reach the ledger guard.
