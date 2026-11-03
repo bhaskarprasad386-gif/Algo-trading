@@ -53,7 +53,8 @@ def depth_levels(record: Any, side: str) -> list[tuple[float, float]]:
     # Paper execution requires broker-supplied depth levels. L1 is not depth
     # and must never be promoted into a five-level executable basket.
     levels.sort(key=lambda item: item[0], reverse=(normalized_side == "BID"))
-    return levels
+    # Execution capacity is deliberately bounded to the broker's top five levels.
+    return levels[:5]
 
 
 def allocate_depth(levels: Sequence[tuple[float, float]], quantity: int) -> dict[str, float | bool]:
