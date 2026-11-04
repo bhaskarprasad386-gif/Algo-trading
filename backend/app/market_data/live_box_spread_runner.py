@@ -243,7 +243,7 @@ class LiveBoxSpreadRunner:
         reasons = []
         if missing_underlyings:
             reasons.append("underlying_ticks_not_fresh:" + ",".join(missing_underlyings))
-        if not option_ready and required_expiry_groups:
+        if not option_ready:
             reasons.append("option_recorder_not_connected")
         if missing_option_groups:
             reasons.append("exact_option_contracts_not_fresh:" + ",".join(sorted(missing_option_groups)))
