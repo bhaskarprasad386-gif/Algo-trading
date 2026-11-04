@@ -439,3 +439,33 @@ def test_box_spread_excludes_finnifty_and_bankex_from_scanner_universe():
     configured = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
     subscribed = configured - BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
     assert subscribed == {"NIFTY", "BANKNIFTY", "MIDCPNIFTY", "SENSEX"}
+
+
+def test_box_depth_shadow_contracts_are_mapped_to_option_descriptors():
+    from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner
+    from app.market_data.live_synthetic_stream import SyntheticSubscription
+
+    contracts = (
+        SyntheticSubscription(
+            2, "101", "NIFTY26NOV2625000CE", "NIFTY", "INDEX",
+            "26NOV2026", "CE", 25000.0, 65,
+        ),
+        SyntheticSubscription(
+            4, "202", "SENSEX26NOV2675000PE", "SENSEX", "INDEX",
+            "26NOV2026", "PE", 75000.0, 20,
+        ),
+    )
+
+    descriptors = LiveBoxSpreadRunner._depth_shadow_descriptors(contracts)
+
+    assert len(descriptors) == 2
+    assert descriptors[0].key.exchange == "NFO"
+    assert descriptors[0].instrument_type == "option"
+    assert descriptors[0].underlying == "NIFTY"
+    assert descriptors[0].option_type == "CE"
+    assert descriptors[0].strike == 25000.0
+    assert descriptors[1].key.exchange == "BFO"
+    assert descriptors[1].instrument_type == "option"
+    assert descriptors[1].underlying == "SENSEX"
+    assert descriptors[1].option_type == "PE"
+    assert descriptors[1].strike == 75000.0
