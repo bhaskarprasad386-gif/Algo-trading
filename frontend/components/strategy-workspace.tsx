@@ -1271,6 +1271,42 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               </label>
             ))}
           </div>
+          <div className="mt-3 rounded-lg border theme-border theme-surface-2 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-extrabold theme-text">Actual Index Feed Status</p>
+              <span className="text-[10px] font-semibold theme-muted">Runtime subscription + latest spot tick · refresh 1s</span>
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => {
+                const subscribed = activeIndexSymbols.includes(symbol);
+                const saved = savedIndexSymbols.includes(symbol);
+                const weeklyOnly = savedWeeklyOnlySymbols.includes(symbol);
+                const spot = indexSpotRows.find(row => row.symbol === symbol);
+                const age = spot?.spot_age_seconds;
+                const hasFreshTick = spot?.status === "LIVE" && typeof age === "number" && age <= 5;
+                const marketClosed = isOutsideNseRegularHours();
+                const status = hasFreshTick ? "LIVE · TICK RECEIVED"
+                  : subscribed && marketClosed ? "SUBSCRIBED · MARKET CLOSED"
+                  : subscribed ? "SUBSCRIBED · WAITING FOR TICK"
+                  : saved ? "SAVED · NOT ACTIVE YET" : "NOT SUBSCRIBED";
+                const tone = hasFreshTick ? "theme-success"
+                  : subscribed ? "theme-warning" : "theme-muted";
+                const quoteTime = spot?.spot_timestamp_ns
+                  ? new Date(spot.spot_timestamp_ns / 1_000_000).toLocaleTimeString("en-IN", {hour12:false,timeZone:"Asia/Kolkata"}) + " IST"
+                  : "—";
+                return <div key={symbol} className="rounded-lg border theme-border theme-surface p-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold theme-text">{symbol}</span>
+                    <span className={"text-[10px] font-extrabold " + tone}>{status}</span>
+                  </div>
+                  <p className="mt-1 text-[10px] theme-muted">Subscription: {subscribed ? "ACTIVE" : saved ? "PENDING / HANDOFF" : "OFF"}{weeklyOnly ? " · WEEKLY ONLY" : ""}</p>
+                  <p className="mt-1 text-[10px] theme-muted">Spot: {spot?.spot_price == null ? "—" : formatValue(spot.spot_price)} · Age: {typeof age === "number" ? age.toFixed(2) + "s" : "—"}</p>
+                  <p className="text-[10px] theme-muted">Last tick: {quoteTime}</p>
+                </div>;
+              })}
+            </div>
+            <p className="mt-2 text-[10px] theme-muted">LIVE तभी दिखेगा जब index subscribed हो और उसका spot tick 5 seconds के अंदर मिला हो। पुराना feed handoff के दौरान ACTIVE रह सकता है।</p>
+          </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Weekly Only: {savedWeeklyOnlySymbols.length ? savedWeeklyOnlySymbols.join(" · ") : "None"} · Other selected indices use available standard expiries.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
             <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0) || (new Set([...indexSelectionDraft, ...weeklyOnlyDraft]).size === savedIndexSymbols.length && [...indexSelectionDraft, ...weeklyOnlyDraft].every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
