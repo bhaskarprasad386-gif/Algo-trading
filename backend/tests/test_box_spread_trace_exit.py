@@ -186,7 +186,7 @@ def test_trace_exit_legacy_record_without_strikes_keeps_exit_preview_and_no_late
 
 
 def test_trace_expiry_helper_marks_past_contract_expired():
-    from datetime import timedelta
+    from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
     from app.scanner.box_spread_trace_routes import _trace_expired
     yesterday = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - timedelta(days=1)).strftime("%Y-%m-%d")
