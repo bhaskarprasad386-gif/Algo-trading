@@ -126,7 +126,7 @@ export default function BoxSpreadTraceArea() {
             <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
             <p className="mt-1 text-[10px] theme-muted">Trace saved: {time(trace.created_at)} · Original alert: {time(trace.entry.observed_at)}</p>
           </div>
-          {!isExpired(trace.expiry) ? <button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
+          {!isExpired(trace.expiry) ? <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setSelectedTrace(trace)} className="min-h-10 rounded-lg border-2 border-slate-500 px-3 text-sm font-extrabold theme-text">View Saved Position</button><button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button></div> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {legs.map(([label,key],index) => {
