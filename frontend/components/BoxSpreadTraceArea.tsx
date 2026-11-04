@@ -24,6 +24,13 @@ type TraceEntry = {
     trace_entry_sides?: Record<string, string>;
     trace_entry_prices?: Record<string, number | null>;
     trace_entry_depth?: Record<string, number | null> | Array<number | null>;
+    depth_legs?: Array<{
+      role: string; side: string; timestamp_ns?: number | string | null;
+      depth_status?: string; vwap?: number | null;
+      available_quantity?: number | null; selected_quantity?: number | null;
+      bid_depth_levels?: Array<{ price: number; quantity: number }>;
+      ask_depth_levels?: Array<{ price: number; quantity: number }>;
+    }>;
   };
 };
 type ExitResult = {
@@ -36,7 +43,12 @@ type ExitResult = {
   gross_pnl_per_lot: number | null;
   max_complete_exit_lots_now: number;
   message: string;
-  legs: Array<{ leg: string; exit_side: string; exit_price: number | null; exit_qty: number | null; leg_gross_pnl: number | null }>;
+  legs: Array<{
+    leg: string; exit_side: string; exit_price: number | null;
+    exit_qty: number | null; leg_gross_pnl: number | null;
+    quote_age_seconds?: number | null;
+    depth_levels?: Array<{ price: number; quantity: number }>;
+  }>;
 };
 const legs = [["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const;
 const fmt = (value: unknown) => value == null || !Number.isFinite(Number(value)) ? "—" : Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -49,7 +61,12 @@ const expiryDate = (value: string) => {
   if (m) { const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]; const y = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]); return new Date(y, months.indexOf(m[2]), Number(m[1])); }
   const d = new Date(raw); return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
 };
-const isExpired = (value: string) => { const d = expiryDate(value); if (!d) return false; const today = new Date(); today.setHours(0,0,0,0); return d < today; };
+const isExpired = (value: string) => {
+  const d = expiryDate(value); if (!d) return false;
+  const key = [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  return key < today;
+};
 const edgeDifference = (entry: number | null | undefined, latest: number | null | undefined) => entry == null || latest == null ? null : latest - entry;
 
 export default function BoxSpreadTraceArea() {
@@ -58,6 +75,7 @@ export default function BoxSpreadTraceArea() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [results, setResults] = useState<Record<number, ExitResult>>({});
+  const [selectedTrace, setSelectedTrace] = useState<TraceEntry | null>(null);
   const api = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread/trace";
   const load = useCallback(async () => {
     setLoading(true);
@@ -102,15 +120,18 @@ export default function BoxSpreadTraceArea() {
     {error && <p role="alert" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs theme-text">{error}</p>}
     {!records.length && loading && <p className="mt-4 text-sm theme-muted">Loading saved Trace alerts…</p>}
     {!records.length && !loading && !error && <p className="mt-4 rounded-lg border theme-border theme-surface-2 p-4 text-sm theme-muted">Abhi koi alert Trace nahi hua. Post-Market History mein alert ke saamne Add to Trace dabayen; woh yahan alag entry ke roop mein dikhega.</p>}
-    <div className="mt-4 space-y-3">
-      {records.map(trace => <article key={trace.id} className="rounded-xl border theme-border theme-surface-2 p-3 sm:p-4">
+    <div className="mt-4 grid gap-4 xl:grid-cols-2">
+      <section className="min-w-0">
+        <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wide theme-text">Active Traces</h3>
+        <div className="space-y-3">
+      {records.filter(trace => !isExpired(trace.expiry)).map(trace => <article key={trace.id} className="rounded-xl border theme-border theme-surface-2 p-3 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-extrabold theme-text">{trace.symbol}</span><span className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:text-cyan-300">{trace.direction}</span><span className="text-[10px] font-semibold theme-muted">{trace.entry.expiry_type || "EXPIRY"} · {trace.expiry}</span>{isExpired(trace.expiry) && <span className="rounded-md border border-rose-700 bg-rose-100 px-2 py-1 text-xs font-extrabold text-rose-900">EXPIRED</span>}</div>
             <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
             <p className="mt-1 text-[10px] theme-muted">Trace saved: {time(trace.created_at)} · Original alert: {time(trace.entry.observed_at)}</p>
           </div>
-          {!isExpired(trace.expiry) ? <button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
+          {!isExpired(trace.expiry) ? <div className="flex flex-wrap gap-2"><button type="button" onClick={() => { setSelectedTrace(trace); void checkExit(trace.id); }} className="min-h-10 rounded-lg border-2 border-slate-500 px-3 text-sm font-extrabold theme-text">Open Trace · Fetch Live Depth</button><button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button></div> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {legs.map(([label,key],index) => {
@@ -131,9 +152,64 @@ export default function BoxSpreadTraceArea() {
           <p className="mt-2 theme-muted">Edge Difference = Latest Edge − Entry Edge (e.g. ₹700 − ₹713 = −₹13). Gross Profit / Lot is verified four-leg gross P&L divided by traced lots. Exit Edge is close P&L per unit from fresh four-leg depth VWAP and is shown only when all four legs support the full traced quantity.</p>
           <p className="mt-1 theme-muted">Latest quote check: {time(results[trace.id].checked_at)}</p>
           <p className="mt-1 theme-muted">{results[trace.id].message}</p>
-          <div className="mt-2 grid grid-cols-2 gap-2">{results[trace.id].legs.map(leg => <p key={leg.leg} className="text-[10px] theme-muted">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+fmt(leg.exit_price)} · Qty {fmt(leg.exit_qty)}</p>)}</div>
+          <div className="mt-2 grid grid-cols-2 gap-2">{results[trace.id].legs.map(leg => <div key={leg.leg} className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] font-bold theme-text">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+fmt(leg.exit_price)} · Qty {fmt(leg.exit_qty)}</p><p className="mt-1 text-[10px] theme-muted">Quote age {leg.quote_age_seconds == null ? "—" : fmt(leg.quote_age_seconds)+"s"} · Saved live levels</p>{leg.depth_levels?.map((level,index) => <p key={index} className="flex justify-between border-t theme-border pt-1 text-[10px] theme-muted"><span>₹{fmt(level.price)}</span><span>{fmt(level.quantity)}</span></p>)}</div>)}</div>
         </div>}
       </article>)}
+        </div>
+      </section>
+      <section className="min-w-0">
+        <h3 className="mb-3 text-sm font-extrabold uppercase tracking-wide theme-text">Expires</h3>
+        <div className="space-y-3">
+          {records.filter(trace => isExpired(trace.expiry)).map(trace => <article key={trace.id} className="rounded-xl border-2 border-rose-700/70 bg-rose-950/20 p-3 sm:p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-extrabold theme-text">{trace.symbol}</span><span className="rounded-md border border-rose-700 bg-rose-100 px-2 py-1 text-xs font-extrabold text-rose-900">EXPIRED</span><span className="text-xs font-semibold theme-muted">{trace.expiry}</span></div>
+                <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
+                <p className="mt-1 text-xs theme-muted">Saved {time(trace.created_at)} · Original alert {time(trace.entry.observed_at)}</p>
+                <p className="mt-1 text-sm font-extrabold theme-text">Entry Edge ₹{fmt(trace.entry.executable_edge)}</p>
+              </div>
+              <button type="button" onClick={() => setSelectedTrace(trace)} className="min-h-9 rounded-lg border-2 border-rose-700 px-3 text-xs font-extrabold theme-text">View Saved Position</button>
+            </div>
+          </article>)}
+          {!records.some(trace => isExpired(trace.expiry)) && <p className="rounded-lg border theme-border theme-surface-2 p-3 text-xs theme-muted">No expired traces.</p>}
+        </div>
+      </section>
     </div>
+    {selectedTrace && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label="Saved trace position">
+      <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border-2 border-slate-500 bg-slate-950 p-4 text-slate-100 shadow-2xl sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-600 pb-3">
+          <div><h3 className="text-lg font-extrabold">Saved Trace Position · {selectedTrace.symbol}</h3><p className="mt-1 text-sm text-slate-300">{selectedTrace.expiry} · {fmt(selectedTrace.entry.low_strike)}–{fmt(selectedTrace.entry.high_strike)} · {selectedTrace.direction} · {selectedTrace.quantity_lots} lots</p><p className="mt-1 text-xs text-slate-400">Original alert: {time(selectedTrace.entry.observed_at)} · Trace saved: {time(selectedTrace.created_at)}</p></div>
+          <button type="button" onClick={() => setSelectedTrace(null)} className="min-h-10 rounded-lg border-2 border-slate-400 px-4 text-sm font-bold text-white">Close</button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-lg border border-slate-600 p-3"><p className="text-xs text-slate-400">Entry Edge</p><p className="mt-1 text-base font-extrabold">₹{fmt(selectedTrace.entry.executable_edge)}</p></div>
+          <div className="rounded-lg border border-slate-600 p-3"><p className="text-xs text-slate-400">Lot Size</p><p className="mt-1 text-base font-extrabold">{fmt(selectedTrace.lot_size)}</p></div>
+          <div className="rounded-lg border border-slate-600 p-3"><p className="text-xs text-slate-400">Quantity</p><p className="mt-1 text-base font-extrabold">{fmt(selectedTrace.quantity)}</p></div>
+          <div className="rounded-lg border border-slate-600 p-3"><p className="text-xs text-slate-400">Saved Position</p><p className="mt-1 text-base font-extrabold">{isExpired(selectedTrace.expiry) ? "EXPIRED" : "ACTIVE"}</p></div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {legs.map(([label, key]) => {
+            const side = selectedTrace.entry.trace_entry_sides?.[key] || "—";
+            const price = selectedTrace.entry.trace_entry_prices?.[key];
+            const depth = selectedTrace.entry.depth_legs?.find(item => item.role.toLowerCase() === key.replace("_", "_").replace("low_call", "low_ce").replace("low_put", "low_pe").replace("high_call", "high_ce").replace("high_put", "high_pe"));
+            return <section key={key} className="rounded-xl border border-slate-600 bg-slate-900 p-3">
+              <h4 className="text-sm font-extrabold">{label} · {side}</h4><p className="mt-1 text-xs text-slate-300">Entry ₹{fmt(price)} · saved L1 qty {fmt(Array.isArray(selectedTrace.entry.trace_entry_depth) ? selectedTrace.entry.trace_entry_depth[legs.findIndex(item => item[1] === key)] : selectedTrace.entry.trace_entry_depth?.[key])}</p>
+              {depth ? <><p className="mt-2 text-xs text-slate-400">Depth tick {depth.timestamp_ns ? new Date(Number(depth.timestamp_ns) / 1e6).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) + " IST" : "—"} · {depth.depth_status || "DEPTH"} · VWAP ₹{fmt(depth.vwap)}</p>{(depth.bid_depth_levels?.length || 0) + (depth.ask_depth_levels?.length || 0) > 0 ? <div className="mt-2 grid grid-cols-2 gap-2">{([[ "BID", depth.bid_depth_levels || [] ], [ "ASK", depth.ask_depth_levels || [] ]] as const).map(([name, levels]) => <div key={name} className="rounded-lg border border-slate-700 p-2"><p className="mb-1 text-xs font-bold">{name}</p>{levels.map((level, index) => <p key={name + index} className="flex justify-between border-t border-slate-800 py-1 text-xs"><span>₹{fmt(level.price)}</span><span>{fmt(level.quantity)}</span></p>)}</div>)}</div> : <p className="mt-2 text-xs text-amber-200">The trace predates saved depth ladders; only the exact saved entry price and depth summary are available.</p>}</> : <p className="mt-2 text-xs text-amber-200">Full depth was not recorded for this older trace; only the immutable saved entry price and quantity are available.</p>}
+            </section>;
+          })}
+        </div>
+        {results[selectedTrace.id] && <section className="mt-4 rounded-xl border border-cyan-800 bg-cyan-950/30 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-extrabold text-cyan-100">Latest Live Market Depth · {results[selectedTrace.id].status}</h4><span className="text-xs text-slate-300">Fetched {time(results[selectedTrace.id].checked_at)}</span></div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Entry Edge</p><p className="mt-1 text-sm font-extrabold">₹{fmt(results[selectedTrace.id].entry_edge)}</p></div>
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Latest Edge</p><p className="mt-1 text-sm font-extrabold">₹{fmt(results[selectedTrace.id].latest_edge)}</p></div>
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Edge Difference</p><p className="mt-1 text-sm font-extrabold">₹{fmt(edgeDifference(results[selectedTrace.id].entry_edge, results[selectedTrace.id].latest_edge))}</p></div>
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Gross P&amp;L</p><p className="mt-1 text-sm font-extrabold">₹{fmt(results[selectedTrace.id].gross_pnl)}</p></div>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">{results[selectedTrace.id].legs.map(leg => <div key={leg.leg} className="rounded-lg border border-slate-700 bg-slate-900 p-2"><p className="text-xs font-bold">{leg.leg.replace("_", " ").toUpperCase()} · {leg.exit_side}</p><p className="mt-1 text-xs text-slate-300">Best executable price ₹{fmt(leg.exit_price)} · Depth qty {fmt(leg.exit_qty)} · Quote age {fmt(leg.quote_age_seconds)}s</p><div className="mt-2">{leg.depth_levels?.length ? leg.depth_levels.map((level,index) => <p key={index} className="flex justify-between border-t border-slate-800 py-1 text-xs"><span>₹{fmt(level.price)}</span><span>{fmt(level.quantity)}</span></p>) : <p className="text-xs text-amber-200">No fresh executable levels</p>}</div></div>)}</div>
+        </section>}
+        <p className="mt-3 text-xs text-slate-400">This view preserves the trace’s immutable entry snapshot and shows a separately timestamped live depth check. The check is saved in trace history; no broker orders are placed.</p>
+      </div>
+    </div>}
   </Card>;
 }
