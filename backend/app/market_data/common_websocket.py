@@ -390,6 +390,36 @@ class CommonWebSocketManager:
                 )
         self._reconcile()
 
+    def _build_shard_assignments(
+        self,
+        pairs_by_mode: dict[int, set[tuple[int, str]]],
+    ) -> dict[int, dict[tuple[int, str], int]]:
+        """Keep active pairs pinned and place only new pairs into available capacity."""
+        result: dict[int, dict[tuple[int, str], int]] = {}
+        for mode, pairs in pairs_by_mode.items():
+            previous = self._shard_assignments.get(mode, {})
+            assignments = {pair: previous[pair] for pair in pairs if pair in previous}
+            occupancy: dict[int, int] = defaultdict(int)
+            for shard_index in assignments.values():
+                occupancy[shard_index] += 1
+            for pair in sorted(pairs - assignments.keys()):
+                available = next(
+                    (
+                        shard_index for shard_index in sorted(occupancy)
+                        if occupancy[shard_index] < self._max_tokens_per_socket
+                    ),
+                    None,
+                )
+                if available is None:
+                    used = set(occupancy)
+                    available = 0
+                    while available in used:
+                        available += 1
+                assignments[pair] = available
+                occupancy[available] += 1
+            result[mode] = assignments
+        return result
+
     def _reconcile(self) -> None:
         """Pack subscriptions while keeping broker I/O outside the state lock."""
         with self._reconcile_lock:
@@ -412,39 +442,12 @@ class CommonWebSocketManager:
                         for token in sorted(tokens):
                             groups_by_mode[mode].append((exchange_type, token))
 
-                # Preserve the shard of every still-active instrument. Only
-                # newly-added pairs are placed, preferring the lowest shard
-                # with spare capacity. This prevents a lexicographically earlier
-                # token from shifting existing live subscriptions between sockets.
-                next_assignments: dict[int, dict[tuple[int, str], int]] = {}
-                for mode, pairs in groups_by_mode.items():
-                    previous = self._shard_assignments.get(mode, {})
-                    active = set(pairs)
-                    assignments = {
-                        pair: previous[pair]
-                        for pair in active
-                        if pair in previous
-                    }
-                    occupancy: dict[int, int] = defaultdict(int)
-                    for shard_index in assignments.values():
-                        occupancy[shard_index] += 1
-                    for pair in sorted(active - assignments.keys()):
-                        available = next(
-                            (
-                                shard_index
-                                for shard_index in sorted(occupancy)
-                                if occupancy[shard_index] < self._max_tokens_per_socket
-                            ),
-                            None,
-                        )
-                        if available is None:
-                            used = set(occupancy)
-                            available = 0
-                            while available in used:
-                                available += 1
-                        assignments[pair] = available
-                        occupancy[available] += 1
-                    next_assignments[mode] = assignments
+                # Preserve active placements; only new instruments are assigned.
+                pairs_by_mode = {
+                    mode: set(pairs) for mode, pairs in groups_by_mode.items()
+                }
+                next_assignments = self._build_shard_assignments(pairs_by_mode)
+                for mode, assignments in next_assignments.items():
                     for pair, shard_index in assignments.items():
                         shard = SocketGroup(mode=mode, shard=shard_index)
                         desired_tokens.setdefault(shard, set()).add(pair)
@@ -1237,11 +1240,12 @@ class CommonWebSocketManager:
                     (self._resolve_exchange_type(sub.key), sub.key.token.strip())
                 )
             expected_socket_groups: set[SocketGroup] = set()
-            for mode, pairs in pairs_by_mode.items():
-                for index, _ in enumerate(sorted(pairs)):
-                    expected_socket_groups.add(
-                        SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
-                    )
+            expected_assignments = self._build_shard_assignments(pairs_by_mode)
+            for mode, assignments in expected_assignments.items():
+                expected_socket_groups.update(
+                    SocketGroup(mode=mode, shard=shard_index)
+                    for shard_index in assignments.values()
+                )
             # Compare identities, not only counts: a stale/unexpected group can
             # make the count look complete while a required shard is missing.
             missing_groups = set(self._sockets) != expected_socket_groups
@@ -1674,11 +1678,12 @@ class CommonWebSocketManager:
                     (self._resolve_exchange_type(sub.key), sub.key.token.strip())
                 )
             required_groups: set[SocketGroup] = set()
-            for mode, pairs in pairs_by_mode.items():
-                for index, _ in enumerate(sorted(pairs)):
-                    required_groups.add(
-                        SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
-                    )
+            required_assignments = self._build_shard_assignments(pairs_by_mode)
+            for mode, assignments in required_assignments.items():
+                required_groups.update(
+                    SocketGroup(mode=mode, shard=shard_index)
+                    for shard_index in assignments.values()
+                )
             socket_health_by_group: dict[str, dict[str, Any]] = {}
             for group, socket in sockets.items():
                 try:
