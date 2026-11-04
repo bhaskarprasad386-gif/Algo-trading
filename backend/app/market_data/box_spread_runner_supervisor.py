@@ -52,6 +52,10 @@ class BoxSpreadRunnerSupervisor:
                 runner.stop()
 
         thread = threading.Thread(target=target, name=name, daemon=True)
+        try:
+            setattr(runner, "_runner_worker", thread)
+        except Exception:
+            pass
         thread.start()
         return thread, errors
 
@@ -169,6 +173,16 @@ class BoxSpreadRunnerSupervisor:
     def _join_worker(self, thread, timeout):
         if thread is not None and thread is not threading.current_thread() and thread.is_alive():
             thread.join(timeout=timeout)
+
+    @property
+    def active_runner(self):
+        with self._lock:
+            return self._active_runner
+
+    @property
+    def active_thread(self):
+        with self._lock:
+            return self._active_thread
 
     def snapshot(self):
         with self._lock:
