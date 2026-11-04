@@ -66,6 +66,7 @@ class BoxLiveDepthShadowFeed:
         max_arrival_age_seconds: float = 5.0,
         max_provider_age_seconds: float = 5.0,
         feed: Any | None = None,
+        consumer: str = _CONSUMER,
     ) -> None:
         if isinstance(max_records, bool) or int(max_records) < 1:
             raise ValueError("max_records must be a positive integer")
@@ -73,7 +74,10 @@ class BoxLiveDepthShadowFeed:
         self.max_records = int(max_records)
         self.max_arrival_age_seconds = float(max_arrival_age_seconds)
         self.max_provider_age_seconds = float(max_provider_age_seconds)
-        self._feed = feed or CommonStrategyMarketFeed(_CONSUMER, mode=mode)
+        self.consumer = str(consumer or _CONSUMER).strip()
+        if not self.consumer:
+            raise ValueError("depth feed consumer must be non-empty")
+        self._feed = feed or CommonStrategyMarketFeed(self.consumer, mode=mode)
         self._lock = RLock()
         self._records: OrderedDict[Any, dict[str, Any]] = OrderedDict()
         self._metadata: dict[Any, dict[str, Any]] = {}
@@ -449,7 +453,7 @@ class BoxLiveDepthShadowFeed:
             return {
                 "enabled": self.enabled,
                 "running": self._started,
-                "consumer": str(getattr(self._feed, "consumer", _CONSUMER)),
+                "consumer": str(getattr(self._feed, "consumer", self.consumer)),
                 "record_count": len(rows),
                 "counts": dict(self._counts),
                 "readiness": sorted(readiness, key=lambda item: (item["underlying"], item["expiry"] or 0)),
