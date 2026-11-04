@@ -224,13 +224,3 @@ class SystemLog(Base):
     level: Mapped[str] = mapped_column(String(16), index=True)
     message: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-
-
-class BoxSpreadIndexSelection(Base):
-    """Persist the one active Box Spread index universe (singleton row id=1)."""
-
-    __tablename__ = "box_spread_index_selection"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    symbols_json: Mapped[str] = mapped_column(Text, nullable=False, default='["NIFTY","BANKNIFTY","MIDCPNIFTY","SENSEX"]')
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
