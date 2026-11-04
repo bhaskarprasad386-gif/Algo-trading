@@ -36,6 +36,35 @@ def _fake_paper_depth(row, roles=None):
     yield records
 
 
+def test_paper_entry_does_not_require_unused_opposite_depth_side(monkeypatch):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
+        "low_put_bid": 40, "low_put_ask": 41,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
+    }
+    contracts = SimpleNamespace(direction="LONG", lot_size=25)
+
+    @contextmanager
+    def partial_depth(_contracts):
+        with _fake_paper_depth(row) as records:
+            # HIGH_PE is bought for a LONG box, so only its ASK is executable.
+            # Its unused BID side may be absent without invalidating the basket.
+            records["HIGH_PE"].payload["best_5_buy_data"] = []
+            yield records
+
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", partial_depth)
+    selected = routes._fresh_entry_depth_selection(contracts, target_lots=2)
+
+    assert selected["lots"] == 2
+    assert selected["quantity"] == 50
+    assert selected["allocations"]["HIGH_PE"]["complete"] is True
+
+
 def test_paper_entry_accepts_one_level_on_weakest_leg_when_two_lots_are_available(monkeypatch):
     row = {
         "low_call_bid": 10, "low_call_ask": 11,
