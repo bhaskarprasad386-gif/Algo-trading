@@ -136,7 +136,8 @@ def _get_box_spread_index_selection():
             if saved is not None:
                 return _normalize_box_spread_index_symbols(json.loads(saved.symbols_json or "[]"))
     except Exception as exc:
-        app_logger.warning("Box Spread index selection read failed; using safe default: {}", exc)
+        app_logger.exception("Box Spread index selection read failed; refusing to broaden the live subscription universe")
+        raise RuntimeError("Box Spread index selection is unavailable; live index subscriptions are paused until it can be read") from exc
     return BOX_SPREAD_DEFAULT_INDEX_SELECTION
 
 
