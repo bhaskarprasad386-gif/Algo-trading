@@ -87,8 +87,9 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
     monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
 
     class Shadow:
-        def __init__(self, *, enabled):
+        def __init__(self, *, enabled, consumer=None):
             self.enabled = enabled
+            self.consumer = consumer
         def start(self, descriptors): pass
         def stop(self): pass
         def snapshot(self): return {"running": True, "record_count": 0, "counts": {}}
@@ -338,8 +339,9 @@ def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(m
         def stop(self): pass
 
     class Shadow:
-        def __init__(self, *, enabled):
+        def __init__(self, *, enabled, consumer=None):
             self.enabled = enabled
+            self.consumer = consumer
             self.started = []
             self.stopped = 0
         def start(self, descriptors):
