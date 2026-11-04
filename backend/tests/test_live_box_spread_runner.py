@@ -650,15 +650,15 @@ def test_staged_session_readiness_fails_closed_for_one_stale_underlying_or_parti
             "subscriptions": 100, "records_received": 12,
             "feed": {"active_instruments": 100, "connected_groups": [1]},
             "fresh_contracts": [
-                {"underlying": "NIFTY", "expiry": "", "option_type": "CE"},
-                {"underlying": "NIFTY", "expiry": "", "option_type": "CE"},
-                {"underlying": "NIFTY", "expiry": "", "option_type": "PE"},
-                {"underlying": "NIFTY", "expiry": "", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "PE"},
             ],
         },
         "depth_shadow": {"enabled": True, "running": True, "readiness": [
-            {"underlying": "NIFTY", "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
-            {"underlying": "SENSEX", "state": "WAITING_FOR_DEPTH", "executable_depth_ce": 1, "executable_depth_pe": 2, "executable_depth_contracts": 3},
+            {"underlying": "NIFTY", "expiry": 20261106, "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "SENSEX", "expiry": 20261106, "state": "WAITING_FOR_DEPTH", "executable_depth_ce": 1, "executable_depth_pe": 2, "executable_depth_contracts": 3},
         ]},
     }
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(
@@ -677,14 +677,14 @@ def test_staged_session_readiness_rejects_disconnected_option_feed():
             "subscriptions": 100, "records_received": 12,
             "feed": {"active_instruments": 100, "connected_groups": [], "disconnected_groups": [1]},
             "fresh_contracts": [
-                {"underlying": "NIFTY", "expiry": "", "option_type": "CE"},
-                {"underlying": "NIFTY", "expiry": "", "option_type": "CE"},
-                {"underlying": "NIFTY", "expiry": "", "option_type": "PE"},
-                {"underlying": "NIFTY", "expiry": "", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "PE"},
             ],
         },
         "depth_shadow": {"enabled": True, "running": True, "readiness": [
-            {"underlying": "NIFTY", "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "NIFTY", "expiry": 20261106, "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
         ]},
     }
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(
