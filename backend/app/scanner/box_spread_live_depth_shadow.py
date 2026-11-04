@@ -248,8 +248,10 @@ class BoxLiveDepthShadowFeed:
         max_executable_lots = min(
             item["available_quantity"] // lot_size for item in selected
         )
-        if max_executable_lots < 1:
-            return {"status": "INCOMPLETE", "reason": "INSUFFICIENT_FOUR_LEG_DEPTH"}
+        # Box Spread shadow eligibility requires at least two common lots.
+        # A one-lot quote is not sufficient to mark the four-leg basket executable.
+        if max_executable_lots < 2:
+            return {"status": "INCOMPLETE", "reason": "INSUFFICIENT_TWO_LOT_FOUR_LEG_DEPTH"}
         executable_quantity = max_executable_lots * lot_size
         for item in selected:
             # Preserve the full original per-leg capacity before consuming levels
