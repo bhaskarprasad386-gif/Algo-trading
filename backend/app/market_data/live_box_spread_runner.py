@@ -258,7 +258,7 @@ class LiveBoxSpreadRunner:
             missing_depth = sorted(symbols_requiring_depth - ready_depth_symbols)
         else:
             missing_expiry_groups = []
-            missing_depth = sorted(required_symbols - ready_depth_symbols)
+            missing_depth = []
 
         reasons = []
         if missing_underlyings:
