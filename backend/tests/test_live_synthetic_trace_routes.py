@@ -8,11 +8,11 @@ from fastapi import HTTPException
 from app.scanner import live_synthetic_trace_routes as trace_routes
 
 
-def _instrument(symbol, token, instrument_type, expiry="29OCT2026", strike="0", segment="NFO"):
+def _instrument(symbol, token, instrument_type, expiry="29OCT2026", strike="0", segment="NFO", name="NIFTY", lotsize="65"):
     return {
-        "name": "NIFTY", "symbol": symbol, "token": token,
+        "name": name, "symbol": symbol, "token": token,
         "instrumenttype": instrument_type, "expiry": expiry,
-        "strike": strike, "exch_seg": segment, "lotsize": "65",
+        "strike": strike, "exch_seg": segment, "lotsize": lotsize,
     }
 
 
@@ -57,8 +57,10 @@ def test_trace_status_resolves_exact_strike_outside_scanner_range_and_calculates
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
 
-    long = trace_routes.check_trace_live_status(_request("LONG", 12.5))
+    # The submitted/browser lot size is intentionally stale; exact future master wins.
+    long = trace_routes.check_trace_live_status(_request("LONG", 12.5).model_copy(update={"lot_size": 30}))
     assert long["status"] == "LIVE_QUOTES"
+    assert long["lot_size"] == 65
     assert long["synthetic_bid"] == 25028
     assert long["synthetic_ask"] == 25032
     assert long["current_edge"] == -84
@@ -70,6 +72,47 @@ def test_trace_status_resolves_exact_strike_outside_scanner_range_and_calculates
     assert short["current_edge"] == 78  # future bid minus synthetic ask
     assert short["current_edge"] == 78
     assert short["edge_change"] == 65.5
+
+
+def test_banknifty_trace_uses_banknifty_master_lot_size_for_pnl(monkeypatch):
+    monkeypatch.setattr(trace_routes, "_save_check", lambda _request, _payload: 1)
+    monkeypatch.setattr(trace_routes, "_history_rows", lambda _trace_id: [])
+    instruments = [
+        _instrument("BANKNIFTY29OCT26FUT", "11", "FUTIDX", name="BANKNIFTY", lotsize="30"),
+        _instrument("BANKNIFTY29OCT2650000CE", "12", "OPTIDX", strike="5000000", name="BANKNIFTY", lotsize="30"),
+        _instrument("BANKNIFTY29OCT2650000PE", "13", "OPTIDX", strike="5000000", name="BANKNIFTY", lotsize="30"),
+    ]
+
+    class FakeMaster:
+        def __init__(self):
+            self.instruments = instruments
+        def download(self):
+            return self.instruments
+
+    stamp = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%Y %H:%M:%S")
+
+    class FakeClient:
+        def quote_many(self, exchange, contracts):
+            assert exchange == "NFO"
+            assert {item["symboltoken"] for item in contracts} == {"11", "12", "13"}
+            return {"status": True, "data": {"fetched": [
+                {"symbolToken": "11", "exchFeedTime": stamp, "depth": {"buy": [{"price": 49999}], "sell": [{"price": 50000}]}},
+                {"symbolToken": "12", "exchFeedTime": stamp, "depth": {"buy": [{"price": 101}], "sell": [{"price": 102}]}},
+                {"symbolToken": "13", "exchFeedTime": stamp, "depth": {"buy": [{"price": 90}], "sell": [{"price": 91}]}},
+            ]}}
+
+    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
+    monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
+    request = trace_routes.TraceStatusRequest(
+        underlying="BANKNIFTY", expiry="2026-10-29", strike=50000,
+        direction="LONG", entry_edge=25, lot_size=65,
+    )
+
+    result = trace_routes.check_trace_live_status(request)
+    assert result["current_edge"] == 10
+    assert result["lot_size"] == 30
+    assert result["pnl_per_unit"] == 15
+    assert result["pnl_per_lot"] == 450
 
 
 def test_trace_status_fails_closed_when_exact_option_contract_is_missing(monkeypatch):
@@ -94,26 +137,30 @@ def test_trace_status_rejects_unsupported_underlying_before_market_data(monkeypa
         trace_routes.check_trace_live_status(request)
     assert exc.value.status_code == 422
 
-def test_close_pnl_uses_direction_specific_executable_close_prices():
-    long_request = _request("LONG")
-    long = trace_routes._calculate_close_pnl(
-        long_request,
-        {"bid": 25110, "ask": 25112},
-        synthetic_bid=25028,
-        synthetic_ask=25032,
-    )
+def test_close_pnl_is_entry_edge_minus_current_edge_for_both_directions():
+    long_request = _request("LONG", entry_edge=25)
+    long = trace_routes._calculate_close_pnl(long_request, current_edge=10)
     assert long["pnl_status"] == "GROSS_ESTIMATE"
-    assert long["pnl_per_unit"] == (25110 - 25102) + ((25000 + 118 - 92) - 25032)
-    assert long["pnl_per_lot"] == long["pnl_per_unit"] * 65
+    assert long["pnl_per_unit"] == 15
+    assert long["pnl_per_lot"] == 15 * 65
+    assert "entry edge" in long["pnl_detail"].lower()
 
-    short_request = _request("SHORT")
-    short = trace_routes._calculate_close_pnl(
-        short_request,
-        {"bid": 25110, "ask": 25112},
-        synthetic_bid=25028,
-        synthetic_ask=25032,
-    )
-    assert short["pnl_per_unit"] == (25100 - 25112) + (25028 - (25000 + 120 - 90))
+    short_request = _request("SHORT", entry_edge=25)
+    short = trace_routes._calculate_close_pnl(short_request, current_edge=10)
+    assert short["pnl_per_unit"] == 15
+    assert short["pnl_per_lot"] == 15 * 65
+
+    # If the edge widens instead of narrowing, the tracked opportunity loses value.
+    widened = trace_routes._calculate_close_pnl(long_request, current_edge=30)
+    assert widened["pnl_per_unit"] == -5
+    assert widened["pnl_per_lot"] == -5 * 65
+
+
+def test_one_banknifty_lot_edge_capture_is_450_rupees():
+    request = _request("LONG", entry_edge=25).model_copy(update={"underlying": "BANKNIFTY", "lot_size": 30})
+    pnl = trace_routes._calculate_close_pnl(request, current_edge=10)
+    assert pnl["pnl_per_unit"] == 15
+    assert pnl["pnl_per_lot"] == 450
 
 
 def test_close_pnl_is_unavailable_without_entry_snapshot():
@@ -121,8 +168,9 @@ def test_close_pnl_is_unavailable_without_entry_snapshot():
         underlying="NIFTY", expiry="2026-10-29", strike=25000,
         direction="LONG", entry_edge=10, trace_id="missing-entry", lot_size=None,
     )
-    pnl = trace_routes._calculate_close_pnl(request, {"bid": 100, "ask": 101}, 100, 101)
+    pnl = trace_routes._calculate_close_pnl(request, current_edge=15)
     assert pnl["pnl_status"] == "UNAVAILABLE"
+    assert "lot size" in pnl["pnl_detail"].lower()
     assert pnl["pnl_per_lot"] is None
 
 def test_trace_quotes_without_exchange_timestamp_fail_closed():

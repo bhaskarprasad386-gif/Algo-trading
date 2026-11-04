@@ -160,33 +160,31 @@ def _quote_rows(response):
     return []
 
 
-def _calculate_close_pnl(request: TraceStatusRequest, future: dict, synthetic_bid: float, synthetic_ask: float):
-    entry = {
-        "future_bid": _positive_price(request.entry_future_bid),
-        "future_ask": _positive_price(request.entry_future_ask),
-        "call_bid": _positive_price(request.entry_call_bid),
-        "call_ask": _positive_price(request.entry_call_ask),
-        "put_bid": _positive_price(request.entry_put_bid),
-        "put_ask": _positive_price(request.entry_put_ask),
-    }
-    if any(value is None for value in entry.values()) or not request.lot_size:
+def _calculate_close_pnl(request: TraceStatusRequest, current_edge: float):
+    # Trace P&L is the captured change in the same-direction executable edge.
+    # When an opportunity is traced at 25 points and is now 10 points,
+    # 15 points have been captured. A falling edge is therefore positive P&L.
+    if not request.lot_size:
         return {
             "pnl_status": "UNAVAILABLE",
-            "pnl_detail": "Entry bid/ask snapshot or lot size was not saved; close P&L cannot be reconstructed reliably.",
+            "pnl_detail": "Exact index lot size is unavailable from the future instrument master; P&L cannot be calculated safely.",
             "pnl_per_unit": None, "pnl_per_lot": None,
             "entry_synthetic_bid": None, "entry_synthetic_ask": None,
         }
-    entry_synthetic_bid = request.strike + entry["call_bid"] - entry["put_ask"]
-    entry_synthetic_ask = request.strike + entry["call_ask"] - entry["put_bid"]
-    if request.direction == "LONG":
-        # LONG = buy future at entry ask and sell synthetic at entry bid.
-        pnl_per_unit = (future["bid"] - entry["future_ask"]) + (entry_synthetic_bid - synthetic_ask)
-    else:
-        # SHORT = sell future at entry bid and buy synthetic at entry ask.
-        pnl_per_unit = (entry["future_bid"] - future["ask"]) + (synthetic_bid - entry_synthetic_ask)
+    pnl_per_unit = float(request.entry_edge) - float(current_edge)
+    entry = {
+        "call_bid": _positive_price(request.entry_call_bid),
+        "put_ask": _positive_price(request.entry_put_ask),
+        "call_ask": _positive_price(request.entry_call_ask),
+        "put_bid": _positive_price(request.entry_put_bid),
+    }
+    entry_synthetic_bid = (request.strike + entry["call_bid"] - entry["put_ask"]
+                           if entry["call_bid"] is not None and entry["put_ask"] is not None else None)
+    entry_synthetic_ask = (request.strike + entry["call_ask"] - entry["put_bid"]
+                           if entry["call_ask"] is not None and entry["put_bid"] is not None else None)
     return {
         "pnl_status": "GROSS_ESTIMATE",
-        "pnl_detail": "Executable bid/ask estimate before brokerage, taxes, slippage and other charges.",
+        "pnl_detail": "Edge-capture estimate: (entry edge − current same-direction edge) × 1 lot, before brokerage, taxes and slippage.",
         "pnl_per_unit": pnl_per_unit,
         "pnl_per_lot": pnl_per_unit * request.lot_size,
         "entry_synthetic_bid": entry_synthetic_bid,
@@ -289,6 +287,15 @@ def _history_rows(trace_id: str, limit: int = 20):
             "entry_edge": row.entry_edge,
             "current_edge": row.current_edge,
             "edge_change": row.edge_change,
+            "future_bid": row.future_bid,
+            "future_ask": row.future_ask,
+            "call_bid": row.call_bid,
+            "call_ask": row.call_ask,
+            "put_bid": row.put_bid,
+            "put_ask": row.put_ask,
+            "synthetic_bid": row.synthetic_bid,
+            "synthetic_ask": row.synthetic_ask,
+            "lot_size": row.lot_size,
             "pnl_status": row.pnl_status,
             "pnl_per_unit": row.pnl_per_unit,
             "pnl_per_lot": row.pnl_per_lot,
@@ -401,6 +408,16 @@ def check_trace_live_status(request: TraceStatusRequest):
         master = InstrumentMaster()
         master.download()
         segment, contracts = _resolve_contracts(master, symbol, request.expiry, float(request.strike))
+        # The exact future instrument-master row is authoritative for lot size.
+        # Never trust a stale or browser-supplied lot size for index P&L.
+        raw_lot_size = contracts["future"].get("lotsize", contracts["future"].get("lot_size"))
+        try:
+            resolved_lot_size = int(float(raw_lot_size))
+        except (TypeError, ValueError, OverflowError):
+            resolved_lot_size = None
+        if resolved_lot_size is not None and resolved_lot_size < 1:
+            resolved_lot_size = None
+        request = request.model_copy(update={"lot_size": resolved_lot_size})
         response = MarketDataClient().quote_many(segment, [
             {"tradingsymbol": str(contracts[role]["symbol"]), "symboltoken": str(contracts[role]["token"])}
             for role in ("future", "call", "put")
@@ -425,13 +442,14 @@ def check_trace_live_status(request: TraceStatusRequest):
         long_edge = synthetic_bid - future["ask"]
         short_edge = future["bid"] - synthetic_ask
         current_edge = long_edge if request.direction == "LONG" else short_edge
-        pnl = _calculate_close_pnl(request, future, synthetic_bid, synthetic_ask)
+        pnl = _calculate_close_pnl(request, current_edge)
         payload = {
             "status": "LIVE_QUOTES", "trace_id": request.trace_id,
             "underlying": symbol, "expiry": _expiry_date(request.expiry).isoformat(),
             "strike": float(request.strike), "direction": request.direction,
             "checked_at": datetime.now().astimezone().isoformat(), "exchange": segment,
             "contracts": legs, "synthetic_bid": synthetic_bid, "synthetic_ask": synthetic_ask,
+            "lot_size": request.lot_size,
             "max_quote_age_seconds": max(legs[role]["quote_age_seconds"] for role in legs),
             "long_edge": long_edge, "short_edge": short_edge, "entry_edge": float(request.entry_edge),
             "current_edge": current_edge, "edge_change": current_edge - float(request.entry_edge),
