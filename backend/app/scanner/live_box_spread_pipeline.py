@@ -343,8 +343,6 @@ class LiveBoxSpreadPipeline:
         # publish, append to the shared durable spool, persist snapshots, or alert.
         if not publish_enabled:
             return results
-        if not publish_enabled:
-            return results
 
         if self.publisher_gate is None:
             self._publish_results(results)
