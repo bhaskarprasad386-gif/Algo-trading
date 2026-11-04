@@ -59,7 +59,7 @@ class BoxSpreadRunnerSupervisor:
         thread.start()
         return thread, errors
 
-    def request_handoff(self, targets):
+    def request_handoff(self, targets, *, on_failed=None):
         targets = tuple(targets)
         if not targets:
             raise ValueError("Box Spread handoff requires at least one target")
@@ -84,7 +84,7 @@ class BoxSpreadRunnerSupervisor:
             self._candidate_thread = candidate_thread
             handoff_thread = threading.Thread(
                 target=self._complete_handoff,
-                args=(old_runner, candidate, candidate_thread, errors),
+                args=(old_runner, candidate, candidate_thread, errors, on_failed),
                 name="box-spread-handoff-supervisor",
                 daemon=True,
             )
@@ -92,7 +92,7 @@ class BoxSpreadRunnerSupervisor:
             handoff_thread.start()
             return dict(self._last_handoff)
 
-    def _complete_handoff(self, old_runner, candidate, candidate_thread, errors):
+    def _complete_handoff(self, old_runner, candidate, candidate_thread, errors, on_failed):
         deadline = time.monotonic() + self._readiness_timeout
         readiness = {"ready": False, "state": "WAITING_FOR_READINESS"}
         while not self._shutdown.is_set() and time.monotonic() < deadline:
@@ -162,6 +162,12 @@ class BoxSpreadRunnerSupervisor:
                 "readiness": readiness,
                 "error": str(errors[0])[:240] if errors else None,
             }
+        if state == "FAILED" and on_failed is not None:
+            try:
+                on_failed()
+            except Exception:
+                # Preserve the live runner even if durable selection rollback fails.
+                pass
 
     def attach_active_thread(self, runner, thread):
         """Register the original worker before enabling handoffs."""
