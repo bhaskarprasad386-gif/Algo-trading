@@ -106,7 +106,7 @@ export default function BoxSpreadTraceArea() {
       {records.map(trace => <article key={trace.id} className="rounded-xl border theme-border theme-surface-2 p-3 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-extrabold theme-text">{trace.symbol}</span><span className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:text-cyan-300">{trace.direction}</span><span className="text-[10px] font-semibold theme-muted">{trace.entry.expiry_type || "EXPIRY"} · {trace.expiry}</span>{isExpired(trace.expiry) && <span className="rounded-md border border-rose-700 bg-rose-100 px-2 py-1 text-xs font-extrabold text-rose-900">EXPIRED</span></div>
+            <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-extrabold theme-text">{trace.symbol}</span><span className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:text-cyan-300">{trace.direction}</span><span className="text-[10px] font-semibold theme-muted">{trace.entry.expiry_type || "EXPIRY"} · {trace.expiry}</span>{isExpired(trace.expiry) && <span className="rounded-md border border-rose-700 bg-rose-100 px-2 py-1 text-xs font-extrabold text-rose-900">EXPIRED</span>}</div>
             <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
             <p className="mt-1 text-[10px] theme-muted">Trace saved: {time(trace.created_at)} · Original alert: {time(trace.entry.observed_at)}</p>
           </div>
