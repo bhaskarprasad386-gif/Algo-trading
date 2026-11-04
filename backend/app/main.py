@@ -242,10 +242,14 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
             if not selected_expiries and expiries:
                 selected_expiries.append(expiries[0])
         if selected_expiries:
-            targets.extend(BoxSpreadLiveTarget(symbol, "INDEX", expiry=item[1]) for item in selected_expiries)
+            targets.extend(
+                BoxSpreadLiveTarget(symbol, "INDEX", expiry=item[1], weekly_only=symbol in weekly_only)
+                for item in selected_expiries
+            )
         else:
-            # Preserve a selected index's spot feed while its option chain is unavailable.
-            targets.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
+            # Preserve spot-only monitoring without allowing a weekly-only index
+            # to fall back to a monthly option chain in the runner.
+            targets.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None, weekly_only=symbol in weekly_only))
     return tuple(targets), expiry_types
 
 
