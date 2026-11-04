@@ -132,35 +132,73 @@ def _normalize_box_spread_index_symbols(symbols):
     return normalized
 
 
+def _read_box_spread_selection_payload(raw):
+    """Read both legacy list rows and the structured index/expiry selection."""
+    payload = json.loads(raw or "[]")
+    if isinstance(payload, list):
+        return {"symbols": payload, "weekly_only_symbols": []}
+    if isinstance(payload, dict):
+        return {
+            "symbols": payload.get("symbols", []),
+            "weekly_only_symbols": payload.get("weekly_only_symbols", []),
+        }
+    raise ValueError("invalid saved Box Spread index selection")
+
+
 def _get_box_spread_index_selection():
     try:
         with SessionLocal() as db:
             saved = db.get(BoxSpreadIndexSelection, 1)
             if saved is not None:
-                return _normalize_box_spread_index_symbols(json.loads(saved.symbols_json or "[]"))
+                payload = _read_box_spread_selection_payload(saved.symbols_json)
+                return _normalize_box_spread_index_symbols(payload["symbols"])
     except Exception as exc:
         app_logger.exception("Box Spread index selection read failed; refusing to broaden the live subscription universe")
         raise RuntimeError("Box Spread index selection is unavailable; live index subscriptions are paused until it can be read") from exc
     return BOX_SPREAD_DEFAULT_INDEX_SELECTION
 
 
-def _save_box_spread_index_selection(symbols):
+def _get_box_spread_weekly_only_symbols():
+    try:
+        with SessionLocal() as db:
+            saved = db.get(BoxSpreadIndexSelection, 1)
+            if saved is None:
+                return ()
+            payload = _read_box_spread_selection_payload(saved.symbols_json)
+            weekly = _normalize_box_spread_index_symbols(payload["weekly_only_symbols"]) if payload.get("weekly_only_symbols") else ()
+            return tuple(symbol for symbol in weekly if symbol in {"NIFTY", "SENSEX"})
+    except Exception as exc:
+        app_logger.exception("Box Spread expiry selection read failed; refusing to broaden the live subscription universe")
+        raise RuntimeError("Box Spread expiry selection is unavailable; live subscriptions are paused until it can be read") from exc
+
+
+def _save_box_spread_index_selection(symbols, weekly_only_symbols=()):
     normalized = _normalize_box_spread_index_symbols(symbols)
+    weekly = tuple(sorted({str(item or "").strip().upper() for item in weekly_only_symbols if str(item or "").strip()}))
+    unsupported_weekly = sorted(set(weekly) - {"NIFTY", "SENSEX"})
+    if unsupported_weekly:
+        raise ValueError(f"weekly-only mode is supported only for NIFTY and SENSEX: {', '.join(unsupported_weekly)}")
+    if set(weekly) - set(normalized):
+        raise ValueError("weekly-only indices must also be included in selected indices")
+    payload = {"symbols": list(normalized), "weekly_only_symbols": list(weekly)}
     with SessionLocal() as db:
         saved = db.get(BoxSpreadIndexSelection, 1)
         if saved is None:
-            saved = BoxSpreadIndexSelection(id=1, symbols_json=json.dumps(list(normalized)))
+            saved = BoxSpreadIndexSelection(id=1, symbols_json=json.dumps(payload))
             db.add(saved)
         else:
-            saved.symbols_json = json.dumps(list(normalized))
+            saved.symbols_json = json.dumps(payload)
             saved.updated_at = datetime.now(timezone.utc)
         db.commit()
     return normalized
 
 
-def _box_spread_targets_from_master(master, symbols):
+def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
     """Build exact selected-index option targets without touching other consumers."""
     selected = _normalize_box_spread_index_symbols(symbols)
+    weekly_only = set(weekly_only_symbols or ())
+    if weekly_only - {"NIFTY", "SENSEX"} or weekly_only - set(selected):
+        raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
     today = datetime.now(IST).date()
     targets = []
     expiry_types = {}
@@ -192,12 +230,17 @@ def _box_spread_targets_from_master(master, symbols):
         weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
         monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
         selected_expiries = []
-        if weekly:
-            selected_expiries.append(weekly)
-        if monthly and (not weekly or monthly[0] != weekly[0]):
-            selected_expiries.append(monthly)
-        if not selected_expiries and expiries:
-            selected_expiries.append(expiries[0])
+        if symbol in weekly_only:
+            # Explicit weekly-only means monthly contracts must never be subscribed.
+            if weekly:
+                selected_expiries.append(weekly)
+        else:
+            if weekly:
+                selected_expiries.append(weekly)
+            if monthly and (not weekly or monthly[0] != weekly[0]):
+                selected_expiries.append(monthly)
+            if not selected_expiries and expiries:
+                selected_expiries.append(expiries[0])
         if selected_expiries:
             targets.extend(BoxSpreadLiveTarget(symbol, "INDEX", expiry=item[1]) for item in selected_expiries)
         else:
@@ -1343,17 +1386,20 @@ class SyntheticUniverseSelection(BaseModel):
 
 class BoxSpreadIndexSelectionRequest(BaseModel):
     symbols: list[str]
+    weekly_only_symbols: list[str] = []
 
 
 @app.get("/api/v1/scanner/box-spread/index-selection")
 def get_box_spread_index_selection():
     selected = _get_box_spread_index_selection()
+    weekly_only = _get_box_spread_weekly_only_symbols()
     runner = live_box_spread_runner
     runtime = runner.snapshot() if runner is not None else {"running": False, "readiness": {"state": "runner_stopped"}}
     runtime["supervisor"] = live_box_spread_supervisor.snapshot() if live_box_spread_supervisor is not None else {"handoff": {"state": "not_running"}}
     return {
         "status": "success",
         "symbols": list(selected),
+        "weekly_only_symbols": list(weekly_only),
         "available_indices": sorted(OPTION_STRATEGY_INDEX_SYMBOLS),
         "presets": {key: list(value) for key, value in BOX_SPREAD_INDEX_PRESETS.items()},
         "runtime": runtime,
@@ -1393,10 +1439,14 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
     global live_box_spread_latest_results
     try:
         selected = _normalize_box_spread_index_symbols(payload.symbols)
+        weekly_only = tuple(sorted({str(item or "").strip().upper() for item in payload.weekly_only_symbols if str(item or "").strip()}))
+        if set(weekly_only) - {"NIFTY", "SENSEX"} or set(weekly_only) - set(selected):
+            raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"message": str(exc)}) from exc
 
     current_selection = set(_get_box_spread_index_selection())
+    current_weekly_only = set(_get_box_spread_weekly_only_symbols())
     removed_symbols = current_selection - set(selected)
     if removed_symbols:
         try:
@@ -1437,18 +1487,18 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
             )
         try:
             # Validate both selections against the same loaded instrument master.
-            prepared_targets, prepared_expiry_types = _box_spread_targets_from_master(runner.master, selected)
-            _previous_targets, previous_expiry_types = _box_spread_targets_from_master(runner.master, current_selection)
+            prepared_targets, prepared_expiry_types = _box_spread_targets_from_master(runner.master, selected, weekly_only)
+            _previous_targets, previous_expiry_types = _box_spread_targets_from_master(runner.master, current_selection, current_weekly_only)
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=409, detail={"message": f"Index selection validation failed; previous feed remains active: {exc}"}) from exc
 
-    saved = _save_box_spread_index_selection(selected)
+    saved = _save_box_spread_index_selection(selected, weekly_only)
     switch = {"status": "SAVED", "restart_requested": False, "symbols": list(saved)}
     if runner is not None and prepared_targets is not None:
         if supervisor is not None:
             try:
                 def rollback_failed_handoff():
-                    _save_box_spread_index_selection(current_selection)
+                    _save_box_spread_index_selection(current_selection, current_weekly_only)
                     if previous_expiry_types is not None:
                         set_live_box_expiry_types(previous_expiry_types)
                         set_live_box_websocket_expiry_types(previous_expiry_types)
@@ -1460,7 +1510,7 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
             except Exception as exc:
                 app_logger.exception("Unable to start staged Box Spread runner; restoring previous selection")
                 try:
-                    _save_box_spread_index_selection(current_selection)
+                    _save_box_spread_index_selection(current_selection, current_weekly_only)
                 except Exception:
                     app_logger.exception("CRITICAL: failed to restore Box Spread selection after staging startup failure")
                 raise HTTPException(
@@ -1483,6 +1533,7 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
     return {
         "status": "success",
         "symbols": list(saved),
+        "weekly_only_symbols": list(weekly_only),
         "switch": switch,
         "message": "Selection saved. Only selected Box Spread indices will be subscribed after the safe session handoff.",
     }
