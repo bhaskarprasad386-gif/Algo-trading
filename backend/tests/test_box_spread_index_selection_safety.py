@@ -61,3 +61,13 @@ def test_saved_index_selection_read_failure_does_not_fall_back_to_all_or_default
 
     with pytest.raises(RuntimeError, match="index selection is unavailable"):
         main._get_box_spread_index_selection()
+
+def test_index_selection_post_route_uses_save_handler():
+    matching = [
+        route for route in main.app.routes
+        if getattr(route, "path", None) == "/api/v1/scanner/box-spread/index-selection"
+        and "POST" in (getattr(route, "methods", set()) or set())
+    ]
+
+    assert len(matching) == 1
+    assert matching[0].endpoint is main.set_box_spread_index_selection
