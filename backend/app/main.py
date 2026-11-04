@@ -21,7 +21,7 @@ from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
-from app.models import User, Instrument, Session, Position, SystemLog
+from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
 from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
@@ -108,6 +108,99 @@ _live_synthetic_universe_status = {
 }
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
+BOX_SPREAD_INDEX_PRESETS = {
+    "ALL": tuple(sorted(OPTION_STRATEGY_INDEX_SYMBOLS)),
+    "NIFTY_SENSEX": ("NIFTY", "SENSEX"),
+    "NIFTY_SENSEX_BANKNIFTY": ("NIFTY", "SENSEX", "BANKNIFTY"),
+}
+BOX_SPREAD_DEFAULT_INDEX_SELECTION = ("NIFTY", "BANKNIFTY", "MIDCPNIFTY", "SENSEX")
+
+
+def _normalize_box_spread_index_symbols(symbols):
+    if not isinstance(symbols, (list, tuple, set, frozenset)):
+        raise ValueError("symbols must be a non-empty list")
+    normalized = tuple(sorted({str(item or "").strip().upper() for item in symbols if str(item or "").strip()}))
+    unsupported = sorted(set(normalized) - set(OPTION_STRATEGY_INDEX_SYMBOLS))
+    if unsupported:
+        raise ValueError(f"unsupported Box Spread indices: {', '.join(unsupported)}")
+    if not normalized:
+        raise ValueError("select at least one Box Spread index")
+    return normalized
+
+
+def _get_box_spread_index_selection():
+    try:
+        with SessionLocal() as db:
+            saved = db.get(BoxSpreadIndexSelection, 1)
+            if saved is not None:
+                return _normalize_box_spread_index_symbols(json.loads(saved.symbols_json or "[]"))
+    except Exception as exc:
+        app_logger.warning("Box Spread index selection read failed; using safe default: {}", exc)
+    return BOX_SPREAD_DEFAULT_INDEX_SELECTION
+
+
+def _save_box_spread_index_selection(symbols):
+    normalized = _normalize_box_spread_index_symbols(symbols)
+    with SessionLocal() as db:
+        saved = db.get(BoxSpreadIndexSelection, 1)
+        if saved is None:
+            saved = BoxSpreadIndexSelection(id=1, symbols_json=json.dumps(list(normalized)))
+            db.add(saved)
+        else:
+            saved.symbols_json = json.dumps(list(normalized))
+            saved.updated_at = datetime.utcnow()
+        db.commit()
+    return normalized
+
+
+def _box_spread_targets_from_master(master, symbols):
+    """Build exact selected-index option targets without touching other consumers."""
+    selected = _normalize_box_spread_index_symbols(symbols)
+    today = datetime.now(IST).date()
+    targets = []
+    expiry_types = {}
+    for symbol in selected:
+        segment = "BFO" if symbol in BSE_BOX_INDEX_SYMBOLS else "NFO"
+        found = {}
+        for contract in getattr(master, "instruments", ()) or ():
+            if str(contract.get("exch_seg", "")).strip().upper() != segment:
+                continue
+            if str(contract.get("instrumenttype", "")).strip().upper() != "OPTIDX":
+                continue
+            if str(contract.get("name", "")).strip().upper() != symbol:
+                continue
+            raw = str(contract.get("expiry", "")).strip()
+            parsed = None
+            for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+                try:
+                    parsed = datetime.strptime(raw.upper(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if parsed is not None and parsed >= today:
+                found.setdefault(parsed, raw)
+        dates = sorted(found)
+        classifications = classify_index_expiry_dates(symbol, dates)
+        for day, raw in found.items():
+            expiry_types[(symbol, raw.upper())] = classifications.get(day, "UNKNOWN")
+        expiries = [(day, found[day], classifications.get(day, "UNKNOWN")) for day in dates]
+        weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
+        monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
+        selected_expiries = []
+        if weekly:
+            selected_expiries.append(weekly)
+        if monthly and (not weekly or monthly[0] != weekly[0]):
+            selected_expiries.append(monthly)
+        if not selected_expiries and expiries:
+            selected_expiries.append(expiries[0])
+        if selected_expiries:
+            targets.extend(BoxSpreadLiveTarget(symbol, "INDEX", expiry=item[1]) for item in selected_expiries)
+        else:
+            # Preserve a selected index's spot feed while its option chain is unavailable.
+            targets.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
+    return tuple(targets), expiry_types
+
+
 configure_live_synthetic(lambda: live_synthetic_latest_results)
 configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
 configure_live_synthetic_pairs(lambda: None if live_synthetic_runner is None else live_synthetic_runner.pair_monitor_snapshot())
