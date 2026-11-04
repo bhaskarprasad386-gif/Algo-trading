@@ -158,9 +158,20 @@ class LiveBoxSpreadRunner:
 
         option = snapshot.get("option_recorder") or {}
         option_feed = option.get("feed") or {}
+        fresh_option_groups = {}
+        for contract in option.get("fresh_contracts") or []:
+            if not isinstance(contract, dict):
+                continue
+            key = (
+                str(contract.get("underlying") or "").strip().upper(),
+                str(contract.get("expiry") or "").strip().upper(),
+            )
+            option_type = str(contract.get("option_type") or "").strip().upper()
+            counts = fresh_option_groups.setdefault(key, {"CE": 0, "PE": 0})
+            if option_type in counts:
+                counts[option_type] += 1
         option_ready = (
             int(option.get("subscriptions", 0) or 0) >= 4
-            and int(option.get("records_received", 0) or 0) > 0
             and int(option_feed.get("active_instruments", 0) or 0) > 0
             and bool(option_feed.get("connected_groups"))
             and not LiveBoxSpreadRunner._feed_is_down(option_feed)
@@ -168,25 +179,42 @@ class LiveBoxSpreadRunner:
 
         depth = snapshot.get("depth_shadow") or {}
         depth_rows = depth.get("readiness") or []
-        ready_depth_symbols = {
-            str(row.get("underlying") or "").strip().upper()
-            for row in depth_rows
-            if isinstance(row, dict)
-            and str(row.get("state") or "").upper() == "READY"
-            and int(row.get("full_depth_ce", 0) or 0) >= 2
-            and int(row.get("full_depth_pe", 0) or 0) >= 2
-            and int(row.get("executable_depth_contracts", 0) or 0) >= 4
-        }
+        ready_depth_symbols = set()
+        missing_option_groups = []
+        for row in depth_rows:
+            if not isinstance(row, dict):
+                continue
+            underlying_symbol = str(row.get("underlying") or "").strip().upper()
+            expiry_key = str(row.get("expiry") or "").strip().upper()
+            if underlying_symbol not in required:
+                continue
+            option_counts = fresh_option_groups.get((underlying_symbol, expiry_key), {})
+            exact_option_ready = (
+                int(option_counts.get("CE", 0)) >= 2
+                and int(option_counts.get("PE", 0)) >= 2
+            )
+            depth_ready = (
+                str(row.get("state") or "").upper() == "READY"
+                and int(row.get("full_depth_ce", 0) or 0) >= 2
+                and int(row.get("full_depth_pe", 0) or 0) >= 2
+                and int(row.get("executable_depth_contracts", 0) or 0) >= 4
+            )
+            if depth_ready and exact_option_ready:
+                ready_depth_symbols.add(underlying_symbol)
+            elif depth_ready and not exact_option_ready:
+                missing_option_groups.append(f"{underlying_symbol}:{expiry_key or 'UNKNOWN'}")
         missing_depth = sorted(required - ready_depth_symbols)
         reasons = []
         if missing_underlyings:
             reasons.append("underlying_ticks_not_fresh:" + ",".join(missing_underlyings))
         if not option_ready:
-            reasons.append("option_recorder_not_receiving_live_records")
+            reasons.append("option_recorder_not_connected")
+        if missing_option_groups:
+            reasons.append("exact_option_contracts_not_fresh:" + ",".join(sorted(missing_option_groups)))
         if not depth.get("enabled") or not depth.get("running"):
             reasons.append("depth_shadow_not_running")
         if missing_depth:
-            reasons.append("five_level_depth_not_ready:" + ",".join(missing_depth))
+            reasons.append("five_level_depth_or_matching_option_quotes_not_ready:" + ",".join(missing_depth))
         return {
             "ready": not reasons,
             "state": "READY" if not reasons else "WAITING_FOR_FEEDS",
