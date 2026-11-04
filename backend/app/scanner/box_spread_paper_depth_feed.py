@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from threading import Condition, RLock
-from time import monotonic
+from time import monotonic, time_ns
 from typing import Any, Iterator
 
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
@@ -110,7 +110,7 @@ class BoxPaperDepthFeed:
             with self._condition:
                 while snapshot_records is None:
                     now = monotonic()
-                    wall_now_ns = __import__("time").time_ns()
+                    wall_now_ns = time_ns()
                     fresh = {}
                     provider_times = []
                     for role, pair in self._records.items():
