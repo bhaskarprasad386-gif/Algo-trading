@@ -345,11 +345,10 @@ def test_pipeline_persists_option_snapshot_when_spot_provider_raises(monkeypatch
         spot_provider=lambda _symbol: (_ for _ in ()).throw(RuntimeError("spot feed unavailable")),
     )
 
-    pipeline.observe({"ignored": True})
-
     # Legacy stock-symbol/L1-only candidates lack the required qualified
     # depth metadata and must never enter the snapshot spool.
-    assert pipeline.observe({"ignored": True}) == ()
+    observed = pipeline.observe({"ignored": True})
+    assert observed == ()
     spool = tmp_path / "pending.jsonl"
     assert not spool.exists() or spool.read_text(encoding="utf-8") == ""
 
