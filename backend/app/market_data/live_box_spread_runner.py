@@ -102,14 +102,17 @@ class BoxSpreadLiveTarget:
 
 
 class LiveBoxSpreadRunner:
-    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None):
+    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None,consumer_namespace="box"):
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
+        self.consumer_namespace = str(consumer_namespace or "box").strip()
+        if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
+            raise ValueError("consumer_namespace must contain only letters, numbers, hyphens, underscores or colons")
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
         self._reconfigure_event = Event()
         self._targets_lock = Lock()
         self._pending_targets = None
-        self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED))
+        self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED), consumer=f"{self.consumer_namespace}-live-depth-shadow")
         self._depth_shadow_lock = Lock()
         self._depth_shadow_last_comparisons = []
         self.depth_shadow_diagnostics = BoxDepthShadowDiagnostics()
@@ -358,7 +361,7 @@ class LiveBoxSpreadRunner:
             strikes.setdefault(symbol.strip().upper(), ())
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
-        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer="box-underlyings")
+        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings")
         self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
         self._feed_thread.start()
         try:
@@ -544,7 +547,7 @@ class LiveBoxSpreadRunner:
                 # Fail closed: never start an L1-only live opportunity publisher.
                 depth_descriptors = self._depth_shadow_descriptors(subs)
                 self.depth_shadow.start(depth_descriptors)
-                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
+                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer=f"{self.consumer_namespace}-options")
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
                 recorder_thread.start()
