@@ -161,7 +161,7 @@ def test_box_pair_rejects_four_leg_timestamp_skew_over_eight_seconds():
                   put_timestamp_ns=10_100_000_000)
     high = replace(q(1, 110, 98.1, 98.2, 102, 102.1),
                    call_timestamp_ns=10_200_000_000,
-                   put_timestamp_ns=13_500_000_000)
+                   put_timestamp_ns=18_500_000_000)
     result = scan_box_snapshot(
         [low, high], atm_strike=100, instrument_class="STOCK",
         config=BoxSpreadScanConfig(
