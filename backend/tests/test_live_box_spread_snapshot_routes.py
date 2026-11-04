@@ -114,7 +114,7 @@ def test_snapshot_endpoint_applies_symbol_filter_before_pagination(monkeypatch):
 
 
 
-def test_snapshot_endpoint_uses_indexed_expiry_and_keeps_legacy_null_rows(monkeypatch):
+def test_snapshot_endpoint_excludes_legacy_rows_without_qualification_metadata(monkeypatch):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -154,9 +154,9 @@ def test_snapshot_endpoint_uses_indexed_expiry_and_keeps_legacy_null_rows(monkey
         monkeypatch.setattr(routes, "SessionLocal", Session)
         weekly = routes.snapshots(days=1, limit=10, offset=0, expiry_type="WEEKLY")
 
-        assert weekly["total_count"] == 2
-        assert weekly["expiry_counts"] == {"WEEKLY": 2, "MONTHLY": 0, "UNKNOWN": 0}
-        assert [row["sequence"] for row in weekly["data"]] == ["indexed", "legacy"]
+        assert weekly["total_count"] == 1
+        assert weekly["expiry_counts"] == {"WEEKLY": 1, "MONTHLY": 0, "UNKNOWN": 0}
+        assert [row["sequence"] for row in weekly["data"]] == ["indexed"]
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
