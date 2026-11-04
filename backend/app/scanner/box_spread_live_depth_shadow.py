@@ -399,12 +399,60 @@ class BoxLiveDepthShadowFeed:
                     "bids": list(item["bids"]),
                     "asks": list(item["asks"]),
                 })
+            records_by_key = {item["key"]: item for item in self._records.values()}
+            readiness_by_group: dict[tuple[str, int | None], dict[str, Any]] = {}
+            for key, meta in self._metadata.items():
+                underlying = str(meta.get("underlying") or "").strip().upper()
+                expiry = meta.get("expiry")
+                if not underlying:
+                    continue
+                group = (underlying, expiry)
+                summary = readiness_by_group.setdefault(group, {
+                    "underlying": underlying,
+                    "expiry": expiry,
+                    "subscribed_contracts": 0,
+                    "fresh_contracts": 0,
+                    "fresh_ce": 0,
+                    "fresh_pe": 0,
+                    "executable_depth_contracts": 0,
+                })
+                summary["subscribed_contracts"] += 1
+                item = records_by_key.get(key)
+                if item is None:
+                    continue
+                provider_age = (wall_now - item["timestamp_ns"]) / 1e9
+                arrival_age = arrival_now - item["arrival_monotonic"]
+                fresh = (
+                    -1.0 <= provider_age <= self.max_provider_age_seconds
+                    and 0.0 <= arrival_age <= self.max_arrival_age_seconds
+                )
+                if not fresh:
+                    continue
+                summary["fresh_contracts"] += 1
+                option_type = str(meta.get("option_type") or "").strip().upper()
+                if option_type == "CE":
+                    summary["fresh_ce"] += 1
+                elif option_type == "PE":
+                    summary["fresh_pe"] += 1
+                if item["depth_status"] in {"DEPTH_FULL", "DEPTH_PARTIAL"} and item["bids"] and item["asks"]:
+                    summary["executable_depth_contracts"] += 1
+            readiness = []
+            for summary in readiness_by_group.values():
+                summary["state"] = (
+                    "READY"
+                    if summary["fresh_ce"] >= 2
+                    and summary["fresh_pe"] >= 2
+                    and summary["executable_depth_contracts"] >= 4
+                    else "WAITING_FOR_DEPTH"
+                )
+                readiness.append(summary)
             return {
                 "enabled": self.enabled,
                 "running": self._started,
-                "consumer": _CONSUMER,
+                "consumer": str(getattr(self._feed, "consumer", _CONSUMER)),
                 "record_count": len(rows),
                 "counts": dict(self._counts),
+                "readiness": sorted(readiness, key=lambda item: (item["underlying"], item["expiry"] or 0)),
                 "records": rows,
             }
 
