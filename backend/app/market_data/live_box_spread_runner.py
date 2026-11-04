@@ -98,8 +98,9 @@ def _safe_snapshot(component):
 
 
 class BoxSpreadLiveTarget:
-    def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None):
+    def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None, *, weekly_only: bool=False):
         self.underlying=underlying.strip().upper(); self.instrument_class=instrument_class.strip().upper(); self.expiry=expiry
+        self.weekly_only = bool(weekly_only)
 
 
 class LiveBoxSpreadRunner:
@@ -471,7 +472,7 @@ class LiveBoxSpreadRunner:
         selected_expiries = {}
         for target in self.targets:
             wanted = target.expiry
-            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
+            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS and not getattr(target, "weekly_only", False):
                 expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
                 option_expiries = []
                 for item in self.master.instruments:
