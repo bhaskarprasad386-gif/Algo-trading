@@ -131,7 +131,7 @@ export default function BoxSpreadTraceArea() {
             <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
             <p className="mt-1 text-[10px] theme-muted">Trace saved: {time(trace.created_at)} · Original alert: {time(trace.entry.observed_at)}</p>
           </div>
-          {!isExpired(trace.expiry) ? <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setSelectedTrace(trace)} className="min-h-10 rounded-lg border-2 border-slate-500 px-3 text-sm font-extrabold theme-text">View Saved Position</button><button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button></div> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
+          {!isExpired(trace.expiry) ? <div className="flex flex-wrap gap-2"><button type="button" onClick={() => { setSelectedTrace(trace); void checkExit(trace.id); }} className="min-h-10 rounded-lg border-2 border-slate-500 px-3 text-sm font-extrabold theme-text">Open Trace · Fetch Live Depth</button><button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button></div> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {legs.map(([label,key],index) => {
@@ -198,7 +198,11 @@ export default function BoxSpreadTraceArea() {
             </section>;
           })}
         </div>
-        <p className="mt-3 text-xs text-slate-400">This view uses the trace’s immutable entry snapshot. It does not replace saved prices with current quotes and does not place orders.</p>
+        {results[selectedTrace.id] && <section className="mt-4 rounded-xl border border-cyan-800 bg-cyan-950/30 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-extrabold text-cyan-100">Latest Live Market Depth · {results[selectedTrace.id].status}</h4><span className="text-xs text-slate-300">Fetched {time(results[selectedTrace.id].checked_at)}</span></div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">{results[selectedTrace.id].legs.map(leg => <div key={leg.leg} className="rounded-lg border border-slate-700 bg-slate-900 p-2"><p className="text-xs font-bold">{leg.leg.replace("_", " ").toUpperCase()} · {leg.exit_side}</p><p className="mt-1 text-xs text-slate-300">Best executable price ₹{fmt(leg.exit_price)} · Depth qty {fmt(leg.exit_qty)} · Quote age {fmt(leg.quote_age_seconds)}s</p><div className="mt-2">{leg.depth_levels?.length ? leg.depth_levels.map((level,index) => <p key={index} className="flex justify-between border-t border-slate-800 py-1 text-xs"><span>₹{fmt(level.price)}</span><span>{fmt(level.quantity)}</span></p>) : <p className="text-xs text-amber-200">No fresh executable levels</p>}</div></div>)}</div>
+        </section>}
+        <p className="mt-3 text-xs text-slate-400">This view preserves the trace’s immutable entry snapshot and shows a separately timestamped live depth check. The check is saved in trace history; no broker orders are placed.</p>
       </div>
     </div>}
   </Card>;
