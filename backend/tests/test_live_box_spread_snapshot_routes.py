@@ -24,7 +24,7 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
         monkeypatch.setattr(routes, "_expiry_types", {})
         with Session() as db:
             for index in range(3):
-                payload = {"sequence": index}
+                payload = {"sequence": index, "tradability_status": "TRADABLE", "max_executable_lots": 2, "depth_edge_per_unit": 5.0}
                 if index == 0:
                     payload["expiry_type"] = "WEEKLY"
                 db.add(LiveBoxSpreadSnapshot(
@@ -89,7 +89,7 @@ def test_snapshot_endpoint_applies_symbol_filter_before_pagination(monkeypatch):
                     low_strike=22000 + index * 100,
                     high_strike=23000 + index * 100,
                     direction="LONG",
-                    payload_json=json.dumps({"sequence": index, "symbol": symbol}),
+                    payload_json=json.dumps({"sequence": index, "symbol": symbol, "tradability_status": "TRADABLE", "max_executable_lots": 2, "depth_edge_per_unit": 10.0}),
                 ))
             db.commit()
 
@@ -114,7 +114,7 @@ def test_snapshot_endpoint_applies_symbol_filter_before_pagination(monkeypatch):
 
 
 
-def test_snapshot_endpoint_uses_indexed_expiry_and_keeps_legacy_null_rows(monkeypatch):
+def test_snapshot_endpoint_excludes_legacy_rows_without_qualification_metadata(monkeypatch):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -136,7 +136,7 @@ def test_snapshot_endpoint_uses_indexed_expiry_and_keeps_legacy_null_rows(monkey
                 high_strike=23000,
                 direction="LONG",
                 expiry_type="WEEKLY",
-                payload_json='{"sequence": "indexed"}',
+                payload_json='{"sequence": "indexed", "tradability_status": "TRADABLE", "max_executable_lots": 2, "depth_edge_per_unit": 5.0}',
             ))
             db.add(LiveBoxSpreadSnapshot(
                 observed_at=now - timedelta(seconds=1),
@@ -154,9 +154,9 @@ def test_snapshot_endpoint_uses_indexed_expiry_and_keeps_legacy_null_rows(monkey
         monkeypatch.setattr(routes, "SessionLocal", Session)
         weekly = routes.snapshots(days=1, limit=10, offset=0, expiry_type="WEEKLY")
 
-        assert weekly["total_count"] == 2
-        assert weekly["expiry_counts"] == {"WEEKLY": 2, "MONTHLY": 0, "UNKNOWN": 0}
-        assert [row["sequence"] for row in weekly["data"]] == ["indexed", "legacy"]
+        assert weekly["total_count"] == 1
+        assert weekly["expiry_counts"] == {"WEEKLY": 1, "MONTHLY": 0, "UNKNOWN": 0}
+        assert [row["sequence"] for row in weekly["data"]] == ["indexed"]
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()

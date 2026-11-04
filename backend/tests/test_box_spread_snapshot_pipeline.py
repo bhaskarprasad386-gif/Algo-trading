@@ -42,6 +42,9 @@ def make_result(timestamp_ns, low_strike=22600, high_strike=23300, direction="LO
         edge_per_lot=338.0,
         gross_pnl=338.0,
         strike_distance=700.0,
+        max_executable_lots=2,
+        tradability_status="TRADABLE",
+        depth_edge_per_unit=5.2,
     )
 
 
@@ -400,3 +403,46 @@ def test_corrupt_spool_records_are_quarantined_without_blocking_valid_rows(tmp_p
         corrupt_json.rstrip("\n"), non_object.rstrip("\n"),
         incomplete.rstrip("\n"), invalid_snapshot.rstrip("\n"),
     ]
+
+
+
+def test_unqualified_depth_result_never_reaches_live_snapshots_or_alerts(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    rejected = make_result(1_793_084_708_000_000_000)
+    rejected.tradability_status = "NOT_TRADABLE"
+    rejected.max_executable_lots = 0
+    rejected.depth_edge_per_unit = 0
+    published = []
+    alert_calls = []
+
+    class RecordingAlerts(NoopAlerts):
+        def persist(self, db, results):
+            alert_calls.extend(results)
+
+        def notify_users(self, db, results):
+            alert_calls.extend(results)
+
+    try:
+        pipeline = LiveBoxSpreadPipeline(
+            scanner=RepeatingScanner(rejected),
+            session_factory=Session,
+            alerts=RecordingAlerts(),
+            on_results=published.extend,
+        )
+        assert pipeline.observe({}) == ()
+        assert published == []
+        assert alert_calls == []
+        with Session() as db:
+            assert db.query(func.count(LiveBoxSpreadSnapshot.id)).scalar() == 0
+        spool = tmp_path / "pending.jsonl"
+        assert not spool.exists() or spool.read_text(encoding="utf-8") == ""
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()

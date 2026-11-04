@@ -345,13 +345,12 @@ def test_pipeline_persists_option_snapshot_when_spot_provider_raises(monkeypatch
         spot_provider=lambda _symbol: (_ for _ in ()).throw(RuntimeError("spot feed unavailable")),
     )
 
-    pipeline.observe({"ignored": True})
-
-    saved = [json.loads(line) for line in (tmp_path / "pending.jsonl").read_text().splitlines()]
-    assert len(saved) == len(results)
-    assert all(row["spot_price"] is None for row in saved)
-    assert all(row["spot_timestamp_ns"] is None for row in saved)
-    assert all(row["executable_edge"] > 0 for row in saved)
+    # Legacy stock-symbol/L1-only candidates lack the required qualified
+    # depth metadata and must never enter the snapshot spool.
+    observed = pipeline.observe({"ignored": True})
+    assert observed == ()
+    spool = tmp_path / "pending.jsonl"
+    assert not spool.exists() or spool.read_text(encoding="utf-8") == ""
 
 
 def test_box_scanner_isolates_atm_provider_exception_and_keeps_quote_bucket():

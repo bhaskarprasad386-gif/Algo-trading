@@ -166,6 +166,39 @@ def _positive_timestamp_ns(value, field_name):
         raise ValueError(f"invalid Box Spread quote timestamp: {field_name}") from exc
 
 
+def _qualified_opportunity(result):
+    """Single hard eligibility gate shared by live publishing, snapshots and alerts."""
+    from app.market_data.live_box_spread_runner import INDEX_EDGE_THRESHOLDS
+    try:
+        symbol = str(result.low.underlying).strip().upper()
+        minimum_edge = float(INDEX_EDGE_THRESHOLDS.get(symbol, 10.0))
+        lots = int(getattr(result, "max_executable_lots", 0) or 0)
+        edge = float(getattr(result, "depth_edge_per_unit", 0) or 0)
+        return (
+            str(getattr(result, "tradability_status", "") or "").strip().upper() == "TRADABLE"
+            and lots >= max(2, int(settings.LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS))
+            and edge >= minimum_edge
+        )
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return False
+
+
+def _qualified_snapshot_row(row):
+    """Fail closed when replaying old spool entries."""
+    from app.market_data.live_box_spread_runner import INDEX_EDGE_THRESHOLDS
+    try:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        lots = int(row.get("max_executable_lots") or 0)
+        edge = float(row.get("depth_edge_per_unit") or 0)
+        return (
+            str(row.get("tradability_status") or "").strip().upper() == "TRADABLE"
+            and lots >= max(2, int(settings.LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS))
+            and edge >= float(INDEX_EDGE_THRESHOLDS.get(symbol, 10.0))
+        )
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return False
+
+
 def _snapshot_payload(result, observed_at, spot_provider=None):
     low, high = result.low, result.high
     low_ts = _positive_timestamp_ns(low.timestamp_ns, "low.timestamp_ns")
@@ -238,6 +271,9 @@ def _snapshot_payload(result, observed_at, spot_provider=None):
         "high_put_ask": high.put_ask,
         "high_put_ask_qty": getattr(high, "put_ask_qty", None),
         "executable_edge": result.executable_edge,
+        "depth_edge_per_unit": getattr(result, "depth_edge_per_unit", result.executable_edge),
+        "max_executable_lots": getattr(result, "max_executable_lots", 0),
+        "tradability_status": getattr(result, "tradability_status", "UNVERIFIED"),
         "edge_per_lot": result.edge_per_lot,
         "gross_pnl": result.gross_pnl,
         "lot_size": low.lot_size,
@@ -282,8 +318,10 @@ class LiveBoxSpreadPipeline:
     def observe(self, payload):
         results = self.scanner.observe(payload)
         if results and callable(self.result_transform):
-            # Gate and price opportunities before any publisher, snapshot or alert sees them.
+            # Apply depth pricing/gating before any downstream consumer.
             results = tuple(self.result_transform(results))
+        # Hard rule: unqualified opportunities never reach live UI, snapshot or alert paths.
+        results = tuple(result for result in (results or ()) if _qualified_opportunity(result))
         if results and self.on_results:
             try:
                 self.on_results(results)
@@ -307,7 +345,7 @@ class LiveBoxSpreadPipeline:
                         row["_snapshot_identity"] = list(key)
                         fresh_rows.append(row)
                     _append_spool(fresh_rows)
-                pending_rows = _read_spool()
+                pending_rows = [row for row in _read_spool() if _qualified_snapshot_row(row)]
             except Exception as exc:
                 # Never report a successful observation after failing to durably
                 # enqueue it. Keep the scanner caller informed; any existing spool
@@ -376,12 +414,13 @@ class LiveBoxSpreadPipeline:
                             logger.warning("Box Spread snapshot persistence failed (attempt %s/3); retrying; disk spool retained", attempt + 1, exc_info=True)
                             time.sleep(0.1 * (attempt + 1))
     
-        try:
-            with self.session_factory() as db:
-                self.alerts.persist(db, results)
-                self.alerts.notify_users(db, results)
-        except Exception:
-            logger.exception("Failed to persist/send Box Spread alerts")
+        if results and self.session_factory:
+            try:
+                with self.session_factory() as db:
+                    self.alerts.persist(db, results)
+                    self.alerts.notify_users(db, results)
+            except Exception:
+                logger.exception("Failed to persist/send Box Spread alerts")
 
         return results
 
