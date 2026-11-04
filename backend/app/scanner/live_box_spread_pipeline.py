@@ -307,13 +307,20 @@ def _snapshot_key(row):
 
 
 class LiveBoxSpreadPipeline:
-    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None):
+    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None, publish_enabled=True):
         self.scanner = scanner
         self.session_factory = session_factory
         self.alerts = alerts or BoxSpreadAlertService()
         self.on_results = on_results
         self.spot_provider = spot_provider
         self.result_transform = result_transform
+        self._publish_lock = threading.RLock()
+        self._publish_enabled = bool(publish_enabled)
+
+    def set_publish_enabled(self, enabled):
+        """Atomically gate all external side effects while a feed session is staged."""
+        with self._publish_lock:
+            self._publish_enabled = bool(enabled)
 
     def observe(self, payload):
         results = self.scanner.observe(payload)
@@ -322,6 +329,12 @@ class LiveBoxSpreadPipeline:
             results = tuple(self.result_transform(results))
         # Hard rule: unqualified opportunities never reach live UI, snapshot or alert paths.
         results = tuple(result for result in (results or ()) if _qualified_opportunity(result))
+        with self._publish_lock:
+            publish_enabled = self._publish_enabled
+        # A staged session may warm its scanner and depth cache, but must not
+        # publish, append to the shared durable spool, persist snapshots, or alert.
+        if not publish_enabled:
+            return results
         if results and self.on_results:
             try:
                 self.on_results(results)
