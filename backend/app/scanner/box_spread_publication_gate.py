@@ -27,6 +27,15 @@ class BoxSpreadPublicationGate:
             self._owner = None
             return True
 
+    def claim_if_unowned(self, owner) -> bool:
+        """Claim an idle gate, or confirm this runner already owns it."""
+        if owner is None:
+            return False
+        with self._lock:
+            if self._owner is None:
+                self._owner = owner
+            return self._owner is owner
+
     def is_owner(self, owner) -> bool:
         with self._lock:
             return owner is not None and self._owner is owner
