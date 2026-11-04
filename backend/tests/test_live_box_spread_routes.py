@@ -402,3 +402,36 @@ def test_http_and_websocket_box_rows_keep_identical_edge_and_executable_prices(m
         "last_update_timestamp_ns", "quote_age_seconds", "timestamp_skew_ms",
     ):
         assert http_row[key] == ws_row[key]
+
+
+def test_index_spot_snapshot_reads_only_manually_selected_indices(monkeypatch):
+    seen = []
+    monkeypatch.setattr(routes, "_index_selection_provider", lambda: ("SENSEX", "NIFTY"))
+    monkeypatch.setattr(
+        routes,
+        "_spot_fields",
+        lambda symbol: seen.append(symbol) or {"spot_price": None, "spot_timestamp_ns": None, "spot_age_seconds": None},
+    )
+
+    payload = routes.index_spot_snapshot()
+
+    assert [row["symbol"] for row in payload["data"]] == ["NIFTY", "SENSEX"]
+    assert seen == ["NIFTY", "SENSEX"]
+
+
+def test_index_spot_snapshot_fails_closed_when_selection_provider_errors(monkeypatch):
+    seen = []
+    def fail_selection():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(routes, "_index_selection_provider", fail_selection)
+    monkeypatch.setattr(
+        routes,
+        "_spot_fields",
+        lambda symbol: seen.append(symbol) or {"spot_price": None, "spot_timestamp_ns": None, "spot_age_seconds": None},
+    )
+
+    payload = routes.index_spot_snapshot()
+
+    assert payload["data"] == []
+    assert seen == []
