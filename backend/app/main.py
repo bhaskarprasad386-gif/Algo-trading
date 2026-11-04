@@ -1016,7 +1016,7 @@ async def _live_box_spread_loop() -> None:
                 )
 
             def set_active_runner(active_runner):
-                global live_box_spread_runner
+                global live_box_spread_runner, live_box_spread_latest_results
                 live_box_spread_runner = active_runner
                 # Change global weekly/monthly filters only after the staged
                 # runner owns publication; during warm-up the old session's
@@ -1030,6 +1030,13 @@ async def _live_box_spread_loop() -> None:
                 )
                 set_live_box_expiry_types(active_expiry_types)
                 set_live_box_websocket_expiry_types(active_expiry_types)
+                # Keep the old session's visible results intact during staging.
+                # Apply the selected-index filter only after publisher ownership
+                # has transferred to this active runner.
+                live_box_spread_latest_results = tuple(
+                    row for row in live_box_spread_latest_results
+                    if str(getattr(getattr(row, "low", None), "underlying", "") or "").strip().upper() in active_symbols
+                )
 
             supervisor = BoxSpreadRunnerSupervisor(
                 active_runner=runner,
@@ -1456,10 +1463,6 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
         # Expiry routing is updated by on_active only after the candidate
         # is fully ready and publisher ownership has transferred.
 
-    live_box_spread_latest_results = tuple(
-        row for row in live_box_spread_latest_results
-        if str(getattr(getattr(row, "low", None), "underlying", "") or "").strip().upper() in set(saved)
-    )
     return {
         "status": "success",
         "symbols": list(saved),
