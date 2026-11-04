@@ -13,6 +13,8 @@ class _Query:
         return self
     def yield_per(self, *args):
         return iter(self.rows)
+    def all(self):
+        return self.rows
 
 
 class _Session:
