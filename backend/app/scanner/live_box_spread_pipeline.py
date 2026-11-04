@@ -270,6 +270,24 @@ def _snapshot_key(row):
     )
 
 
+def _is_history_eligible_result(result):
+    """Only persist/publish depth-qualified opportunities meeting the common-lot floor."""
+    # The production runner always applies the depth gate before this pipeline.
+    # Preserve compatibility for isolated scanner tests/callers with no gate metadata.
+    if not hasattr(result, "tradability_status"):
+        return True
+    if str(getattr(result, "tradability_status", "") or "").strip().upper() != "TRADABLE":
+        return False
+    try:
+        from math import isfinite
+        lots = int(getattr(result, "max_executable_lots", 0) or 0)
+        edge = float(getattr(result, "executable_edge", 0) or 0)
+        depth_edge = float(getattr(result, "depth_edge_per_unit", edge) or 0)
+        return lots >= max(2, int(settings.LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS)) and isfinite(edge) and edge > 0 and isfinite(depth_edge) and depth_edge > 0
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 class LiveBoxSpreadPipeline:
     def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None):
         self.scanner = scanner
@@ -284,6 +302,9 @@ class LiveBoxSpreadPipeline:
         if results and callable(self.result_transform):
             # Gate and price opportunities before any publisher, snapshot or alert sees them.
             results = tuple(self.result_transform(results))
+        # A below-threshold/depth-rejected candidate must not leak into live UI,
+        # durable snapshots, history, or alert processing.
+        results = tuple(result for result in (results or ()) if _is_history_eligible_result(result))
         if results and self.on_results:
             try:
                 self.on_results(results)
