@@ -1040,7 +1040,9 @@ async def _live_box_spread_loop() -> None:
 
             runner = supervisor.active_runner
             if runner.stop_event.is_set():
-                return
+                if supervisor.is_shutting_down:
+                    return
+                raise RuntimeError("Active Box Spread runner stopped unexpectedly after handoff")
             if worker_errors:
                 raise RuntimeError(f"Box Spread worker failed: {worker_errors[0]}")
             app_logger.warning(
@@ -1380,7 +1382,7 @@ def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
 
     runner = live_box_spread_runner
     supervisor = live_box_spread_supervisor
-    if supervisor is not None and supervisor.snapshot().get("candidate_running"):
+    if supervisor is not None and supervisor.snapshot().get("handoff_in_progress"):
         raise HTTPException(
             status_code=409,
             detail={"message": "A Box Spread feed handoff is already staging. Wait for it to finish before changing the index selection again."},
