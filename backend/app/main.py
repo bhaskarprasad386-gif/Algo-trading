@@ -1397,20 +1397,41 @@ def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
             raise HTTPException(status_code=409, detail={"message": f"Index selection validation failed; previous feed remains active: {exc}"}) from exc
 
     saved = _save_box_spread_index_selection(selected)
+    switch = {"status": "SAVED", "restart_requested": False, "symbols": list(saved)}
+    if runner is not None and prepared_targets is not None:
+        if supervisor is not None:
+            try:
+                switch = supervisor.request_handoff(prepared_targets)
+            except Exception as exc:
+                app_logger.exception("Unable to start staged Box Spread runner; restoring previous selection")
+                try:
+                    _save_box_spread_index_selection(current_selection)
+                except Exception:
+                    app_logger.exception("CRITICAL: failed to restore Box Spread selection after staging startup failure")
+                raise HTTPException(
+                    status_code=503,
+                    detail={"message": "New Box Spread feed could not be staged. Previous live runner remains active; retry after checking feed capacity."},
+                ) from exc
+            if switch.get("state") != "STAGING":
+                try:
+                    _save_box_spread_index_selection(current_selection)
+                except Exception:
+                    app_logger.exception("CRITICAL: failed to restore Box Spread selection after rejected handoff")
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "Box Spread handoff was not accepted; previous selection has been restored. Retry after the current handoff finishes."},
+                )
+            switch["restart_requested"] = True
+        else:
+            switch = runner.request_reconfigure(prepared_targets)
+            switch["restart_requested"] = True
+        set_live_box_expiry_types(prepared_expiry_types)
+        set_live_box_websocket_expiry_types(prepared_expiry_types)
+
     live_box_spread_latest_results = tuple(
         row for row in live_box_spread_latest_results
         if str(getattr(getattr(row, "low", None), "underlying", "") or "").strip().upper() in set(saved)
     )
-    switch = {"status": "SAVED", "restart_requested": False, "symbols": list(saved)}
-    if runner is not None and prepared_targets is not None:
-        set_live_box_expiry_types(prepared_expiry_types)
-        set_live_box_websocket_expiry_types(prepared_expiry_types)
-        if supervisor is not None:
-            switch = supervisor.request_handoff(prepared_targets)
-            switch["restart_requested"] = switch.get("state") == "STAGING"
-        else:
-            switch = runner.request_reconfigure(prepared_targets)
-            switch["restart_requested"] = True
     return {
         "status": "success",
         "symbols": list(saved),
