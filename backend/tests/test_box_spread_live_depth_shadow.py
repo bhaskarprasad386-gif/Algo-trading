@@ -215,3 +215,91 @@ def test_four_leg_edge_accepts_one_level_on_weakest_leg_for_two_lots():
     assert len(result["legs"]) == 4
     assert all(leg["selected_quantity"] == 130 for leg in result["legs"])
     assert result["depth_edge_per_unit"] > 0
+
+
+def test_snapshot_reports_per_underlying_expiry_fresh_depth_readiness():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [
+        ("201", 25000, "CE"),
+        ("202", 26000, "CE"),
+        ("203", 26000, "PE"),
+        ("204", 25000, "PE"),
+    ]
+    descriptors = [
+        replace(
+            _descriptor(token),
+            key=InstrumentKey("NFO", "NFO", token),
+            strike=strike,
+            option_type=option_type,
+        )
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for token, _, _ in specs:
+        callback(_record(
+            timestamp_ns=now,
+            token=token,
+            payload={
+                "best_5_buy_data": _five_levels(95),
+                "best_5_sell_data": _five_levels(101),
+            },
+        ))
+
+    snapshot = shadow.snapshot(now_ns=now)
+    assert snapshot["consumer"] == "box-live-depth-shadow"
+    assert snapshot["readiness"] == [{
+        "underlying": "NIFTY",
+        "expiry": 20261106,
+        "subscribed_contracts": 4,
+        "fresh_contracts": 4,
+        "fresh_ce": 2,
+        "fresh_pe": 2,
+        "executable_depth_contracts": 4,
+        "state": "READY",
+    }]
+
+
+def test_snapshot_keeps_depth_readiness_waiting_until_both_option_sides_are_fresh():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [
+        ("301", 25000, "CE"),
+        ("302", 26000, "CE"),
+        ("303", 26000, "PE"),
+        ("304", 25000, "PE"),
+    ]
+    descriptors = [
+        replace(
+            _descriptor(token),
+            key=InstrumentKey("NFO", "NFO", token),
+            strike=strike,
+            option_type=option_type,
+        )
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for token, _, option_type in specs[:2]:
+        callback(_record(
+            timestamp_ns=now,
+            token=token,
+            payload={
+                "best_5_buy_data": _five_levels(95),
+                "best_5_sell_data": _five_levels(101),
+            },
+        ))
+
+    readiness = shadow.snapshot(now_ns=now)["readiness"][0]
+    assert readiness["fresh_ce"] == 2
+    assert readiness["fresh_pe"] == 0
+    assert readiness["state"] == "WAITING_FOR_DEPTH"
