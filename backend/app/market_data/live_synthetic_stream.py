@@ -111,6 +111,7 @@ class LiveSyntheticOptionFutureRecorder:
         self._lock = Lock()
         self._accept_records = False
         self._metadata: dict[tuple[str, str], SyntheticSubscription] = {}
+        self._last_record_at_ns_by_key: dict[tuple[str, str], int] = {}
         self._records_received = 0
         self._observations_emitted = 0
         self._missing_executable_quote = 0
@@ -234,6 +235,11 @@ class LiveSyntheticOptionFutureRecorder:
             if last_timestamp_ns is not None and current_timestamp_ns < last_timestamp_ns:
                 self._out_of_order_records += 1
                 return
+            freshness_map = getattr(self, "_last_record_at_ns_by_key", None)
+            if freshness_map is None:
+                freshness_map = {}
+                self._last_record_at_ns_by_key = freshness_map
+            freshness_map[key] = time_ns()
             self._last_timestamp_ns_by_key[key] = current_timestamp_ns
             previous = self._latest.get(key)
             if previous is not None:
@@ -362,8 +368,22 @@ class LiveSyntheticOptionFutureRecorder:
 
     def snapshot(self) -> dict[str, Any]:
         """Return lightweight recorder state for runtime diagnostics."""
+        now_ns = time_ns()
         with self._lock:
             latest = len(self._latest)
+            fresh_contracts = []
+            for key, received_at_ns in self._last_record_at_ns_by_key.items():
+                meta = self._metadata.get(key)
+                age_seconds = max(0.0, now_ns - received_at_ns) / 1_000_000_000
+                if meta is None or age_seconds > 5.0:
+                    continue
+                fresh_contracts.append({
+                    "underlying": str(meta.underlying or "").strip().upper(),
+                    "expiry": str(meta.expiry or "").strip().upper(),
+                    "option_type": str(meta.option_type or "").strip().upper(),
+                    "strike": meta.strike,
+                    "age_seconds": round(age_seconds, 3),
+                })
             out_of_order_records = self._out_of_order_records
             stale_buffer_discards = self._stale_buffer_discards
             future_buffer_discards = self._future_buffer_discards
@@ -372,6 +392,8 @@ class LiveSyntheticOptionFutureRecorder:
             "running": not self.stop_event.is_set(),
             "subscriptions": len(self.subscriptions),
             "latest_instruments": latest,
+            "fresh_contracts": fresh_contracts,
+            "freshness_threshold_seconds": 5,
             "records_received": self._records_received,
             "out_of_order_records": out_of_order_records,
             "stale_buffer_discards": stale_buffer_discards,

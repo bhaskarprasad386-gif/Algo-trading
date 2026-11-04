@@ -1718,3 +1718,57 @@ def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
         manager.close()
 
 
+
+
+def test_new_lexicographically_earlier_token_does_not_rehome_active_shard():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    earlier = descriptor("050")
+    registry.register_many([first, second, earlier])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 2
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key, second.key])
+        original_socket = manager._sockets[SocketGroup(1, 0)]
+        original_tokens = set(manager._socket_tokens[SocketGroup(1, 0)])
+
+        manager.subscribe("box", [earlier.key])
+
+        assert manager._sockets[SocketGroup(1, 0)] is original_socket
+        assert manager._socket_tokens[SocketGroup(1, 0)] == original_tokens
+        assert manager._socket_tokens[SocketGroup(1, 1)] == {(1, "050")}
+        assert manager.snapshot()["required_socket_groups"] == ["1:0", "1:1"]
+        assert original_socket.closed is False
+    finally:
+        manager.close()
+
+
+def test_socket_capacity_rejection_does_not_commit_new_shard_assignments():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._max_sockets = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original_socket = manager._sockets[SocketGroup(1, 0)]
+        original_assignments = dict(manager._shard_assignments[1])
+
+        try:
+            manager.subscribe("box", [second.key])
+        except ValueError as exc:
+            assert "global WebSocket limit exceeded" in str(exc)
+        else:
+            raise AssertionError("socket capacity overflow must be rejected")
+
+        assert manager._shard_assignments[1] == original_assignments
+        assert manager._sockets[SocketGroup(1, 0)] is original_socket
+        assert original_socket.closed is False
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        manager.close()

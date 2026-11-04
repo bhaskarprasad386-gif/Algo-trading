@@ -18,6 +18,7 @@ from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
+from app.scanner.box_spread_publication_gate import BOX_SPREAD_PUBLICATION_GATE
 from app.scanner.box_spread import BoxSpreadScanConfig
 from app.scanner.box_spread_live_depth_shadow import BoxLiveDepthShadowFeed
 from app.scanner.box_spread_depth_shadow_diagnostics import BoxDepthShadowDiagnostics
@@ -25,7 +26,7 @@ from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 # Temporarily excluded from the Box Spread scanner universe and all its feeds.
-BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset({"FINNIFTY", "BANKEX"})
+BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset()
 WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
@@ -97,16 +98,29 @@ def _safe_snapshot(component):
 
 
 class BoxSpreadLiveTarget:
-    def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None):
+    def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None, *, weekly_only: bool=False):
         self.underlying=underlying.strip().upper(); self.instrument_class=instrument_class.strip().upper(); self.expiry=expiry
+        self.weekly_only = bool(weekly_only)
 
 
 class LiveBoxSpreadRunner:
-    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None):
+    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None,consumer_namespace="box",publish_enabled=True,publication_gate=None):
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
+        self.consumer_namespace = str(consumer_namespace or "box").strip()
+        if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
+            raise ValueError("consumer_namespace must contain only letters, numbers, hyphens, underscores or colons")
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
-        self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
-        self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED))
+        self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None; self.pipeline=None
+        self._publish_enabled = bool(publish_enabled)
+        self._publishing_requested = bool(publish_enabled)
+        self.publication_gate = publication_gate or BOX_SPREAD_PUBLICATION_GATE
+        self._publisher_owner = object()
+        if self._publish_enabled:
+            self.publication_gate.activate(self._publisher_owner)
+        self._reconfigure_event = Event()
+        self._targets_lock = Lock()
+        self._pending_targets = None
+        self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED), consumer=f"{self.consumer_namespace}-live-depth-shadow")
         self._depth_shadow_lock = Lock()
         self._depth_shadow_last_comparisons = []
         self.depth_shadow_diagnostics = BoxDepthShadowDiagnostics()
@@ -120,6 +134,164 @@ class LiveBoxSpreadRunner:
             "underlying_websocket": {"state": "not_started"},
             "option_websocket": {"state": "not_started"},
         }
+
+    def activate_publishing(self):
+        """Allow this warmed session to become the sole live result publisher."""
+        self._publishing_requested = True
+        self._publish_enabled = True
+        self.publication_gate.activate(self._publisher_owner)
+        pipeline = self.pipeline
+        if pipeline is not None:
+            pipeline.set_publish_enabled(True)
+
+    def deactivate_publishing(self, *, preserve_request=False):
+        """Stop this session from publishing before its feeds are detached."""
+        if not preserve_request:
+            self._publishing_requested = False
+        self._publish_enabled = False
+        pipeline = self.pipeline
+        if pipeline is not None:
+            pipeline.set_publish_enabled(False)
+        self.publication_gate.deactivate(self._publisher_owner)
+    @staticmethod
+    def staged_session_readiness(snapshot, required_targets):
+        """Fail closed unless each selected underlying and expiry has matching live quotes/depth.
+
+        Accept legacy symbol-only iterables for focused unit tests and diagnostics.
+        Runtime callers pass (underlying, expiry) pairs so weekly and monthly
+        expiries cannot accidentally satisfy one another's readiness.
+        """
+        def expiry_key(value):
+            if value is None:
+                return ""
+            raw = str(value).strip().upper()
+            if not raw:
+                return ""
+            from datetime import datetime
+            for fmt in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+                try:
+                    return datetime.strptime(raw, fmt).strftime("%Y%m%d")
+                except ValueError:
+                    continue
+            return raw
+
+        required_symbols = set()
+        required_expiry_groups = set()
+        symbols_requiring_depth = set()
+        for item in required_targets:
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                symbol = str(item[0] or "").strip().upper()
+                expiry = expiry_key(item[1])
+                if symbol:
+                    required_symbols.add(symbol)
+                    if expiry:
+                        required_expiry_groups.add((symbol, expiry))
+                        symbols_requiring_depth.add(symbol)
+            else:
+                symbol = str(item).strip().upper()
+                if symbol:
+                    required_symbols.add(symbol)
+        if not required_symbols:
+            return {"ready": False, "state": "WAITING_FOR_TARGETS", "reasons": ["no_required_symbols"]}
+
+        underlying = snapshot.get("underlying_feed") or {}
+        symbol_rows = underlying.get("symbols") if isinstance(underlying, dict) else {}
+        symbol_rows = symbol_rows if isinstance(symbol_rows, dict) else {}
+        missing_underlyings = sorted(
+            symbol for symbol in required_symbols
+            if str((symbol_rows.get(symbol) or {}).get("state") or "").upper() != "LIVE"
+        )
+
+        option = snapshot.get("option_recorder") or {}
+        option_feed = option.get("feed") or {}
+        fresh_option_groups = {}
+        for contract in option.get("fresh_contracts") or []:
+            if not isinstance(contract, dict):
+                continue
+            key = (
+                str(contract.get("underlying") or "").strip().upper(),
+                expiry_key(contract.get("expiry")),
+            )
+            option_type = str(contract.get("option_type") or "").strip().upper()
+            counts = fresh_option_groups.setdefault(key, {"CE": 0, "PE": 0})
+            if option_type in counts:
+                counts[option_type] += 1
+        option_ready = (
+            int(option.get("subscriptions", 0) or 0) >= 4
+            and int(option_feed.get("active_instruments", 0) or 0) > 0
+            and bool(option_feed.get("connected_groups"))
+            and not LiveBoxSpreadRunner._feed_is_down(option_feed)
+        )
+
+        depth = snapshot.get("depth_shadow") or {}
+        depth_rows = depth.get("readiness") or []
+        ready_depth_symbols = set()
+        ready_expiry_groups = set()
+        missing_option_groups = []
+        for row in depth_rows:
+            if not isinstance(row, dict):
+                continue
+            underlying_symbol = str(row.get("underlying") or "").strip().upper()
+            expiry_value = expiry_key(row.get("expiry"))
+            if underlying_symbol not in required_symbols:
+                continue
+            if required_expiry_groups and (underlying_symbol, expiry_value) not in required_expiry_groups:
+                continue
+            option_counts = fresh_option_groups.get((underlying_symbol, expiry_value), {})
+            exact_option_ready = (
+                int(option_counts.get("CE", 0)) >= 2
+                and int(option_counts.get("PE", 0)) >= 2
+            )
+            depth_ready = (
+                str(row.get("state") or "").upper() == "READY"
+                and int(row.get("executable_depth_ce", 0) or 0) >= 2
+                and int(row.get("executable_depth_pe", 0) or 0) >= 2
+                and int(row.get("executable_depth_contracts", 0) or 0) >= 4
+            )
+            if depth_ready and exact_option_ready:
+                ready_depth_symbols.add(underlying_symbol)
+                ready_expiry_groups.add((underlying_symbol, expiry_value))
+            elif depth_ready and not exact_option_ready:
+                missing_option_groups.append(f"{underlying_symbol}:{expiry_value or 'UNKNOWN'}")
+
+        if required_expiry_groups:
+            missing_expiry_groups = sorted(required_expiry_groups - ready_expiry_groups)
+            missing_depth = sorted(symbols_requiring_depth - ready_depth_symbols)
+        else:
+            missing_expiry_groups = []
+            missing_depth = []
+
+        reasons = []
+        if missing_underlyings:
+            reasons.append("underlying_ticks_not_fresh:" + ",".join(missing_underlyings))
+        if required_expiry_groups and not option_ready:
+            reasons.append("option_recorder_not_connected")
+        if missing_option_groups:
+            reasons.append("exact_option_contracts_not_fresh:" + ",".join(sorted(missing_option_groups)))
+        if required_expiry_groups and (not depth.get("enabled") or not depth.get("running")):
+            reasons.append("depth_shadow_not_running")
+        if missing_depth:
+            reasons.append("executable_two_lot_depth_or_matching_option_quotes_not_ready:" + ",".join(missing_depth))
+        if missing_expiry_groups:
+            reasons.append("missing_expiry_readiness:" + ",".join(f"{symbol}:{expiry}" for symbol, expiry in missing_expiry_groups))
+        return {
+            "ready": not reasons,
+            "state": "READY" if not reasons else "WAITING_FOR_FEEDS",
+            "required_symbols": sorted(required_symbols),
+            "required_expiry_groups": [list(item) for item in sorted(required_expiry_groups)],
+            "missing_expiry_groups": [list(item) for item in missing_expiry_groups],
+            "missing_underlying_symbols": missing_underlyings,
+            "missing_depth_symbols": missing_depth,
+            "option_recorder_ready": option_ready,
+            "reasons": reasons,
+        }
+
+    def staged_readiness(self):
+        """Read the live session state using the same strict gate used before handoff."""
+        return self.staged_session_readiness(
+            self.snapshot(),
+            {(target.underlying, target.expiry) for target in self.targets},
+        )
 
     @staticmethod
     def _feed_is_down(feed_snapshot) -> bool:
@@ -158,16 +330,44 @@ class LiveBoxSpreadRunner:
             feed_detail.get("disconnected_groups"), feed_detail.get("last_error"),
         )
 
+    def request_reconfigure(self, targets):
+        """Queue a validated target set; the current session tears down once before applying it."""
+        normalized = tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper(), str(target.expiry or ""))))
+        if not normalized:
+            raise ValueError("Box Spread requires at least one selected index target")
+        with self._targets_lock:
+            self._pending_targets = normalized
+            self._reconfigure_event.set()
+        return {"status": "RECONFIGURE_QUEUED", "target_count": len(normalized), "symbols": sorted({target.underlying.strip().upper() for target in normalized})}
+
+    def _apply_pending_targets(self):
+        with self._targets_lock:
+            if not self._reconfigure_event.is_set() or self._pending_targets is None:
+                return False
+            self.targets = self._pending_targets
+            self._pending_targets = None
+            self._reconfigure_event.clear()
+            self._readiness = {"state": "reconfiguring", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
+            self.scanner = None
+            self.tracker = None
+        return True
+
     def run_forever(self):
         retry_delay = 5.0
         max_retry_delay = 60.0
         while not self.stop_event.is_set():
             try:
                 self._run_session()
+                if self._apply_pending_targets():
+                    retry_delay = 1.0
+                    continue
                 retry_delay = 5.0
             except Exception as exc:
                 if self.stop_event.is_set():
                     break
+                if self._apply_pending_targets():
+                    retry_delay = 1.0
+                    continue
                 app_logger.warning(
                     "Box Spread live runner failed; retrying in {:.1f}s: {}",
                     retry_delay,
@@ -233,7 +433,10 @@ class LiveBoxSpreadRunner:
                 entry.quantity if entry.action == "BUY" else -entry.quantity
             )
         subscriptions = []
+        selected_symbols = {target.underlying.strip().upper() for target in self.targets}
         for trade in trades:
+            if str(trade.underlying or "").strip().upper() not in selected_symbols:
+                continue
             if not any(signed_by_trade.get(trade.id, {}).values()):
                 continue
             try:
@@ -253,6 +456,11 @@ class LiveBoxSpreadRunner:
                 )
         return subscriptions
     def _run_session(self):
+        # A reconfigured session may reclaim an idle gate, but must never
+        # override a newer staged runner that already owns publication.
+        if self._publishing_requested:
+            self.publication_gate.claim_if_unowned(self._publisher_owner)
+            self._publish_enabled = self.publication_gate.is_owner(self._publisher_owner)
         # main.py prepares the shared master before starting this runner. Reuse
         # that validated snapshot instead of triggering a second network refresh.
         if not getattr(self.master, "_loaded", False) or not getattr(self.master, "instruments", None):
@@ -264,7 +472,7 @@ class LiveBoxSpreadRunner:
         selected_expiries = {}
         for target in self.targets:
             wanted = target.expiry
-            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
+            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS and not getattr(target, "weekly_only", False):
                 expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
                 option_expiries = []
                 for item in self.master.instruments:
@@ -324,11 +532,11 @@ class LiveBoxSpreadRunner:
             strikes.setdefault(symbol.strip().upper(), ())
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
-        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer="box-underlyings")
+        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings")
         self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
         self._feed_thread.start()
         try:
-            while not self.stop_event.is_set():
+            while not self.stop_event.is_set() and not self._reconfigure_event.is_set():
                 self._log_feed_state_change()
                 underlying_snapshot = _box_underlying_health_snapshot(_safe_snapshot(self.feed))
                 # Box Spread accepts only source-fresh underlying prices. Keep this
@@ -379,6 +587,15 @@ class LiveBoxSpreadRunner:
                                     continue
                         if expiries:
                             wanted = min(expiries)[1]
+                    # Weekly-only targets must fail closed when the instrument
+                    # master has no classified weekly expiry. Passing expiry=None
+                    # to the selector would let it infer a monthly contract.
+                    if getattr(target, "weekly_only", False) and wanted is None:
+                        unavailable_symbols.append({
+                            "symbol": target.underlying,
+                            "reason": "WEEKLY_EXPIRY_UNAVAILABLE",
+                        })
+                        continue
                     try:
                         sel=select_box_contracts(self.master,underlying=target.underlying,instrument_class=target.instrument_class,
                             atm_strike=atms[target.underlying],expiry=wanted,
@@ -465,7 +682,8 @@ class LiveBoxSpreadRunner:
                             self._depth_shadow_last_comparisons = comparisons[-20:]
                     return tuple(gated)
 
-                pipeline=LiveBoxSpreadPipeline(scanner, SessionLocal, on_results=self.on_results, spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None, result_transform=apply_depth_gate)
+                pipeline=LiveBoxSpreadPipeline(scanner, SessionLocal, on_results=self.on_results, spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None, result_transform=apply_depth_gate, publish_enabled=self._publish_enabled, publisher_gate=self.publication_gate, publisher_owner=self._publisher_owner)
+                self.pipeline = pipeline
                 subscribed_strikes = {}
                 for sub in subs:
                     symbol = str(getattr(sub, "underlying", "") or "").strip().upper()
@@ -510,7 +728,7 @@ class LiveBoxSpreadRunner:
                 # Fail closed: never start an L1-only live opportunity publisher.
                 depth_descriptors = self._depth_shadow_descriptors(subs)
                 self.depth_shadow.start(depth_descriptors)
-                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
+                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer=f"{self.consumer_namespace}-options")
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
                 recorder_thread.start()
@@ -519,7 +737,7 @@ class LiveBoxSpreadRunner:
                     "subscription_count": len(subs),
                 }
                 down_since = None
-                while not self.stop_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
+                while not self.stop_event.is_set() and not self._reconfigure_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
                     self._log_feed_state_change()
                     self._readiness["underlying_websocket"] = _box_underlying_health_snapshot(_safe_snapshot(self.feed))
                     recorder_snapshot = _safe_snapshot(recorder)
@@ -543,6 +761,8 @@ class LiveBoxSpreadRunner:
             feed, self.feed = self.feed, None
             feed_thread, self._feed_thread = self._feed_thread, None
             recorder, self.recorder = self.recorder, None
+            self.deactivate_publishing(preserve_request=True)
+            self.pipeline = None
             if recorder is not None:
                 recorder.stop()
             self.depth_shadow.stop()
@@ -559,6 +779,8 @@ class LiveBoxSpreadRunner:
         return {
             "running": not self.stop_event.is_set(),
             "targets": len(self.targets),
+            "target_symbols": sorted({target.underlying.strip().upper() for target in self.targets}),
+            "reconfigure_pending": self._reconfigure_event.is_set(),
             "underlying_feed_thread_alive": bool(
                 self._feed_thread
                 and callable(getattr(self._feed_thread, "is_alive", None))
@@ -573,6 +795,7 @@ class LiveBoxSpreadRunner:
                 "running": depth_snapshot.get("running", False),
                 "record_count": depth_snapshot.get("record_count", 0),
                 "counts": depth_snapshot.get("counts", {}),
+                "readiness": depth_snapshot.get("readiness", []),
                 "last_comparisons": last_comparisons,
                 "comparison_diagnostics": self.depth_shadow_diagnostics.snapshot(),
             },

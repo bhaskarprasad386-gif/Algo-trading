@@ -3,7 +3,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Also validate stacked Box Spread PRs targeting the Batch 0 integration branch.
+    branches: [main, feature/box-spread-manual-index-selection-batch-0]
   workflow_dispatch:
 
 concurrency:

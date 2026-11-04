@@ -11,6 +11,7 @@ router=APIRouter(prefix="/api/v1/scanner/box-spread",tags=["box-spread"])
 _latest=()
 _diagnostics_getter = None
 _spot_provider = None
+_index_selection_provider = None
 _monitor_getter = None
 _expiry_types = {}
 MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
@@ -19,6 +20,12 @@ def configure_spot_provider(provider):
     """Configure a source-backed, freshness-checked underlying spot getter."""
     global _spot_provider
     _spot_provider = provider
+
+
+def configure_index_selection_provider(provider):
+    """Configure the persisted manual index universe for spot snapshots."""
+    global _index_selection_provider
+    _index_selection_provider = provider
 
 def _spot_fields(symbol):
     # Spot is supplementary context: a spot-feed failure must never suppress
@@ -118,7 +125,16 @@ def classify_expiry_type(symbol, expiry):
 @router.get("/index-spots")
 def index_spot_snapshot():
     """Return independent source-backed spot quotes for all supported Box Spread indices."""
-    symbols = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
+    defaults = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
+    if callable(_index_selection_provider):
+        try:
+            selected = set(_index_selection_provider())
+            symbols = tuple(symbol for symbol in defaults if symbol in selected)
+        except Exception:
+            # Fail closed: never expose/fetch an unselected index on a setting error.
+            symbols = ()
+    else:
+        symbols = defaults
     now_ns = time.time_ns()
     data = []
     for symbol in symbols:

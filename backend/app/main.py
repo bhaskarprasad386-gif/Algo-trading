@@ -12,7 +12,7 @@ import threading
 import math
 import time as time_module
 import uuid
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
@@ -21,7 +21,7 @@ from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
-from app.models import User, Instrument, Session, Position, SystemLog
+from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
 from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
@@ -34,6 +34,7 @@ from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSec
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
+from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
@@ -50,9 +51,10 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, set_expiry_types as set_live_box_expiry_types
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
+from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, set_expiry_types as set_live_box_websocket_expiry_types
 from app.intelligence.routes import router as intelligence_router
@@ -108,10 +110,171 @@ _live_synthetic_universe_status = {
 }
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
+live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
+BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
+BOX_SPREAD_INDEX_PRESETS = {
+    "ALL": tuple(sorted(OPTION_STRATEGY_INDEX_SYMBOLS)),
+    "NIFTY_SENSEX": ("NIFTY", "SENSEX"),
+    "NIFTY_SENSEX_BANKNIFTY": ("NIFTY", "SENSEX", "BANKNIFTY"),
+}
+BOX_SPREAD_DEFAULT_INDEX_SELECTION = ("NIFTY", "BANKNIFTY", "MIDCPNIFTY", "SENSEX")
+
+
+def _normalize_box_spread_index_symbols(symbols):
+    if not isinstance(symbols, (list, tuple, set, frozenset)):
+        raise ValueError("symbols must be a non-empty list")
+    normalized = tuple(sorted({str(item or "").strip().upper() for item in symbols if str(item or "").strip()}))
+    unsupported = sorted(set(normalized) - set(OPTION_STRATEGY_INDEX_SYMBOLS))
+    if unsupported:
+        raise ValueError(f"unsupported Box Spread indices: {', '.join(unsupported)}")
+    if not normalized:
+        raise ValueError("select at least one Box Spread index")
+    return normalized
+
+
+def _read_box_spread_selection_payload(raw):
+    """Read both legacy list rows and the structured index/expiry selection."""
+    payload = json.loads(raw or "[]")
+    if isinstance(payload, list):
+        return {"symbols": payload, "weekly_only_symbols": []}
+    if isinstance(payload, dict):
+        return {
+            "symbols": payload.get("symbols", []),
+            "weekly_only_symbols": payload.get("weekly_only_symbols", []),
+        }
+    raise ValueError("invalid saved Box Spread index selection")
+
+
+def _get_box_spread_index_selection():
+    try:
+        with SessionLocal() as db:
+            saved = db.get(BoxSpreadIndexSelection, 1)
+            if saved is not None:
+                payload = _read_box_spread_selection_payload(saved.symbols_json)
+                return _normalize_box_spread_index_symbols(payload["symbols"])
+    except Exception as exc:
+        app_logger.exception("Box Spread index selection read failed; refusing to broaden the live subscription universe")
+        raise RuntimeError("Box Spread index selection is unavailable; live index subscriptions are paused until it can be read") from exc
+    return BOX_SPREAD_DEFAULT_INDEX_SELECTION
+
+
+def _get_box_spread_weekly_only_symbols():
+    try:
+        with SessionLocal() as db:
+            saved = db.get(BoxSpreadIndexSelection, 1)
+            if saved is None:
+                return ()
+            payload = _read_box_spread_selection_payload(saved.symbols_json)
+            weekly = _normalize_box_spread_index_symbols(payload["weekly_only_symbols"]) if payload.get("weekly_only_symbols") else ()
+            return tuple(symbol for symbol in weekly if symbol in {"NIFTY", "SENSEX"})
+    except Exception as exc:
+        app_logger.exception("Box Spread expiry selection read failed; refusing to broaden the live subscription universe")
+        raise RuntimeError("Box Spread expiry selection is unavailable; live subscriptions are paused until it can be read") from exc
+
+
+def _save_box_spread_index_selection(symbols, weekly_only_symbols=()):
+    normalized = _normalize_box_spread_index_symbols(symbols)
+    weekly = tuple(sorted({str(item or "").strip().upper() for item in weekly_only_symbols if str(item or "").strip()}))
+    unsupported_weekly = sorted(set(weekly) - {"NIFTY", "SENSEX"})
+    if unsupported_weekly:
+        raise ValueError(f"weekly-only mode is supported only for NIFTY and SENSEX: {', '.join(unsupported_weekly)}")
+    if set(weekly) - set(normalized):
+        raise ValueError("weekly-only indices must also be included in selected indices")
+    payload = {"symbols": list(normalized), "weekly_only_symbols": list(weekly)}
+    with SessionLocal() as db:
+        saved = db.get(BoxSpreadIndexSelection, 1)
+        if saved is None:
+            saved = BoxSpreadIndexSelection(id=1, symbols_json=json.dumps(payload))
+            db.add(saved)
+        else:
+            saved.symbols_json = json.dumps(payload)
+            saved.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    return normalized
+
+
+def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
+    """Build exact selected-index option targets without touching other consumers."""
+    selected = _normalize_box_spread_index_symbols(symbols)
+    weekly_only = set(weekly_only_symbols or ())
+    if weekly_only - {"NIFTY", "SENSEX"} or weekly_only - set(selected):
+        raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
+    today = datetime.now(IST).date()
+    targets = []
+    expiry_types = {}
+    for symbol in selected:
+        segment = "BFO" if symbol in BSE_BOX_INDEX_SYMBOLS else "NFO"
+        found = {}
+        for contract in getattr(master, "instruments", ()) or ():
+            if str(contract.get("exch_seg", "")).strip().upper() != segment:
+                continue
+            if str(contract.get("instrumenttype", "")).strip().upper() != "OPTIDX":
+                continue
+            if str(contract.get("name", "")).strip().upper() != symbol:
+                continue
+            raw = str(contract.get("expiry", "")).strip()
+            parsed = None
+            for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+                try:
+                    parsed = datetime.strptime(raw.upper(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if parsed is not None and parsed >= today:
+                found.setdefault(parsed, raw)
+        dates = sorted(found)
+        classifications = classify_index_expiry_dates(symbol, dates)
+        for day, raw in found.items():
+            expiry_types[(symbol, raw.upper())] = classifications.get(day, "UNKNOWN")
+        expiries = [(day, found[day], classifications.get(day, "UNKNOWN")) for day in dates]
+        weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
+        monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
+        selected_expiries = []
+        if symbol in weekly_only:
+            # Explicit weekly-only means monthly contracts must never be subscribed.
+            if weekly:
+                selected_expiries.append(weekly)
+        else:
+            if weekly:
+                selected_expiries.append(weekly)
+            if monthly and (not weekly or monthly[0] != weekly[0]):
+                selected_expiries.append(monthly)
+            if not selected_expiries and expiries:
+                selected_expiries.append(expiries[0])
+        if selected_expiries:
+            targets.extend(
+                BoxSpreadLiveTarget(symbol, "INDEX", expiry=item[1], weekly_only=symbol in weekly_only)
+                for item in selected_expiries
+            )
+        else:
+            # Preserve spot-only monitoring without allowing a weekly-only index
+            # to fall back to a monthly option chain in the runner.
+            targets.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None, weekly_only=symbol in weekly_only))
+    return tuple(targets), expiry_types
+
+
 configure_live_synthetic(lambda: live_synthetic_latest_results)
 configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
 configure_live_synthetic_pairs(lambda: None if live_synthetic_runner is None else live_synthetic_runner.pair_monitor_snapshot())
 configure_live_box_spread(lambda: live_box_spread_latest_results)
+def _get_box_spread_active_index_symbols():
+    """Expose the publisher's active index universe during make-before-break handoff.
+
+    The persisted selection may already point at a staged candidate while the
+    previous runner is still publishing. Spot snapshots must follow the active
+    runner until the supervisor transfers ownership.
+    """
+    runner = live_box_spread_runner
+    if runner is None:
+        return _get_box_spread_index_selection()
+    return tuple(sorted({
+        str(target.underlying).strip().upper()
+        for target in runner.targets
+        if str(getattr(target, "underlying", "") or "").strip()
+    }))
+
+
+configure_live_box_index_selection(_get_box_spread_active_index_symbols)
 configure_live_box_spread_monitor(lambda: None if live_box_spread_runner is None or live_box_spread_runner.scanner is None else live_box_spread_runner.scanner.monitor_snapshot())
 configure_live_box_spread_diagnostics(
     lambda: None if live_box_spread_runner is None else live_box_spread_runner.snapshot().get("scanner_diagnostics")
@@ -411,6 +574,12 @@ def _signal_live_runner_shutdown() -> None:
     unwind and perform its normal cleanup instead of reaching systemd's
     30-second stop deadline.
     """
+    if live_box_spread_supervisor is not None:
+        threading.Thread(
+            target=live_box_spread_supervisor.stop,
+            name="box-spread-supervisor-shutdown",
+            daemon=True,
+        ).start()
     for runner in (
         live_cash_future_runner,
         live_calendar_spread_runner,
@@ -807,14 +976,42 @@ def _update_live_synthetic_results(results: tuple) -> None:
         live_synthetic_latest_results = tuple(item[2] for item in latest.values())
 
 
+def _start_box_spread_runner_worker(runner):
+    """Start the initial Box Spread worker and capture fatal thread errors."""
+    errors = []
+
+    def target():
+        try:
+            runner.run_forever()
+        except BaseException as exc:
+            runtime_diagnostics.record(
+                component="Scanner Runner",
+                severity="CRITICAL" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "ERROR",
+                error_type=type(exc).__name__,
+                message=str(exc) or repr(exc),
+                context={"worker": "live-box-spread-runner"},
+            )
+            errors.append(exc)
+            runner.stop()
+
+    worker = threading.Thread(target=target, name="live-box-spread-runner", daemon=True)
+    try:
+        setattr(runner, "_runner_worker", worker)
+    except Exception:
+        pass
+    worker.start()
+    return worker, errors
+
+
 async def _live_box_spread_loop() -> None:
-    """Supervise the Box Spread runner with bounded retry backoff."""
-    global live_box_spread_runner, live_box_spread_latest_results
+    """Supervise Box Spread with staged make-before-break runner handoffs."""
+    global live_box_spread_runner, live_box_spread_supervisor, live_box_spread_latest_results
     retry_delay = 5.0
     max_retry_delay = 60.0
     while True:
         master = InstrumentMaster()
         runner = None
+        supervisor = None
         try:
             # Box Spread uses its own recent instrument-master cache on download failure.
             # The shared InstrumentMaster behavior for other scanners remains unchanged.
@@ -839,75 +1036,17 @@ async def _live_box_spread_loop() -> None:
                 name = str(item.get("name", "")).strip().upper()
                 if not name:
                     continue
-                # Build the scanner universe from option contracts, not futures.
-                # Futures are not live-subscribed for Box Spread; option-only rows
-                # must remain eligible even when a future row is missing or renamed.
                 # Live Box Spread is intentionally index-only; stock contracts are not subscribed.
                 if typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS and name not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS:
                     expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
                     if segment == expected_segment:
                         index_symbols.add(name)
-            # Select option expiries directly from the option master. For indices,
-            # subscribe the nearest available weekly AND monthly expiry (when distinct);
-            # stocks remain on their nearest listed expiry. No futures rows/ticks are used.
-            targets_list = []
-            expiry_types = {}
 
-            def listed_option_expiries(symbol, instrument_class):
-                expected_segment = "BFO" if instrument_class == "INDEX" and symbol in BSE_BOX_INDEX_SYMBOLS else "NFO"
-                expected_type = "OPTSTK" if instrument_class == "STOCK" else "OPTIDX"
-                found = {}
-                for contract in master.instruments:
-                    if str(contract.get("exch_seg", "")).strip().upper() != expected_segment:
-                        continue
-                    if str(contract.get("instrumenttype", "")).strip().upper() != expected_type:
-                        continue
-                    if str(contract.get("name", "")).strip().upper() != symbol:
-                        continue
-                    raw_expiry = str(contract.get("expiry", "")).strip()
-                    parsed = None
-                    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
-                        try:
-                            parsed = datetime.strptime(raw_expiry.upper(), fmt).date()
-                            break
-                        except ValueError:
-                            continue
-                    if parsed is not None and parsed >= today:
-                        found.setdefault(parsed, raw_expiry)
-                dates = sorted(found)
-                classifications = classify_index_expiry_dates(symbol, dates)
-                for day, raw_expiry in found.items():
-                    expiry_types[(symbol, raw_expiry.upper())] = classifications[day]
-                return [(day, found[day], classifications[day]) for day in dates]
-
-            # Index-only mode: stock option targets are intentionally disabled.
-            # Keep option-master expiry discovery for supported indices only.
-            for symbol in sorted(index_symbols):
-                expiries = listed_option_expiries(symbol, "INDEX")
-                if not expiries:
-                    continue
-                nearest_weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
-                nearest_monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
-                selected = []
-                if nearest_weekly:
-                    selected.append(nearest_weekly)
-                if nearest_monthly and (not nearest_weekly or nearest_monthly[0] != nearest_weekly[0]):
-                    selected.append(nearest_monthly)
-                if not selected:
-                    selected.append(expiries[0])
-                for _day, expiry, _kind in selected:
-                    targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=expiry))
-
-            # Spot quotes are useful independently of whether the option master
-            # currently exposes an eligible expiry/strike chain. Ensure every
-            # supported NSE/BSE index remains subscribed for spot-only updates.
-            targeted_symbols = {target.underlying.strip().upper() for target in targets_list}
-            for symbol in sorted(OPTION_STRATEGY_INDEX_SYMBOLS - targeted_symbols - BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS):
-                targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
-
+            selected_symbols = _get_box_spread_index_selection()
+            weekly_only_symbols = _get_box_spread_weekly_only_symbols()
+            targets, expiry_types = _box_spread_targets_from_master(master, selected_symbols, weekly_only_symbols)
             set_live_box_expiry_types(expiry_types)
             set_live_box_websocket_expiry_types(expiry_types)
-            targets = tuple(targets_list)
             if not targets:
                 app_logger.warning(
                     "Box Spread live runner found no current F&O targets; retrying in {:.1f}s",
@@ -916,6 +1055,7 @@ async def _live_box_spread_loop() -> None:
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(max_retry_delay, retry_delay * 2.0)
                 continue
+
             runner = LiveBoxSpreadRunner(
                 settings.BACKTEST_DATA_DB,
                 targets,
@@ -925,11 +1065,72 @@ async def _live_box_spread_loop() -> None:
                 on_results=lambda results: _update_live_box_spread_results(results),
             )
             live_box_spread_runner = runner
-            await _run_live_runner_in_daemon_thread(
-                runner, name="live-box-spread-runner"
+            worker, worker_errors = _start_box_spread_runner_worker(runner)
+
+            def make_staged_runner(new_targets):
+                return LiveBoxSpreadRunner(
+                    settings.BACKTEST_DATA_DB,
+                    new_targets,
+                    allowed_stock_symbols=runner.allowed_stock_symbols,
+                    future_master=runner.master,
+                    auth=AngelOneAuth(),
+                    on_results=lambda results: _update_live_box_spread_results(results),
+                    consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
+                    publish_enabled=False,
+                    publication_gate=runner.publication_gate,
+                )
+
+            def set_active_runner(active_runner):
+                global live_box_spread_runner, live_box_spread_latest_results
+                live_box_spread_runner = active_runner
+                # Change global weekly/monthly filters only after the staged
+                # runner owns publication; during warm-up the old session's
+                # expiry routing must remain untouched.
+                active_symbols = {
+                    str(target.underlying).strip().upper()
+                    for target in active_runner.targets
+                }
+                active_weekly_only = _get_box_spread_weekly_only_symbols()
+                _active_targets, active_expiry_types = _box_spread_targets_from_master(
+                    active_runner.master, active_symbols, active_weekly_only
+                )
+                set_live_box_expiry_types(active_expiry_types)
+                set_live_box_websocket_expiry_types(active_expiry_types)
+                # Keep the old session's visible results intact during staging.
+                # Apply the selected-index filter only after publisher ownership
+                # has transferred to this active runner.
+                live_box_spread_latest_results = tuple(
+                    row for row in live_box_spread_latest_results
+                    if str(getattr(getattr(row, "low", None), "underlying", "") or "").strip().upper() in active_symbols
+                )
+
+            supervisor = BoxSpreadRunnerSupervisor(
+                active_runner=runner,
+                active_thread=worker,
+                runner_factory=make_staged_runner,
+                on_active=set_active_runner,
+                readiness_timeout_seconds=90.0,
+                readiness_poll_seconds=0.25,
             )
+            live_box_spread_supervisor = supervisor
+
+            # Follow the currently active worker. A successful staged handoff
+            # swaps this pointer before stopping the old worker, so the loop
+            # naturally continues monitoring the replacement thread.
+            while True:
+                active_runner = supervisor.active_runner
+                active_worker = supervisor.active_thread
+                if active_runner.stop_event.is_set() or not active_worker.is_alive():
+                    break
+                await asyncio.sleep(0.25)
+
+            runner = supervisor.active_runner
             if runner.stop_event.is_set():
-                return
+                if supervisor.is_shutting_down:
+                    return
+                raise RuntimeError("Active Box Spread runner stopped unexpectedly after handoff")
+            if worker_errors:
+                raise RuntimeError(f"Box Spread worker failed: {worker_errors[0]}")
             app_logger.warning(
                 "Box Spread live runner exited unexpectedly; retrying in {:.1f}s",
                 retry_delay,
@@ -942,14 +1143,19 @@ async def _live_box_spread_loop() -> None:
                 retry_delay, exc,
             )
         finally:
-            if runner is not None:
-                _stop_live_runner_nonblocking(
-                    runner, name="live-box-spread-final-stop"
-                )
-            if live_box_spread_runner is runner:
+            if supervisor is not None:
+                await asyncio.to_thread(supervisor.stop)
+            elif runner is not None:
+                await asyncio.to_thread(runner.stop)
+            if live_box_spread_supervisor is supervisor:
+                live_box_spread_supervisor = None
+            if live_box_spread_runner is runner or (
+                supervisor is not None and live_box_spread_runner is supervisor.active_runner
+            ):
                 live_box_spread_runner = None
         await asyncio.sleep(retry_delay)
         retry_delay = min(max_retry_delay, retry_delay * 2.0)
+
 
 def _box_spread_result_key(result) -> tuple:
     low = getattr(result, "low", None)
@@ -994,8 +1200,13 @@ def _update_live_box_spread_results(results: tuple) -> None:
     global live_box_spread_latest_results
     # Each scanner callback is scoped to a single quote bucket. Merge fresh
     # rows across symbols instead of letting one symbol erase every other one.
+    selected_symbols = set(_get_box_spread_active_index_symbols())
+    selected_results = tuple(
+        result for result in (results or ())
+        if str(getattr(getattr(result, "low", None), "underlying", "") or "").strip().upper() in selected_symbols
+    )
     combined = _fresh_live_box_spread_results(
-        tuple(live_box_spread_latest_results) + tuple(results or ())
+        tuple(live_box_spread_latest_results) + selected_results
     )
     latest = {}
     for result in combined:
@@ -1011,7 +1222,8 @@ def _update_live_box_spread_results(results: tuple) -> None:
         ):
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
-    publish_live_box_spread_opportunities(results)
+    if selected_results:
+        publish_live_box_spread_opportunities(selected_results)
 
 
 async def _live_calendar_spread_loop() -> None:
@@ -1176,6 +1388,169 @@ def root():
 
 class SyntheticUniverseSelection(BaseModel):
     selection: str
+
+
+class BoxSpreadIndexSelectionRequest(BaseModel):
+    symbols: list[str]
+    weekly_only_symbols: list[str] | None = None
+
+
+@app.get("/api/v1/scanner/box-spread/index-selection")
+def get_box_spread_index_selection():
+    selected = _get_box_spread_index_selection()
+    weekly_only = _get_box_spread_weekly_only_symbols()
+    runner = live_box_spread_runner
+    runtime = runner.snapshot() if runner is not None else {"running": False, "readiness": {"state": "runner_stopped"}}
+    runtime["supervisor"] = live_box_spread_supervisor.snapshot() if live_box_spread_supervisor is not None else {"handoff": {"state": "not_running"}}
+    return {
+        "status": "success",
+        "symbols": list(selected),
+        "weekly_only_symbols": list(weekly_only),
+        "available_indices": sorted(OPTION_STRATEGY_INDEX_SYMBOLS),
+        "presets": {key: list(value) for key, value in BOX_SPREAD_INDEX_PRESETS.items()},
+        "runtime": runtime,
+    }
+
+
+def _box_spread_open_paper_symbols():
+    """Return indices with any non-flat paper position across the single-owner ledger.
+
+    A deselected index must keep receiving quotes until every paper leg is flat.
+    Read failures are allowed to propagate so the caller can fail closed.
+    """
+    open_symbols = set()
+    with SessionLocal() as db:
+        trades = db.query(BoxSpreadPaperTradeRecord).filter(
+            BoxSpreadPaperTradeRecord.status.notin_(("CLOSED", "CANCELLED"))
+        ).all()
+        for trade in trades:
+            entries = db.query(BoxSpreadPaperLedgerEntry).filter(
+                BoxSpreadPaperLedgerEntry.account_key == trade.account_key,
+                BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+            ).all()
+            signed_by_role = {}
+            for entry in entries:
+                role = str(entry.role or "").strip().upper()
+                if role not in {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}:
+                    continue
+                signed_by_role[role] = signed_by_role.get(role, 0) + (
+                    int(entry.quantity) if str(entry.action).upper() == "BUY" else -int(entry.quantity)
+                )
+            if any(quantity != 0 for quantity in signed_by_role.values()):
+                open_symbols.add(str(trade.underlying or "").strip().upper())
+    return open_symbols
+
+
+def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionRequest):
+    global live_box_spread_latest_results
+    try:
+        selected = _normalize_box_spread_index_symbols(payload.symbols)
+        weekly_only = tuple(sorted({str(item or "").strip().upper() for item in (payload.weekly_only_symbols or []) if str(item or "").strip()}))
+        if set(weekly_only) - {"NIFTY", "SENSEX"} or set(weekly_only) - set(selected):
+            raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"message": str(exc)}) from exc
+
+    current_selection = set(_get_box_spread_index_selection())
+    current_weekly_only = set(_get_box_spread_weekly_only_symbols())
+    removed_symbols = current_selection - set(selected)
+    if removed_symbols:
+        try:
+            open_symbols = _box_spread_open_paper_symbols()
+        except Exception as exc:
+            app_logger.exception("Unable to verify open Box Spread paper positions before index deselection")
+            raise HTTPException(
+                status_code=503,
+                detail={"message": "Could not verify open paper positions. Index selection was not changed; retry after the paper ledger is available."},
+            ) from exc
+        blocked_symbols = sorted(removed_symbols & open_symbols)
+        if blocked_symbols:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Cannot deselect an index while its Box Spread paper position is still open. Close or settle every leg first.",
+                    "blocked_indices": blocked_symbols,
+                },
+            )
+
+    runner = live_box_spread_runner
+    supervisor = live_box_spread_supervisor
+    if supervisor is not None and supervisor.snapshot().get("handoff_in_progress"):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "A Box Spread feed handoff is already staging. Wait for it to finish before changing the index selection again."},
+        )
+    prepared_targets = None
+    prepared_expiry_types = None
+    previous_expiry_types = None
+    if runner is not None and not runner.stop_event.is_set():
+        if supervisor is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": "Safe Box Spread handoff supervisor is not ready. Selection was not changed; retry shortly.",
+                },
+            )
+        try:
+            # Validate both selections against the same loaded instrument master.
+            prepared_targets, prepared_expiry_types = _box_spread_targets_from_master(runner.master, selected, weekly_only)
+            _previous_targets, previous_expiry_types = _box_spread_targets_from_master(runner.master, current_selection, current_weekly_only)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=409, detail={"message": f"Index selection validation failed; previous feed remains active: {exc}"}) from exc
+
+    saved = _save_box_spread_index_selection(selected, weekly_only)
+    switch = {"status": "SAVED", "restart_requested": False, "symbols": list(saved)}
+    if runner is not None and prepared_targets is not None:
+        if supervisor is not None:
+            try:
+                def rollback_failed_handoff():
+                    _save_box_spread_index_selection(current_selection, current_weekly_only)
+                    if previous_expiry_types is not None:
+                        set_live_box_expiry_types(previous_expiry_types)
+                        set_live_box_websocket_expiry_types(previous_expiry_types)
+
+                switch = supervisor.request_handoff(
+                    prepared_targets,
+                    on_failed=rollback_failed_handoff,
+                )
+            except Exception as exc:
+                app_logger.exception("Unable to start staged Box Spread runner; restoring previous selection")
+                try:
+                    _save_box_spread_index_selection(current_selection, current_weekly_only)
+                except Exception:
+                    app_logger.exception("CRITICAL: failed to restore Box Spread selection after staging startup failure")
+                raise HTTPException(
+                    status_code=503,
+                    detail={"message": "New Box Spread feed could not be staged. Previous live runner remains active; retry after checking feed capacity."},
+                ) from exc
+            if switch.get("state") != "STAGING":
+                try:
+                    _save_box_spread_index_selection(current_selection, current_weekly_only)
+                except Exception:
+                    app_logger.exception("CRITICAL: failed to restore Box Spread selection after rejected handoff")
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "Box Spread handoff was not accepted; previous selection has been restored. Retry after the current handoff finishes."},
+                )
+            switch["restart_requested"] = True
+        # Expiry routing is updated by on_active only after the candidate
+        # is fully ready and publisher ownership has transferred.
+
+    return {
+        "status": "success",
+        "symbols": list(saved),
+        "weekly_only_symbols": list(weekly_only),
+        "switch": switch,
+        "message": "Selection saved. Only selected Box Spread indices will be subscribed after the safe session handoff.",
+    }
+
+
+@app.post("/api/v1/scanner/box-spread/index-selection")
+def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
+    # Serialize validation, persistence and staged-runner reservation so two
+    # concurrent UI saves cannot persist a selection that was never staged.
+    with BOX_SPREAD_INDEX_SELECTION_LOCK:
+        return _set_box_spread_index_selection_locked(payload)
 
 
 @app.get("/api/v1/scanner/synthetic-cash-carry/universe")

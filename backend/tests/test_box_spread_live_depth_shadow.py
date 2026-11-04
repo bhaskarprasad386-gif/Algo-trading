@@ -214,4 +214,246 @@ def test_four_leg_edge_accepts_one_level_on_weakest_leg_for_two_lots():
     assert min(result["depth_capacity_by_leg"].values()) == 130
     assert len(result["legs"]) == 4
     assert all(leg["selected_quantity"] == 130 for leg in result["legs"])
+    assert all(len(leg["depth_levels"]) in {1, 4, 5} for leg in result["legs"])
+    weakest = next(leg for leg in result["legs"] if leg["role"] == "LOW_CE")
+    assert weakest["depth_levels"] == [
+        {"price": 110.0, "quantity": 130.0},
+    ]
+    assert weakest["bid_depth_levels"] == [
+        {"price": 100.0, "quantity": 130.0},
+    ]
+    assert weakest["ask_depth_levels"] == [
+        {"price": 110.0, "quantity": 130.0},
+    ]
     assert result["depth_edge_per_unit"] > 0
+
+
+def test_snapshot_reports_per_underlying_expiry_fresh_depth_readiness():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [
+        ("201", 25000, "CE"),
+        ("202", 26000, "CE"),
+        ("203", 26000, "PE"),
+        ("204", 25000, "PE"),
+    ]
+    descriptors = [
+        replace(
+            _descriptor(token),
+            key=InstrumentKey("NFO", "NFO", token),
+            strike=strike,
+            option_type=option_type,
+        )
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for token, _, _ in specs:
+        callback(_record(
+            timestamp_ns=now,
+            token=token,
+            payload={
+                "best_5_buy_data": [{"price": str((95 + i) * 100), "quantity": "30"} for i in range(5)],
+                "best_5_sell_data": [{"price": str((101 + i) * 100), "quantity": "30"} for i in range(5)],
+            },
+        ))
+
+    snapshot = shadow.snapshot(now_ns=now)
+    assert snapshot["consumer"] == "box-live-depth-shadow"
+    assert snapshot["readiness"] == [{
+        "underlying": "NIFTY",
+        "expiry": 20261106,
+        "subscribed_contracts": 4,
+        "fresh_contracts": 4,
+        "fresh_ce": 2,
+        "fresh_pe": 2,
+        "executable_depth_contracts": 4,
+        "executable_depth_ce": 2,
+        "executable_depth_pe": 2,
+        "full_depth_ce": 2,
+        "full_depth_pe": 2,
+        "state": "READY",
+    }]
+
+
+def test_snapshot_keeps_depth_readiness_waiting_until_both_option_sides_are_fresh():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [
+        ("301", 25000, "CE"),
+        ("302", 26000, "CE"),
+        ("303", 26000, "PE"),
+        ("304", 25000, "PE"),
+    ]
+    descriptors = [
+        replace(
+            _descriptor(token),
+            key=InstrumentKey("NFO", "NFO", token),
+            strike=strike,
+            option_type=option_type,
+        )
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for token, _, option_type in specs[:2]:
+        callback(_record(
+            timestamp_ns=now,
+            token=token,
+            payload={
+                "best_5_buy_data": _five_levels(95),
+                "best_5_sell_data": _five_levels(101),
+            },
+        ))
+
+    readiness = shadow.snapshot(now_ns=now)["readiness"][0]
+    assert readiness["fresh_ce"] == 2
+    assert readiness["fresh_pe"] == 0
+    assert readiness["state"] == "WAITING_FOR_DEPTH"
+
+
+def test_depth_shadow_supports_distinct_consumer_namespace_without_touching_default():
+    active_feed = FakeFeed()
+    staged_feed = FakeFeed()
+    active = BoxLiveDepthShadowFeed(enabled=True, feed=active_feed)
+    staged = BoxLiveDepthShadowFeed(
+        enabled=True,
+        feed=staged_feed,
+        consumer="box-staged-42-live-depth-shadow",
+    )
+    active.start([_descriptor("701")])
+    staged.start([_descriptor("702")])
+
+    assert active.snapshot()["consumer"] == "box-live-depth-shadow"
+    assert staged.snapshot()["consumer"] == "box-staged-42-live-depth-shadow"
+
+    staged.stop()
+    assert staged_feed.stopped == 1
+    assert active_feed.stopped == 0
+    assert active.snapshot()["running"] is True
+
+
+def test_partial_depth_below_two_lot_capacity_does_not_mark_staged_feed_ready():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [("401", 25000, "CE"), ("402", 26000, "CE"), ("403", 26000, "PE"), ("404", 25000, "PE")]
+    descriptors = [
+        replace(_descriptor(token), key=InstrumentKey("NFO", "NFO", token), strike=strike, option_type=option_type)
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for index, (token, _, _) in enumerate(specs):
+        levels = 4 if index == 0 else 5
+        callback(_record(timestamp_ns=now, token=token, payload={
+            "best_5_buy_data": _five_levels(95)[:levels],
+            "best_5_sell_data": _five_levels(101)[:levels],
+        }))
+    readiness = shadow.snapshot(now_ns=now)["readiness"][0]
+    assert readiness["fresh_ce"] == 2
+    assert readiness["fresh_pe"] == 2
+    assert readiness["executable_depth_contracts"] == 0
+    assert readiness["executable_depth_ce"] == 0
+    assert readiness["executable_depth_pe"] == 0
+    assert readiness["full_depth_ce"] == 1
+    assert readiness["full_depth_pe"] == 2
+    assert readiness["state"] == "WAITING_FOR_DEPTH"
+
+
+
+def test_one_level_depth_is_ready_when_every_option_has_two_lots_on_both_sides():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [("501", 25000, "CE"), ("502", 26000, "CE"), ("503", 26000, "PE"), ("504", 25000, "PE")]
+    descriptors = [
+        replace(_descriptor(token), key=InstrumentKey("NFO", "NFO", token), strike=strike, option_type=option_type)
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for index, (token, _, _) in enumerate(specs):
+        count = 1 if index == 0 else (4 if index == 1 else 5)
+        quantity = "130" if index == 0 else "50"
+        bids = [{"price": str((100 - level) * 100), "quantity": quantity} for level in range(count)]
+        asks = [{"price": str((110 + level) * 100), "quantity": quantity} for level in range(count)]
+        callback(_record(timestamp_ns=now, token=token, payload={
+            "best_5_buy_data": bids,
+            "best_5_sell_data": asks,
+        }))
+    readiness = shadow.snapshot(now_ns=now)["readiness"][0]
+    assert readiness["fresh_ce"] == 2
+    assert readiness["fresh_pe"] == 2
+    assert readiness["executable_depth_contracts"] == 4
+    assert readiness["executable_depth_ce"] == 2
+    assert readiness["executable_depth_pe"] == 2
+    assert readiness["full_depth_ce"] == 0
+    assert readiness["full_depth_pe"] == 2
+    assert readiness["state"] == "READY"
+
+
+
+def test_four_leg_edge_rejects_one_lot_even_when_all_four_legs_have_depth():
+    """A complete-looking one-lot book must not pass the two-lot minimum."""
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [
+        ("601", 25000, "CE"),
+        ("602", 26000, "CE"),
+        ("603", 26000, "PE"),
+        ("604", 25000, "PE"),
+    ]
+    descriptors = [
+        replace(
+            _descriptor(token),
+            key=InstrumentKey("NFO", "NFO", token),
+            strike=strike,
+            option_type=option_type,
+        )
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for token, _, _ in specs:
+        callback(_record(
+            timestamp_ns=now,
+            token=token,
+            payload={
+                # Five levels x 13 contracts = exactly one 65-contract lot.
+                "best_5_buy_data": [{"price": str((100 - level) * 100), "quantity": "13"} for level in range(5)],
+                "best_5_sell_data": [{"price": str((110 + level) * 100), "quantity": "13"} for level in range(5)],
+            },
+        ))
+
+    low = SimpleNamespace(
+        underlying="NIFTY", expiry=20261106, strike=25000, lot_size=65,
+        call_timestamp_ns=now, put_timestamp_ns=now, timestamp_ns=now,
+    )
+    high = SimpleNamespace(
+        underlying="NIFTY", expiry=20261106, strike=26000, lot_size=65,
+        call_timestamp_ns=now, put_timestamp_ns=now, timestamp_ns=now,
+    )
+    opportunity = SimpleNamespace(low=low, high=high, direction="LONG", executable_edge=5.0)
+
+    result = shadow.compare_opportunity(opportunity, now_ns=now)
+    assert result["status"] == "INCOMPLETE"
+    assert result["reason"] == "INSUFFICIENT_TWO_LOT_FOUR_LEG_DEPTH"

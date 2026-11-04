@@ -66,6 +66,7 @@ class BoxLiveDepthShadowFeed:
         max_arrival_age_seconds: float = 5.0,
         max_provider_age_seconds: float = 5.0,
         feed: Any | None = None,
+        consumer: str = _CONSUMER,
     ) -> None:
         if isinstance(max_records, bool) or int(max_records) < 1:
             raise ValueError("max_records must be a positive integer")
@@ -73,7 +74,10 @@ class BoxLiveDepthShadowFeed:
         self.max_records = int(max_records)
         self.max_arrival_age_seconds = float(max_arrival_age_seconds)
         self.max_provider_age_seconds = float(max_provider_age_seconds)
-        self._feed = feed or CommonStrategyMarketFeed(_CONSUMER, mode=mode)
+        self.consumer = str(consumer or _CONSUMER).strip()
+        if not self.consumer:
+            raise ValueError("depth feed consumer must be non-empty")
+        self._feed = feed or CommonStrategyMarketFeed(self.consumer, mode=mode)
         self._lock = RLock()
         self._records: OrderedDict[Any, dict[str, Any]] = OrderedDict()
         self._metadata: dict[Any, dict[str, Any]] = {}
@@ -232,6 +236,8 @@ class BoxLiveDepthShadowFeed:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{role}"}
             selected.append({
                 "role": role, "side": side, "levels": levels,
+                "bid_depth_levels": list(item["bids"]),
+                "ask_depth_levels": list(item["asks"]),
                 "available_quantity": available_quantity,
                 "timestamp_ns": item["timestamp_ns"],
                 "depth_status": item["depth_status"],
@@ -242,14 +248,31 @@ class BoxLiveDepthShadowFeed:
         max_executable_lots = min(
             item["available_quantity"] // lot_size for item in selected
         )
-        if max_executable_lots < 1:
-            return {"status": "INCOMPLETE", "reason": "INSUFFICIENT_FOUR_LEG_DEPTH"}
+        # Box Spread shadow eligibility requires at least two common lots.
+        # A one-lot quote is not sufficient to mark the four-leg basket executable.
+        if max_executable_lots < 2:
+            return {"status": "INCOMPLETE", "reason": "INSUFFICIENT_TWO_LOT_FOUR_LEG_DEPTH"}
         executable_quantity = max_executable_lots * lot_size
         for item in selected:
             # Preserve the full original per-leg capacity before consuming levels
             # for the common executable quantity's VWAP allocation.
             original_capacity = item["available_quantity"]
             levels = item.pop("levels")
+            # Persist the exact broker ladder used for this opportunity. The
+            # pipeline stores this immutable copy with the snapshot timestamp;
+            # historical UI must never reconstruct it from current quotes.
+            item["depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in levels
+            ]
+            item["bid_depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in item.pop("bid_depth_levels")
+            ]
+            item["ask_depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in item.pop("ask_depth_levels")
+            ]
             item["vwap"] = self._allocate(levels, executable_quantity)
             if item["vwap"] is None:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{item['role']}"}
@@ -399,12 +422,97 @@ class BoxLiveDepthShadowFeed:
                     "bids": list(item["bids"]),
                     "asks": list(item["asks"]),
                 })
+            records_by_key = {item["key"]: item for item in self._records.values()}
+            readiness_by_group: dict[tuple[str, int | None], dict[str, Any]] = {}
+            for key, meta in self._metadata.items():
+                underlying = str(meta.get("underlying") or "").strip().upper()
+                expiry = meta.get("expiry")
+                if not underlying:
+                    continue
+                group = (underlying, expiry)
+                summary = readiness_by_group.setdefault(group, {
+                    "underlying": underlying,
+                    "expiry": expiry,
+                    "subscribed_contracts": 0,
+                    "fresh_contracts": 0,
+                    "fresh_ce": 0,
+                    "fresh_pe": 0,
+                    "executable_depth_contracts": 0,
+                    "executable_depth_ce": 0,
+                    "executable_depth_pe": 0,
+                })
+                summary["subscribed_contracts"] += 1
+                item = records_by_key.get(key)
+                if item is None:
+                    continue
+                provider_age = (wall_now - item["timestamp_ns"]) / 1e9
+                arrival_age = arrival_now - item["arrival_monotonic"]
+                fresh = (
+                    -1.0 <= provider_age <= self.max_provider_age_seconds
+                    and 0.0 <= arrival_age <= self.max_arrival_age_seconds
+                )
+                if not fresh:
+                    continue
+                summary["fresh_contracts"] += 1
+                option_type = str(meta.get("option_type") or "").strip().upper()
+                if option_type == "CE":
+                    summary["fresh_ce"] += 1
+                elif option_type == "PE":
+                    summary["fresh_pe"] += 1
+                full_depth = (
+                    item["depth_status"] == "DEPTH_FULL"
+                    and len(item["bids"]) >= 5
+                    and len(item["asks"]) >= 5
+                )
+                if full_depth:
+                    if option_type == "CE":
+                        summary["full_depth_ce"] = summary.get("full_depth_ce", 0) + 1
+                    elif option_type == "PE":
+                        summary["full_depth_pe"] = summary.get("full_depth_pe", 0) + 1
+
+                # Five levels are a maximum depth window, not a minimum. A
+                # partial book qualifies for staging when both sides carry at
+                # least two lots of actual quantity, matching the execution
+                # sizing floor used by the four-leg depth comparison.
+                try:
+                    minimum_two_lots = int(meta.get("lot_size")) * 2
+                except (TypeError, ValueError, OverflowError):
+                    minimum_two_lots = 0
+                usable_depth = (
+                    item["depth_status"] in {"DEPTH_FULL", "DEPTH_PARTIAL"}
+                    and minimum_two_lots > 0
+                    and bool(item["bids"])
+                    and bool(item["asks"])
+                    and sum(quantity for _price, quantity in item["bids"]) >= minimum_two_lots
+                    and sum(quantity for _price, quantity in item["asks"]) >= minimum_two_lots
+                )
+                if usable_depth:
+                    summary["executable_depth_contracts"] += 1
+                    if option_type == "CE":
+                        summary["executable_depth_ce"] += 1
+                    elif option_type == "PE":
+                        summary["executable_depth_pe"] += 1
+            readiness = []
+            for summary in readiness_by_group.values():
+                summary.setdefault("full_depth_ce", 0)
+                summary.setdefault("full_depth_pe", 0)
+                summary["state"] = (
+                    "READY"
+                    if summary["fresh_ce"] >= 2
+                    and summary["fresh_pe"] >= 2
+                    and summary["executable_depth_ce"] >= 2
+                    and summary["executable_depth_pe"] >= 2
+                    and summary["executable_depth_contracts"] >= 4
+                    else "WAITING_FOR_DEPTH"
+                )
+                readiness.append(summary)
             return {
                 "enabled": self.enabled,
                 "running": self._started,
-                "consumer": _CONSUMER,
+                "consumer": str(getattr(self._feed, "consumer", self.consumer)),
                 "record_count": len(rows),
                 "counts": dict(self._counts),
+                "readiness": sorted(readiness, key=lambda item: (item["underlying"], item["expiry"] or 0)),
                 "records": rows,
             }
 

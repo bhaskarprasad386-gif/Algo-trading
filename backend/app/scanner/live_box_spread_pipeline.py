@@ -307,21 +307,56 @@ def _snapshot_key(row):
 
 
 class LiveBoxSpreadPipeline:
-    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None):
+    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None, publish_enabled=True, publisher_gate=None, publisher_owner=None):
         self.scanner = scanner
         self.session_factory = session_factory
         self.alerts = alerts or BoxSpreadAlertService()
         self.on_results = on_results
         self.spot_provider = spot_provider
         self.result_transform = result_transform
+        self.publisher_gate = publisher_gate
+        self.publisher_owner = publisher_owner
+        self._publish_lock = threading.RLock()
+        self._publish_enabled = bool(publish_enabled)
+
+    def set_publish_enabled(self, enabled):
+        """Atomically gate all external side effects while a feed session is staged."""
+        with self._publish_lock:
+            self._publish_enabled = bool(enabled)
 
     def observe(self, payload):
+        # Serialize the complete observation/publish cycle with activation changes.
+        # Deactivation therefore waits for any in-flight publisher to finish.
+        with self._publish_lock:
+            return self._observe(payload)
+
+    def _observe(self, payload):
         results = self.scanner.observe(payload)
         if results and callable(self.result_transform):
             # Apply depth pricing/gating before any downstream consumer.
             results = tuple(self.result_transform(results))
         # Hard rule: unqualified opportunities never reach live UI, snapshot or alert paths.
         results = tuple(result for result in (results or ()) if _qualified_opportunity(result))
+        with self._publish_lock:
+            publish_enabled = self._publish_enabled
+        # A staged session may warm its scanner and depth cache, but must not
+        # publish, append to the shared durable spool, persist snapshots, or alert.
+        if not publish_enabled:
+            return results
+
+        if self.publisher_gate is None:
+            self._publish_results(results)
+        else:
+            # The shared gate holds its lock through every external side effect.
+            # A new owner therefore cannot activate until an in-flight old publish
+            # completes, and an old owner cannot publish after ownership transfers.
+            self.publisher_gate.publish(
+                self.publisher_owner,
+                lambda: self._publish_results(results),
+            )
+        return results
+
+    def _publish_results(self, results):
         if results and self.on_results:
             try:
                 self.on_results(results)
@@ -422,7 +457,6 @@ class LiveBoxSpreadPipeline:
             except Exception:
                 logger.exception("Failed to persist/send Box Spread alerts")
 
-        return results
 
 
 __all__ = ["LiveBoxSpreadPipeline"]
