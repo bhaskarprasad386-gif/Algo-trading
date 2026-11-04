@@ -176,6 +176,7 @@ class LiveBoxSpreadRunner:
 
         required_symbols = set()
         required_expiry_groups = set()
+        symbols_requiring_depth = set()
         for item in required_targets:
             if isinstance(item, (tuple, list)) and len(item) >= 2:
                 symbol = str(item[0] or "").strip().upper()
@@ -184,6 +185,7 @@ class LiveBoxSpreadRunner:
                     required_symbols.add(symbol)
                     if expiry:
                         required_expiry_groups.add((symbol, expiry))
+                        symbols_requiring_depth.add(symbol)
             else:
                 symbol = str(item).strip().upper()
                 if symbol:
@@ -253,7 +255,7 @@ class LiveBoxSpreadRunner:
 
         if required_expiry_groups:
             missing_expiry_groups = sorted(required_expiry_groups - ready_expiry_groups)
-            missing_depth = sorted({symbol for symbol, _expiry in missing_expiry_groups})
+            missing_depth = sorted(symbols_requiring_depth - ready_depth_symbols)
         else:
             missing_expiry_groups = []
             missing_depth = sorted(required_symbols - ready_depth_symbols)
@@ -261,7 +263,7 @@ class LiveBoxSpreadRunner:
         reasons = []
         if missing_underlyings:
             reasons.append("underlying_ticks_not_fresh:" + ",".join(missing_underlyings))
-        if not option_ready:
+        if required_expiry_groups and not option_ready:
             reasons.append("option_recorder_not_connected")
         if missing_option_groups:
             reasons.append("exact_option_contracts_not_fresh:" + ",".join(sorted(missing_option_groups)))
