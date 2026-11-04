@@ -1151,7 +1151,7 @@ def _update_live_box_spread_results(results: tuple) -> None:
     global live_box_spread_latest_results
     # Each scanner callback is scoped to a single quote bucket. Merge fresh
     # rows across symbols instead of letting one symbol erase every other one.
-    selected_symbols = set(_get_box_spread_index_selection())
+    selected_symbols = set(_get_box_spread_active_index_symbols())
     selected_results = tuple(
         result for result in (results or ())
         if str(getattr(getattr(result, "low", None), "underlying", "") or "").strip().upper() in selected_symbols
