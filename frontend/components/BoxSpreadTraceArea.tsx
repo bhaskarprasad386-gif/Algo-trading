@@ -43,7 +43,12 @@ type ExitResult = {
   gross_pnl_per_lot: number | null;
   max_complete_exit_lots_now: number;
   message: string;
-  legs: Array<{ leg: string; exit_side: string; exit_price: number | null; exit_qty: number | null; leg_gross_pnl: number | null }>;
+  legs: Array<{
+    leg: string; exit_side: string; exit_price: number | null;
+    exit_qty: number | null; leg_gross_pnl: number | null;
+    quote_age_seconds?: number | null;
+    depth_levels?: Array<{ price: number; quantity: number }>;
+  }>;
 };
 const legs = [["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const;
 const fmt = (value: unknown) => value == null || !Number.isFinite(Number(value)) ? "—" : Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -147,7 +152,7 @@ export default function BoxSpreadTraceArea() {
           <p className="mt-2 theme-muted">Edge Difference = Latest Edge − Entry Edge (e.g. ₹700 − ₹713 = −₹13). Gross Profit / Lot is verified four-leg gross P&L divided by traced lots. Exit Edge is close P&L per unit from fresh four-leg depth VWAP and is shown only when all four legs support the full traced quantity.</p>
           <p className="mt-1 theme-muted">Latest quote check: {time(results[trace.id].checked_at)}</p>
           <p className="mt-1 theme-muted">{results[trace.id].message}</p>
-          <div className="mt-2 grid grid-cols-2 gap-2">{results[trace.id].legs.map(leg => <p key={leg.leg} className="text-[10px] theme-muted">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+fmt(leg.exit_price)} · Qty {fmt(leg.exit_qty)}</p>)}</div>
+          <div className="mt-2 grid grid-cols-2 gap-2">{results[trace.id].legs.map(leg => <div key={leg.leg} className="rounded-md border theme-border theme-surface-2 p-2"><p className="text-[10px] font-bold theme-text">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+fmt(leg.exit_price)} · Qty {fmt(leg.exit_qty)}</p><p className="mt-1 text-[10px] theme-muted">Quote age {leg.quote_age_seconds == null ? "—" : fmt(leg.quote_age_seconds)+"s"} · Saved live levels</p>{leg.depth_levels?.map((level,index) => <p key={index} className="flex justify-between border-t theme-border pt-1 text-[10px] theme-muted"><span>₹{fmt(level.price)}</span><span>{fmt(level.quantity)}</span></p>)}</div>)}</div>
         </div>}
       </article>)}
         </div>
