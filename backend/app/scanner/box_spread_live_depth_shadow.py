@@ -236,6 +236,8 @@ class BoxLiveDepthShadowFeed:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{role}"}
             selected.append({
                 "role": role, "side": side, "levels": levels,
+                "bid_depth_levels": list(item["bids"]),
+                "ask_depth_levels": list(item["asks"]),
                 "available_quantity": available_quantity,
                 "timestamp_ns": item["timestamp_ns"],
                 "depth_status": item["depth_status"],
@@ -254,6 +256,21 @@ class BoxLiveDepthShadowFeed:
             # for the common executable quantity's VWAP allocation.
             original_capacity = item["available_quantity"]
             levels = item.pop("levels")
+            # Persist the exact broker ladder used for this opportunity. The
+            # pipeline stores this immutable copy with the snapshot timestamp;
+            # historical UI must never reconstruct it from current quotes.
+            item["depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in levels
+            ]
+            item["bid_depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in item.pop("bid_depth_levels")
+            ]
+            item["ask_depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in item.pop("ask_depth_levels")
+            ]
             item["vwap"] = self._allocate(levels, executable_quantity)
             if item["vwap"] is None:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{item['role']}"}
