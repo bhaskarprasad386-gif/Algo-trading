@@ -1392,7 +1392,7 @@ class SyntheticUniverseSelection(BaseModel):
 
 class BoxSpreadIndexSelectionRequest(BaseModel):
     symbols: list[str]
-    weekly_only_symbols: list[str] = []
+    weekly_only_symbols: list[str] | None = None
 
 
 @app.get("/api/v1/scanner/box-spread/index-selection")
@@ -1445,7 +1445,7 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
     global live_box_spread_latest_results
     try:
         selected = _normalize_box_spread_index_symbols(payload.symbols)
-        weekly_only = tuple(sorted({str(item or "").strip().upper() for item in payload.weekly_only_symbols if str(item or "").strip()}))
+        weekly_only = tuple(sorted({str(item or "").strip().upper() for item in (payload.weekly_only_symbols or []) if str(item or "").strip()}))
         if set(weekly_only) - {"NIFTY", "SENSEX"} or set(weekly_only) - set(selected):
             raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
     except ValueError as exc:
