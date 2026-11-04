@@ -91,6 +91,33 @@ def test_supervisor_failed_staging_keeps_old_runner_active():
     assert candidates[0].activated == 0
     supervisor.stop()
 
+def test_supervisor_invokes_selection_rollback_after_async_staging_failure():
+    old = FakeRunner([type("Target", (), {"underlying": "NIFTY"})()])
+    old_thread = threading.Thread(target=old.run_forever, daemon=True)
+    old_thread.start()
+    rolled_back = []
+
+    def factory(targets):
+        return FakeRunner(targets, ready=False)
+
+    supervisor = BoxSpreadRunnerSupervisor(
+        active_runner=old,
+        active_thread=old_thread,
+        runner_factory=factory,
+        readiness_timeout_seconds=0.08,
+        readiness_poll_seconds=0.01,
+    )
+    supervisor.request_handoff(
+        [type("Target", (), {"underlying": "SENSEX"})()],
+        on_failed=lambda: rolled_back.append(True),
+    )
+    assert wait_for(lambda: supervisor.snapshot()["handoff"]["state"] == "FAILED")
+    assert rolled_back == [True]
+    assert supervisor.snapshot()["active_symbols"] == ["NIFTY"]
+    assert old.stop_event.is_set() is False
+    supervisor.stop()
+
+
 
 def test_supervisor_rejects_parallel_handoff_requests():
     old = FakeRunner([type("Target", (), {"underlying": "NIFTY"})()])
