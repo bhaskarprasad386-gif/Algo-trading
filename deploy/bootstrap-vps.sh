@@ -13,6 +13,11 @@ VENV_DIR="$APP_DIR/.venv"
 SERVICE_NAME="algo-trading.service"
 SERVICE_SRC="$APP_DIR/deploy/$SERVICE_NAME"
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
+WATCHDOG_SERVICE="algo-trading-watchdog.service"
+WATCHDOG_TIMER="algo-trading-watchdog.timer"
+WATCHDOG_SRC="$APP_DIR/deploy/$WATCHDOG_SERVICE"
+WATCHDOG_TIMER_SRC="$APP_DIR/deploy/$WATCHDOG_TIMER"
+WATCHDOG_SCRIPT="$APP_DIR/deploy/algo-trading-watchdog.sh"
 
 log() { printf '\n[algo-vps] %s\n' "$*"; }
 die() { printf '\n[algo-vps] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -21,6 +26,9 @@ die() { printf '\n[algo-vps] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ -d "$APP_DIR/.git" ]] || die "$APP_DIR is not a Git repository. Clone the repository there first."
 [[ -f "$BACKEND_DIR/requirements.txt" ]] || die "backend/requirements.txt not found."
 [[ -f "$SERVICE_SRC" ]] || die "$SERVICE_SRC not found."
+[[ -f "$WATCHDOG_SRC" ]] || die "$WATCHDOG_SRC not found."
+[[ -f "$WATCHDOG_TIMER_SRC" ]] || die "$WATCHDOG_TIMER_SRC not found."
+[[ -f "$WATCHDOG_SCRIPT" ]] || die "$WATCHDOG_SCRIPT not found."
 
 cd "$APP_DIR"
 
@@ -54,8 +62,12 @@ fi
 
 log "Installing systemd service"
 install -m 0644 "$SERVICE_SRC" "$SERVICE_DST"
+install -m 0644 "$WATCHDOG_SRC" "/etc/systemd/system/$WATCHDOG_SERVICE"
+install -m 0644 "$WATCHDOG_TIMER_SRC" "/etc/systemd/system/$WATCHDOG_TIMER"
+install -m 0755 "$WATCHDOG_SCRIPT" "$WATCHDOG_SCRIPT"
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
+systemctl enable --now "$WATCHDOG_TIMER"
 systemctl restart "$SERVICE_NAME"
 
 # Optional Telegram control bot: install/start only when credentials are already configured.
@@ -95,6 +107,8 @@ printf 'commit: '
 git rev-parse --short HEAD
 printf 'service: '
 systemctl is-active "$SERVICE_NAME"
+printf 'watchdog: '
+systemctl is-active "$WATCHDOG_TIMER"
 printf 'health: '
 cat /tmp/algo-health.json
 rm -f /tmp/algo-health.json
