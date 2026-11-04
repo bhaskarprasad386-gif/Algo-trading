@@ -630,8 +630,8 @@ def test_staged_session_readiness_requires_all_underlyings_options_and_full_dept
         ],
         },
         "depth_shadow": {"enabled": True, "running": True, "readiness": [
-            {"underlying": "NIFTY", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
-            {"underlying": "SENSEX", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "NIFTY", "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "SENSEX", "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
         ]},
     }
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY", "SENSEX"})
@@ -657,8 +657,8 @@ def test_staged_session_readiness_fails_closed_for_one_stale_underlying_or_parti
             ],
         },
         "depth_shadow": {"enabled": True, "running": True, "readiness": [
-            {"underlying": "NIFTY", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
-            {"underlying": "SENSEX", "state": "WAITING_FOR_DEPTH", "full_depth_ce": 1, "full_depth_pe": 2, "executable_depth_contracts": 3},
+            {"underlying": "NIFTY", "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "SENSEX", "state": "WAITING_FOR_DEPTH", "executable_depth_ce": 1, "executable_depth_pe": 2, "executable_depth_contracts": 3},
         ]},
     }
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY", "SENSEX"})
@@ -682,7 +682,7 @@ def test_staged_session_readiness_rejects_disconnected_option_feed():
             ],
         },
         "depth_shadow": {"enabled": True, "running": True, "readiness": [
-            {"underlying": "NIFTY", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "NIFTY", "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
         ]},
     }
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY"})
@@ -714,7 +714,7 @@ def test_staged_readiness_requires_every_selected_expiry_group():
             "running": True,
             "readiness": [
                 {"underlying": "NIFTY", "expiry": "WEEKLY", "state": "READY",
-                 "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+                 "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
             ],
         },
     }
@@ -725,7 +725,7 @@ def test_staged_readiness_requires_every_selected_expiry_group():
 
     snapshot["depth_shadow"]["readiness"].append(
         {"underlying": "NIFTY", "expiry": "MONTHLY", "state": "READY",
-         "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4}
+         "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4}
     )
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, required)
     assert result["ready"] is True
