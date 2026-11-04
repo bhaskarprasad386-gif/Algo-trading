@@ -246,8 +246,8 @@ def test_snapshot_reports_per_underlying_expiry_fresh_depth_readiness():
             timestamp_ns=now,
             token=token,
             payload={
-                "best_5_buy_data": _five_levels(95),
-                "best_5_sell_data": _five_levels(101),
+                "best_5_buy_data": [{"price": str((95 + i) * 100), "quantity": "30"} for i in range(5)],
+                "best_5_sell_data": [{"price": str((101 + i) * 100), "quantity": "30"} for i in range(5)],
             },
         ))
 
