@@ -571,6 +571,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [historyExpiryView, setHistoryExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
   const [historySymbol, setHistorySymbol] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
+  const [historySort, setHistorySort] = useState<{ key: "edge" | "lots"; direction: "asc" | "desc" }>({ key: "edge", direction: "desc" });
   const [historyHealth, setHistoryHealth] = useState<{ last_save_at?: string | null; last_saved_count?: number; last_error?: string | null; storage?: string } | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [copyFallbackText, setCopyFallbackText] = useState("");
@@ -874,7 +875,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           setSavedWeeklyOnlySymbols(weeklyOnly);
           setActiveIndexSymbols(active);
           setIndexHandoffState(handoff);
-          setIndexSelectionDraft(current => current.length && handoff !== "FAILED" ? current : symbols);
+          setIndexSelectionDraft(current => current.length && handoff !== "FAILED" ? current : symbols.filter(symbol => !weeklyOnly.includes(symbol)));
           setWeeklyOnlyDraft(current => current.length && handoff !== "FAILED" ? current : weeklyOnly);
           setIndexSelectionError(null);
         }
@@ -892,8 +893,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug]);
 
   const saveIndexSelection = async () => {
-    if (slug !== "box-spread" || indexSelectionDraft.length === 0) return;
-    const weeklyOnly = weeklyOnlyDraft.filter(symbol => indexSelectionDraft.includes(symbol));
+    if (slug !== "box-spread" || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0)) return;
+    const weeklyOnly = weeklyOnlyDraft;
+    const effectiveSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnly]));
     setIndexSelectionSaving(true);
     setIndexSelectionError(null);
     setIndexSelectionMessage("");
@@ -902,15 +904,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: indexSelectionDraft, weekly_only_symbols: weeklyOnly }),
+        body: JSON.stringify({ symbols: effectiveSymbols, weekly_only_symbols: weeklyOnly }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Index selection save failed");
-      const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : indexSelectionDraft;
+      const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : effectiveSymbols;
       const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
       setSavedIndexSymbols(saved);
       setSavedWeeklyOnlySymbols(savedWeeklyOnly);
-      setIndexSelectionDraft(saved);
+      setIndexSelectionDraft(saved.filter(symbol => !savedWeeklyOnly.includes(symbol)));
       setWeeklyOnlyDraft(savedWeeklyOnly);
       const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
       setIndexHandoffState(handoff);
@@ -1146,6 +1148,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const historyPageCount = Math.max(1, Math.ceil((slug === "box-spread" ? historyTotalCount : filteredHistoryRows.length) / historyPageSize));
   const safeHistoryPage = Math.min(historyPage, historyPageCount);
   const visibleHistoryRows = slug === "box-spread" ? filteredHistoryRows : filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
+  const sortedHistoryRows = slug === "box-spread" ? [...visibleHistoryRows].sort((left, right) => {
+    const value = (row: Row) => historySort.key === "edge"
+      ? numberValue(row, "executable_edge", "box_edge", "edge")
+      : numberValue(row, "max_executable_lots", "maxExecutableLots", "max_executable_lot_count", "max_executable_qty");
+    const delta = value(left) - value(right);
+    return historySort.direction === "asc" ? delta : -delta;
+  }) : visibleHistoryRows;
 
   return (
     <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
@@ -1248,7 +1257,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
               {(["NIFTY", "SENSEX"] as const).map(symbol => (
                 <label key={symbol} className="flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-bold theme-text">
-                  <input type="checkbox" checked={weeklyOnlyDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading || !indexSelectionDraft.includes(symbol)} onChange={event => setWeeklyOnlyDraft(current => event.target.checked ? [...current, symbol] : current.filter(item => item !== symbol))} className="h-4 w-4 accent-emerald-600" />
+                  <input type="checkbox" checked={weeklyOnlyDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={event => setWeeklyOnlyDraft(current => event.target.checked ? [...current, symbol] : current.filter(item => item !== symbol))} className="h-4 w-4 accent-emerald-600" />
                   {symbol} Weekly Only
                 </label>
               ))}
@@ -1264,7 +1273,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Weekly Only: {savedWeeklyOnlySymbols.length ? savedWeeklyOnlySymbols.join(" · ") : "None"} · Other selected indices use available standard expiries.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === savedIndexSymbols.length && indexSelectionDraft.every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.filter(symbol => indexSelectionDraft.includes(symbol)).length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.filter(symbol => indexSelectionDraft.includes(symbol)).every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0) || (indexSelectionDraft.length + weeklyOnlyDraft.length === savedIndexSymbols.length && [...indexSelectionDraft, ...weeklyOnlyDraft].every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
               {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
             </button>
           </div>
@@ -1730,7 +1739,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </label>
           <span className="text-xs theme-muted">Showing {filteredHistoryRows.length === 0 ? 0 : (safeHistoryPage - 1) * historyPageSize + 1}–{Math.min(safeHistoryPage * historyPageSize, filteredHistoryRows.length)} of {filteredHistoryRows.length} matches</span>
         </div>}
-        {historyError && <div role="status" className="mt-3 rounded-lg border theme-border theme-warning-bg p-3 text-xs theme-warning">History refresh failed: {historyError}. Previously loaded rows are retained.</div>}
+        {slug === "box-spread" && <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Sort current Box Spread history page">
+           <span className="text-xs font-semibold theme-muted">Sort loaded 25 rows:</span>
+           <button type="button" aria-pressed={historySort.key === "edge"} onClick={() => setHistorySort(current => ({ key: "edge", direction: current.key === "edge" && current.direction === "desc" ? "asc" : "desc" }))} className={"min-h-9 rounded-lg border px-3 text-xs font-bold " + (historySort.key === "edge" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Box Edge {historySort.key === "edge" ? (historySort.direction === "desc" ? "↓" : "↑") : "↕"}</button>
+           <button type="button" aria-pressed={historySort.key === "lots"} onClick={() => setHistorySort(current => ({ key: "lots", direction: current.key === "lots" && current.direction === "desc" ? "asc" : "desc" }))} className={"min-h-9 rounded-lg border px-3 text-xs font-bold " + (historySort.key === "lots" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Max Executable Lots {historySort.key === "lots" ? (historySort.direction === "desc" ? "↓" : "↑") : "↕"}</button>
+         </div>}
+         {historyError && <div role="status" className="mt-3 rounded-lg border theme-border theme-warning-bg p-3 text-xs theme-warning">History refresh failed: {historyError}. Previously loaded rows are retained.</div>}
         {slug === "synthetic-arbitrage" && historyHealth && <p className="mt-2 text-xs theme-muted">Storage: {historyHealth.storage || "UNKNOWN"} · Last saved: {historyHealth.last_save_at || "not reported"} · Last batch: {historyHealth.last_saved_count ?? 0} rows{historyHealth.last_error ? " · Save error: " + historyHealth.last_error : ""}</p>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{slug === "box-spread" ? "Recent snapshots (24h)" : "Saved observations"}</p><p className="mt-1 text-lg font-semibold theme-text">{(slug === "box-spread" ? historyTotalCount : historyRows.length).toLocaleString("en-IN")}</p></div>
@@ -1738,7 +1752,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "box-spread" ? "Scanner snapshots · 24h" : slug === "synthetic-arbitrage" ? "Saved live pair snapshots (5s sampling)" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
         </div>
         <div className="mt-4 grid gap-2 md:hidden">
-          {filteredHistoryRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{(slug === "box-spread" ? historyTotalCount === 0 : historyRows.length === 0) ? "No saved pair snapshots yet. Keep this page open while the live pair monitor runs." : "No history rows match this filter or page."}</div> : visibleHistoryRows.map((row, index) => {
+          {filteredHistoryRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{(slug === "box-spread" ? historyTotalCount === 0 : historyRows.length === 0) ? "No saved pair snapshots yet. Keep this page open while the live pair monitor runs." : "No history rows match this filter or page."}</div> : sortedHistoryRows.map((row, index) => {
             const cols = c.pairColumns;
             return <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{historyCell(slug, cols[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{cols.filter((column) => column !== cols[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{historyCell(slug, column, row)}</div></div>)}</div></div>;
           })}
@@ -1748,7 +1762,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{visiblePairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
               {filteredHistoryRows.length === 0 ? <tr><td colSpan={Math.max(visiblePairColumns.length, 1)} className="px-4 py-10 text-center theme-muted">{(slug === "box-spread" ? historyTotalCount === 0 : historyRows.length === 0) ? "No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled." : "No history rows match this filter or page."}</td></tr> :
-              visibleHistoryRows.map((row, index) => {
+              sortedHistoryRows.map((row, index) => {
                 const cols = c.pairColumns;
                 return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
                   {cols.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{historyCell(slug, column, row)}</td>)}
