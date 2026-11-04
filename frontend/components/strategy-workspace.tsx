@@ -587,6 +587,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
   const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
+  const [indexSelectionDraft, setIndexSelectionDraft] = useState<string[]>([]);
+  const [activeIndexSymbols, setActiveIndexSymbols] = useState<string[]>([]);
+  const [indexSelectionLoading, setIndexSelectionLoading] = useState(false);
+  const [indexSelectionSaving, setIndexSelectionSaving] = useState(false);
+  const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
+  const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
