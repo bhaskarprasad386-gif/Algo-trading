@@ -50,17 +50,11 @@ def depth_levels(record: Any, side: str) -> list[tuple[float, float]]:
         if price is not None and quantity is not None:
             levels.append((price / 100.0, quantity))
 
-    # Legacy/canonical records may have only L1 fields. Never extrapolate beyond L1.
-    if not levels:
-        price = _positive(getattr(record, "bid" if normalized_side == "BID" else "ask", None))
-        quantity = _positive(
-            getattr(record, "bid_qty" if normalized_side == "BID" else "ask_qty", None)
-        )
-        if price is not None and quantity is not None:
-            levels = [(price, quantity)]
-
+    # Paper execution requires broker-supplied depth levels. L1 is not depth
+    # and must never be promoted into a five-level executable basket.
     levels.sort(key=lambda item: item[0], reverse=(normalized_side == "BID"))
-    return levels
+    # Execution capacity is deliberately bounded to the broker's top five levels.
+    return levels[:5]
 
 
 def allocate_depth(levels: Sequence[tuple[float, float]], quantity: int) -> dict[str, float | bool]:
@@ -91,19 +85,26 @@ def select_complete_lots(
     depth_by_role: Mapping[str, Sequence[tuple[float, float]]],
     *,
     roles: Sequence[str],
+    minimum_lots: int = 1,
 ) -> dict[str, Any] | None:
     """Choose the largest complete four-leg quantity at or below target lots.
 
-    Returns no candidate when even one lot cannot be filled on every leg.
+    A candidate is returned only when every leg can fill at least
+    minimum_lots whole lots. Each leg may use a different number of broker
+    depth levels (one through five).
     """
     if isinstance(target_lots, bool) or int(target_lots) != target_lots or target_lots < 1:
         raise ValueError("target_lots must be a positive integer")
     if isinstance(lot_size, bool) or int(lot_size) != lot_size or lot_size < 1:
         raise ValueError("lot_size must be a positive integer")
+    if isinstance(minimum_lots, bool) or int(minimum_lots) != minimum_lots or minimum_lots < 1:
+        raise ValueError("minimum_lots must be a positive integer")
+    if minimum_lots > target_lots:
+        return None
     if not roles or any(role not in depth_by_role for role in roles):
         return None
 
-    for lots in range(int(target_lots), 0, -1):
+    for lots in range(int(target_lots), int(minimum_lots) - 1, -1):
         quantity = lots * int(lot_size)
         allocations = {
             role: allocate_depth(depth_by_role[role], quantity)

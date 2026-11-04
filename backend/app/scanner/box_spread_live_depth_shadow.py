@@ -221,15 +221,40 @@ class BoxLiveDepthShadowFeed:
                 return {"status": "INCOMPLETE", "reason": f"INVALID_DEPTH_{role}"}
             if abs(item["timestamp_ns"] - int(quote_timestamp)) > max_leg_skew_seconds * 1e9:
                 return {"status": "INCOMPLETE", "reason": f"QUOTE_DEPTH_SKEW_{role}"}
+            # Five levels is the maximum depth window, not a minimum.
+            # A partial book is usable: size the basket from its actual selected-
+            # side liquidity, then cap all four legs to the common whole-lot qty.
             levels = item["asks"] if side == "ASK" else item["bids"]
-            vwap = self._allocate(levels, lot_size)
-            if vwap is None:
+            if not levels:
+                return {"status": "INCOMPLETE", "reason": f"NO_EXECUTABLE_LEVELS_{role}"}
+            available_quantity = int(sum(quantity for _, quantity in levels))
+            if available_quantity < lot_size:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{role}"}
             selected.append({
-                "role": role, "side": side, "vwap": vwap,
+                "role": role, "side": side, "levels": levels,
+                "available_quantity": available_quantity,
                 "timestamp_ns": item["timestamp_ns"],
                 "depth_status": item["depth_status"],
             })
+
+        # A basket is executable only up to the common whole-lot capacity
+        # across all four required sides. Price every leg at that same quantity.
+        max_executable_lots = min(
+            item["available_quantity"] // lot_size for item in selected
+        )
+        if max_executable_lots < 1:
+            return {"status": "INCOMPLETE", "reason": "INSUFFICIENT_FOUR_LEG_DEPTH"}
+        executable_quantity = max_executable_lots * lot_size
+        for item in selected:
+            # Preserve the full original per-leg capacity before consuming levels
+            # for the common executable quantity's VWAP allocation.
+            original_capacity = item["available_quantity"]
+            levels = item.pop("levels")
+            item["vwap"] = self._allocate(levels, executable_quantity)
+            if item["vwap"] is None:
+                return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{item['role']}"}
+            item["available_quantity"] = original_capacity
+            item["selected_quantity"] = executable_quantity
 
         timestamps = [item["timestamp_ns"] for item in selected]
         if max(timestamps) - min(timestamps) > max_leg_skew_seconds * 1e9:
@@ -247,9 +272,14 @@ class BoxLiveDepthShadowFeed:
         return {
             "status": "COMPLETE",
             "direction": direction,
-            "quantity": lot_size,
+            "quantity": executable_quantity,
+            "max_executable_lots": max_executable_lots,
+            "depth_capacity_by_leg": {
+                item["role"]: item["available_quantity"] for item in selected
+            },
             "l1_edge_per_unit": l1_edge,
             "depth_edge_per_unit": depth_edge,
+            "net_entry_price": net_debit if direction == "LONG" else net_credit,
             "difference_per_unit": depth_edge - l1_edge,
             "l1_edge_per_lot": l1_edge * lot_size,
             "depth_edge_per_lot": depth_edge * lot_size,
@@ -301,6 +331,49 @@ class BoxLiveDepthShadowFeed:
             self._records.move_to_end(instrument)
             while len(self._records) > self.max_records:
                 self._records.popitem(last=False)
+
+    def depth_for_opportunity(self, opportunity: Any) -> dict[str, Any]:
+        """Return fresh five-level bid/ask ladders for the opportunity's four contracts."""
+        now_ns = time_ns()
+        now_arrival = monotonic()
+        low, high = opportunity.low, opportunity.high
+        roles = (
+            ("low_call", low.strike, "CE"),
+            ("low_put", low.strike, "PE"),
+            ("high_call", high.strike, "CE"),
+            ("high_put", high.strike, "PE"),
+        )
+        output = {}
+        with self._lock:
+            cached = list(self._records.values())
+            metadata = dict(self._metadata)
+        for role, strike, option_type in roles:
+            matches = [
+                item for item in cached
+                if (meta := metadata.get(item.get("key"), {})).get("underlying") == str(low.underlying).strip().upper()
+                and meta.get("expiry") == int(low.expiry)
+                and meta.get("strike") == float(strike)
+                and meta.get("option_type") == option_type
+            ]
+            if not matches:
+                output[role] = {"status": "UNAVAILABLE", "bids": [], "asks": []}
+                continue
+            item = max(matches, key=lambda row: row["timestamp_ns"])
+            provider_age = (now_ns - item["timestamp_ns"]) / 1e9
+            arrival_age = now_arrival - item["arrival_monotonic"]
+            fresh = (
+                -1.0 <= provider_age <= self.max_provider_age_seconds
+                and 0.0 <= arrival_age <= self.max_arrival_age_seconds
+                and item["depth_status"] in {"DEPTH_FULL", "DEPTH_PARTIAL"}
+                and bool(item["bids"]) and bool(item["asks"])
+            )
+            output[role] = {
+                "status": "LIVE" if fresh else item["depth_status"],
+                "timestamp_ns": item["timestamp_ns"],
+                "bids": [{"price": price, "quantity": quantity} for price, quantity in item["bids"]],
+                "asks": [{"price": price, "quantity": quantity} for price, quantity in item["asks"]],
+            }
+        return output
 
     def snapshot(self, *, now_ns: int | None = None, now_monotonic: float | None = None) -> dict[str, Any]:
         """Return fresh in-memory observations; never persists or changes scanner data."""

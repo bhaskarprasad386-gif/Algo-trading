@@ -45,6 +45,7 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
             direction="LONG",
             lots=1,
             lot_size=25,
+            alert_edge=8,
         )
         before_restart.claim_entry_attempt(
             trade_id=trade.id, account_key="restart-partial",
@@ -107,6 +108,7 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
             lots=1,
             idempotency_key="restart-partial-entry",
             account_key="restart-partial",
+            alert_edge=8,
         )
         # This test targets durable replay protection, not the independent
         # manual execution switch. Enable the switch to reach the ledger guard.

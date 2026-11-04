@@ -12,7 +12,7 @@ def _result(low_ts=None, high_ts=None, symbol="ABC", instrument_class="STOCK"):
         put_ltp=1.5, put_bid=1, put_ask=2, put_bid_qty=103, put_ask_qty=104, lot_size=10, volume=25)
     high = SimpleNamespace(strike=110, timestamp_ns=high_ts, call_ltp=8.5, call_bid=8,
         call_ask=9, call_bid_qty=201, call_ask_qty=202, put_ltp=2.5, put_bid=2, put_ask=3, put_bid_qty=203, put_ask_qty=204, volume=20)
-    return SimpleNamespace(low=low, high=high, direction="LONG", executable_edge=6,
+    return SimpleNamespace(low=low, high=high, direction="LONG", tradability_status="TRADABLE", executable_edge=6,
         edge_per_lot=60, gross_pnl=60, strike_distance=1)
 
 

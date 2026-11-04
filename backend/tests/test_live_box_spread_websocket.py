@@ -18,7 +18,7 @@ def _result(now_ns=None):
         put_ltp=2.5, put_bid=2, put_ask=3, put_bid_qty=203, put_ask_qty=204, lot_size=25,
     )
     return SimpleNamespace(
-        low=low, high=high, direction="LONG", executable_edge=6,
+        low=low, high=high, direction="LONG", tradability_status="TRADABLE", executable_edge=6,
         edge_per_lot=60, gross_pnl=60, strike_distance=100,
     )
 

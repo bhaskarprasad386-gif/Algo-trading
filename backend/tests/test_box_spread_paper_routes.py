@@ -20,18 +20,92 @@ def _fake_paper_depth(row, roles=None):
     records = {}
     for role, (bid, ask, bid_qty, ask_qty) in fields.items():
         payload = {
-            "best_5_buy_data": ([{
-                "price": float(row[bid]) * 100, "quantity": row.get(bid_qty),
-            }] if row.get(bid) is not None and row.get(bid_qty) is not None else []),
-            "best_5_sell_data": ([{
-                "price": float(row[ask]) * 100, "quantity": row.get(ask_qty),
-            }] if row.get(ask) is not None and row.get(ask_qty) is not None else []),
+            "best_5_buy_data": ([
+                {"price": float(row[bid]) * 100 - level, "quantity": row.get(bid_qty) if level == 0 else 0}
+                for level in range(5)
+            ] if row.get(bid) is not None and row.get(bid_qty) is not None else []),
+            "best_5_sell_data": ([
+                {"price": float(row[ask]) * 100 + level, "quantity": row.get(ask_qty) if level == 0 else 0}
+                for level in range(5)
+            ] if row.get(ask) is not None and row.get(ask_qty) is not None else []),
         }
         records[role] = SimpleNamespace(
             bid=row.get(bid), ask=row.get(ask),
             bid_qty=row.get(bid_qty), ask_qty=row.get(ask_qty), payload=payload,
         )
     yield records
+
+
+def test_paper_entry_does_not_require_unused_opposite_depth_side(monkeypatch):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
+        "low_put_bid": 40, "low_put_ask": 41,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
+    }
+    contracts = SimpleNamespace(direction="LONG", lot_size=25)
+
+    @contextmanager
+    def partial_depth(_contracts):
+        with _fake_paper_depth(row) as records:
+            # HIGH_PE is bought for a LONG box, so only its ASK is executable.
+            # Its unused BID side may be absent without invalidating the basket.
+            records["HIGH_PE"].payload["best_5_buy_data"] = []
+            yield records
+
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", partial_depth)
+    selected = routes._fresh_entry_depth_selection(contracts, target_lots=2)
+
+    assert selected["lots"] == 2
+    assert selected["quantity"] == 50
+    assert selected["allocations"]["HIGH_PE"]["complete"] is True
+
+
+def test_paper_entry_accepts_one_level_on_weakest_leg_when_two_lots_are_available(monkeypatch):
+    row = {
+        "low_call_bid": 10, "low_call_ask": 11,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
+        "high_call_bid": 20, "high_call_ask": 21,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
+        "high_put_bid": 30, "high_put_ask": 31,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
+        "low_put_bid": 40, "low_put_ask": 41,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
+    }
+    contracts = SimpleNamespace(direction="LONG", lot_size=25)
+
+    @contextmanager
+    def partial_depth(_contracts):
+        with _fake_paper_depth(row) as records:
+            # The three other legs spread 50 units across five levels.
+            # HIGH_PE is an entry BUY for LONG and has only one ASK level,
+            # but that single level alone supports the same two-lot basket.
+            for role, record in records.items():
+                if role != "HIGH_PE":
+                    for side in ("best_5_buy_data", "best_5_sell_data"):
+                        base = record.payload[side][0]["price"]
+                        record.payload[side] = [
+                            {"price": base + (level if side == "best_5_buy_data" else -level),
+                             "quantity": 10}
+                            for level in range(5)
+                        ]
+            records["HIGH_PE"].payload["best_5_sell_data"] = [
+                {"price": 3100, "quantity": 50},
+            ]
+            yield records
+
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", partial_depth)
+    selected = routes._fresh_entry_depth_selection(contracts, target_lots=5)
+
+    assert selected["lots"] == 2
+    assert selected["quantity"] == 50
+    assert set(selected["prices"]) == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+    assert selected["allocations"]["HIGH_PE"]["quantity"] == 50
+    assert selected["allocations"]["HIGH_PE"]["complete"] is True
 
 
 
@@ -265,8 +339,8 @@ def test_simulation_blocks_duplicate_replay_when_durable_fills_exist(monkeypatch
 def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="backend-prices-only", account_key="isolated-test",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=2,
+        idempotency_key="backend-prices-only", alert_edge=8, account_key="isolated-test",
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
@@ -276,13 +350,13 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
     }
     monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
     monkeypatch.setattr(routes._ledger, "list_fills", lambda trade_id, account_key="default": [])
@@ -297,8 +371,8 @@ def test_simulation_uses_backend_quote_sides_not_browser_prices(monkeypatch):
     captured = {}
 
     fills = [
-        SimpleNamespace(role=role, action=action, quantity=25, fill_price=price,
-                         reference_price=price, slippage=0, notional=price * 25, charges=0)
+        SimpleNamespace(role=role, action=action, quantity=50, fill_price=price,
+                         reference_price=price, slippage=0, notional=price * 50, charges=0)
         for role, action, price in (
             ("LOW_CE", "BUY", 11), ("HIGH_CE", "SELL", 20),
             ("HIGH_PE", "BUY", 31), ("LOW_PE", "SELL", 40),
@@ -934,7 +1008,7 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
         low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="partial-ledger-write", account_key="partial-write-test",
+        idempotency_key="partial-ledger-write", alert_edge=8, account_key="partial-write-test",
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
@@ -1047,8 +1121,8 @@ def test_simulate_entry_is_blocked_before_ledger_or_quote_access_when_switch_off
 def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
-        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
-        idempotency_key="toggle-race-test", account_key="toggle-race-test",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=2,
+        idempotency_key="toggle-race-test", alert_edge=8, account_key="toggle-race-test",
     )
     contracts = SimpleNamespace(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
@@ -1058,13 +1132,13 @@ def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypat
         "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "29OCT2026",
         "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
         "low_call_bid": 10, "low_call_ask": 11,
-        "low_call_bid_qty": 25, "low_call_ask_qty": 25,
+        "low_call_bid_qty": 50, "low_call_ask_qty": 50,
         "high_call_bid": 20, "high_call_ask": 21,
-        "high_call_bid_qty": 25, "high_call_ask_qty": 25,
+        "high_call_bid_qty": 50, "high_call_ask_qty": 50,
         "high_put_bid": 30, "high_put_ask": 31,
-        "high_put_bid_qty": 25, "high_put_ask_qty": 25,
+        "high_put_bid_qty": 50, "high_put_ask_qty": 50,
         "low_put_bid": 40, "low_put_ask": 41,
-        "low_put_bid_qty": 25, "low_put_ask_qty": 25,
+        "low_put_bid_qty": 50, "low_put_ask_qty": 50,
     }
     monkeypatch.setattr(routes, "_paper_execution_enabled", True)
     monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)

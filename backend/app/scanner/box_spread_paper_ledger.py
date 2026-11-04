@@ -101,6 +101,7 @@ class BoxSpreadPaperTradeRecord(Base):
     low_strike: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     high_strike: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     entry_spot_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    alert_edge: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
     direction: Mapped[str] = mapped_column(String(8), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     lots: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -206,6 +207,7 @@ class BoxSpreadPaperLedger:
         lot_size: int,
         account_key: str = "default",
         entry_spot_price: object | None = None,
+        alert_edge: object | None = None,
     ) -> BoxSpreadPaperTradeRecord:
         account = self._account_key(account_key)
         key = str(idempotency_key or "").strip()
@@ -234,6 +236,11 @@ class BoxSpreadPaperLedger:
         except (TypeError, ValueError):
             raise ValueError("expiry must be an ISO date (YYYY-MM-DD)") from None
         canonical_expiry = expiry_date.isoformat()
+        if alert_edge is None:
+            raise ValueError("alert_edge is required for a new Box Spread paper trade")
+        alert_edge_value = Decimal(str(alert_edge))
+        if not alert_edge_value.is_finite() or alert_edge_value < 5:
+            raise ValueError("alert_edge must be finite and at least 5")
         with self._session_factory() as session, session.begin():
             self._ensure_account_in_session(session, account)
             existing = session.scalar(select(BoxSpreadPaperTradeRecord).where(
@@ -242,10 +249,11 @@ class BoxSpreadPaperLedger:
             ))
             if existing is not None:
                 expected = (str(underlying).upper(), str(instrument_class).upper(), canonical_expiry,
-                            low, high, direction, lots_value, lot_value)
+                            low, high, direction, lots_value, lot_value, alert_edge_value)
                 actual = (existing.underlying, existing.instrument_class, existing.expiry,
                           Decimal(existing.low_strike), Decimal(existing.high_strike),
-                          existing.direction, existing.lots, existing.lot_size)
+                          existing.direction, existing.lots, existing.lot_size,
+                          Decimal(existing.alert_edge) if existing.alert_edge is not None else None)
                 if expected != actual:
                     raise ValueError("idempotency_key reused for a different trade")
                 session.expunge(existing)
@@ -255,6 +263,7 @@ class BoxSpreadPaperLedger:
                 instrument_class=str(instrument_class).upper(), expiry=canonical_expiry,
                 low_strike=low, high_strike=high,
                 entry_spot_price=_money(entry_spot_price, field="entry spot price") if entry_spot_price is not None else None,
+                alert_edge=alert_edge_value,
                 direction=direction, quantity=lots_value * lot_value, lots=lots_value, lot_size=lot_value,
                 status="CREATED", fee_schedule_version=self.fee_schedule.version,
                 created_at=datetime.now(timezone.utc),

@@ -9,6 +9,7 @@ _subscribers = set()
 _loop = None
 _latest_getter = None
 _spot_provider = None
+_depth_provider = None
 _expiry_types = {}
 MAX_QUOTE_AGE_NS = 5_000_000_000
 MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
@@ -23,6 +24,12 @@ def configure_spot_provider(provider):
     """Configure a source-backed, freshness-checked underlying spot getter."""
     global _spot_provider
     _spot_provider = provider
+
+
+def configure_depth_provider(provider):
+    """Configure a Box Spread-only five-level depth source."""
+    global _depth_provider
+    _depth_provider = provider
 
 
 def _spot_fields(symbol):
@@ -101,7 +108,25 @@ def _row(result):
     if newest_timestamp - oldest_timestamp > MAX_LEG_TIMESTAMP_SKEW_NS:
         return None
 
+    try:
+        market_depth = _depth_provider(result) if callable(_depth_provider) else None
+    except Exception:
+        market_depth = None
+    if getattr(result, "tradability_status", "UNVERIFIED") != "TRADABLE":
+        return None
     return {
+        "tradability_status": result.tradability_status,
+        "tradability_reason": getattr(result, "tradability_reason", None),
+        "l1_reference_edge": getattr(result, "l1_reference_edge", None),
+        "depth_edge_per_unit": getattr(result, "depth_edge_per_unit", None),
+        "depth_edge_per_lot": getattr(result, "depth_edge_per_lot", None),
+        "depth_executable_lots": getattr(result, "depth_executable_lots", 0),
+        "depth_quantity": getattr(result, "depth_quantity", 0),
+        "depth_legs": list(getattr(result, "depth_legs", ()) or ()),
+        "depth_entry_prices": dict(getattr(result, "depth_entry_prices", {}) or {}),
+        "depth_entry_type": getattr(result, "depth_entry_type", None),
+        "depth_net_entry_price": getattr(result, "depth_net_entry_price", None),
+        "market_depth": market_depth if isinstance(market_depth, dict) else {},
         "symbol": low.underlying, "instrument_class": low.instrument_class,
         "expiry": low.expiry, "expiry_type": _expiry_types.get((str(low.underlying).strip().upper(), _expiry_key(low.expiry)), "UNKNOWN"), "low_strike": low.strike, "high_strike": high.strike,
         "direction": result.direction, **_spot_fields(low.underlying), "timestamp_ns": int(low.timestamp_ns),

@@ -1,6 +1,6 @@
 """Executable live Box Spread scanner built only from real synchronized option quotes."""
 from __future__ import annotations
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from itertools import combinations
 from math import isfinite
 from decimal import Decimal, InvalidOperation
@@ -32,6 +32,18 @@ class BoxSpreadScanResult:
     gross_pnl: float
     strike_distance: int
     max_executable_lots: int = 0
+    # Live-only execution gate; raw L1 values are retained for diagnostics.
+    tradability_status: str = "UNVERIFIED"
+    tradability_reason: str | None = None
+    l1_reference_edge: float | None = None
+    depth_edge_per_unit: float | None = None
+    depth_edge_per_lot: float | None = None
+    depth_executable_lots: int = 0
+    depth_quantity: int = 0
+    depth_legs: tuple = ()
+    depth_entry_prices: dict = field(default_factory=dict)
+    depth_entry_type: str | None = None
+    depth_net_entry_price: float | None = None
 
 def _whole_nonnegative(value) -> bool:
     try:

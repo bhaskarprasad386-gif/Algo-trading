@@ -38,10 +38,18 @@ def test_depth_levels_normalize_rupees_and_sort_price_priority():
     assert depth_levels(record, "ASK") == [(101.0, 6.0), (102.0, 4.0)]
 
 
-def test_depth_levels_fall_back_to_canonical_l1_only():
+def test_depth_levels_reject_canonical_l1_only_quotes():
     record = SimpleNamespace(bid=99.5, ask=100.5, bid_qty=20, ask_qty=15, payload={})
-    assert depth_levels(record, "BID") == [(99.5, 20.0)]
-    assert depth_levels(record, "ASK") == [(100.5, 15.0)]
+    assert depth_levels(record, "BID") == []
+    assert depth_levels(record, "ASK") == []
+
+
+def test_depth_levels_are_limited_to_top_five_price_levels():
+    bids = [(100 - index, 10) for index in range(7)]
+    asks = [(101 + index, 10) for index in range(7)]
+    record = _record(bids, asks)
+    assert len(depth_levels(record, "BID")) == 5
+    assert len(depth_levels(record, "ASK")) == 5
 
 
 def test_allocate_depth_calculates_weighted_average_across_levels():
@@ -61,6 +69,20 @@ def test_entry_quantity_falls_back_until_all_four_legs_are_complete():
     assert selected["lots"] == 2
     assert selected["quantity"] == 100
     assert all(item["complete"] for item in selected["allocations"].values())
+
+
+def test_minimum_lots_gate_rejects_one_lot_but_accepts_two_lots():
+    depth = {role: [(100.0, 100)] for role in ROLES}
+    depth["HIGH_PE"] = [(80.0, 100)]  # A single level can carry multiple lots.
+
+    selected = select_complete_lots(5, 50, depth, roles=ROLES, minimum_lots=2)
+    assert selected is not None
+    assert selected["lots"] == 2
+    assert selected["quantity"] == 100
+
+    one_lot_depth = dict(depth)
+    one_lot_depth["HIGH_PE"] = [(80.0, 50)]
+    assert select_complete_lots(5, 50, one_lot_depth, roles=ROLES, minimum_lots=2) is None
 
 
 def test_entry_is_rejected_if_even_one_complete_lot_is_unavailable():

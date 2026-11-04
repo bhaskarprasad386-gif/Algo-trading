@@ -73,17 +73,33 @@ function makeWsUrl() {
   url.search = "";
   return url.toString();
 }
-function LegQuote({ row, name, price, qty, side }: { row: Opportunity; name: string; price: string; qty: string; side: "BUY" | "SELL" }) {
+function LegQuote({ row, name, price, qty, side, depthKey }: { row: Opportunity; name: string; price: string; qty: string; side: "BUY" | "SELL"; depthKey: string }) {
   const q = quote(row, price, qty);
   const buy = side === "BUY";
+  const depth = row.market_depth && typeof row.market_depth === "object"
+    ? (row.market_depth as Record<string, unknown>)[depthKey] as { status?: string; bids?: Array<{price:number;quantity:number}>; asks?: Array<{price:number;quantity:number}> } | undefined
+    : undefined;
+  const ladder = (levels: Array<{price:number;quantity:number}> | undefined) => (levels || []).slice(0, 5);
+  const bids = ladder(depth?.bids);
+  const asks = ladder(depth?.asks);
+  const live = depth?.status === "LIVE";
   return (
-    <div className="flex min-w-[118px] flex-col gap-1 rounded-lg border theme-border theme-surface-2 px-2.5 py-2">
+    <div className="flex min-w-[150px] flex-col gap-1 rounded-lg border theme-border theme-surface-2 px-2.5 py-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold tracking-wide theme-text">{name}</span>
         <span className={"rounded px-1.5 py-0.5 text-[9px] font-extrabold " + (buy ? "bg-emerald-400/15 text-emerald-300" : "bg-rose-400/15 text-rose-300")}>{buy ? "BUY · ASK" : "SELL · BID"}</span>
       </div>
       <div className={"text-sm font-bold tabular-nums " + (buy ? "text-emerald-300" : "text-rose-300")}>{fmt(q.price)}</div>
-      <div className="text-[10px] theme-muted">Qty {fmt(q.qty, 0)}</div>
+      <div className="text-[10px] theme-muted">L1 Qty {fmt(q.qty, 0)}</div>
+      <div className="mt-1 border-t theme-border pt-1">
+        <div className="mb-1 flex justify-between text-[9px] font-bold uppercase tracking-wide theme-muted"><span>Bid · Qty</span><span>Ask · Qty</span></div>
+        {live ? Array.from({length: Math.max(bids.length, asks.length, 5)}, (_, index) => (
+          <div key={index} className="grid grid-cols-2 gap-2 text-[9px] tabular-nums">
+            <span className="flex justify-between gap-1 text-rose-300"><span>{bids[index] ? fmt(bids[index].price) : "—"}</span><span className="theme-muted">{bids[index] ? fmt(bids[index].quantity, 0) : "—"}</span></span>
+            <span className="flex justify-between gap-1 text-emerald-300"><span>{asks[index] ? fmt(asks[index].price) : "—"}</span><span className="theme-muted">{asks[index] ? fmt(asks[index].quantity, 0) : "—"}</span></span>
+          </div>
+        )) : <div className="text-[9px] theme-muted">Depth unavailable / stale</div>}
+      </div>
     </div>
   );
 }
@@ -264,17 +280,17 @@ export default function LiveOpportunityGrid() {
                   <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
                     {String(row.direction || "LONG").toUpperCase() === "SHORT" ? (
                       <>
-                        <LegQuote row={row} name="LOW CE" price="low_call_bid" qty="low_call_bid_qty" side="SELL"/>
-                        <LegQuote row={row} name="LOW PE" price="low_put_ask" qty="low_put_ask_qty" side="BUY"/>
-                        <LegQuote row={row} name="HIGH CE" price="high_call_ask" qty="high_call_ask_qty" side="BUY"/>
-                        <LegQuote row={row} name="HIGH PE" price="high_put_bid" qty="high_put_bid_qty" side="SELL"/>
+                        <LegQuote row={row} name="LOW CE" depthKey="low_call" price="low_call_bid" qty="low_call_bid_qty" side="SELL"/>
+                        <LegQuote row={row} name="LOW PE" depthKey="low_put" price="low_put_ask" qty="low_put_ask_qty" side="BUY"/>
+                        <LegQuote row={row} name="HIGH CE" depthKey="high_call" price="high_call_ask" qty="high_call_ask_qty" side="BUY"/>
+                        <LegQuote row={row} name="HIGH PE" depthKey="high_put" price="high_put_bid" qty="high_put_bid_qty" side="SELL"/>
                       </>
                     ) : (
                       <>
-                        <LegQuote row={row} name="LOW CE" price="low_call_ask" qty="low_call_ask_qty" side="BUY"/>
-                        <LegQuote row={row} name="LOW PE" price="low_put_bid" qty="low_put_bid_qty" side="SELL"/>
-                        <LegQuote row={row} name="HIGH CE" price="high_call_bid" qty="high_call_bid_qty" side="SELL"/>
-                        <LegQuote row={row} name="HIGH PE" price="high_put_ask" qty="high_put_ask_qty" side="BUY"/>
+                        <LegQuote row={row} name="LOW CE" depthKey="low_call" price="low_call_ask" qty="low_call_ask_qty" side="BUY"/>
+                        <LegQuote row={row} name="LOW PE" depthKey="low_put" price="low_put_bid" qty="low_put_bid_qty" side="SELL"/>
+                        <LegQuote row={row} name="HIGH CE" depthKey="high_call" price="high_call_bid" qty="high_call_bid_qty" side="SELL"/>
+                        <LegQuote row={row} name="HIGH PE" depthKey="high_put" price="high_put_ask" qty="high_put_ask_qty" side="BUY"/>
                       </>
                     )}
                   </div>
@@ -291,7 +307,7 @@ export default function LiveOpportunityGrid() {
                   <div className="rounded-xl border theme-border theme-surface-2 p-3">
                     <p className="text-[9px] font-bold uppercase tracking-wider theme-muted">Max Executable Lots</p>
                     <p className="mt-1 text-lg font-extrabold tabular-nums theme-text">{(() => { const lots = n(row, "max_executable_lots"); return lots === null || lots < 0 || !Number.isInteger(lots) ? "—" : lots.toLocaleString("en-IN") + " lots"; })()}</p>
-                    <p className="mt-1 text-[9px] theme-muted">Top-of-book estimate · not a fill guarantee</p>
+                    <p className="mt-1 text-[9px] theme-muted">Common four-leg depth capacity · not a fill guarantee</p>
                   </div>
                 </div>
               </div>
@@ -300,7 +316,7 @@ export default function LiveOpportunityGrid() {
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t theme-border theme-surface-2 px-4 py-3 text-[10px] theme-muted">
-        <span>Max Executable Lots is a top-of-book estimate, not full-depth capacity or a four-leg fill guarantee.</span>
+        <span>Executable edge uses synchronized VWAP across up to five available depth levels; each leg may contribute a different number of levels. Max Executable Lots is common four-leg depth capacity. Displayed ladders are live snapshots, not a fill guarantee.</span>
         <span>Four-leg quote sides follow LONG/SHORT direction; green = BUY/ASK, red = SELL/BID.</span>
         <span>Rows become STALE after 1.5s and expire after 60s without updates.</span>
       </div>

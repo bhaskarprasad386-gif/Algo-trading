@@ -57,9 +57,20 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def stop(self): pass
 
     captured = []
+    from app.market_data.contracts import InstrumentKey
+    from app.market_data.registry import InstrumentDescriptor
+
     def select(*args, **kwargs):
-        captured.append(kwargs["underlying"])
-        return BoxContractSelection((object(),), "26NOV2026", 100.0)
+        underlying = kwargs["underlying"]
+        captured.append(underlying)
+        descriptor = InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", underlying),
+            symbol=f"{underlying}26NOV26100CE",
+            instrument_type="option", exchange="NFO", segment="NFO",
+            expiry="26NOV2026", strike=100, option_type="CE", lot_size=25,
+            underlying=underlying,
+        )
+        return BoxContractSelection((descriptor,), "26NOV2026", 100.0)
 
     monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"READY": (100.0, 110.0), "WAITING": (100.0, 110.0)})
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
@@ -74,6 +85,18 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def stop(self): pass
         def snapshot(self): return {"running": True}
     monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
+
+    class Shadow:
+        def __init__(self, *, enabled):
+            self.enabled = enabled
+        def start(self, descriptors): pass
+        def stop(self): pass
+        def snapshot(self): return {"running": True, "record_count": 0, "counts": {}}
+        def compare_opportunity(self, opportunity):
+            return {"status": "INCOMPLETE", "reason": "MISSING_LEG"}
+
+    monkeypatch.setattr(mod.settings, "LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED", True)
+    monkeypatch.setattr(mod, "BoxLiveDepthShadowFeed", Shadow)
 
     runner = mod.LiveBoxSpreadRunner(
         object(),

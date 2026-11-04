@@ -31,7 +31,10 @@ from app.scanner.box_spread_paper_depth import depth_levels, limit_eligible_dept
 from app.scanner.box_spread_paper_depth_feed import (
     BoxPaperDepthFeedError, fresh_box_paper_depth,
 )
-from app.scanner.box_spread_paper_engine import BoxSpreadPaperEngine, BoxSpreadPaperEngineError
+from app.scanner.box_spread_paper_engine import (
+    ADVERSE_SLIPPAGE_RATE, BoxSpreadPaperEngine, BoxSpreadPaperEngineError,
+)
+from app.scanner.box_spread_entry_edge import validate_entry_edge
 from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperLedger, BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry,
 )
@@ -186,6 +189,7 @@ class CreatePaperTrade(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=100)
     account_key: str = Field(default="default", min_length=1, max_length=128)
     entry_spot_price: float | None = Field(default=None, gt=0)
+    alert_edge: float | None = Field(default=None)
 
 
 class SimulateEntry(BaseModel):
@@ -307,17 +311,37 @@ def _fresh_entry_depth_selection(contracts, target_lots: int):
     roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     try:
         with fresh_box_paper_depth(contracts) as records:
-            depth = {
-                role: depth_levels(records.get(role), _entry_depth_side(contracts.direction, role))
-                for role in roles
-            }
+            depth = {}
+            for role in roles:
+                record = records.get(role)
+                bid_levels = depth_levels(record, "BID")
+                ask_levels = depth_levels(record, "ASK")
+                # Use whatever broker depth is actually available (up to five
+                # levels). Do not require a fifth level; the common four-leg lot
+                # calculation below decides whether the available quantity suffices.
+                required_side = _entry_depth_side(contracts.direction, role)
+                required_levels = bid_levels if required_side == "BID" else ask_levels
+                if not required_levels:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"fresh executable-side broker depth is unavailable for {role}; no entry created",
+                    )
+                # The opposite side is not consumed by this leg's entry action.
+                # Validate the spread when both sides exist, but do not reject a
+                # usable executable side solely because the unused side is empty.
+                if bid_levels and ask_levels and bid_levels[0][0] > ask_levels[0][0]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"fresh broker depth is crossed for {role}; no entry created",
+                    )
+                depth[role] = required_levels
             selected = select_complete_lots(
-                target_lots, contracts.lot_size, depth, roles=roles,
+                target_lots, contracts.lot_size, depth, roles=roles, minimum_lots=2,
             )
             if selected is None:
                 raise HTTPException(
                     status_code=409,
-                    detail="insufficient fresh four-leg market depth for even one complete lot; no entry created",
+                    detail="fresh four-leg depth must support at least two complete lots; no entry created",
                 )
             prices = {
                 role: float(selected["allocations"][role]["vwap"])
@@ -778,6 +802,30 @@ def trades(
 def create_trade(payload: CreatePaperTrade):
     try:
         contracts = _resolve(payload)
+        live_snapshot = live_box_spread_opportunities(limit=500, max_age_seconds=5.0)
+        alert_row = next((
+            row for row in live_snapshot.get("data", [])
+            if str(row.get("symbol", "")).strip().upper() == contracts.underlying
+            and str(row.get("instrument_class", "")).strip().upper() == contracts.instrument_class
+            and _canonical_expiry(row.get("expiry_date") or row.get("expiry")) == _canonical_expiry(contracts.expiry)
+            and _strike_matches(row.get("low_strike"), contracts.low_strike)
+            and _strike_matches(row.get("high_strike"), contracts.high_strike)
+            and str(row.get("direction", "")).strip().upper() == contracts.direction
+            and str(row.get("tradability_status", "")).strip().upper() == "TRADABLE"
+        ), None)
+        if alert_row is None:
+            raise HTTPException(status_code=409, detail="No matching fresh tradable Box Spread alert; paper trade was not created")
+        alert_edge = alert_row.get("depth_edge_per_unit")
+        if alert_edge is None:
+            alert_edge = alert_row.get("executable_edge")
+        try:
+            validate_entry_edge(
+                alert_edge=alert_edge, direction=contracts.direction,
+                low_strike=contracts.low_strike, high_strike=contracts.high_strike,
+                reference_prices=alert_row.get("depth_entry_prices") or {},
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=f"Alert edge is not eligible for paper entry: {exc}") from None
         selection = _fresh_entry_depth_selection(contracts, payload.lots)
         selected_lots = int(selection["lots"])
         trade = _ledger.create_trade(
@@ -786,10 +834,17 @@ def create_trade(payload: CreatePaperTrade):
             low_strike=contracts.low_strike, high_strike=contracts.high_strike,
             direction=contracts.direction, lots=selected_lots, lot_size=contracts.lot_size,
             account_key=payload.account_key, entry_spot_price=payload.entry_spot_price,
+            alert_edge=alert_edge,
         )
         return {
             "mode": "PAPER_ONLY", "broker_orders_enabled": False,
             "trade_id": trade.id, "status": trade.status,
+            "alert_edge": float(trade.alert_edge),
+            "minimum_entry_edge": validate_entry_edge(
+                alert_edge=trade.alert_edge, direction=contracts.direction,
+                low_strike=contracts.low_strike, high_strike=contracts.high_strike,
+                reference_prices=alert_row.get("depth_entry_prices") or {},
+            )["minimum_entry_edge"],
             "idempotency_key": trade.idempotency_key,
             "requested_lots": payload.lots, "selected_lots": selected_lots,
             "contracts": _contract_payload(contracts),
@@ -810,6 +865,7 @@ def _load_trade_request(trade_id: int, account_key: str) -> CreatePaperTrade:
             high_strike=float(trade.high_strike), direction=trade.direction,
             lots=trade.lots, idempotency_key=trade.idempotency_key,
             account_key=account_key,
+            alert_edge=float(trade.alert_edge) if trade.alert_edge is not None else None,
         )
 
 
@@ -910,6 +966,28 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
                     raise HTTPException(status_code=409, detail=f"{role} SELL limit is above current bid; all four entry legs rejected")
         elif payload.limit_prices is not None:
             raise HTTPException(status_code=422, detail="MARKET entry must not include limit_prices")
+        # The immutable alert edge is the reference; never substitute the current scanner edge.
+        if request.alert_edge is None:
+            raise HTTPException(status_code=409, detail="Original alert edge is missing; legacy paper trade is blocked from entry")
+        edge_reference_prices = dict(reference_prices)
+        if payload.order_type == "MARKET":
+            actions_for_edge = (
+                {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+                if contracts.direction == "LONG"
+                else {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+            )
+            for role, action in actions_for_edge.items():
+                factor = (1 + float(ADVERSE_SLIPPAGE_RATE)) if action == "BUY" else (1 - float(ADVERSE_SLIPPAGE_RATE))
+                edge_reference_prices[role] = float(reference_prices[role]) * factor
+        try:
+            edge_check = validate_entry_edge(
+                alert_edge=request.alert_edge, direction=contracts.direction,
+                low_strike=contracts.low_strike, high_strike=contracts.high_strike,
+                reference_prices=edge_reference_prices,
+                limit_prices=limit_prices if payload.order_type == "LIMIT" else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         # Recheck immediately before the durable claim: OFF pressed while quotes
         # and contracts were being prepared must prevent this entry from starting.
         # Once the claim is created, the four-leg attempt is in flight; OFF does
@@ -962,6 +1040,9 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
             "trade_id": trade_id, "status": summary["status"],
             "latency_seconds": execution.latency_seconds,
             "slippage_rate": str(execution.slippage_rate),
+            "alert_edge": edge_check["alert_edge"],
+            "minimum_entry_edge": edge_check["minimum_entry_edge"],
+            "effective_entry_edge": edge_check["effective_entry_edge"],
             "fills": [{
                 "role": fill.role, "action": fill.action, "quantity": fill.quantity,
                 "reference_price": str(fill.reference_price), "fill_price": str(fill.fill_price),
