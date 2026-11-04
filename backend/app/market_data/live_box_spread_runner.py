@@ -111,6 +111,7 @@ class LiveBoxSpreadRunner:
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None; self.pipeline=None
         self._publish_enabled = bool(publish_enabled)
+        self._publishing_requested = bool(publish_enabled)
         self.publication_gate = publication_gate or BOX_SPREAD_PUBLICATION_GATE
         self._publisher_owner = object()
         if self._publish_enabled:
@@ -135,14 +136,17 @@ class LiveBoxSpreadRunner:
 
     def activate_publishing(self):
         """Allow this warmed session to become the sole live result publisher."""
+        self._publishing_requested = True
         self._publish_enabled = True
         self.publication_gate.activate(self._publisher_owner)
         pipeline = self.pipeline
         if pipeline is not None:
             pipeline.set_publish_enabled(True)
 
-    def deactivate_publishing(self):
+    def deactivate_publishing(self, *, preserve_request=False):
         """Stop this session from publishing before its feeds are detached."""
+        if not preserve_request:
+            self._publishing_requested = False
         self._publish_enabled = False
         pipeline = self.pipeline
         if pipeline is not None:
@@ -435,6 +439,11 @@ class LiveBoxSpreadRunner:
                 )
         return subscriptions
     def _run_session(self):
+        # A reconfigured session may reclaim an idle gate, but must never
+        # override a newer staged runner that already owns publication.
+        if self._publishing_requested:
+            self.publication_gate.claim_if_unowned(self._publisher_owner)
+            self._publish_enabled = self.publication_gate.is_owner(self._publisher_owner)
         # main.py prepares the shared master before starting this runner. Reuse
         # that validated snapshot instead of triggering a second network refresh.
         if not getattr(self.master, "_loaded", False) or not getattr(self.master, "instruments", None):
@@ -726,7 +735,7 @@ class LiveBoxSpreadRunner:
             feed, self.feed = self.feed, None
             feed_thread, self._feed_thread = self._feed_thread, None
             recorder, self.recorder = self.recorder, None
-            self.deactivate_publishing()
+            self.deactivate_publishing(preserve_request=True)
             self.pipeline = None
             if recorder is not None:
                 recorder.stop()
