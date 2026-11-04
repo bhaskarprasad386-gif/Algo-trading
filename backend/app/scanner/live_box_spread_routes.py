@@ -126,10 +126,14 @@ def classify_expiry_type(symbol, expiry):
 def index_spot_snapshot():
     """Return independent source-backed spot quotes for all supported Box Spread indices."""
     defaults = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
-    try:
-        selected = _index_selection_provider() if callable(_index_selection_provider) else defaults
-        symbols = tuple(symbol for symbol in defaults if symbol in set(selected))
-    except Exception:
+    if callable(_index_selection_provider):
+        try:
+            selected = set(_index_selection_provider())
+            symbols = tuple(symbol for symbol in defaults if symbol in selected)
+        except Exception:
+            # Fail closed: never expose/fetch an unselected index on a setting error.
+            symbols = ()
+    else:
         symbols = defaults
     now_ns = time.time_ns()
     data = []
