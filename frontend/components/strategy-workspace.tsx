@@ -589,6 +589,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
   const [indexSelectionDraft, setIndexSelectionDraft] = useState<string[]>([]);
   const [activeIndexSymbols, setActiveIndexSymbols] = useState<string[]>([]);
+  const [savedIndexSymbols, setSavedIndexSymbols] = useState<string[]>([]);
+  const [indexHandoffState, setIndexHandoffState] = useState("CHECKING");
   const [indexSelectionLoading, setIndexSelectionLoading] = useState(false);
   const [indexSelectionSaving, setIndexSelectionSaving] = useState(false);
   const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
@@ -857,9 +859,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Unable to load saved index selection");
         const symbols = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : [];
+        const runtime = body?.runtime?.supervisor;
+        const active = Array.isArray(runtime?.active_symbols) ? runtime.active_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
+        const handoff = typeof runtime?.handoff?.state === "string" ? runtime.handoff.state : "UNKNOWN";
         if (!cancelled) {
-          setActiveIndexSymbols(symbols);
-          setIndexSelectionDraft(symbols);
+          setSavedIndexSymbols(symbols);
+          setActiveIndexSymbols(active);
+          setIndexHandoffState(handoff);
+          setIndexSelectionDraft(current => current.length ? current : symbols);
           setIndexSelectionError(null);
         }
       } catch (e) {
@@ -869,7 +876,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
     };
     void loadSelection();
-    return () => { cancelled = true; };
+    const timer = window.setInterval(() => void loadSelection(), 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [slug]);
 
   const saveIndexSelection = async () => {
@@ -887,14 +895,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Index selection save failed");
       const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : indexSelectionDraft;
-      setActiveIndexSymbols(saved);
+      setSavedIndexSymbols(saved);
       setIndexSelectionDraft(saved);
-      setRows([]);
-      rowsRef.current = [];
-      setRowsStale(false);
-      setPairRows([]);
-      setIndexSelectionMessage(body?.message || "Index selection saved. Switching live feed safely.");
-      void load(true);
+      const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
+      setIndexHandoffState(handoff);
+      setIndexSelectionMessage(handoff === "STAGING"
+        ? "Selection saved. New feed is warming up; the previous live feed and its rows remain active until readiness is confirmed."
+        : (body?.message || "Index selection saved."));
     } catch (e) {
       setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
     } finally {
@@ -1209,10 +1216,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-sm font-extrabold theme-text">Manual Index Subscription</h2>
-              <p className="mt-1 text-xs theme-muted">Select only the indices whose Box Spread spot and option data should be subscribed. Selection is saved on the backend.</p>
+              <p className="mt-1 text-xs theme-muted">Saved selection is applied only after the replacement feed is live-ready. During staging, the previous feed remains active.</p>
             </div>
             <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">
-              {indexSelectionLoading ? "LOADING SAVED SETTING" : activeIndexSymbols.length + " ACTIVE INDICES"}
+              {indexSelectionLoading ? "LOADING FEED STATE" : activeIndexSymbols.length + " ACTIVE INDICES"}
             </span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -1229,8 +1236,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             ))}
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[11px] theme-muted">Currently saved: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "Loading…"}. Unsaved checkbox changes do not affect the live feed.</p>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === activeIndexSymbols.length && indexSelectionDraft.every(symbol => activeIndexSymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
+            <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === savedIndexSymbols.length && indexSelectionDraft.every(symbol => savedIndexSymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
               {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
             </button>
           </div>
