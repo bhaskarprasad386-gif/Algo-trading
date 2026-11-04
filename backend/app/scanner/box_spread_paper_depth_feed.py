@@ -33,7 +33,7 @@ class BoxPaperDepthFeed:
     """Serialize short-lived exact-token subscriptions on the common feed."""
 
     def __init__(self, *, mode: int = 3, max_age_seconds: float = 5.0,
-                 max_skew_seconds: float = 2.0) -> None:
+                 max_skew_seconds: float = 5.0) -> None:
         self._feed = CommonStrategyMarketFeed(_CONSUMER, mode=mode)
         self._max_age = float(max_age_seconds)
         self._max_skew = float(max_skew_seconds)
@@ -73,10 +73,49 @@ class BoxPaperDepthFeed:
             payload.get(name) is not None for name in _PROVIDER_TIMESTAMP_FIELDS
         ):
             return None
-        try:
-            value = int(getattr(record, "timestamp_ns"))
-        except (TypeError, ValueError, OverflowError):
+        # Parse the raw provider field itself. The normalizer deliberately
+        # falls back to local receipt time for malformed timestamps, so reading
+        # record.timestamp_ns here would incorrectly bless malformed provider
+        # data as an exchange timestamp.
+        for name in ("exchange_timestamp_ns", "timestamp_ns"):
+            raw = payload.get(name)
+            if raw is None:
+                continue
+            try:
+                value = int(str(raw).strip())
+            except (TypeError, ValueError, OverflowError):
+                continue
+            return value if value > 0 else None
+
+        raw = next(
+            (payload.get(name) for name in (
+                "exchange_timestamp", "exchange_timestamp_ms", "timestamp", "feed_time"
+            ) if payload.get(name) is not None),
+            None,
+        )
+        if raw is None:
             return None
+        try:
+            text = str(raw).strip()
+            integer = int(text)
+        except (TypeError, ValueError, OverflowError):
+            try:
+                number = float(raw)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            if not (number == number and abs(number) != float("inf")):
+                return None
+            integer = int(number)
+
+        magnitude = abs(integer)
+        if magnitude >= 10**16:
+            value = integer
+        elif magnitude >= 10**14:
+            value = integer * 1_000
+        elif magnitude >= 10**11:
+            value = integer * 1_000_000
+        else:
+            value = integer * 1_000_000_000
         return value if value > 0 else None
 
     def _on_record(self, record: Any) -> None:
