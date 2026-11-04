@@ -279,7 +279,7 @@ export default function BoxSpreadPostMarketHistory() {
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
           <div>
-            <h2 className="text-base font-extrabold theme-text">Historical Box Spread Scanner Snapshots</h2>
+            <h2 className="text-base font-extrabold theme-text">Opportunity History · Last 24 Hours</h2>
             <p className="mt-1 text-sm theme-muted">Historical qualifying scanner observations · saved snapshot prices and edge · selected history window · read-only, not live quotes or today’s alert list</p>
           </div>
         </div>
@@ -396,6 +396,7 @@ export default function BoxSpreadPostMarketHistory() {
             <button type="button" onClick={() => setDepthSnapshot(null)} className="min-h-10 rounded-lg border-2 border-slate-400 px-4 text-sm font-bold text-white">Close</button>
           </div>
           <p className="mt-3 rounded-lg border border-cyan-700 bg-cyan-950/50 p-3 text-xs text-cyan-100">Historical broker depth captured with this exact opportunity. These levels are immutable saved data, not current quotes.</p>
+          {!depthSnapshot.depth_legs?.some(leg => (leg.bid_depth_levels?.length || 0) + (leg.ask_depth_levels?.length || 0) > 0) && <p className="mt-3 rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-xs text-amber-100">This older snapshot has no saved five-level bid/ask ladder. Its saved L1 values remain available; no current depth is substituted.</p>}
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {(depthSnapshot.depth_legs || []).map(leg => <section key={leg.role} className="rounded-xl border border-slate-600 bg-slate-900 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-extrabold">{leg.role.replaceAll("_", " ")} · EXECUTABLE {leg.side}</h4><span className="text-xs font-bold text-cyan-200">{leg.depth_status || "DEPTH"}</span></div>
