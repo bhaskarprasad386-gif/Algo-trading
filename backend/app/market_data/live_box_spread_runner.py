@@ -142,6 +142,67 @@ class LiveBoxSpreadRunner:
         if pipeline is not None:
             pipeline.set_publish_enabled(False)
     @staticmethod
+    def staged_session_readiness(snapshot, required_symbols):
+        """Fail closed unless every selected underlying and the new option/depth feeds are live."""
+        required = {str(symbol).strip().upper() for symbol in required_symbols if str(symbol).strip()}
+        if not required:
+            return {"ready": False, "state": "WAITING_FOR_TARGETS", "reasons": ["no_required_symbols"]}
+
+        underlying = snapshot.get("underlying_feed") or {}
+        symbol_rows = underlying.get("symbols") if isinstance(underlying, dict) else {}
+        symbol_rows = symbol_rows if isinstance(symbol_rows, dict) else {}
+        missing_underlyings = sorted(
+            symbol for symbol in required
+            if str((symbol_rows.get(symbol) or {}).get("state") or "").upper() != "LIVE"
+        )
+
+        option = snapshot.get("option_recorder") or {}
+        option_feed = option.get("feed") or {}
+        option_ready = (
+            int(option.get("subscriptions", 0) or 0) >= 4
+            and int(option.get("records_received", 0) or 0) > 0
+            and not LiveBoxSpreadRunner._feed_is_down(option_feed)
+        )
+
+        depth = snapshot.get("depth_shadow") or {}
+        depth_rows = depth.get("readiness") or []
+        ready_depth_symbols = {
+            str(row.get("underlying") or "").strip().upper()
+            for row in depth_rows
+            if isinstance(row, dict)
+            and str(row.get("state") or "").upper() == "READY"
+            and int(row.get("full_depth_ce", 0) or 0) >= 2
+            and int(row.get("full_depth_pe", 0) or 0) >= 2
+            and int(row.get("executable_depth_contracts", 0) or 0) >= 4
+        }
+        missing_depth = sorted(required - ready_depth_symbols)
+        reasons = []
+        if missing_underlyings:
+            reasons.append("underlying_ticks_not_fresh:" + ",".join(missing_underlyings))
+        if not option_ready:
+            reasons.append("option_recorder_not_receiving_live_records")
+        if not depth.get("enabled") or not depth.get("running"):
+            reasons.append("depth_shadow_not_running")
+        if missing_depth:
+            reasons.append("five_level_depth_not_ready:" + ",".join(missing_depth))
+        return {
+            "ready": not reasons,
+            "state": "READY" if not reasons else "WAITING_FOR_FEEDS",
+            "required_symbols": sorted(required),
+            "missing_underlying_symbols": missing_underlyings,
+            "missing_depth_symbols": missing_depth,
+            "option_recorder_ready": option_ready,
+            "reasons": reasons,
+        }
+
+    def staged_readiness(self):
+        """Read the live session state using the same strict gate used before handoff."""
+        return self.staged_session_readiness(
+            self.snapshot(),
+            {target.underlying for target in self.targets},
+        )
+
+    @staticmethod
     def _feed_is_down(feed_snapshot) -> bool:
         """Detect a sustained no-socket state without fighting the manager's reconnect window."""
         snapshot = feed_snapshot or {}
