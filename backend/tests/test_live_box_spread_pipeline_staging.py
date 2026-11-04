@@ -120,3 +120,20 @@ def test_publisher_gate_waits_for_inflight_publish_before_transfer():
     assert not activator.is_alive()
     assert activation_finished.is_set()
     assert gate.is_owner(new_owner)
+
+
+
+def test_publisher_gate_claims_only_when_idle():
+    from app.scanner.box_spread_publication_gate import BoxSpreadPublicationGate
+
+    gate = BoxSpreadPublicationGate()
+    first = object()
+    second = object()
+
+    assert gate.claim_if_unowned(first) is True
+    assert gate.claim_if_unowned(first) is True
+    assert gate.claim_if_unowned(second) is False
+    assert gate.is_owner(first) is True
+    assert gate.deactivate(first) is True
+    assert gate.claim_if_unowned(second) is True
+    assert gate.is_owner(second) is True
