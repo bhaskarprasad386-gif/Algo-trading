@@ -686,3 +686,45 @@ def test_staged_session_readiness_rejects_disconnected_option_feed():
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY"})
     assert result["ready"] is False
     assert result["option_recorder_ready"] is False
+
+
+def test_staged_readiness_requires_every_selected_expiry_group():
+    import app.market_data.live_box_spread_runner as mod
+
+    snapshot = {
+        "underlying_feed": {"symbols": {"NIFTY": {"state": "LIVE"}}},
+        "option_recorder": {
+            "subscriptions": 8,
+            "feed": {"active_instruments": 8, "connected_groups": [1], "disconnected_groups": []},
+            "fresh_contracts": [
+                {"underlying": "NIFTY", "expiry": "WEEKLY", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "WEEKLY", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "WEEKLY", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "WEEKLY", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "MONTHLY", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "MONTHLY", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "MONTHLY", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "MONTHLY", "option_type": "PE"},
+            ],
+        },
+        "depth_shadow": {
+            "enabled": True,
+            "running": True,
+            "readiness": [
+                {"underlying": "NIFTY", "expiry": "WEEKLY", "state": "READY",
+                 "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+            ],
+        },
+    }
+    required = {("NIFTY", "WEEKLY"), ("NIFTY", "MONTHLY")}
+    result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, required)
+    assert result["ready"] is False
+    assert result["missing_expiry_groups"] == [["NIFTY", "MONTHLY"]]
+
+    snapshot["depth_shadow"]["readiness"].append(
+        {"underlying": "NIFTY", "expiry": "MONTHLY", "state": "READY",
+         "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4}
+    )
+    result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, required)
+    assert result["ready"] is True
+    assert result["missing_expiry_groups"] == []
