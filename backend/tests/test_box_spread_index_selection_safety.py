@@ -46,3 +46,18 @@ def test_index_deselection_is_allowed_after_all_paper_legs_are_flat(monkeypatch)
     assert result["status"] == "success"
     assert result["symbols"] == ["NIFTY"]
     assert saved == [("NIFTY",)]
+
+
+
+def test_saved_index_selection_read_failure_does_not_fall_back_to_all_or_default(monkeypatch):
+    class BrokenSession:
+        def __enter__(self):
+            raise RuntimeError("database unavailable")
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(main, "SessionLocal", lambda: BrokenSession())
+
+    with pytest.raises(RuntimeError, match="index selection is unavailable"):
+        main._get_box_spread_index_selection()
