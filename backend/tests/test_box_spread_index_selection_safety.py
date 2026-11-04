@@ -99,3 +99,27 @@ def test_selection_fails_closed_when_active_runner_has_no_handoff_supervisor(mon
 
     assert error.value.status_code == 503
     assert saved == []
+
+def test_spot_index_universe_follows_active_runner_during_staged_handoff(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("BANKEX", "SENSEX"))
+    monkeypatch.setattr(
+        main,
+        "live_box_spread_runner",
+        SimpleNamespace(targets=[
+            SimpleNamespace(underlying="NIFTY"),
+            SimpleNamespace(underlying="BANKNIFTY"),
+            SimpleNamespace(underlying="NIFTY"),
+        ]),
+    )
+
+    assert main._get_box_spread_active_index_symbols() == ("BANKNIFTY", "NIFTY")
+
+
+def test_spot_index_universe_uses_saved_selection_before_runner_starts(monkeypatch):
+    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("SENSEX", "BANKEX"))
+    monkeypatch.setattr(main, "live_box_spread_runner", None)
+
+    assert main._get_box_spread_active_index_symbols() == ("SENSEX", "BANKEX")
+
