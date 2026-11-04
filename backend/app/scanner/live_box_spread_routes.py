@@ -463,9 +463,9 @@ def alerts(days:int=Query(30,ge=1,le=30),limit:int=Query(500,ge=1,le=5000)):
         data=[]
         for r in rows:
             try:
-                edge=float(r.depth_edge_per_unit)
-                lots=int(r.max_executable_lots)
-                status=str(r.tradability_status or "").strip().upper()
+                edge=float(getattr(r,"depth_edge_per_unit",None))
+                lots=int(getattr(r,"max_executable_lots",None))
+                status=str(getattr(r,"tradability_status",None) or "").strip().upper()
                 threshold=float(INDEX_EDGE_THRESHOLDS.get(str(r.symbol).strip().upper(),10.0))
             except (TypeError,ValueError,OverflowError):
                 continue
