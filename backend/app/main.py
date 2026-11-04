@@ -1271,6 +1271,61 @@ class SyntheticUniverseSelection(BaseModel):
     selection: str
 
 
+class BoxSpreadIndexSelectionRequest(BaseModel):
+    symbols: list[str]
+
+
+@app.get("/api/v1/scanner/box-spread/index-selection")
+def get_box_spread_index_selection():
+    selected = _get_box_spread_index_selection()
+    runner = live_box_spread_runner
+    runtime = runner.snapshot() if runner is not None else {"running": False, "readiness": {"state": "runner_stopped"}}
+    return {
+        "status": "success",
+        "symbols": list(selected),
+        "available_indices": sorted(OPTION_STRATEGY_INDEX_SYMBOLS),
+        "presets": {key: list(value) for key, value in BOX_SPREAD_INDEX_PRESETS.items()},
+        "runtime": runtime,
+    }
+
+
+@app.post("/api/v1/scanner/box-spread/index-selection")
+def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
+    global live_box_spread_latest_results
+    try:
+        selected = _normalize_box_spread_index_symbols(payload.symbols)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"message": str(exc)}) from exc
+
+    runner = live_box_spread_runner
+    prepared_targets = None
+    prepared_expiry_types = None
+    if runner is not None and not runner.stop_event.is_set():
+        try:
+            # Validate against the runner's already-loaded master before committing.
+            prepared_targets, prepared_expiry_types = _box_spread_targets_from_master(runner.master, selected)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=409, detail={"message": f"Index selection validation failed; previous feed remains active: {exc}"}) from exc
+
+    saved = _save_box_spread_index_selection(selected)
+    live_box_spread_latest_results = tuple(
+        row for row in live_box_spread_latest_results
+        if str(getattr(getattr(row, "low", None), "underlying", "") or "").strip().upper() in set(saved)
+    )
+    switch = {"status": "SAVED", "restart_requested": False, "symbols": list(saved)}
+    if runner is not None and prepared_targets is not None:
+        set_live_box_expiry_types(prepared_expiry_types)
+        set_live_box_websocket_expiry_types(prepared_expiry_types)
+        switch = runner.request_reconfigure(prepared_targets)
+        switch["restart_requested"] = True
+    return {
+        "status": "success",
+        "symbols": list(saved),
+        "switch": switch,
+        "message": "Selection saved. Only selected Box Spread indices will be subscribed after the safe session handoff.",
+    }
+
+
 @app.get("/api/v1/scanner/synthetic-cash-carry/universe")
 def get_synthetic_universe():
     return {
