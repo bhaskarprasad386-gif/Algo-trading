@@ -184,11 +184,16 @@ class BoxSpreadRunnerSupervisor:
         with self._lock:
             return self._active_thread
 
+    @property
+    def is_shutting_down(self):
+        return self._shutdown.is_set()
+
     def snapshot(self):
         with self._lock:
             return {
                 "active_symbols": sorted({t.underlying for t in self._active_runner.targets}),
                 "candidate_running": bool(self._candidate_thread and self._candidate_thread.is_alive()),
+                "handoff_in_progress": bool(self._handoff_thread and self._handoff_thread.is_alive()),
                 "handoff": dict(self._last_handoff),
             }
 
