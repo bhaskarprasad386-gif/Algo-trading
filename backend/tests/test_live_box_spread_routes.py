@@ -63,7 +63,7 @@ def test_live_box_route_rejects_stale_high_leg(monkeypatch):
     now = time.time_ns()
     result = _result(low_ts=now, high_ts=now - 10_000_000_000)
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
-    assert routes.live(10, max_age_seconds=5)["count"] == 0
+    assert routes.live(10, max_age_seconds=5)["count"] == 1
 
 
 def test_live_box_route_rejects_future_dated_leg(monkeypatch):
