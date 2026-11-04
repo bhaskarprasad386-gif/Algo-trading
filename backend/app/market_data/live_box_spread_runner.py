@@ -161,6 +161,8 @@ class LiveBoxSpreadRunner:
         option_ready = (
             int(option.get("subscriptions", 0) or 0) >= 4
             and int(option.get("records_received", 0) or 0) > 0
+            and int(option_feed.get("active_instruments", 0) or 0) > 0
+            and bool(option_feed.get("connected_groups"))
             and not LiveBoxSpreadRunner._feed_is_down(option_feed)
         )
 
