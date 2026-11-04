@@ -25,7 +25,7 @@ from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 # Temporarily excluded from the Box Spread scanner universe and all its feeds.
-BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset({"FINNIFTY", "BANKEX"})
+BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset()
 WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
@@ -106,6 +106,9 @@ class LiveBoxSpreadRunner:
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
+        self._reconfigure_event = Event()
+        self._targets_lock = Lock()
+        self._pending_targets = None
         self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED))
         self._depth_shadow_lock = Lock()
         self._depth_shadow_last_comparisons = []
@@ -158,12 +161,37 @@ class LiveBoxSpreadRunner:
             feed_detail.get("disconnected_groups"), feed_detail.get("last_error"),
         )
 
+    def request_reconfigure(self, targets):
+        """Queue a validated target set; the current session tears down once before applying it."""
+        normalized = tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper(), str(target.expiry or ""))))
+        if not normalized:
+            raise ValueError("Box Spread requires at least one selected index target")
+        with self._targets_lock:
+            self._pending_targets = normalized
+            self._reconfigure_event.set()
+        return {"status": "RECONFIGURE_QUEUED", "target_count": len(normalized), "symbols": sorted({target.underlying.strip().upper() for target in normalized})}
+
+    def _apply_pending_targets(self):
+        with self._targets_lock:
+            if not self._reconfigure_event.is_set() or self._pending_targets is None:
+                return False
+            self.targets = self._pending_targets
+            self._pending_targets = None
+            self._reconfigure_event.clear()
+            self._readiness = {"state": "reconfiguring", "ready_symbols": [], "waiting_symbols": [], "unavailable_symbols": []}
+            self.scanner = None
+            self.tracker = None
+        return True
+
     def run_forever(self):
         retry_delay = 5.0
         max_retry_delay = 60.0
         while not self.stop_event.is_set():
             try:
                 self._run_session()
+                if self._apply_pending_targets():
+                    retry_delay = 1.0
+                    continue
                 retry_delay = 5.0
             except Exception as exc:
                 if self.stop_event.is_set():
@@ -233,7 +261,10 @@ class LiveBoxSpreadRunner:
                 entry.quantity if entry.action == "BUY" else -entry.quantity
             )
         subscriptions = []
+        selected_symbols = {target.underlying.strip().upper() for target in self.targets}
         for trade in trades:
+            if str(trade.underlying or "").strip().upper() not in selected_symbols:
+                continue
             if not any(signed_by_trade.get(trade.id, {}).values()):
                 continue
             try:
@@ -328,7 +359,7 @@ class LiveBoxSpreadRunner:
         self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
         self._feed_thread.start()
         try:
-            while not self.stop_event.is_set():
+            while not self.stop_event.is_set() and not self._reconfigure_event.is_set():
                 self._log_feed_state_change()
                 underlying_snapshot = _box_underlying_health_snapshot(_safe_snapshot(self.feed))
                 # Box Spread accepts only source-fresh underlying prices. Keep this
@@ -519,7 +550,7 @@ class LiveBoxSpreadRunner:
                     "subscription_count": len(subs),
                 }
                 down_since = None
-                while not self.stop_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
+                while not self.stop_event.is_set() and not self._reconfigure_event.is_set() and recorder_thread.is_alive() and self.recorder is recorder:
                     self._log_feed_state_change()
                     self._readiness["underlying_websocket"] = _box_underlying_health_snapshot(_safe_snapshot(self.feed))
                     recorder_snapshot = _safe_snapshot(recorder)
