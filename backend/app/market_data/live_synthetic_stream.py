@@ -231,11 +231,11 @@ class LiveSyntheticOptionFutureRecorder:
                 return
             self._records_received += 1
             current_timestamp_ns = int(record.timestamp_ns)
-            self._last_record_at_ns_by_key[key] = time_ns()
             last_timestamp_ns = self._last_timestamp_ns_by_key.get(key)
             if last_timestamp_ns is not None and current_timestamp_ns < last_timestamp_ns:
                 self._out_of_order_records += 1
                 return
+            self._last_record_at_ns_by_key[key] = time_ns()
             self._last_timestamp_ns_by_key[key] = current_timestamp_ns
             previous = self._latest.get(key)
             if previous is not None:
