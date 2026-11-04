@@ -1525,7 +1525,7 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
                 ) from exc
             if switch.get("state") != "STAGING":
                 try:
-                    _save_box_spread_index_selection(current_selection)
+                    _save_box_spread_index_selection(current_selection, current_weekly_only)
                 except Exception:
                     app_logger.exception("CRITICAL: failed to restore Box Spread selection after rejected handoff")
                 raise HTTPException(
