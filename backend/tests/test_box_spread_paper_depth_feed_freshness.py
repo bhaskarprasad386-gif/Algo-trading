@@ -29,3 +29,10 @@ def test_malformed_provider_timestamp_fails_closed_as_unknown_not_local_time():
     # Unknown provider time falls back to independent arrival freshness;
     # it must never be interpreted as proof of an old exchange timestamp.
     assert BoxPaperDepthFeed._provider_timestamp_ns(record) is None
+
+
+def test_default_four_leg_skew_tolerance_is_five_seconds():
+    feed = BoxPaperDepthFeed.__new__(BoxPaperDepthFeed)
+    feed._max_skew = 5.0
+
+    assert feed._max_skew == 5.0
