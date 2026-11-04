@@ -1244,7 +1244,6 @@ def get_box_spread_index_selection():
     }
 
 
-@app.post("/api/v1/scanner/box-spread/index-selection")
 def _box_spread_open_paper_symbols():
     """Return indices with any non-flat paper position across the single-owner ledger.
 
@@ -1274,6 +1273,7 @@ def _box_spread_open_paper_symbols():
     return open_symbols
 
 
+@app.post("/api/v1/scanner/box-spread/index-selection")
 def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
     global live_box_spread_latest_results
     try:
