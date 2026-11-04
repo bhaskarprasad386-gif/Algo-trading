@@ -1205,6 +1205,41 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       )}
 
       {slug === "box-spread" && (
+        <Card className="theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Manual Box Spread index selection">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-extrabold theme-text">Manual Index Subscription</h2>
+              <p className="mt-1 text-xs theme-muted">Select only the indices whose Box Spread spot and option data should be subscribed. Selection is saved on the backend.</p>
+            </div>
+            <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">
+              {indexSelectionLoading ? "LOADING SAVED SETTING" : activeIndexSymbols.length + " ACTIVE INDICES"}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">All Indices</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX","BANKNIFTY"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX + BANKNIFTY</button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => (
+              <label key={symbol} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs font-bold theme-text">
+                <input type="checkbox" checked={indexSelectionDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={(event) => setIndexSelectionDraft(current => event.target.checked ? [...current, symbol] : current.filter(item => item !== symbol))} className="h-4 w-4 accent-emerald-600" />
+                {symbol}
+              </label>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[11px] theme-muted">Currently saved: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "Loading…"}. Unsaved checkbox changes do not affect the live feed.</p>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === activeIndexSymbols.length && indexSelectionDraft.every(symbol => activeIndexSymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
+              {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
+            </button>
+          </div>
+          {indexSelectionMessage && <p role="status" className="mt-3 rounded-lg border theme-border theme-success-bg p-3 text-xs theme-success">{indexSelectionMessage}</p>}
+          {indexSelectionError && <p role="alert" className="mt-3 rounded-lg border theme-border theme-danger-bg p-3 text-xs theme-danger">{indexSelectionError}. Previous saved selection is retained.</p>}
+        </Card>
+      )}
+
+      {slug === "box-spread" && (
         <section id="box-overview" className="scroll-mt-24 space-y-3 rounded-2xl theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread live index prices">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div><h2 className="text-sm font-extrabold theme-text">Live Index Prices</h2><p className="mt-1 text-[10px] theme-muted">Direct spot-feed snapshots · refresh 1s · LIVE only when quote age is 5s or less</p></div>
