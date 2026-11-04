@@ -328,6 +328,16 @@ def test_snapshot_payload_persists_all_four_leg_timestamps_and_quote_skew(tmp_pa
     result.low.put_timestamp_ns = base + 100_000_000
     result.high.call_timestamp_ns = base + 200_000_000
     result.high.put_timestamp_ns = base + 300_000_000
+    result.depth_legs = (
+        {
+            "role": "LOW_CE", "side": "ASK", "timestamp_ns": base,
+            "depth_status": "DEPTH_PARTIAL", "vwap": 10.5,
+            "available_quantity": 130, "selected_quantity": 130,
+            "bid_depth_levels": [{"price": 10.0, "quantity": 130}],
+            "ask_depth_levels": [{"price": 10.5, "quantity": 130}],
+            "depth_levels": [{"price": 10.5, "quantity": 130}],
+        },
+    )
     pipeline = LiveBoxSpreadPipeline(
         scanner=RepeatingScanner(result), session_factory=None, alerts=NoopAlerts(),
     )
@@ -341,6 +351,9 @@ def test_snapshot_payload_persists_all_four_leg_timestamps_and_quote_skew(tmp_pa
     assert saved["high_put_timestamp_ns"] == base + 300_000_000
     assert saved["last_update_timestamp_ns"] == base + 300_000_000
     assert saved["timestamp_skew_ms"] == 300.0
+    assert saved["depth_legs"][0]["timestamp_ns"] == base
+    assert saved["depth_legs"][0]["bid_depth_levels"] == [{"price": 10.0, "quantity": 130}]
+    assert saved["depth_legs"][0]["ask_depth_levels"] == [{"price": 10.5, "quantity": 130}]
 
 
 
