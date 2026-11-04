@@ -196,6 +196,9 @@ class LiveBoxSpreadRunner:
             except Exception as exc:
                 if self.stop_event.is_set():
                     break
+                if self._apply_pending_targets():
+                    retry_delay = 1.0
+                    continue
                 app_logger.warning(
                     "Box Spread live runner failed; retrying in {:.1f}s: {}",
                     retry_delay,
@@ -590,6 +593,8 @@ class LiveBoxSpreadRunner:
         return {
             "running": not self.stop_event.is_set(),
             "targets": len(self.targets),
+            "target_symbols": sorted({target.underlying.strip().upper() for target in self.targets}),
+            "reconfigure_pending": self._reconfigure_event.is_set(),
             "underlying_feed_thread_alive": bool(
                 self._feed_thread
                 and callable(getattr(self._feed_thread, "is_alive", None))
