@@ -122,7 +122,7 @@ export default function BoxSpreadTraceArea() {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex items-start gap-3">
         <Archive className="mt-0.5 h-5 w-5 theme-accent" />
-        <div><h2 className="text-base font-extrabold theme-text">Box Spread Trace</h2>
+        <div><h2 className="text-lg font-black text-slate-950 sm:text-xl">Box Spread Trace</h2>
           <p className="mt-1 text-xs theme-muted">Alerts manually added from Post-Market History remain here as separate records. Check Status / Exit fetches fresh live quotes and available depth for all four legs; it only calculates exit status and P&L preview — it never places an order.</p>
         </div>
       </div>
