@@ -33,6 +33,7 @@ type ExitResult = {
   latest_edge: number | null;
   exit_edge: number | null;
   gross_pnl: number | null;
+  gross_pnl_per_lot: number | null;
   max_complete_exit_lots_now: number;
   message: string;
   legs: Array<{ leg: string; exit_side: string; exit_price: number | null; exit_qty: number | null; leg_gross_pnl: number | null }>;
@@ -40,6 +41,16 @@ type ExitResult = {
 const legs = [["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const;
 const fmt = (value: unknown) => value == null || !Number.isFinite(Number(value)) ? "—" : Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 const time = (value: string) => { const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString("en-IN", { timeZone:"Asia/Kolkata", dateStyle:"short", timeStyle:"medium" }); };
+const expiryDate = (value: string) => {
+  const raw = String(value || "").trim().toUpperCase();
+  let m = raw.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = raw.match(/^(\\d{1,2})-([A-Z]{3})-(\\d{2,4})$/);
+  if (m) { const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]; const y = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]); return new Date(y, months.indexOf(m[2]), Number(m[1])); }
+  const d = new Date(raw); return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+};
+const isExpired = (value: string) => { const d = expiryDate(value); if (!d) return false; const today = new Date(); today.setHours(0,0,0,0); return d < today; };
+const edgeDifference = (entry: number | null | undefined, latest: number | null | undefined) => entry == null || latest == null ? null : latest - entry;
 
 export default function BoxSpreadTraceArea() {
   const [records, setRecords] = useState<TraceEntry[]>([]);
@@ -75,7 +86,7 @@ export default function BoxSpreadTraceArea() {
     } catch (e) { setError(e instanceof Error ? e.message : "Exit check failed"); }
     finally { setBusy(null); }
   };
-  return <Card id="box-trace" className="scroll-mt-24 theme-border theme-surface theme-text p-4 shadow-xl sm:p-5">
+  return <Card id="box-trace" className="box-trace-contrast scroll-mt-24 theme-border theme-surface theme-text p-4 shadow-xl sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex items-start gap-3">
         <Archive className="mt-0.5 h-5 w-5 theme-accent" />
@@ -95,11 +106,11 @@ export default function BoxSpreadTraceArea() {
       {records.map(trace => <article key={trace.id} className="rounded-xl border theme-border theme-surface-2 p-3 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-extrabold theme-text">{trace.symbol}</span><span className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:text-cyan-300">{trace.direction}</span><span className="text-[10px] font-semibold theme-muted">{trace.entry.expiry_type || "EXPIRY"} · {trace.expiry}</span></div>
+            <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-extrabold theme-text">{trace.symbol}</span><span className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:text-cyan-300">{trace.direction}</span><span className="text-[10px] font-semibold theme-muted">{trace.entry.expiry_type || "EXPIRY"} · {trace.expiry}</span>{isExpired(trace.expiry) && <span className="rounded-md border border-rose-700 bg-rose-100 px-2 py-1 text-xs font-extrabold text-rose-900">EXPIRED</span></div>
             <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
             <p className="mt-1 text-[10px] theme-muted">Trace saved: {time(trace.created_at)} · Original alert: {time(trace.entry.observed_at)}</p>
           </div>
-          <button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-9 rounded-lg border border-amber-500/50 px-3 text-xs font-bold theme-text disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button>
+          {!isExpired(trace.expiry) ? <button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {legs.map(([label,key],index) => {
@@ -113,11 +124,11 @@ export default function BoxSpreadTraceArea() {
           <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Entry Edge (saved alert)</p><p className="mt-1 text-xs font-extrabold theme-text">₹{fmt(trace.entry.executable_edge)}</p></div>
           <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Latest Edge (same direction)</p><p className="mt-1 text-xs font-extrabold theme-text">{results[trace.id] ? "₹"+fmt(results[trace.id].latest_edge) : "—"}</p></div>
           <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Exit Edge (close P&amp;L / unit)</p><p className="mt-1 text-xs font-extrabold theme-text">{results[trace.id] ? "₹"+fmt(results[trace.id].exit_edge) : "—"}</p></div>
-          <div className="rounded-md border theme-border theme-surface p-2"><p className="text-[10px] theme-muted">Gross P&amp;L (full quantity)</p><p className="mt-1 text-xs font-extrabold theme-text">{results[trace.id]?.gross_pnl == null ? "—" : "₹"+fmt(results[trace.id].gross_pnl)}</p></div>
+          <div className="rounded-md border theme-border theme-surface p-2"><p className="text-sm font-bold theme-muted">Edge Difference (Latest − Entry)</p><p className={"mt-1 text-base font-extrabold " + ((edgeDifference(trace.entry.executable_edge, results[trace.id]?.latest_edge) ?? 0) >= 0 ? "text-emerald-800" : "text-rose-800")}>{edgeDifference(trace.entry.executable_edge, results[trace.id]?.latest_edge) == null ? "—" : (edgeDifference(trace.entry.executable_edge, results[trace.id]?.latest_edge)! > 0 ? "+" : "") + "₹" + fmt(edgeDifference(trace.entry.executable_edge, results[trace.id]?.latest_edge))}</p></div><div className="rounded-md border theme-border theme-surface p-2"><p className="text-sm font-bold theme-muted">Gross Profit (1 lot)</p><p className="mt-1 text-base font-extrabold text-emerald-800">{results[trace.id]?.gross_pnl_per_lot == null ? "—" : "₹"+fmt(results[trace.id].gross_pnl_per_lot)}</p></div>
         </div>
         {results[trace.id] && <div className="mt-3 rounded-lg border theme-border theme-surface p-3 text-xs theme-text">
           <p className="font-bold">{results[trace.id].status} · Gross P&L {results[trace.id].gross_pnl == null ? "—" : "₹"+fmt(results[trace.id].gross_pnl)} · Max exit {results[trace.id].max_complete_exit_lots_now} lots</p>
-          <p className="mt-2 theme-muted">Latest Edge is the fresh same-direction scanner edge. Exit Edge is the realized close P&amp;L per unit from fresh four-leg depth VWAP versus saved entry prices; it is shown only when all four legs support the full traced quantity.</p>
+          <p className="mt-2 theme-muted">Edge Difference = Latest Edge − Entry Edge (e.g. ₹700 − ₹713 = −₹13). Gross Profit / Lot is verified four-leg gross P&L divided by traced lots. Exit Edge is close P&L per unit from fresh four-leg depth VWAP and is shown only when all four legs support the full traced quantity.</p>
           <p className="mt-1 theme-muted">Latest quote check: {time(results[trace.id].checked_at)}</p>
           <p className="mt-1 theme-muted">{results[trace.id].message}</p>
           <div className="mt-2 grid grid-cols-2 gap-2">{results[trace.id].legs.map(leg => <p key={leg.leg} className="text-[10px] theme-muted">{leg.leg.replace("_"," ").toUpperCase()} · {leg.exit_side} · {leg.exit_price == null ? "No quote" : "₹"+fmt(leg.exit_price)} · Qty {fmt(leg.exit_qty)}</p>)}</div>
