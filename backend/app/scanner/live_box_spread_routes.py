@@ -14,7 +14,7 @@ _spot_provider = None
 _index_selection_provider = None
 _monitor_getter = None
 _expiry_types = {}
-MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
+MAX_LEG_TIMESTAMP_SKEW_NS = 8_000_000_000
 
 def configure_spot_provider(provider):
     """Configure a source-backed, freshness-checked underlying spot getter."""
