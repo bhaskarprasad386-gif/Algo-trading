@@ -647,6 +647,12 @@ def test_staged_session_readiness_fails_closed_for_one_stale_underlying_or_parti
         "option_recorder": {
             "subscriptions": 100, "records_received": 12,
             "feed": {"active_instruments": 100, "connected_groups": [1]},
+            "fresh_contracts": [
+                {"underlying": "NIFTY", "expiry": "", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "", "option_type": "PE"},
+            ],
         },
         "depth_shadow": {"enabled": True, "running": True, "readiness": [
             {"underlying": "NIFTY", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
