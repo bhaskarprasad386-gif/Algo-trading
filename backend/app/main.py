@@ -111,6 +111,7 @@ _live_synthetic_universe_status = {
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
+BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": tuple(sorted(OPTION_STRATEGY_INDEX_SYMBOLS)),
     "NIFTY_SENSEX": ("NIFTY", "SENSEX"),
@@ -1313,6 +1314,7 @@ def get_box_spread_index_selection():
     selected = _get_box_spread_index_selection()
     runner = live_box_spread_runner
     runtime = runner.snapshot() if runner is not None else {"running": False, "readiness": {"state": "runner_stopped"}}
+    runtime["supervisor"] = live_box_spread_supervisor.snapshot() if live_box_spread_supervisor is not None else {"handoff": {"state": "not_running"}}
     return {
         "status": "success",
         "symbols": list(selected),
@@ -1351,8 +1353,7 @@ def _box_spread_open_paper_symbols():
     return open_symbols
 
 
-@app.post("/api/v1/scanner/box-spread/index-selection")
-def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
+def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionRequest):
     global live_box_spread_latest_results
     try:
         selected = _normalize_box_spread_index_symbols(payload.symbols)
@@ -1438,6 +1439,14 @@ def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
         "switch": switch,
         "message": "Selection saved. Only selected Box Spread indices will be subscribed after the safe session handoff.",
     }
+
+
+@app.post("/api/v1/scanner/box-spread/index-selection")
+def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
+    # Serialize validation, persistence and staged-runner reservation so two
+    # concurrent UI saves cannot persist a selection that was never staged.
+    with BOX_SPREAD_INDEX_SELECTION_LOCK:
+        return _set_box_spread_index_selection_locked(payload)
 
 
 @app.get("/api/v1/scanner/synthetic-cash-carry/universe")
