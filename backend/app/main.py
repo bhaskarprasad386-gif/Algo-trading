@@ -940,67 +940,13 @@ async def _live_box_spread_loop() -> None:
                     expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
                     if segment == expected_segment:
                         index_symbols.add(name)
-            # Select option expiries directly from the option master. For indices,
-            # subscribe the nearest available weekly AND monthly expiry (when distinct);
-            # stocks remain on their nearest listed expiry. No futures rows/ticks are used.
-            targets_list = []
-            expiry_types = {}
-
-            def listed_option_expiries(symbol, instrument_class):
-                expected_segment = "BFO" if instrument_class == "INDEX" and symbol in BSE_BOX_INDEX_SYMBOLS else "NFO"
-                expected_type = "OPTSTK" if instrument_class == "STOCK" else "OPTIDX"
-                found = {}
-                for contract in master.instruments:
-                    if str(contract.get("exch_seg", "")).strip().upper() != expected_segment:
-                        continue
-                    if str(contract.get("instrumenttype", "")).strip().upper() != expected_type:
-                        continue
-                    if str(contract.get("name", "")).strip().upper() != symbol:
-                        continue
-                    raw_expiry = str(contract.get("expiry", "")).strip()
-                    parsed = None
-                    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
-                        try:
-                            parsed = datetime.strptime(raw_expiry.upper(), fmt).date()
-                            break
-                        except ValueError:
-                            continue
-                    if parsed is not None and parsed >= today:
-                        found.setdefault(parsed, raw_expiry)
-                dates = sorted(found)
-                classifications = classify_index_expiry_dates(symbol, dates)
-                for day, raw_expiry in found.items():
-                    expiry_types[(symbol, raw_expiry.upper())] = classifications[day]
-                return [(day, found[day], classifications[day]) for day in dates]
-
-            # Index-only mode: stock option targets are intentionally disabled.
-            # Keep option-master expiry discovery for supported indices only.
-            for symbol in sorted(index_symbols):
-                expiries = listed_option_expiries(symbol, "INDEX")
-                if not expiries:
-                    continue
-                nearest_weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
-                nearest_monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
-                selected = []
-                if nearest_weekly:
-                    selected.append(nearest_weekly)
-                if nearest_monthly and (not nearest_weekly or nearest_monthly[0] != nearest_weekly[0]):
-                    selected.append(nearest_monthly)
-                if not selected:
-                    selected.append(expiries[0])
-                for _day, expiry, _kind in selected:
-                    targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=expiry))
-
-            # Spot quotes are useful independently of whether the option master
-            # currently exposes an eligible expiry/strike chain. Ensure every
-            # supported NSE/BSE index remains subscribed for spot-only updates.
-            targeted_symbols = {target.underlying.strip().upper() for target in targets_list}
-            for symbol in sorted(OPTION_STRATEGY_INDEX_SYMBOLS - targeted_symbols - BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS):
-                targets_list.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None))
-
+            # The persisted manual selection is the sole Box Spread universe.
+            # Build targets only for selected indices; spot-only targets remain
+            # available while an index's option chain is temporarily unavailable.
+            selected_symbols = _get_box_spread_index_selection()
+            targets, expiry_types = _box_spread_targets_from_master(master, selected_symbols)
             set_live_box_expiry_types(expiry_types)
             set_live_box_websocket_expiry_types(expiry_types)
-            targets = tuple(targets_list)
             if not targets:
                 app_logger.warning(
                     "Box Spread live runner found no current F&O targets; retrying in {:.1f}s",
