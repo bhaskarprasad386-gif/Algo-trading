@@ -1160,7 +1160,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
       <div className="flex items-center justify-between gap-3">
         {slug === "box-spread" ? (
-          <span className="text-[10px] font-bold uppercase tracking-[0.16em] theme-muted">Box Spread · Live market monitor</span>
+          <span className="text-lg font-black uppercase tracking-wide text-slate-950 sm:text-xl">Box Spread · Live Market Monitor</span>
         ) : (
           <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
             <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
@@ -1239,7 +1239,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <Card className="theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Manual Box Spread index selection">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-sm font-extrabold theme-text">Manual Index Subscription</h2>
+              <h2 className="text-lg font-black text-slate-950 sm:text-xl">Manual Index Subscription</h2>
               <p className="mt-1 text-xs theme-muted">Saved selection is applied only after the replacement feed is live-ready. During staging, the previous feed remains active.</p>
             </div>
             <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">
@@ -1285,7 +1285,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       {slug === "box-spread" && (
         <section id="box-overview" className="scroll-mt-24 space-y-3 rounded-2xl theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread live index prices">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div><h2 className="text-sm font-extrabold theme-text">Live Index Prices</h2><p className="mt-1 text-[10px] theme-muted">Direct spot-feed snapshots · refresh 1s · LIVE only when quote age is 5s or less</p></div>
+            <div><h2 className="text-lg font-black text-slate-950 sm:text-xl">Live Index Prices</h2><p className="mt-1 text-[10px] theme-muted">Direct spot-feed snapshots · refresh 1s · LIVE only when quote age is 5s or less</p></div>
             <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">{activeIndexSymbols.length} SELECTED INDEX SPOTS</span>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
@@ -1310,7 +1310,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <Card className="scroll-mt-24 theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread system health" id="box-system-health">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="flex items-center gap-2 text-sm font-bold theme-text"><Activity className="h-4 w-4 theme-accent" /> System Health</h2>
+              <h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> System Health</h2>
               <p className="mt-1 text-xs theme-muted">Common market-data feed and Box Spread runner diagnostics · exchange-level status, not per-index feed confirmation.</p>
             </div>
             <span className={"rounded-lg border px-3 py-1.5 text-[11px] font-bold " + (feedStatus === "LIVE" && runner?.running ? "theme-border theme-success-bg theme-success" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-warning-bg theme-warning")}>
@@ -1706,7 +1706,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <Card className={"theme-border theme-surface p-4 " + (slug === "box-spread" ? "box-history-contrast" : "")}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> {slug === "box-spread" ? "Recent Box Spread Snapshots (Last 24 Hours)" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">{slug === "box-spread" ? "Persisted scanner snapshots from the rolling last 24 hours · same source as the historical section, with a shorter time window." : "Real backend history/alert records for today's session. No synthetic rows are created in the UI."}</p></div>
+          <div><h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> {slug === "box-spread" ? "Recent Box Spread Snapshots (Last 24 Hours)" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">{slug === "box-spread" ? "Persisted scanner snapshots from the rolling last 24 hours · same source as the historical section, with a shorter time window." : "Real backend history/alert records for today's session. No synthetic rows are created in the UI."}</p></div>
           <div className="flex items-center gap-2">
             {slug === "box-spread" && <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} aria-label="Refresh last 24 hours of Box Spread history" title="Reload the rolling last 24 hours of saved Box Spread snapshots" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:cursor-wait disabled:opacity-50"><RefreshCw className={"h-3.5 w-3.5 " + (historyLoading ? "animate-spin" : "")} />{historyLoading ? "Refreshing…" : "Refresh 24h"}</button>}
             <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
