@@ -110,7 +110,7 @@ const quoteTime = (value: number | string | null | undefined) => {
 };
 
 export default function BoxSpreadPostMarketHistory() {
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(1);
   const [expiryType, setExpiryType] = useState("ALL");
   const [selectedIndex, setSelectedIndex] = useState("ALL");
   const [rows, setRows] = useState<Snapshot[]>([]);
@@ -123,7 +123,7 @@ export default function BoxSpreadPostMarketHistory() {
   const [error, setError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [sortingAll, setSortingAll] = useState(false);
-  const [sortKey, setSortKey] = useState<"profit" | "edge" | "time" | "gap" | "lots">("time");
+  const [sortKey, setSortKey] = useState<"profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots">("time");
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [traces, setTraces] = useState<Record<string, { id: number; quantity_lots: number }>>({});
   const [traceBusy, setTraceBusy] = useState<string | null>(null);
@@ -143,14 +143,14 @@ export default function BoxSpreadPostMarketHistory() {
     return Math.floor(Math.min(...sides.map(Number)) / lotSize);
   };
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
-    const metric = (row: Snapshot) => sortKey === "profit" ? row.gross_pnl : sortKey === "edge" ? row.executable_edge : sortKey === "gap" ? strikeGap(row) : sortKey === "lots" ? executableLots(row) : new Date(row.observed_at).getTime();
+    const metric = (row: Snapshot) => sortKey === "profit" ? row.gross_pnl : sortKey === "edge" ? row.executable_edge : sortKey === "edgePerLot" ? row.edge_per_lot : sortKey === "gap" ? strikeGap(row) : sortKey === "lots" ? executableLots(row) : new Date(row.observed_at).getTime();
     const av = metric(a), bv = metric(b);
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
     return (sortDirection === "desc" ? -1 : 1) * (Number(av) - Number(bv));
   }), [rows, sortKey, sortDirection]);
-  const selectSort = async (key: "profit" | "edge" | "time" | "gap" | "lots") => {
+  const selectSort = async (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
     const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
     setSortKey(key);
     setSortDirection(nextDirection);
@@ -181,7 +181,7 @@ export default function BoxSpreadPostMarketHistory() {
       setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
     } finally { setSortingAll(false); }
   };
-  const sortMark = (key: "profit" | "edge" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
+  const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const traceApi = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread/trace";
   useEffect(() => {
     let active = true;
@@ -326,7 +326,7 @@ export default function BoxSpreadPostMarketHistory() {
 
       {rows.length > 0 && <div className="mt-4 space-y-2">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Sort saved history">
-          {(["profit","edge","gap","lots","time"] as const).map(key => <button key={key} type="button" onClick={() => void selectSort(key)} disabled={sortingAll} aria-pressed={sortKey === key} className={"min-h-14 rounded-xl border px-3 text-base font-extrabold shadow-sm disabled:opacity-50 " + (sortKey === key ? "theme-accent theme-accent-bg theme-border" : "theme-border theme-surface theme-text")}>{key === "profit" ? "Gross Profit" : key === "edge" ? "Edge" : key === "gap" ? "Strike Gap" : key === "lots" ? "Max Lots" : "Timing"}<span className="block mt-1 text-sm font-medium">{sortKey === key ? (sortDirection === "desc" ? "Highest first ↓" : "Lowest first ↑") : "Tap to sort ↕"}</span></button>)}
+          {(["profit","edge","edgePerLot","gap","lots","time"] as const).map(key => <button key={key} type="button" onClick={() => void selectSort(key)} disabled={sortingAll} aria-pressed={sortKey === key} className={"min-h-14 rounded-xl border px-3 text-base font-extrabold shadow-sm disabled:opacity-50 " + (sortKey === key ? "theme-accent theme-accent-bg theme-border" : "theme-border theme-surface theme-text")}>{key === "profit" ? "Gross Profit" : key === "edge" ? "Edge" : key === "edgePerLot" ? "Edge / Lot" : key === "gap" ? "Strike Gap" : key === "lots" ? "Max Lots" : "Timing"}<span className="block mt-1 text-sm font-medium">{sortKey === key ? (sortDirection === "desc" ? "Highest first ↓" : "Lowest first ↑") : "Tap to sort ↕"}</span></button>)}
         </div>
         {sortingAll && <p role="status" className="text-sm theme-muted">Loading complete history for sorting…</p>}
       </div>}
@@ -344,7 +344,7 @@ export default function BoxSpreadPostMarketHistory() {
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">{([["Low CE","low_call"],["Low PE","low_put"],["High CE","high_call"],["High PE","high_put"]] as const).map(([label,prefix]) => { const buy = row.direction?.toUpperCase().includes("LONG") ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); return <div key={prefix} className="rounded-lg border-2 border-slate-400 dark:border-slate-500 theme-border theme-surface p-2"><p className={"text-base font-extrabold " + (buy ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>{label} · {buy ? "BUY / ASK" : "SELL / BID"}</p><p className="mt-1 text-sm theme-muted">LTP {quoteField(row,prefix,"ltp")}</p><p className="mt-1 text-sm"><span className={buy ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-rose-600 dark:text-rose-400"}>{buy ? "ASK BUY" : "BID SELL"} {quoteField(row,prefix,buy ? "ask" : "bid")}</span></p><p className="mt-1 text-sm theme-muted">Bid {quoteField(row,prefix,"bid")} ({quoteField(row,prefix,"bid_qty")}) · Ask {quoteField(row,prefix,"ask")} ({quoteField(row,prefix,"ask_qty")})</p></div>;})}</div><div className="mt-3 flex flex-wrap justify-between gap-2 border-t-2 border-slate-400 dark:border-slate-500 theme-border pt-2 text-sm theme-muted"><span>Saved {observedTime(row.observed_at)}</span><span>Quote {quoteTime(row.last_update_timestamp_ns)}</span></div>
 <div className="mt-3 flex flex-wrap items-center gap-2 border-t-2 border-slate-400 dark:border-slate-500 theme-border pt-3">
-<button type="button" onClick={() => setDepthSnapshot(row)} disabled={!row.depth_legs?.length} className="min-h-9 rounded-lg border-2 border-slate-400 dark:border-slate-500 theme-border px-3 text-base font-extrabold theme-text disabled:opacity-40">{row.depth_legs?.length ? "View Saved Depth" : "Depth Not Recorded"}</button>
+<button type="button" onClick={() => setDepthSnapshot(row)} className="min-h-9 rounded-lg border-2 border-slate-400 dark:border-slate-500 theme-border px-3 text-base font-extrabold theme-text disabled:opacity-40">View Saved Depth</button>
 {traces[traceIdentity(row)] ? <span className="rounded-md bg-emerald-500/10 px-2 py-1 text-base font-extrabold text-emerald-700 dark:text-emerald-300">ADDED TO TRACE · {traces[traceIdentity(row)].quantity_lots} LOTS</span> : <button type="button" onClick={() => void addTrace(row)} disabled={traceBusy === traceIdentity(row)} className="min-h-9 rounded-lg border border-cyan-500/50 px-3 text-base font-extrabold theme-text disabled:opacity-50">{traceBusy === traceIdentity(row) ? "Adding…" : "＋ Add to Trace"}</button>}
 </div>
         </article>)}
@@ -376,7 +376,7 @@ export default function BoxSpreadPostMarketHistory() {
 
             {(["low_call","low_put","high_call","high_put"] as const).flatMap(prefix => { const isLong = row.direction?.toUpperCase().includes("LONG"); const buy = isLong ? (prefix === "low_call" || prefix === "high_put") : (prefix === "low_put" || prefix === "high_call"); const buyTone = "text-emerald-600 dark:text-emerald-400 font-bold"; const sellTone = "text-rose-600 dark:text-rose-400 font-bold"; return [<td key={prefix+"ltp"} className="px-2 py-2 theme-muted">{quoteField(row,prefix,"ltp")}</td>,<td key={prefix+"bid"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid")}</td>,<td key={prefix+"bq"} className={"px-2 py-2 " + (!buy ? sellTone : "theme-muted")}>{quoteField(row,prefix,"bid_qty")}</td>,<td key={prefix+"ask"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask")}</td>,<td key={prefix+"aq"} className={"px-2 py-2 " + (buy ? buyTone : "theme-muted")}>{quoteField(row,prefix,"ask_qty")}</td>];})}
             <td className="min-w-[280px] px-3 py-2">
-<button type="button" onClick={() => setDepthSnapshot(row)} disabled={!row.depth_legs?.length} className="mb-2 min-h-8 rounded-md border-2 border-slate-400 dark:border-slate-500 theme-border px-2 text-sm font-extrabold theme-text disabled:opacity-40">{row.depth_legs?.length ? "View Saved Depth" : "Depth Not Recorded"}</button>
+<button type="button" onClick={() => setDepthSnapshot(row)} className="mb-2 min-h-8 rounded-md border-2 border-slate-400 dark:border-slate-500 theme-border px-2 text-sm font-extrabold theme-text disabled:opacity-40">{row.depth_legs?.length ? "View Saved Depth" : "Depth Not Recorded"}</button>
 {traces[traceIdentity(row)] ? <span className="text-base font-extrabold text-emerald-700 dark:text-emerald-300">ADDED TO TRACE · {traces[traceIdentity(row)].quantity_lots} LOTS</span> : <button type="button" onClick={() => void addTrace(row)} disabled={traceBusy === traceIdentity(row)} className="min-h-8 rounded-md border border-cyan-500/50 px-2 text-base font-extrabold theme-text disabled:opacity-50">{traceBusy === traceIdentity(row) ? "Adding…" : "＋ Add to Trace"}</button>}</td>
           </tr>)}</tbody>
         </table>
