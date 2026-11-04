@@ -21,6 +21,7 @@ type Snapshot = {
   edge_per_lot?: number | null;
   gross_pnl?: number | null;
   lot_size?: number | null;
+  max_executable_lots?: number | null;
   freshness?: string;
   last_update_timestamp_ns?: number | string | null;
   timestamp_skew_ms?: number | null;
@@ -131,16 +132,13 @@ export default function BoxSpreadPostMarketHistory() {
   const [depthSnapshot, setDepthSnapshot] = useState<Snapshot | null>(null);
   const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
   const executableLots = (row: Snapshot) => {
-    const isLong = String(row.direction ?? "LONG").toUpperCase() !== "SHORT";
-    const sides = [
-      isLong ? row.low_call_ask_qty : row.low_call_bid_qty,
-      isLong ? row.low_put_bid_qty : row.low_put_ask_qty,
-      isLong ? row.high_call_bid_qty : row.high_call_ask_qty,
-      isLong ? row.high_put_ask_qty : row.high_put_bid_qty,
-    ];
+    const savedLots = Number(row.max_executable_lots);
+    if (row.max_executable_lots != null && Number.isFinite(savedLots) && savedLots >= 0) return Math.floor(savedLots);
     const lotSize = Number(row.lot_size);
-    if (!Number.isFinite(lotSize) || lotSize <= 0 || sides.some(q => q == null || !Number.isFinite(Number(q)))) return null;
-    return Math.floor(Math.min(...sides.map(Number)) / lotSize);
+    if (!Number.isFinite(lotSize) || lotSize <= 0 || !Array.isArray(row.depth_legs) || row.depth_legs.length !== 4) return null;
+    const capacities = row.depth_legs.map(leg => Number(leg.available_quantity));
+    if (capacities.some(quantity => !Number.isFinite(quantity) || quantity < 0)) return null;
+    return Math.floor(Math.min(...capacities) / lotSize);
   };
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
     const metric = (row: Snapshot) => sortKey === "profit" ? row.gross_pnl : sortKey === "edge" ? row.executable_edge : sortKey === "edgePerLot" ? row.edge_per_lot : sortKey === "gap" ? strikeGap(row) : sortKey === "lots" ? executableLots(row) : new Date(row.observed_at).getTime();
