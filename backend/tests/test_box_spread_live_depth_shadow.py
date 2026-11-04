@@ -261,6 +261,8 @@ def test_snapshot_reports_per_underlying_expiry_fresh_depth_readiness():
         "fresh_ce": 2,
         "fresh_pe": 2,
         "executable_depth_contracts": 4,
+        "executable_depth_ce": 2,
+        "executable_depth_pe": 2,
         "full_depth_ce": 2,
         "full_depth_pe": 2,
         "state": "READY",
@@ -328,7 +330,7 @@ def test_depth_shadow_supports_distinct_consumer_namespace_without_touching_defa
     assert active.snapshot()["running"] is True
 
 
-def test_partial_five_level_depth_does_not_mark_staged_feed_ready():
+def test_partial_depth_below_two_lot_capacity_does_not_mark_staged_feed_ready():
     from dataclasses import replace
     import time
 
@@ -351,7 +353,44 @@ def test_partial_five_level_depth_does_not_mark_staged_feed_ready():
     readiness = shadow.snapshot(now_ns=now)["readiness"][0]
     assert readiness["fresh_ce"] == 2
     assert readiness["fresh_pe"] == 2
-    assert readiness["executable_depth_contracts"] == 3
+    assert readiness["executable_depth_contracts"] == 0
+    assert readiness["executable_depth_ce"] == 0
+    assert readiness["executable_depth_pe"] == 0
     assert readiness["full_depth_ce"] == 1
     assert readiness["full_depth_pe"] == 2
     assert readiness["state"] == "WAITING_FOR_DEPTH"
+
+
+
+def test_one_level_depth_is_ready_when_every_option_has_two_lots_on_both_sides():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [("501", 25000, "CE"), ("502", 26000, "CE"), ("503", 26000, "PE"), ("504", 25000, "PE")]
+    descriptors = [
+        replace(_descriptor(token), key=InstrumentKey("NFO", "NFO", token), strike=strike, option_type=option_type)
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for index, (token, _, _) in enumerate(specs):
+        count = 1 if index == 0 else (4 if index == 1 else 5)
+        quantity = "130" if index == 0 else "50"
+        bids = [{"price": str((100 - level) * 100), "quantity": quantity} for level in range(count)]
+        asks = [{"price": str((110 + level) * 100), "quantity": quantity} for level in range(count)]
+        callback(_record(timestamp_ns=now, token=token, payload={
+            "best_5_buy_data": bids,
+            "best_5_sell_data": asks,
+        }))
+    readiness = shadow.snapshot(now_ns=now)["readiness"][0]
+    assert readiness["fresh_ce"] == 2
+    assert readiness["fresh_pe"] == 2
+    assert readiness["executable_depth_contracts"] == 4
+    assert readiness["executable_depth_ce"] == 2
+    assert readiness["executable_depth_pe"] == 2
+    assert readiness["full_depth_ce"] == 1
+    assert readiness["full_depth_pe"] == 2
+    assert readiness["state"] == "READY"
