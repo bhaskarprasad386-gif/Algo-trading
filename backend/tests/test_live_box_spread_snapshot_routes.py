@@ -147,7 +147,7 @@ def test_snapshot_endpoint_excludes_legacy_rows_without_qualification_metadata(m
                 high_strike=23100,
                 direction="LONG",
                 expiry_type=None,
-                payload_json='{"sequence": "legacy", "expiry_type": "WEEKLY", }',
+                payload_json='{"sequence": "legacy", "expiry_type": "WEEKLY"}',
             ))
             db.commit()
 
