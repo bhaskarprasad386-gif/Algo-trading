@@ -219,6 +219,12 @@ def test_four_leg_edge_accepts_one_level_on_weakest_leg_for_two_lots():
     assert weakest["depth_levels"] == [
         {"price": 110.0, "quantity": 130.0},
     ]
+    assert weakest["bid_depth_levels"] == [
+        {"price": 100.0, "quantity": 130.0},
+    ]
+    assert weakest["ask_depth_levels"] == [
+        {"price": 110.0, "quantity": 130.0},
+    ]
     assert result["depth_edge_per_unit"] > 0
 
 
