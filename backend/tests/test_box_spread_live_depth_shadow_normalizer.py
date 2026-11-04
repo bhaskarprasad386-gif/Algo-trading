@@ -57,11 +57,11 @@ def test_normalized_angel_one_ticks_keep_raw_five_level_depth_for_four_leg_snaps
             "exchange_timestamp_ns": str(now),
             "last_traded_price": "10000",
             "best_5_buy_data": [
-                {"price": str(int((bid - level) * 100)), "quantity": "130"}
+                {"price": str(int((bid - level) * 100)), "quantity": "26"}
                 for level in range(5)
             ],
             "best_5_sell_data": [
-                {"price": str(int((ask + level) * 100)), "quantity": "130"}
+                {"price": str(int((ask + level) * 100)), "quantity": "26"}
                 for level in range(5)
             ],
         }
