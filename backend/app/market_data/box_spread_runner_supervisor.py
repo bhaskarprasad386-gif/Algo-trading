@@ -107,11 +107,15 @@ class BoxSpreadRunnerSupervisor:
                 candidate.activate_publishing()
                 if not candidate_thread.is_alive() or candidate.stop_event.is_set():
                     candidate.deactivate_publishing()
+                    old_runner.activate_publishing()
                     break
                 with self._lock:
                     if self._shutdown.is_set():
                         candidate.deactivate_publishing()
+                        old_runner.activate_publishing()
                         break
+                    old_thread = self._old_threads.get(id(old_runner))
+                    self._old_threads[id(candidate)] = candidate_thread
                     self._active_runner = candidate
                     self._active_thread = candidate_thread
                     self._candidate_runner = None
@@ -123,10 +127,15 @@ class BoxSpreadRunnerSupervisor:
                         "symbols": sorted({t.underlying for t in candidate.targets}),
                     }
                 if self._on_active is not None:
-                    self._on_active(candidate)
+                    try:
+                        self._on_active(candidate)
+                    except Exception:
+                        # Ownership has transferred; callback failure must not
+                        # interrupt deterministic cleanup of the old runner.
+                        pass
                 old_runner.stop()
                 if old_runner is not candidate:
-                    self._join_worker(self._active_old_thread(old_runner, candidate_thread), timeout=5.0)
+                    self._join_worker(old_thread, timeout=5.0)
                 return
             self._shutdown.wait(self._readiness_poll)
 
@@ -141,11 +150,6 @@ class BoxSpreadRunnerSupervisor:
                 "readiness": readiness,
                 "error": str(errors[0])[:240] if errors else None,
             }
-
-    def _active_old_thread(self, old_runner, candidate_thread):
-        # Keep the old worker reference captured before the active pointer moves.
-        # The caller's original worker is retained in this private map.
-        return self._old_threads.get(id(old_runner), candidate_thread)
 
     def attach_active_thread(self, runner, thread):
         """Register the original worker before enabling handoffs."""
