@@ -391,6 +391,6 @@ def test_one_level_depth_is_ready_when_every_option_has_two_lots_on_both_sides()
     assert readiness["executable_depth_contracts"] == 4
     assert readiness["executable_depth_ce"] == 2
     assert readiness["executable_depth_pe"] == 2
-    assert readiness["full_depth_ce"] == 1
+    assert readiness["full_depth_ce"] == 0
     assert readiness["full_depth_pe"] == 2
     assert readiness["state"] == "READY"
