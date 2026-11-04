@@ -12,7 +12,7 @@ _spot_provider = None
 _depth_provider = None
 _expiry_types = {}
 MAX_QUOTE_AGE_NS = 5_000_000_000
-MAX_LEG_TIMESTAMP_SKEW_NS = 3_000_000_000
+MAX_LEG_TIMESTAMP_SKEW_NS = 8_000_000_000
 
 
 def configure(getter, expiry_types_getter=None):

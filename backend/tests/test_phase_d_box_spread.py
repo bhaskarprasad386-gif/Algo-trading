@@ -74,14 +74,35 @@ def test_crossed_quote_is_rejected():
     assert not results
 
 
-def test_timestamp_mismatch_is_rejected():
+def test_four_leg_timestamp_skew_within_eight_seconds_is_accepted():
+    chain = make_chain((1,))
+    synchronized_within_window = [
+        OptionQuote(
+            x.timestamp_ns, x.underlying, x.expiry, x.strike,
+            x.call_bid, x.call_ask, x.put_bid, x.put_ask, x.lot_size,
+            x.instrument_class, x.volume, x.oi,
+            call_timestamp_ns=x.timestamp_ns + 4_000_000_000,
+            put_timestamp_ns=x.timestamp_ns,
+        )
+        for x in chain
+    ]
+    results = scan_box_snapshot(
+        synchronized_within_window,
+        atm_strike=100,
+        instrument_class="INDEX",
+        policy=ScanPolicy(index_box_distances=(1,)),
+    )
+    assert results
+
+
+def test_four_leg_timestamp_skew_over_eight_seconds_is_rejected():
     chain = make_chain((1,))
     mismatched_chain = [
         OptionQuote(
             x.timestamp_ns, x.underlying, x.expiry, x.strike,
             x.call_bid, x.call_ask, x.put_bid, x.put_ask, x.lot_size,
             x.instrument_class, x.volume, x.oi,
-            call_timestamp_ns=x.timestamp_ns + 4_000_000_000,
+            call_timestamp_ns=x.timestamp_ns + 8_000_000_001,
             put_timestamp_ns=x.timestamp_ns,
         )
         for x in chain

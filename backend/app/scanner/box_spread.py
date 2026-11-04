@@ -221,7 +221,7 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
             high.call_timestamp_ns if high.call_timestamp_ns is not None else high.timestamp_ns,
             high.put_timestamp_ns if high.put_timestamp_ns is not None else high.timestamp_ns,
         )
-        if max(leg_timestamps) - min(leg_timestamps) > 3_000_000_000:
+        if max(leg_timestamps) - min(leg_timestamps) > 8_000_000_000:
             stats["timestamp_skew_rejected_pairs"] += 1
             continue
         anchor_ts = max(leg_timestamps)

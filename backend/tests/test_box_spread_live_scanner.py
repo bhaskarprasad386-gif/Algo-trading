@@ -153,7 +153,7 @@ def test_box_scanner_does_not_replace_newer_leg_with_out_of_order_quote():
 
 
 
-def test_box_pair_rejects_four_leg_timestamp_skew_over_three_seconds():
+def test_box_pair_rejects_four_leg_timestamp_skew_over_eight_seconds():
     from dataclasses import replace
 
     low = replace(q(1, 100, 100, 100.1, 99.1, 99.2),
@@ -161,7 +161,7 @@ def test_box_pair_rejects_four_leg_timestamp_skew_over_three_seconds():
                   put_timestamp_ns=10_100_000_000)
     high = replace(q(1, 110, 98.1, 98.2, 102, 102.1),
                    call_timestamp_ns=10_200_000_000,
-                   put_timestamp_ns=13_500_000_000)
+                   put_timestamp_ns=18_500_000_000)
     result = scan_box_snapshot(
         [low, high], atm_strike=100, instrument_class="STOCK",
         config=BoxSpreadScanConfig(
@@ -173,7 +173,7 @@ def test_box_pair_rejects_four_leg_timestamp_skew_over_three_seconds():
     assert result == ()
 
 
-def test_box_pair_accepts_four_leg_timestamp_skew_within_three_seconds():
+def test_box_pair_accepts_four_leg_timestamp_skew_within_eight_seconds():
     from dataclasses import replace
 
     low = replace(q(1, 100, 100, 100.1, 99.1, 99.2),
@@ -181,7 +181,7 @@ def test_box_pair_accepts_four_leg_timestamp_skew_within_three_seconds():
                   put_timestamp_ns=10_100_000_000)
     high = replace(q(1, 110, 98.1, 98.2, 102, 102.1),
                    call_timestamp_ns=11_200_000_000,
-                   put_timestamp_ns=12_000_000_000)
+                   put_timestamp_ns=17_000_000_000)
     result = scan_box_snapshot(
         [low, high], atm_strike=100, instrument_class="STOCK",
         config=BoxSpreadScanConfig(
@@ -192,4 +192,4 @@ def test_box_pair_accepts_four_leg_timestamp_skew_within_three_seconds():
     )
     assert any(item.direction == "LONG" for item in result)
     assert result[0].low.call_timestamp_ns == 10_000_000_000
-    assert result[0].high.put_timestamp_ns == 12_000_000_000
+    assert result[0].high.put_timestamp_ns == 17_000_000_000
