@@ -143,3 +143,35 @@ def test_supervisor_rejects_parallel_handoff_requests():
     assert second["state"] == "HANDOFF_ALREADY_RUNNING"
     assert len(candidates) == 1
     supervisor.stop()
+
+
+
+def test_supervisor_restores_old_publisher_when_candidate_activation_raises():
+    class ActivationFailureRunner(FakeRunner):
+        def activate_publishing(self):
+            self.activated += 1
+            raise RuntimeError("pipeline activation failed")
+
+    old = FakeRunner([type("Target", (), {"underlying": "NIFTY"})()])
+    old_thread = threading.Thread(target=old.run_forever, daemon=True)
+    old_thread.start()
+    candidates = []
+
+    def factory(targets):
+        candidate = ActivationFailureRunner(targets, ready=True)
+        candidates.append(candidate)
+        return candidate
+
+    supervisor = BoxSpreadRunnerSupervisor(
+        active_runner=old,
+        active_thread=old_thread,
+        runner_factory=factory,
+        readiness_poll_seconds=0.01,
+    )
+    supervisor.request_handoff([type("Target", (), {"underlying": "SENSEX"})()])
+    assert wait_for(lambda: supervisor.snapshot()["handoff"]["state"] == "FAILED")
+    assert supervisor.snapshot()["active_symbols"] == ["NIFTY"]
+    assert old.activated == 1
+    assert old.stop_event.is_set() is False
+    assert candidates[0].stop_event.is_set() is True
+    supervisor.stop()
