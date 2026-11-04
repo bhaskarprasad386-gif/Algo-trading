@@ -1033,8 +1033,13 @@ def _update_live_box_spread_results(results: tuple) -> None:
     global live_box_spread_latest_results
     # Each scanner callback is scoped to a single quote bucket. Merge fresh
     # rows across symbols instead of letting one symbol erase every other one.
+    selected_symbols = set(_get_box_spread_index_selection())
+    selected_results = tuple(
+        result for result in (results or ())
+        if str(getattr(getattr(result, "low", None), "underlying", "") or "").strip().upper() in selected_symbols
+    )
     combined = _fresh_live_box_spread_results(
-        tuple(live_box_spread_latest_results) + tuple(results or ())
+        tuple(live_box_spread_latest_results) + selected_results
     )
     latest = {}
     for result in combined:
@@ -1050,7 +1055,8 @@ def _update_live_box_spread_results(results: tuple) -> None:
         ):
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
-    publish_live_box_spread_opportunities(results)
+    if selected_results:
+        publish_live_box_spread_opportunities(selected_results)
 
 
 async def _live_calendar_spread_loop() -> None:
