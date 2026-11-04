@@ -661,7 +661,9 @@ def test_staged_session_readiness_fails_closed_for_one_stale_underlying_or_parti
             {"underlying": "SENSEX", "state": "WAITING_FOR_DEPTH", "executable_depth_ce": 1, "executable_depth_pe": 2, "executable_depth_contracts": 3},
         ]},
     }
-    result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY", "SENSEX"})
+    result = mod.LiveBoxSpreadRunner.staged_session_readiness(
+        snapshot, {("NIFTY", ""), ("SENSEX", "")}
+    )
     assert result["ready"] is False
     assert result["missing_underlying_symbols"] == ["SENSEX"]
     assert result["missing_depth_symbols"] == ["SENSEX"]
@@ -685,7 +687,9 @@ def test_staged_session_readiness_rejects_disconnected_option_feed():
             {"underlying": "NIFTY", "state": "READY", "executable_depth_ce": 2, "executable_depth_pe": 2, "executable_depth_contracts": 4},
         ]},
     }
-    result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY"})
+    result = mod.LiveBoxSpreadRunner.staged_session_readiness(
+        snapshot, {("NIFTY", "")}
+    )
     assert result["ready"] is False
     assert result["option_recorder_ready"] is False
 
