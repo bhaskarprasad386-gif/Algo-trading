@@ -866,7 +866,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           setSavedIndexSymbols(symbols);
           setActiveIndexSymbols(active);
           setIndexHandoffState(handoff);
-          setIndexSelectionDraft(current => current.length ? current : symbols);
+          setIndexSelectionDraft(current => current.length && handoff !== "FAILED" ? current : symbols);
           setIndexSelectionError(null);
         }
       } catch (e) {
