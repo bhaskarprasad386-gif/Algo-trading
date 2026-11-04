@@ -1039,7 +1039,8 @@ async def _live_box_spread_loop() -> None:
                         index_symbols.add(name)
 
             selected_symbols = _get_box_spread_index_selection()
-            targets, expiry_types = _box_spread_targets_from_master(master, selected_symbols)
+            weekly_only_symbols = _get_box_spread_weekly_only_symbols()
+            targets, expiry_types = _box_spread_targets_from_master(master, selected_symbols, weekly_only_symbols)
             set_live_box_expiry_types(expiry_types)
             set_live_box_websocket_expiry_types(expiry_types)
             if not targets:
@@ -1085,8 +1086,9 @@ async def _live_box_spread_loop() -> None:
                     str(target.underlying).strip().upper()
                     for target in active_runner.targets
                 }
+                active_weekly_only = _get_box_spread_weekly_only_symbols()
                 _active_targets, active_expiry_types = _box_spread_targets_from_master(
-                    active_runner.master, active_symbols
+                    active_runner.master, active_symbols, active_weekly_only
                 )
                 set_live_box_expiry_types(active_expiry_types)
                 set_live_box_websocket_expiry_types(active_expiry_types)
