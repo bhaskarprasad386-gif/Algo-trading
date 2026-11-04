@@ -319,12 +319,22 @@ def _fresh_entry_depth_selection(contracts, target_lots: int):
                 # Use whatever broker depth is actually available (up to five
                 # levels). Do not require a fifth level; the common four-leg lot
                 # calculation below decides whether the available quantity suffices.
-                if not bid_levels or not ask_levels or bid_levels[0][0] > ask_levels[0][0]:
+                required_side = _entry_depth_side(contracts.direction, role)
+                required_levels = bid_levels if required_side == "BID" else ask_levels
+                if not required_levels:
                     raise HTTPException(
                         status_code=409,
-                        detail=f"fresh valid two-sided broker depth is unavailable for {role}; no entry created",
+                        detail=f"fresh executable-side broker depth is unavailable for {role}; no entry created",
                     )
-                depth[role] = bid_levels if _entry_depth_side(contracts.direction, role) == "BID" else ask_levels
+                # The opposite side is not consumed by this leg's entry action.
+                # Validate the spread when both sides exist, but do not reject a
+                # usable executable side solely because the unused side is empty.
+                if bid_levels and ask_levels and bid_levels[0][0] > ask_levels[0][0]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"fresh broker depth is crossed for {role}; no entry created",
+                    )
+                depth[role] = required_levels
             selected = select_complete_lots(
                 target_lots, contracts.lot_size, depth, roles=roles, minimum_lots=2,
             )
