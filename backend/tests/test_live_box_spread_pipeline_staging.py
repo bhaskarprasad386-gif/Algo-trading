@@ -19,6 +19,7 @@ def test_staged_pipeline_warms_without_publishing_or_persisting(monkeypatch):
         on_results=lambda rows: published.append(rows),
         publish_enabled=False,
     )
+    pipeline._publish_results = lambda rows: (pipeline.on_results(rows), published.append(rows))
 
     assert pipeline.observe({"tick": 1}) == (result,)
     assert published == []
