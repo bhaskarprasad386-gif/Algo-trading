@@ -609,6 +609,7 @@ class LiveBoxSpreadRunner:
                 "running": depth_snapshot.get("running", False),
                 "record_count": depth_snapshot.get("record_count", 0),
                 "counts": depth_snapshot.get("counts", {}),
+                "readiness": depth_snapshot.get("readiness", []),
                 "last_comparisons": last_comparisons,
                 "comparison_diagnostics": self.depth_shadow_diagnostics.snapshot(),
             },
