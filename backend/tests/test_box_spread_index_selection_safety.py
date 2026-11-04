@@ -123,3 +123,24 @@ def test_spot_index_universe_uses_saved_selection_before_runner_starts(monkeypat
 
     assert main._get_box_spread_active_index_symbols() == ("SENSEX", "BANKEX")
 
+def test_live_results_continue_using_old_active_indices_while_new_selection_stages(monkeypatch):
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        low=SimpleNamespace(underlying="NIFTY", timestamp_ns=1),
+        high=SimpleNamespace(timestamp_ns=1),
+        executable_edge=12.0,
+    )
+    published = []
+    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("BANKEX",))
+    monkeypatch.setattr(main, "_get_box_spread_active_index_symbols", lambda: ("NIFTY",))
+    monkeypatch.setattr(main, "_fresh_live_box_spread_results", lambda rows: tuple(rows))
+    monkeypatch.setattr(main, "_box_spread_result_key", lambda item: ("NIFTY",))
+    monkeypatch.setattr(main, "publish_live_box_spread_opportunities", lambda rows: published.extend(rows))
+    monkeypatch.setattr(main, "live_box_spread_latest_results", ())
+
+    main._update_live_box_spread_results((row,))
+
+    assert main.live_box_spread_latest_results == (row,)
+    assert published == [row]
+
