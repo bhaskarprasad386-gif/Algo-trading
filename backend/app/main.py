@@ -50,7 +50,7 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, set_expiry_types as set_live_box_expiry_types
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
@@ -205,6 +205,7 @@ configure_live_synthetic(lambda: live_synthetic_latest_results)
 configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
 configure_live_synthetic_pairs(lambda: None if live_synthetic_runner is None else live_synthetic_runner.pair_monitor_snapshot())
 configure_live_box_spread(lambda: live_box_spread_latest_results)
+configure_live_box_index_selection(_get_box_spread_index_selection)
 configure_live_box_spread_monitor(lambda: None if live_box_spread_runner is None or live_box_spread_runner.scanner is None else live_box_spread_runner.scanner.monitor_snapshot())
 configure_live_box_spread_diagnostics(
     lambda: None if live_box_spread_runner is None else live_box_spread_runner.snapshot().get("scanner_diagnostics")
