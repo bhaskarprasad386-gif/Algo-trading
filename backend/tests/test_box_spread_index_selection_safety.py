@@ -144,3 +144,54 @@ def test_live_results_continue_using_old_active_indices_while_new_selection_stag
     assert main.live_box_spread_latest_results == (row,)
     assert published == [row]
 
+def test_box_spread_index_universe_and_presets_cover_all_six_supported_indices():
+    expected = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+
+    assert set(main.OPTION_STRATEGY_INDEX_SYMBOLS) == expected
+    assert set(main.BOX_SPREAD_INDEX_PRESETS["ALL"]) == expected
+    assert set(main.BOX_SPREAD_INDEX_PRESETS["NIFTY_SENSEX"]) == {"NIFTY", "SENSEX"}
+    assert set(main.BOX_SPREAD_INDEX_PRESETS["NIFTY_SENSEX_BANKNIFTY"]) == {
+        "NIFTY", "SENSEX", "BANKNIFTY"
+    }
+
+
+def test_box_spread_target_builder_uses_only_selected_indices_and_correct_exchange_segments():
+    from types import SimpleNamespace
+
+    expiry = "31DEC2099"
+    instruments = []
+    for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"):
+        instruments.append({
+            "exch_seg": "NFO", "instrumenttype": "OPTIDX",
+            "name": symbol, "expiry": expiry,
+        })
+    for symbol in ("SENSEX", "BANKEX"):
+        instruments.append({
+            "exch_seg": "BFO", "instrumenttype": "OPTIDX",
+            "name": symbol, "expiry": expiry,
+        })
+    # Wrong-exchange and non-index contracts must never satisfy an index target.
+    instruments.extend([
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "SENSEX", "expiry": expiry},
+        {"exch_seg": "BFO", "instrumenttype": "OPTIDX", "name": "NIFTY", "expiry": expiry},
+        {"exch_seg": "NFO", "instrumenttype": "OPTSTK", "name": "BANKNIFTY", "expiry": expiry},
+    ])
+    master = SimpleNamespace(instruments=instruments)
+
+    targets, _ = main._box_spread_targets_from_master(master, ["SENSEX", "NIFTY", "BANKEX"])
+
+    assert {(target.underlying, target.instrument_class) for target in targets} == {
+        ("NIFTY", "INDEX"), ("SENSEX", "INDEX"), ("BANKEX", "INDEX")
+    }
+    assert len(targets) == 3
+    assert all(target.expiry == expiry for target in targets)
+
+
+def test_box_spread_all_index_selection_normalizes_to_exact_six_supported_symbols():
+    selected = main._normalize_box_spread_index_symbols([
+        "nifty", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "sensex", "BANKEX", "NIFTY"
+    ])
+
+    assert set(selected) == {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+    assert len(selected) == 6
+
