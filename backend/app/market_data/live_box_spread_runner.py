@@ -587,6 +587,15 @@ class LiveBoxSpreadRunner:
                                     continue
                         if expiries:
                             wanted = min(expiries)[1]
+                    # Weekly-only targets must fail closed when the instrument
+                    # master has no classified weekly expiry. Passing expiry=None
+                    # to the selector would let it infer a monthly contract.
+                    if getattr(target, "weekly_only", False) and wanted is None:
+                        unavailable_symbols.append({
+                            "symbol": target.underlying,
+                            "reason": "WEEKLY_EXPIRY_UNAVAILABLE",
+                        })
+                        continue
                     try:
                         sel=select_box_contracts(self.master,underlying=target.underlying,instrument_class=target.instrument_class,
                             atm_strike=atms[target.underlying],expiry=wanted,
