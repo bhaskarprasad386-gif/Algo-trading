@@ -102,13 +102,14 @@ class BoxSpreadLiveTarget:
 
 
 class LiveBoxSpreadRunner:
-    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None,consumer_namespace="box"):
+    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None,consumer_namespace="box",publish_enabled=True):
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.consumer_namespace = str(consumer_namespace or "box").strip()
         if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
             raise ValueError("consumer_namespace must contain only letters, numbers, hyphens, underscores or colons")
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
-        self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None
+        self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None; self.pipeline=None
+        self._publish_enabled = bool(publish_enabled)
         self._reconfigure_event = Event()
         self._targets_lock = Lock()
         self._pending_targets = None
@@ -127,6 +128,19 @@ class LiveBoxSpreadRunner:
             "option_websocket": {"state": "not_started"},
         }
 
+    def activate_publishing(self):
+        """Allow this warmed session to become the sole live result publisher."""
+        self._publish_enabled = True
+        pipeline = self.pipeline
+        if pipeline is not None:
+            pipeline.set_publish_enabled(True)
+
+    def deactivate_publishing(self):
+        """Stop this session from publishing before its feeds are detached."""
+        self._publish_enabled = False
+        pipeline = self.pipeline
+        if pipeline is not None:
+            pipeline.set_publish_enabled(False)
     @staticmethod
     def _feed_is_down(feed_snapshot) -> bool:
         """Detect a sustained no-socket state without fighting the manager's reconnect window."""
@@ -503,6 +517,7 @@ class LiveBoxSpreadRunner:
                     return tuple(gated)
 
                 pipeline=LiveBoxSpreadPipeline(scanner, SessionLocal, on_results=self.on_results, spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None, result_transform=apply_depth_gate)
+                self.pipeline = pipeline
                 subscribed_strikes = {}
                 for sub in subs:
                     symbol = str(getattr(sub, "underlying", "") or "").strip().upper()
@@ -580,6 +595,8 @@ class LiveBoxSpreadRunner:
             feed, self.feed = self.feed, None
             feed_thread, self._feed_thread = self._feed_thread, None
             recorder, self.recorder = self.recorder, None
+            self.deactivate_publishing()
+            self.pipeline = None
             if recorder is not None:
                 recorder.stop()
             self.depth_shadow.stop()
