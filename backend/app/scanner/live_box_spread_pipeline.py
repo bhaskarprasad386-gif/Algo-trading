@@ -323,6 +323,12 @@ class LiveBoxSpreadPipeline:
             self._publish_enabled = bool(enabled)
 
     def observe(self, payload):
+        # Serialize the complete observation/publish cycle with activation changes.
+        # Deactivation therefore waits for any in-flight publisher to finish.
+        with self._publish_lock:
+            return self._observe(payload)
+
+    def _observe(self, payload):
         results = self.scanner.observe(payload)
         if results and callable(self.result_transform):
             # Apply depth pricing/gating before any downstream consumer.
