@@ -847,6 +847,62 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   useEffect(() => {
+    if (slug !== "box-spread") return;
+    let cancelled = false;
+    const loadSelection = async () => {
+      setIndexSelectionLoading(true);
+      try {
+        const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+        const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", { cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Unable to load saved index selection");
+        const symbols = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : [];
+        if (!cancelled) {
+          setActiveIndexSymbols(symbols);
+          setIndexSelectionDraft(symbols);
+          setIndexSelectionError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setIndexSelectionError(e instanceof Error ? e.message : "Index selection unavailable");
+      } finally {
+        if (!cancelled) setIndexSelectionLoading(false);
+      }
+    };
+    void loadSelection();
+    return () => { cancelled = true; };
+  }, [slug]);
+
+  const saveIndexSelection = async () => {
+    if (slug !== "box-spread" || indexSelectionDraft.length === 0) return;
+    setIndexSelectionSaving(true);
+    setIndexSelectionError(null);
+    setIndexSelectionMessage("");
+    try {
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+      const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: indexSelectionDraft }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Index selection save failed");
+      const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : indexSelectionDraft;
+      setActiveIndexSymbols(saved);
+      setIndexSelectionDraft(saved);
+      setRows([]);
+      rowsRef.current = [];
+      setRowsStale(false);
+      setPairRows([]);
+      setIndexSelectionMessage(body?.message || "Index selection saved. Switching live feed safely.");
+      void load(true);
+    } catch (e) {
+      setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
+    } finally {
+      setIndexSelectionSaving(false);
+    }
+  };
+
+  useEffect(() => {
     if (slug !== "box-spread") { setIndexSpotRows([]); return; }
     let cancelled = false;
     const loadIndexSpots = async () => {
