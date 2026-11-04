@@ -34,6 +34,7 @@ from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSec
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
+from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
@@ -109,6 +110,7 @@ _live_synthetic_universe_status = {
 }
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
+live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": tuple(sorted(OPTION_STRATEGY_INDEX_SYMBOLS)),
     "NIFTY_SENSEX": ("NIFTY", "SENSEX"),
@@ -507,6 +509,12 @@ def _signal_live_runner_shutdown() -> None:
     unwind and perform its normal cleanup instead of reaching systemd's
     30-second stop deadline.
     """
+    if live_box_spread_supervisor is not None:
+        threading.Thread(
+            target=live_box_spread_supervisor.stop,
+            name="box-spread-supervisor-shutdown",
+            daemon=True,
+        ).start()
     for runner in (
         live_cash_future_runner,
         live_calendar_spread_runner,
@@ -903,14 +911,42 @@ def _update_live_synthetic_results(results: tuple) -> None:
         live_synthetic_latest_results = tuple(item[2] for item in latest.values())
 
 
+def _start_box_spread_runner_worker(runner):
+    """Start the initial Box Spread worker and capture fatal thread errors."""
+    errors = []
+
+    def target():
+        try:
+            runner.run_forever()
+        except BaseException as exc:
+            runtime_diagnostics.record(
+                component="Scanner Runner",
+                severity="CRITICAL" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "ERROR",
+                error_type=type(exc).__name__,
+                message=str(exc) or repr(exc),
+                context={"worker": "live-box-spread-runner"},
+            )
+            errors.append(exc)
+            runner.stop()
+
+    worker = threading.Thread(target=target, name="live-box-spread-runner", daemon=True)
+    try:
+        setattr(runner, "_runner_worker", worker)
+    except Exception:
+        pass
+    worker.start()
+    return worker, errors
+
+
 async def _live_box_spread_loop() -> None:
-    """Supervise the Box Spread runner with bounded retry backoff."""
-    global live_box_spread_runner, live_box_spread_latest_results
+    """Supervise Box Spread with staged make-before-break runner handoffs."""
+    global live_box_spread_runner, live_box_spread_supervisor, live_box_spread_latest_results
     retry_delay = 5.0
     max_retry_delay = 60.0
     while True:
         master = InstrumentMaster()
         runner = None
+        supervisor = None
         try:
             # Box Spread uses its own recent instrument-master cache on download failure.
             # The shared InstrumentMaster behavior for other scanners remains unchanged.
@@ -935,17 +971,12 @@ async def _live_box_spread_loop() -> None:
                 name = str(item.get("name", "")).strip().upper()
                 if not name:
                     continue
-                # Build the scanner universe from option contracts, not futures.
-                # Futures are not live-subscribed for Box Spread; option-only rows
-                # must remain eligible even when a future row is missing or renamed.
                 # Live Box Spread is intentionally index-only; stock contracts are not subscribed.
                 if typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS and name not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS:
                     expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
                     if segment == expected_segment:
                         index_symbols.add(name)
-            # The persisted manual selection is the sole Box Spread universe.
-            # Build targets only for selected indices; spot-only targets remain
-            # available while an index's option chain is temporarily unavailable.
+
             selected_symbols = _get_box_spread_index_selection()
             targets, expiry_types = _box_spread_targets_from_master(master, selected_symbols)
             set_live_box_expiry_types(expiry_types)
@@ -958,6 +989,7 @@ async def _live_box_spread_loop() -> None:
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(max_retry_delay, retry_delay * 2.0)
                 continue
+
             runner = LiveBoxSpreadRunner(
                 settings.BACKTEST_DATA_DB,
                 targets,
@@ -967,11 +999,50 @@ async def _live_box_spread_loop() -> None:
                 on_results=lambda results: _update_live_box_spread_results(results),
             )
             live_box_spread_runner = runner
-            await _run_live_runner_in_daemon_thread(
-                runner, name="live-box-spread-runner"
+            worker, worker_errors = _start_box_spread_runner_worker(runner)
+
+            def make_staged_runner(new_targets):
+                return LiveBoxSpreadRunner(
+                    settings.BACKTEST_DATA_DB,
+                    new_targets,
+                    allowed_stock_symbols=runner.allowed_stock_symbols,
+                    future_master=runner.master,
+                    auth=AngelOneAuth(),
+                    on_results=lambda results: _update_live_box_spread_results(results),
+                    consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
+                    publish_enabled=False,
+                    publication_gate=runner.publication_gate,
+                )
+
+            def set_active_runner(active_runner):
+                global live_box_spread_runner
+                live_box_spread_runner = active_runner
+
+            supervisor = BoxSpreadRunnerSupervisor(
+                active_runner=runner,
+                active_thread=worker,
+                runner_factory=make_staged_runner,
+                on_active=set_active_runner,
+                readiness_timeout_seconds=90.0,
+                readiness_poll_seconds=0.25,
             )
+            live_box_spread_supervisor = supervisor
+
+            # Follow the currently active worker. A successful staged handoff
+            # swaps this pointer before stopping the old worker, so the loop
+            # naturally continues monitoring the replacement thread.
+            while True:
+                active_runner = supervisor.active_runner
+                active_worker = supervisor.active_thread
+                if active_runner.stop_event.is_set() or not active_worker.is_alive():
+                    break
+                await asyncio.sleep(0.25)
+
+            runner = supervisor.active_runner
             if runner.stop_event.is_set():
                 return
+            if worker_errors:
+                raise RuntimeError(f"Box Spread worker failed: {worker_errors[0]}")
             app_logger.warning(
                 "Box Spread live runner exited unexpectedly; retrying in {:.1f}s",
                 retry_delay,
@@ -984,14 +1055,19 @@ async def _live_box_spread_loop() -> None:
                 retry_delay, exc,
             )
         finally:
-            if runner is not None:
-                _stop_live_runner_nonblocking(
-                    runner, name="live-box-spread-final-stop"
-                )
-            if live_box_spread_runner is runner:
+            if supervisor is not None:
+                await asyncio.to_thread(supervisor.stop)
+            elif runner is not None:
+                await asyncio.to_thread(runner.stop)
+            if live_box_spread_supervisor is supervisor:
+                live_box_spread_supervisor = None
+            if live_box_spread_runner is runner or (
+                supervisor is not None and live_box_spread_runner is supervisor.active_runner
+            ):
                 live_box_spread_runner = None
         await asyncio.sleep(retry_delay)
         retry_delay = min(max_retry_delay, retry_delay * 2.0)
+
 
 def _box_spread_result_key(result) -> tuple:
     low = getattr(result, "low", None)
@@ -1303,6 +1379,12 @@ def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
             )
 
     runner = live_box_spread_runner
+    supervisor = live_box_spread_supervisor
+    if supervisor is not None and supervisor.snapshot().get("candidate_running"):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "A Box Spread feed handoff is already staging. Wait for it to finish before changing the index selection again."},
+        )
     prepared_targets = None
     prepared_expiry_types = None
     if runner is not None and not runner.stop_event.is_set():
@@ -1321,8 +1403,12 @@ def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
     if runner is not None and prepared_targets is not None:
         set_live_box_expiry_types(prepared_expiry_types)
         set_live_box_websocket_expiry_types(prepared_expiry_types)
-        switch = runner.request_reconfigure(prepared_targets)
-        switch["restart_requested"] = True
+        if supervisor is not None:
+            switch = supervisor.request_handoff(prepared_targets)
+            switch["restart_requested"] = switch.get("state") == "STAGING"
+        else:
+            switch = runner.request_reconfigure(prepared_targets)
+            switch["restart_requested"] = True
     return {
         "status": "success",
         "symbols": list(saved),
