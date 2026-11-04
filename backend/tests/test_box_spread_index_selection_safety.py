@@ -8,7 +8,7 @@ def test_index_deselection_is_blocked_while_paper_position_is_open(monkeypatch):
     monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("NIFTY", "BANKNIFTY"))
     monkeypatch.setattr(main, "_box_spread_open_paper_symbols", lambda: {"BANKNIFTY"})
     saved = []
-    monkeypatch.setattr(main, "_save_box_spread_index_selection", lambda symbols: saved.append(tuple(symbols)))
+    monkeypatch.setattr(main, "_save_box_spread_index_selection", lambda symbols, weekly_only_symbols=(): saved.append((tuple(symbols), tuple(weekly_only_symbols))))
 
     with pytest.raises(HTTPException) as error:
         main.set_box_spread_index_selection(main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY"]))
@@ -39,13 +39,13 @@ def test_index_deselection_is_allowed_after_all_paper_legs_are_flat(monkeypatch)
     monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("NIFTY", "BANKNIFTY"))
     monkeypatch.setattr(main, "_box_spread_open_paper_symbols", lambda: set())
     saved = []
-    monkeypatch.setattr(main, "_save_box_spread_index_selection", lambda symbols: saved.append(tuple(symbols)) or tuple(symbols))
+    monkeypatch.setattr(main, "_save_box_spread_index_selection", lambda symbols, weekly_only_symbols=(): saved.append((tuple(symbols), tuple(weekly_only_symbols))) or tuple(symbols))
 
     result = main.set_box_spread_index_selection(main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY"]))
 
     assert result["status"] == "success"
     assert result["symbols"] == ["NIFTY"]
-    assert saved == [("NIFTY",)]
+    assert saved == [(('NIFTY',), ())]
 
 
 
