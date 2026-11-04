@@ -604,3 +604,63 @@ def test_box_runner_can_activate_and_deactivate_a_staged_pipeline():
     runner.deactivate_publishing()
     assert runner._publish_enabled is False
     assert pipeline.states == [True, False]
+
+
+def test_staged_session_readiness_requires_all_underlyings_options_and_full_depth():
+    import app.market_data.live_box_spread_runner as mod
+    snapshot = {
+        "underlying_feed": {"symbols": {
+            "NIFTY": {"state": "LIVE"},
+            "SENSEX": {"state": "LIVE"},
+        }},
+        "option_recorder": {
+            "subscriptions": 100, "records_received": 12,
+            "feed": {"active_instruments": 100, "connected_groups": [1]},
+        },
+        "depth_shadow": {"enabled": True, "running": True, "readiness": [
+            {"underlying": "NIFTY", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "SENSEX", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+        ]},
+    }
+    result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY", "SENSEX"})
+    assert result["ready"] is True
+    assert result["state"] == "READY"
+
+
+def test_staged_session_readiness_fails_closed_for_one_stale_underlying_or_partial_depth():
+    import app.market_data.live_box_spread_runner as mod
+    snapshot = {
+        "underlying_feed": {"symbols": {
+            "NIFTY": {"state": "LIVE"},
+            "SENSEX": {"state": "STALE"},
+        }},
+        "option_recorder": {
+            "subscriptions": 100, "records_received": 12,
+            "feed": {"active_instruments": 100, "connected_groups": [1]},
+        },
+        "depth_shadow": {"enabled": True, "running": True, "readiness": [
+            {"underlying": "NIFTY", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+            {"underlying": "SENSEX", "state": "WAITING_FOR_DEPTH", "full_depth_ce": 1, "full_depth_pe": 2, "executable_depth_contracts": 3},
+        ]},
+    }
+    result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY", "SENSEX"})
+    assert result["ready"] is False
+    assert result["missing_underlying_symbols"] == ["SENSEX"]
+    assert result["missing_depth_symbols"] == ["SENSEX"]
+
+
+def test_staged_session_readiness_rejects_disconnected_option_feed():
+    import app.market_data.live_box_spread_runner as mod
+    snapshot = {
+        "underlying_feed": {"symbols": {"NIFTY": {"state": "LIVE"}}},
+        "option_recorder": {
+            "subscriptions": 100, "records_received": 12,
+            "feed": {"active_instruments": 100, "connected_groups": [], "disconnected_groups": [1]},
+        },
+        "depth_shadow": {"enabled": True, "running": True, "readiness": [
+            {"underlying": "NIFTY", "state": "READY", "full_depth_ce": 2, "full_depth_pe": 2, "executable_depth_contracts": 4},
+        ]},
+    }
+    result = mod.LiveBoxSpreadRunner.staged_session_readiness(snapshot, {"NIFTY"})
+    assert result["ready"] is False
+    assert result["option_recorder_ready"] is False
