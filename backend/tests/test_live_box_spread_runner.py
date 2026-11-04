@@ -493,3 +493,57 @@ def test_depth_edge_must_meet_the_configured_per_index_floor():
     assert _depth_edge_below_minimum(10.25, 10.0) is False
     assert _depth_edge_below_minimum(4.99, 5.0) is True
     assert _depth_edge_below_minimum(5.0, 5.0) is False
+
+
+def test_box_runner_queues_index_switch_and_applies_only_after_session_handoff():
+    import app.market_data.live_box_spread_runner as mod
+
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(),
+        future_master=object(),
+        auth=object(),
+    )
+    old_scanner = object()
+    old_tracker = object()
+    runner.scanner = old_scanner
+    runner.tracker = old_tracker
+
+    queued = runner.request_reconfigure([
+        mod.BoxSpreadLiveTarget("SENSEX", "INDEX"),
+        mod.BoxSpreadLiveTarget("BANKNIFTY", "INDEX"),
+    ])
+
+    # Queueing must not mutate the active target set or tear down its scanner.
+    assert queued["status"] == "RECONFIGURE_QUEUED"
+    assert [target.underlying for target in runner.targets] == ["NIFTY"]
+    assert runner.scanner is old_scanner
+    assert runner.tracker is old_tracker
+    assert runner._reconfigure_event.is_set()
+
+    # The supervisor applies the new targets only after _run_session has
+    # returned and its old feeds have passed through their teardown path.
+    assert runner._apply_pending_targets() is True
+    assert [target.underlying for target in runner.targets] == ["SENSEX", "BANKNIFTY"]
+    assert runner.scanner is None
+    assert runner.tracker is None
+    assert not runner._reconfigure_event.is_set()
+    assert runner._apply_pending_targets() is False
+
+
+def test_box_runner_rejects_empty_index_switch_without_disturbing_active_targets():
+    import pytest
+    import app.market_data.live_box_spread_runner as mod
+
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(),
+        future_master=object(),
+        auth=object(),
+    )
+    with pytest.raises(ValueError, match="at least one selected index"):
+        runner.request_reconfigure([])
+    assert [target.underlying for target in runner.targets] == ["NIFTY"]
+    assert not runner._reconfigure_event.is_set()
