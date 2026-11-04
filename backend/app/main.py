@@ -1392,6 +1392,13 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
     prepared_expiry_types = None
     previous_expiry_types = None
     if runner is not None and not runner.stop_event.is_set():
+        if supervisor is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": "Safe Box Spread handoff supervisor is not ready. Selection was not changed; retry shortly.",
+                },
+            )
         try:
             # Validate both selections against the same loaded instrument master.
             prepared_targets, prepared_expiry_types = _box_spread_targets_from_master(runner.master, selected)
@@ -1433,9 +1440,6 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
                     status_code=409,
                     detail={"message": "Box Spread handoff was not accepted; previous selection has been restored. Retry after the current handoff finishes."},
                 )
-            switch["restart_requested"] = True
-        else:
-            switch = runner.request_reconfigure(prepared_targets)
             switch["restart_requested"] = True
         set_live_box_expiry_types(prepared_expiry_types)
         set_live_box_websocket_expiry_types(prepared_expiry_types)
