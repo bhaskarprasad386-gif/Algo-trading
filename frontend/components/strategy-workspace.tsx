@@ -588,8 +588,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
   const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
   const [indexSelectionDraft, setIndexSelectionDraft] = useState<string[]>([]);
+  const [weeklyOnlyDraft, setWeeklyOnlyDraft] = useState<string[]>([]);
   const [activeIndexSymbols, setActiveIndexSymbols] = useState<string[]>([]);
   const [savedIndexSymbols, setSavedIndexSymbols] = useState<string[]>([]);
+  const [savedWeeklyOnlySymbols, setSavedWeeklyOnlySymbols] = useState<string[]>([]);
   const [indexHandoffState, setIndexHandoffState] = useState("CHECKING");
   const [indexSelectionLoading, setIndexSelectionLoading] = useState(false);
   const [indexSelectionSaving, setIndexSelectionSaving] = useState(false);
@@ -863,14 +865,17 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Unable to load saved index selection");
         const symbols = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : [];
+        const weeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
         const runtime = body?.runtime?.supervisor;
         const active = Array.isArray(runtime?.active_symbols) ? runtime.active_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
         const handoff = typeof runtime?.handoff?.state === "string" ? runtime.handoff.state : "UNKNOWN";
         if (!cancelled) {
           setSavedIndexSymbols(symbols);
+          setSavedWeeklyOnlySymbols(weeklyOnly);
           setActiveIndexSymbols(active);
           setIndexHandoffState(handoff);
           setIndexSelectionDraft(current => current.length && handoff !== "FAILED" ? current : symbols);
+          setWeeklyOnlyDraft(current => current.length && handoff !== "FAILED" ? current : weeklyOnly);
           setIndexSelectionError(null);
         }
       } catch (e) {
@@ -888,6 +893,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const saveIndexSelection = async () => {
     if (slug !== "box-spread" || indexSelectionDraft.length === 0) return;
+    const weeklyOnly = weeklyOnlyDraft.filter(symbol => indexSelectionDraft.includes(symbol));
     setIndexSelectionSaving(true);
     setIndexSelectionError(null);
     setIndexSelectionMessage("");
@@ -896,13 +902,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbols: indexSelectionDraft }),
+        body: JSON.stringify({ symbols: indexSelectionDraft, weekly_only_symbols: weeklyOnly }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Index selection save failed");
       const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : indexSelectionDraft;
+      const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
       setSavedIndexSymbols(saved);
+      setSavedWeeklyOnlySymbols(savedWeeklyOnly);
       setIndexSelectionDraft(saved);
+      setWeeklyOnlyDraft(savedWeeklyOnly);
       const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
       setIndexHandoffState(handoff);
       setIndexSelectionMessage(handoff === "STAGING"
@@ -1233,6 +1242,18 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX</button>
             <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX","BANKNIFTY"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX + BANKNIFTY</button>
           </div>
+          <div className="mt-3 rounded-lg border theme-border theme-surface-2 p-3">
+            <p className="text-xs font-extrabold theme-text">Expiry subscription mode</p>
+            <p className="mt-1 text-[11px] theme-muted">NIFTY/SENSEX default: Weekly + Monthly. Enable Weekly Only to subscribe just that index's weekly contracts.</p>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(["NIFTY", "SENSEX"] as const).map(symbol => (
+                <label key={symbol} className="flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-bold theme-text">
+                  <input type="checkbox" checked={weeklyOnlyDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading || !indexSelectionDraft.includes(symbol)} onChange={event => setWeeklyOnlyDraft(current => event.target.checked ? [...current, symbol] : current.filter(item => item !== symbol))} className="h-4 w-4 accent-emerald-600" />
+                  {symbol} Weekly Only
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
             {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => (
               <label key={symbol} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs font-bold theme-text">
@@ -1242,8 +1263,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             ))}
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === savedIndexSymbols.length && indexSelectionDraft.every(symbol => savedIndexSymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
+            <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Weekly Only: {savedWeeklyOnlySymbols.length ? savedWeeklyOnlySymbols.join(" · ") : "None"} · Other selected indices use available standard expiries.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === savedIndexSymbols.length && indexSelectionDraft.every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.filter(symbol => indexSelectionDraft.includes(symbol)).length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.filter(symbol => indexSelectionDraft.includes(symbol)).every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
               {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
             </button>
           </div>
