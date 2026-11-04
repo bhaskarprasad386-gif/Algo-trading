@@ -235,3 +235,54 @@ def test_weekly_only_selection_is_limited_to_selected_nifty_or_sensex():
 def test_weekly_only_selection_must_also_be_selected():
     with pytest.raises(ValueError, match="weekly-only indices must also be included"):
         main._save_box_spread_index_selection(["SENSEX"], ["NIFTY"])
+
+def test_sensex_weekly_only_target_builder_excludes_monthly_and_marks_target(monkeypatch):
+    from datetime import date
+    from types import SimpleNamespace
+
+    weekly_raw = "31DEC2099"
+    monthly_raw = "30DEC2099"
+    weekly_day = date(2099, 12, 31)
+    monthly_day = date(2099, 12, 30)
+    instruments = [
+        {"exch_seg": "BFO", "instrumenttype": "OPTIDX", "name": "SENSEX", "expiry": weekly_raw},
+        {"exch_seg": "BFO", "instrumenttype": "OPTIDX", "name": "SENSEX", "expiry": monthly_raw},
+    ]
+    monkeypatch.setattr(
+        main,
+        "classify_index_expiry_dates",
+        lambda symbol, dates: {weekly_day: "WEEKLY", monthly_day: "MONTHLY"},
+    )
+
+    targets, expiry_types = main._box_spread_targets_from_master(
+        SimpleNamespace(instruments=instruments), ["SENSEX"], ["SENSEX"]
+    )
+
+    assert [(target.underlying, target.expiry, target.weekly_only) for target in targets] == [
+        ("SENSEX", weekly_raw, True)
+    ]
+    assert expiry_types[("SENSEX", monthly_raw)] == "MONTHLY"
+
+
+def test_weekly_only_without_classified_weekly_expiry_stays_spot_only(monkeypatch):
+    from datetime import date
+    from types import SimpleNamespace
+
+    monthly_raw = "30DEC2099"
+    monthly_day = date(2099, 12, 30)
+    instruments = [
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY", "expiry": monthly_raw},
+    ]
+    monkeypatch.setattr(
+        main,
+        "classify_index_expiry_dates",
+        lambda symbol, dates: {monthly_day: "MONTHLY"},
+    )
+
+    targets, _ = main._box_spread_targets_from_master(
+        SimpleNamespace(instruments=instruments), ["NIFTY"], ["NIFTY"]
+    )
+
+    assert len(targets) == 1
+    assert targets[0].expiry is None
+    assert targets[0].weekly_only is True
