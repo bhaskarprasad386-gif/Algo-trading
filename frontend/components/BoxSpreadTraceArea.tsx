@@ -200,6 +200,12 @@ export default function BoxSpreadTraceArea() {
         </div>
         {results[selectedTrace.id] && <section className="mt-4 rounded-xl border border-cyan-800 bg-cyan-950/30 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-extrabold text-cyan-100">Latest Live Market Depth · {results[selectedTrace.id].status}</h4><span className="text-xs text-slate-300">Fetched {time(results[selectedTrace.id].checked_at)}</span></div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Entry Edge</p><p className="mt-1 text-sm font-extrabold">₹{fmt(results[selectedTrace.id].entry_edge)}</p></div>
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Latest Edge</p><p className="mt-1 text-sm font-extrabold">₹{fmt(results[selectedTrace.id].latest_edge)}</p></div>
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Edge Difference</p><p className="mt-1 text-sm font-extrabold">₹{fmt(edgeDifference(results[selectedTrace.id].entry_edge, results[selectedTrace.id].latest_edge))}</p></div>
+            <div className="rounded-lg border border-slate-700 p-2"><p className="text-[10px] text-slate-400">Gross P&amp;L</p><p className="mt-1 text-sm font-extrabold">₹{fmt(results[selectedTrace.id].gross_pnl)}</p></div>
+          </div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">{results[selectedTrace.id].legs.map(leg => <div key={leg.leg} className="rounded-lg border border-slate-700 bg-slate-900 p-2"><p className="text-xs font-bold">{leg.leg.replace("_", " ").toUpperCase()} · {leg.exit_side}</p><p className="mt-1 text-xs text-slate-300">Best executable price ₹{fmt(leg.exit_price)} · Depth qty {fmt(leg.exit_qty)} · Quote age {fmt(leg.quote_age_seconds)}s</p><div className="mt-2">{leg.depth_levels?.length ? leg.depth_levels.map((level,index) => <p key={index} className="flex justify-between border-t border-slate-800 py-1 text-xs"><span>₹{fmt(level.price)}</span><span>{fmt(level.quantity)}</span></p>) : <p className="text-xs text-amber-200">No fresh executable levels</p>}</div></div>)}</div>
         </section>}
         <p className="mt-3 text-xs text-slate-400">This view preserves the trace’s immutable entry snapshot and shows a separately timestamped live depth check. The check is saved in trace history; no broker orders are placed.</p>
