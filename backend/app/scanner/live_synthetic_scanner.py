@@ -24,7 +24,10 @@ class LiveSyntheticScanner:
     """Bounded in-memory assembler for one-second synthetic opportunities."""
 
     MAX_ACTIVE_BUCKETS = 4096
-    MAX_BUCKET_AGE_NS = 3_000_000_000
+    # Retain snapshots long enough for sparse index option ticks to meet, while
+    # pairing still requires source timestamps within TIMESTAMP_TOLERANCE_NS.
+    MAX_BUCKET_AGE_NS = 6_000_000_000
+    MAX_PENDING_QUOTE_WAIT_NS = 3_000_000_000
 
     def __init__(
         self,
@@ -313,7 +316,7 @@ class LiveSyntheticScanner:
                     and previous_ltp is not None
                     and current_bid is not None
                     and current_ask is not None
-                    and age_ns < 3_000_000_000
+                    and age_ns < self.MAX_PENDING_QUOTE_WAIT_NS
                 ):
                     anchored = dict(current)
                     anchored["source_timestamp_ns"] = previous.get("source_timestamp_ns")
@@ -537,7 +540,7 @@ class LiveSyntheticScanner:
                     if bucket.get("quote_wait_started_ns") is None:
                         bucket["quote_wait_started_ns"] = time.monotonic_ns()
                         bucket_age_ns = 0
-                    if bucket_age_ns < 3_000_000_000:
+                    if bucket_age_ns < self.MAX_PENDING_QUOTE_WAIT_NS:
                         self._count("waiting_for_executable_quote")
                         return ()
                 self._count("no_executable_ce_pe_pair")
@@ -886,7 +889,7 @@ class LiveSyntheticScanner:
         for key, bucket in self._buckets.items():
             if key[0] != symbol or key[2] != expiry:
                 continue
-            if abs(key[1] - timestamp_ns) > 3_000_000_000:
+            if abs(key[1] - timestamp_ns) > self.MAX_PENDING_QUOTE_WAIT_NS:
                 continue
             started_ns = bucket.get("quote_wait_started_ns")
             if started_ns is None:
@@ -895,7 +898,7 @@ class LiveSyntheticScanner:
                 wait_age_ns = now_monotonic_ns - int(started_ns)
             except (TypeError, ValueError, OverflowError):
                 continue
-            if 0 <= wait_age_ns < 3_000_000_000:
+            if 0 <= wait_age_ns < self.MAX_PENDING_QUOTE_WAIT_NS:
                 pending.append(key)
         if pending:
             return min(pending, key=lambda key: abs(key[1] - timestamp_ns))
@@ -927,7 +930,7 @@ class LiveSyntheticScanner:
                     return False
                 # A pending executable-book quote gets its own bounded three-second
                 # grace period, even if the original bucket was created earlier.
-                return 0 <= wait_age_ns < self.MAX_BUCKET_AGE_NS
+                return 0 <= wait_age_ns < self.MAX_PENDING_QUOTE_WAIT_NS
             age_ns = now_monotonic_ns - first_seen_ns
             return 0 <= age_ns < self.MAX_BUCKET_AGE_NS
 
