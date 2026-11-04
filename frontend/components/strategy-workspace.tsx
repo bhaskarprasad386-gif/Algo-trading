@@ -1257,7 +1257,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
               {(["NIFTY", "SENSEX"] as const).map(symbol => (
                 <label key={symbol} className="flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-bold theme-text">
-                  <input type="checkbox" checked={weeklyOnlyDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={event => setWeeklyOnlyDraft(current => event.target.checked ? [...current, symbol] : current.filter(item => item !== symbol))} className="h-4 w-4 accent-emerald-600" />
+                  <input type="checkbox" checked={weeklyOnlyDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={event => { setWeeklyOnlyDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); if (event.target.checked) setIndexSelectionDraft(current => current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
                   {symbol} Weekly Only
                 </label>
               ))}
@@ -1266,14 +1266,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
             {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => (
               <label key={symbol} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs font-bold theme-text">
-                <input type="checkbox" checked={indexSelectionDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={(event) => setIndexSelectionDraft(current => event.target.checked ? [...current, symbol] : current.filter(item => item !== symbol))} className="h-4 w-4 accent-emerald-600" />
+                <input type="checkbox" checked={indexSelectionDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={(event) => { setIndexSelectionDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); if (event.target.checked) setWeeklyOnlyDraft(current => current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
                 {symbol}
               </label>
             ))}
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Weekly Only: {savedWeeklyOnlySymbols.length ? savedWeeklyOnlySymbols.join(" · ") : "None"} · Other selected indices use available standard expiries.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0) || (indexSelectionDraft.length + weeklyOnlyDraft.length === savedIndexSymbols.length && [...indexSelectionDraft, ...weeklyOnlyDraft].every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0) || (new Set([...indexSelectionDraft, ...weeklyOnlyDraft]).size === savedIndexSymbols.length && [...indexSelectionDraft, ...weeklyOnlyDraft].every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
               {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
             </button>
           </div>
