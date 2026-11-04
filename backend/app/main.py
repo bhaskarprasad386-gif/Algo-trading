@@ -1390,10 +1390,12 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
         )
     prepared_targets = None
     prepared_expiry_types = None
+    previous_expiry_types = None
     if runner is not None and not runner.stop_event.is_set():
         try:
-            # Validate against the runner's already-loaded master before committing.
+            # Validate both selections against the same loaded instrument master.
             prepared_targets, prepared_expiry_types = _box_spread_targets_from_master(runner.master, selected)
+            _previous_targets, previous_expiry_types = _box_spread_targets_from_master(runner.master, current_selection)
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=409, detail={"message": f"Index selection validation failed; previous feed remains active: {exc}"}) from exc
 
@@ -1402,9 +1404,15 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
     if runner is not None and prepared_targets is not None:
         if supervisor is not None:
             try:
+                def rollback_failed_handoff():
+                    _save_box_spread_index_selection(current_selection)
+                    if previous_expiry_types is not None:
+                        set_live_box_expiry_types(previous_expiry_types)
+                        set_live_box_websocket_expiry_types(previous_expiry_types)
+
                 switch = supervisor.request_handoff(
                     prepared_targets,
-                    on_failed=lambda: _save_box_spread_index_selection(current_selection),
+                    on_failed=rollback_failed_handoff,
                 )
             except Exception as exc:
                 app_logger.exception("Unable to start staged Box Spread runner; restoring previous selection")
