@@ -27,6 +27,11 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
                 payload = {"sequence": index, "tradability_status": "TRADABLE", "max_executable_lots": 2, "depth_edge_per_unit": 5.0}
                 if index == 0:
                     payload["expiry_type"] = "WEEKLY"
+                    payload["depth_legs"] = [{
+                        "role": "LOW_CE", "side": "ASK", "timestamp_ns": 123456789,
+                        "bid_depth_levels": [{"price": 100.0, "quantity": 65.0}],
+                        "ask_depth_levels": [{"price": 101.0, "quantity": 130.0}],
+                    }]
                 db.add(LiveBoxSpreadSnapshot(
                     observed_at=now - timedelta(seconds=index),
                     timestamp_ns=1_790_000_000_000_000_000 + index,
@@ -53,6 +58,8 @@ def test_snapshot_endpoint_reports_total_and_supports_stable_pagination(monkeypa
         assert second["has_more"] is False
         assert [item["sequence"] for item in first["data"] + second["data"]] == [0, 1, 2]
         assert first["data"][0]["expiry_type"] == "WEEKLY"
+        assert first["data"][0]["depth_legs"][0]["timestamp_ns"] == 123456789
+        assert first["data"][0]["depth_legs"][0]["ask_depth_levels"] == [{"price": 101.0, "quantity": 130.0}]
         assert first["expiry_counts"] == {"WEEKLY": 1, "MONTHLY": 0, "UNKNOWN": 2}
 
         weekly = routes.snapshots(days=1, limit=2, offset=0, expiry_type="WEEKLY")
