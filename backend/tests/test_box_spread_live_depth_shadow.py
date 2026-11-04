@@ -261,6 +261,8 @@ def test_snapshot_reports_per_underlying_expiry_fresh_depth_readiness():
         "fresh_ce": 2,
         "fresh_pe": 2,
         "executable_depth_contracts": 4,
+        "full_depth_ce": 2,
+        "full_depth_pe": 2,
         "state": "READY",
     }]
 
@@ -324,3 +326,32 @@ def test_depth_shadow_supports_distinct_consumer_namespace_without_touching_defa
     assert staged_feed.stopped == 1
     assert active_feed.stopped == 0
     assert active.snapshot()["running"] is True
+
+
+def test_partial_five_level_depth_does_not_mark_staged_feed_ready():
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [("401", 25000, "CE"), ("402", 26000, "CE"), ("403", 26000, "PE"), ("404", 25000, "PE")]
+    descriptors = [
+        replace(_descriptor(token), key=InstrumentKey("NFO", "NFO", token), strike=strike, option_type=option_type)
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for index, (token, _, _) in enumerate(specs):
+        levels = 4 if index == 0 else 5
+        callback(_record(timestamp_ns=now, token=token, payload={
+            "best_5_buy_data": _five_levels(95)[:levels],
+            "best_5_sell_data": _five_levels(101)[:levels],
+        }))
+    readiness = shadow.snapshot(now_ns=now)["readiness"][0]
+    assert readiness["fresh_ce"] == 2
+    assert readiness["fresh_pe"] == 2
+    assert readiness["executable_depth_contracts"] == 3
+    assert readiness["full_depth_ce"] == 1
+    assert readiness["full_depth_pe"] == 2
+    assert readiness["state"] == "WAITING_FOR_DEPTH"
