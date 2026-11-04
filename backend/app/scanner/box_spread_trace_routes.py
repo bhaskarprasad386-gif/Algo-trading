@@ -113,6 +113,21 @@ def list_traces(limit: int = 200):
         return {"strategy": "box-spread", "count": len(rows), "data": [_serialize_trace(row) for row in rows]}
 
 
+@router.delete("/{trace_id}")
+def delete_trace(trace_id: int):
+    """Permanently remove one saved Box Spread trace and its exit-check history."""
+    with SessionLocal() as db:
+        row = db.query(BoxSpreadTrace).filter(BoxSpreadTrace.id == trace_id).first()
+        if row is None:
+            raise HTTPException(404, "Trace not found.")
+        db.query(BoxSpreadTraceExitCheck).filter(
+            BoxSpreadTraceExitCheck.trace_id == trace_id
+        ).delete(synchronize_session=False)
+        db.delete(row)
+        db.commit()
+        return {"strategy": "box-spread", "deleted": True, "trace_id": trace_id}
+
+
 @router.post("")
 def create_trace(payload: TraceCreate):
     snapshot = dict(payload.snapshot or {})
