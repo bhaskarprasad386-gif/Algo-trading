@@ -766,3 +766,65 @@ def test_staged_readiness_normalizes_broker_expiry_formats_across_feeds():
     )
     assert result["ready"] is True
     assert result["missing_expiry_groups"] == []
+
+
+
+def test_staged_readiness_allows_spot_only_index_without_option_chain():
+    from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner
+
+    snapshot = {
+        "underlying_feed": {"symbols": {"FINNIFTY": {"state": "LIVE"}}},
+        "option_recorder": {
+            "subscriptions": 0,
+            "feed": {"active_instruments": 0, "connected_groups": [], "disconnected_groups": []},
+            "fresh_contracts": [],
+        },
+        "depth_shadow": {"enabled": False, "running": False, "readiness": []},
+    }
+    result = LiveBoxSpreadRunner.staged_session_readiness(
+        snapshot, {("FINNIFTY", None)}
+    )
+    assert result["ready"] is True
+    assert result["missing_underlying_symbols"] == []
+    assert result["missing_depth_symbols"] == []
+
+
+def test_staged_readiness_requires_depth_only_for_indices_with_selected_expiries():
+    from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner
+
+    snapshot = {
+        "underlying_feed": {
+            "symbols": {
+                "NIFTY": {"state": "LIVE"},
+                "FINNIFTY": {"state": "LIVE"},
+            }
+        },
+        "option_recorder": {
+            "subscriptions": 4,
+            "feed": {"active_instruments": 4, "connected_groups": [1], "disconnected_groups": []},
+            "fresh_contracts": [
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "CE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "PE"},
+                {"underlying": "NIFTY", "expiry": "06NOV2026", "option_type": "PE"},
+            ],
+        },
+        "depth_shadow": {
+            "enabled": True,
+            "running": True,
+            "readiness": [{
+                "underlying": "NIFTY",
+                "expiry": 20261106,
+                "state": "READY",
+                "executable_depth_contracts": 4,
+                "executable_depth_ce": 2,
+                "executable_depth_pe": 2,
+            }],
+        },
+    }
+    result = LiveBoxSpreadRunner.staged_session_readiness(
+        snapshot, {("NIFTY", "06NOV2026"), ("FINNIFTY", None)}
+    )
+    assert result["ready"] is True
+    assert result["missing_depth_symbols"] == []
+    assert result["missing_expiry_groups"] == []
