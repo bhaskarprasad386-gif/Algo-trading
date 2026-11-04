@@ -66,3 +66,33 @@ def test_box_alert_message_shows_depth_qty_next_to_each_bid_ask_price():
     assert "₹1.00 (35)/₹2.00 (45)" in message
     assert "₹8.00 (55)/₹9.00 (65)" in message
     assert "₹2.00 (75)/₹3.00 (85)" in message
+
+
+
+def test_alert_eligibility_requires_tradable_depth_and_at_least_two_lots():
+    two_lots = _result()
+    two_lots.tradability_status = "TRADABLE"
+    two_lots.max_executable_lots = 2
+
+    three_lots = _result()
+    three_lots.tradability_status = "TRADABLE"
+    three_lots.max_executable_lots = 3
+
+    one_lot = _result()
+    one_lot.tradability_status = "NOT_TRADABLE"
+    one_lot.max_executable_lots = 1
+
+    rejected = _result()
+    rejected.tradability_status = "NOT_TRADABLE"
+    rejected.max_executable_lots = 5
+
+    assert BoxSpreadAlertService._eligible_results(
+        (two_lots, three_lots, one_lot, rejected)
+    ) == (two_lots, three_lots)
+
+
+def test_alert_eligibility_fails_closed_when_depth_quantity_is_missing():
+    missing = _result()
+    missing.tradability_status = "TRADABLE"
+
+    assert BoxSpreadAlertService._eligible_results((missing,)) == ()

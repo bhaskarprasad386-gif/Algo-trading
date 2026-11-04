@@ -469,3 +469,27 @@ def test_box_depth_shadow_contracts_are_mapped_to_option_descriptors():
     assert descriptors[1].underlying == "SENSEX"
     assert descriptors[1].option_type == "PE"
     assert descriptors[1].strike == 75000.0
+
+
+def test_box_spread_index_edge_thresholds_match_configured_floors():
+    from app.market_data.live_box_spread_runner import INDEX_EDGE_THRESHOLDS
+
+    assert INDEX_EDGE_THRESHOLDS == {
+        "NIFTY": 5.0,
+        "BANKNIFTY": 10.0,
+        "FINNIFTY": 5.0,
+        "MIDCPNIFTY": 10.0,
+        "SENSEX": 10.0,
+        "BANKEX": 10.0,
+    }
+
+
+def test_depth_edge_must_meet_the_configured_per_index_floor():
+    from app.market_data.live_box_spread_runner import _depth_edge_below_minimum
+
+    assert _depth_edge_below_minimum(5.95, 10.0) is True
+    assert _depth_edge_below_minimum(9.999, 10.0) is True
+    assert _depth_edge_below_minimum(10.0, 10.0) is False
+    assert _depth_edge_below_minimum(10.25, 10.0) is False
+    assert _depth_edge_below_minimum(4.99, 5.0) is True
+    assert _depth_edge_below_minimum(5.0, 5.0) is False

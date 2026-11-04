@@ -30,11 +30,15 @@ WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
     "FINNIFTY": 5.0,
-    "MIDCPNIFTY": 5.0,
+    "MIDCPNIFTY": 10.0,
     "BANKNIFTY": 10.0,
     "SENSEX": 10.0,
     "BANKEX": 10.0,
 }
+
+def _depth_edge_below_minimum(depth_edge: float, minimum_edge: float) -> bool:
+    """Apply the configured per-index floor to the final four-leg depth VWAP edge."""
+    return float(depth_edge) + 1e-9 < float(minimum_edge)
 
 
 def _atm_outside_subscribed_range(atm_strike, subscribed_strikes):
@@ -431,8 +435,25 @@ class LiveBoxSpreadRunner:
                             depth_edge = float(comparison.get("depth_edge_per_unit"))
                             quantity = int(comparison.get("quantity") or 0)
                             lot_size = int(opportunity.low.lot_size)
-                            if not isfinite(depth_edge) or depth_edge <= 0 or lots < minimum_lots or quantity != lots * lot_size:
-                                reason = "NON_POSITIVE_DEPTH_EDGE" if isfinite(depth_edge) and depth_edge <= 0 else "BELOW_MINIMUM_EXECUTABLE_LOTS" if lots < minimum_lots else "INVALID_DEPTH_ALLOCATION"
+                            minimum_edge = INDEX_EDGE_THRESHOLDS.get(
+                                str(opportunity.low.underlying).strip().upper(), 10.0
+                            )
+                            if (
+                                not isfinite(depth_edge)
+                                or depth_edge <= 0
+                                or _depth_edge_below_minimum(depth_edge, minimum_edge)
+                                or lots < minimum_lots
+                                or quantity != lots * lot_size
+                            ):
+                                reason = (
+                                    "NON_POSITIVE_DEPTH_EDGE"
+                                    if isfinite(depth_edge) and depth_edge <= 0
+                                    else "BELOW_MINIMUM_DEPTH_EDGE"
+                                    if isfinite(depth_edge) and _depth_edge_below_minimum(depth_edge, minimum_edge)
+                                    else "BELOW_MINIMUM_EXECUTABLE_LOTS"
+                                    if lots < minimum_lots
+                                    else "INVALID_DEPTH_ALLOCATION"
+                                )
                                 gated.append(replace(opportunity, executable_edge=0.0, edge_per_lot=0.0, gross_pnl=0.0, max_executable_lots=0, tradability_status="NOT_TRADABLE", tradability_reason=reason, l1_reference_edge=float(opportunity.executable_edge), depth_executable_lots=lots, depth_quantity=quantity))
                                 continue
                             gated.append(replace(opportunity, executable_edge=depth_edge, edge_per_lot=depth_edge * lot_size, gross_pnl=depth_edge * quantity, max_executable_lots=lots, tradability_status="TRADABLE", tradability_reason=None, l1_reference_edge=float(opportunity.executable_edge), depth_edge_per_unit=depth_edge, depth_edge_per_lot=depth_edge * lot_size, depth_executable_lots=lots, depth_quantity=quantity, depth_legs=tuple(comparison.get("legs") or ()), depth_entry_prices={leg["role"]: float(leg["vwap"]) for leg in (comparison.get("legs") or ())}, depth_entry_type="NET_DEBIT" if str(opportunity.direction).strip().upper() == "LONG" else "NET_CREDIT", depth_net_entry_price=abs(float(comparison.get("net_entry_price") or 0.0))))
