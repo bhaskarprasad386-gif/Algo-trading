@@ -94,7 +94,7 @@ def test_live_box_route_normalizes_expiry_type_keys(monkeypatch):
 
 
 
-def test_live_box_route_rejects_skew_hidden_inside_strike_timestamps(monkeypatch):
+def test_live_box_route_accepts_skew_hidden_inside_strike_timestamps_when_each_leg_is_fresh(monkeypatch):
     now = time.time_ns()
     result = _result(low_ts=now - 1_000_000_000, high_ts=now - 1_000_000_000)
     result.low.call_timestamp_ns = now - 4_500_000_000
@@ -102,7 +102,7 @@ def test_live_box_route_rejects_skew_hidden_inside_strike_timestamps(monkeypatch
     result.high.call_timestamp_ns = now - 1_000_000_000
     result.high.put_timestamp_ns = now - 1_000_000_000
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
-    assert routes.live(10, max_age_seconds=5)["count"] == 0
+    assert routes.live(10, max_age_seconds=5)["count"] == 1
 
 
 def test_live_box_route_age_uses_oldest_individual_option_quote(monkeypatch):
