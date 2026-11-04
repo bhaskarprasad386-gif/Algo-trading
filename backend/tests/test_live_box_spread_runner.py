@@ -546,3 +546,35 @@ def test_box_runner_rejects_empty_index_switch_without_disturbing_active_targets
         runner.request_reconfigure([])
     assert [target.underlying for target in runner.targets] == ["NIFTY"]
     assert not runner._reconfigure_event.is_set()
+
+
+def test_box_runner_namespaces_all_three_feed_consumers_for_staged_sessions():
+    import app.market_data.live_box_spread_runner as mod
+
+    active = mod.LiveBoxSpreadRunner(
+        object(), [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(), future_master=object(), auth=object(),
+        consumer_namespace="box-active-17",
+    )
+    staged = mod.LiveBoxSpreadRunner(
+        object(), [mod.BoxSpreadLiveTarget("SENSEX", "INDEX")],
+        allowed_stock_symbols=set(), future_master=object(), auth=object(),
+        consumer_namespace="box-staged-18",
+    )
+
+    assert active.depth_shadow.consumer == "box-active-17-live-depth-shadow"
+    assert staged.depth_shadow.consumer == "box-staged-18-live-depth-shadow"
+    assert active.depth_shadow.consumer != staged.depth_shadow.consumer
+    assert active.consumer_namespace != staged.consumer_namespace
+
+
+def test_box_runner_rejects_unsafe_consumer_namespace():
+    import pytest
+    import app.market_data.live_box_spread_runner as mod
+
+    with pytest.raises(ValueError, match="consumer_namespace"):
+        mod.LiveBoxSpreadRunner(
+            object(), [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+            allowed_stock_symbols=set(), future_master=object(), auth=object(),
+            consumer_namespace="box staged",
+        )
