@@ -598,6 +598,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionSaving, setIndexSelectionSaving] = useState(false);
   const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
+  const indexSelectionDraftInitialized = useRef(false);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
@@ -875,8 +876,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           setSavedWeeklyOnlySymbols(weeklyOnly);
           setActiveIndexSymbols(active);
           setIndexHandoffState(handoff);
-          setIndexSelectionDraft(current => current.length && handoff !== "FAILED" ? current : symbols.filter((symbol: string) => !weeklyOnly.includes(symbol)));
-          setWeeklyOnlyDraft(current => current.length && handoff !== "FAILED" ? current : weeklyOnly);
+          // Polling refreshes saved/runtime status only; it must not overwrite an in-progress user draft.
+          if (!indexSelectionDraftInitialized.current) {
+            setIndexSelectionDraft(symbols.filter((symbol: string) => !weeklyOnly.includes(symbol)));
+            setWeeklyOnlyDraft(weeklyOnly);
+            indexSelectionDraftInitialized.current = true;
+          }
           setIndexSelectionError(null);
         }
       } catch (e) {
@@ -914,6 +919,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setSavedWeeklyOnlySymbols(savedWeeklyOnly);
       setIndexSelectionDraft(saved.filter((symbol: string) => !savedWeeklyOnly.includes(symbol)));
       setWeeklyOnlyDraft(savedWeeklyOnly);
+      indexSelectionDraftInitialized.current = true;
       const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
       setIndexHandoffState(handoff);
       setIndexSelectionMessage(handoff === "STAGING"
