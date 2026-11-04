@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,4 +17,4 @@ class BoxSpreadIndexSelection(Base):
         nullable=False,
         default='["NIFTY","BANKNIFTY","MIDCPNIFTY","SENSEX"]',
     )
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
