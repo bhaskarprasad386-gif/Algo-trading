@@ -851,8 +851,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (slug !== "box-spread") return;
     let cancelled = false;
+    let hasLoaded = false;
+    let inFlight = false;
     const loadSelection = async () => {
-      setIndexSelectionLoading(true);
+      if (inFlight) return;
+      inFlight = true;
+      if (!hasLoaded) setIndexSelectionLoading(true);
       try {
         const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
         const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", { cache: "no-store" });
@@ -872,6 +876,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       } catch (e) {
         if (!cancelled) setIndexSelectionError(e instanceof Error ? e.message : "Index selection unavailable");
       } finally {
+        inFlight = false;
+        hasLoaded = true;
         if (!cancelled) setIndexSelectionLoading(false);
       }
     };
