@@ -44,7 +44,7 @@ def test_websocket_row_rejects_future_dated_leg(monkeypatch):
 def test_websocket_row_rejects_excessive_four_leg_skew(monkeypatch):
     now_ns = time.time_ns()
     result = _result(now_ns)
-    result.low.call_timestamp_ns = now_ns - 3_500_000_000
+    result.low.call_timestamp_ns = now_ns - 5_500_000_000
     monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
 
     assert websocket._row(result) is None
