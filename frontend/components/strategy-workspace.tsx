@@ -1243,10 +1243,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <section id="box-overview" className="scroll-mt-24 space-y-3 rounded-2xl theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread live index prices">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div><h2 className="text-sm font-extrabold theme-text">Live Index Prices</h2><p className="mt-1 text-[10px] theme-muted">Direct spot-feed snapshots · refresh 1s · LIVE only when quote age is 5s or less</p></div>
-            <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">6 INDEX SPOTS</span>
+            <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">{activeIndexSymbols.length} SELECTED INDEX SPOTS</span>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => {
+            {activeIndexSymbols.map(symbol => {
               const item = indexSpotRows.find(row => row.symbol === symbol);
               const age = item?.spot_age_seconds;
               const live = item?.status === "LIVE" && typeof age === "number" && age <= 5;
