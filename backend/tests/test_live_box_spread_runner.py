@@ -662,7 +662,7 @@ def test_staged_session_readiness_fails_closed_for_one_stale_underlying_or_parti
         ]},
     }
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(
-        snapshot, {("NIFTY", ""), ("SENSEX", "")}
+        snapshot, {("NIFTY", "06NOV2026"), ("SENSEX", "06NOV2026")}
     )
     assert result["ready"] is False
     assert result["missing_underlying_symbols"] == ["SENSEX"]
@@ -688,7 +688,7 @@ def test_staged_session_readiness_rejects_disconnected_option_feed():
         ]},
     }
     result = mod.LiveBoxSpreadRunner.staged_session_readiness(
-        snapshot, {("NIFTY", "")}
+        snapshot, {("NIFTY", "06NOV2026")}
     )
     assert result["ready"] is False
     assert result["option_recorder_ready"] is False
