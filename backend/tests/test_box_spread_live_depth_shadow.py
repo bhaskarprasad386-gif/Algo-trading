@@ -438,8 +438,9 @@ def test_four_leg_edge_rejects_one_lot_even_when_all_four_legs_have_depth():
             timestamp_ns=now,
             token=token,
             payload={
-                "best_5_buy_data": [{"price": str((100 - level) * 100), "quantity": "65"} for level in range(5)],
-                "best_5_sell_data": [{"price": str((110 + level) * 100), "quantity": "65"} for level in range(5)],
+                # Five levels x 13 contracts = exactly one 65-contract lot.
+                "best_5_buy_data": [{"price": str((100 - level) * 100), "quantity": "13"} for level in range(5)],
+                "best_5_sell_data": [{"price": str((110 + level) * 100), "quantity": "13"} for level in range(5)],
             },
         ))
 
