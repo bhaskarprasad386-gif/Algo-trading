@@ -448,3 +448,18 @@ html[data-theme="black"] .box-spread-page,
 html[data-theme="blue"] .box-spread-page {
   --app-border: #64748b;
 }
+
+
+/* Box Spread Trace: high-contrast labels, stronger typography and semantic status colours. */
+.box-trace-contrast { font-size: 15px; font-weight: 600; }
+.box-trace-contrast :is(h2,p,span,button) { text-rendering: optimizeLegibility; }
+.box-trace-contrast article { border: 1.5px solid color-mix(in srgb, var(--app-text) 34%, var(--app-border)) !important; }
+.box-trace-contrast article [class*="rounded-md"], .box-trace-contrast article [class*="rounded-lg"] { border-color: color-mix(in srgb, var(--app-text) 34%, var(--app-border)) !important; border-width: 1.5px !important; }
+.box-trace-contrast article .theme-muted { color: #334155 !important; font-weight: 700 !important; }
+.box-trace-contrast article .theme-text { color: #0f172a !important; }
+.box-trace-contrast article [class*="text-[10px]"], .box-trace-contrast article [class*="text-xs"] { font-size: .875rem !important; line-height: 1.35rem !important; }
+.box-trace-contrast article [class*="font-extrabold"], .box-trace-contrast article [class*="font-bold"] { font-weight: 800 !important; }
+.box-trace-contrast article .text-emerald-800 { color: #065f46 !important; }
+.box-trace-contrast article .text-rose-800 { color: #9f1239 !important; }
+html[data-theme="black"] .box-trace-contrast article .theme-muted, html[data-theme="blue"] .box-trace-contrast article .theme-muted { color: #e2e8f0 !important; }
+html[data-theme="black"] .box-trace-contrast article .theme-text, html[data-theme="blue"] .box-trace-contrast article .theme-text { color: #f8fafc !important; }
