@@ -578,3 +578,29 @@ def test_box_runner_rejects_unsafe_consumer_namespace():
             allowed_stock_symbols=set(), future_master=object(), auth=object(),
             consumer_namespace="box staged",
         )
+
+
+def test_box_runner_can_activate_and_deactivate_a_staged_pipeline():
+    import app.market_data.live_box_spread_runner as mod
+
+    runner = mod.LiveBoxSpreadRunner(
+        object(), [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(), future_master=object(), auth=object(),
+        consumer_namespace="box-stage-activation", publish_enabled=False,
+    )
+
+    class Pipeline:
+        def __init__(self):
+            self.states = []
+
+        def set_publish_enabled(self, enabled):
+            self.states.append(enabled)
+
+    pipeline = Pipeline()
+    runner.pipeline = pipeline
+    assert runner._publish_enabled is False
+    runner.activate_publishing()
+    assert runner._publish_enabled is True
+    runner.deactivate_publishing()
+    assert runner._publish_enabled is False
+    assert pipeline.states == [True, False]
