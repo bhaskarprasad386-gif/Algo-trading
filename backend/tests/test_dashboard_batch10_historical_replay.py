@@ -1,6 +1,6 @@
 from pathlib import Path
 
-HTML = Path("web/dashboard/index.html").read_text(encoding="utf-8")
+HTML = Path("../web/dashboard/index.html").read_text(encoding="utf-8")
 
 
 def test_batch10_historical_replay_workspace_contract():
