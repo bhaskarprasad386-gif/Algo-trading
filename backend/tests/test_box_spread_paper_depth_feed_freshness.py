@@ -1,3 +1,4 @@
+from inspect import signature
 from types import SimpleNamespace
 
 from app.scanner.box_spread_paper_depth_feed import BoxPaperDepthFeed
@@ -32,7 +33,4 @@ def test_malformed_provider_timestamp_fails_closed_as_unknown_not_local_time():
 
 
 def test_default_four_leg_skew_tolerance_is_five_seconds():
-    feed = BoxPaperDepthFeed.__new__(BoxPaperDepthFeed)
-    feed._max_skew = 5.0
-
-    assert feed._max_skew == 5.0
+    assert signature(BoxPaperDepthFeed).parameters["max_skew_seconds"].default == 5.0
