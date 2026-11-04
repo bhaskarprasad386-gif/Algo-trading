@@ -414,12 +414,13 @@ class LiveBoxSpreadPipeline:
                             logger.warning("Box Spread snapshot persistence failed (attempt %s/3); retrying; disk spool retained", attempt + 1, exc_info=True)
                             time.sleep(0.1 * (attempt + 1))
     
-        try:
-            with self.session_factory() as db:
-                self.alerts.persist(db, results)
-                self.alerts.notify_users(db, results)
-        except Exception:
-            logger.exception("Failed to persist/send Box Spread alerts")
+        if results and self.session_factory:
+            try:
+                with self.session_factory() as db:
+                    self.alerts.persist(db, results)
+                    self.alerts.notify_users(db, results)
+            except Exception:
+                logger.exception("Failed to persist/send Box Spread alerts")
 
         return results
 
