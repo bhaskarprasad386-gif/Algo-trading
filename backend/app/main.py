@@ -53,6 +53,7 @@ from app.scanner.live_synthetic_trace_routes import router as live_synthetic_tra
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
+from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, set_expiry_types as set_live_box_websocket_expiry_types
 from app.intelligence.routes import router as intelligence_router
@@ -1243,12 +1244,62 @@ def get_box_spread_index_selection():
 
 
 @app.post("/api/v1/scanner/box-spread/index-selection")
+def _box_spread_open_paper_symbols():
+    """Return indices with any non-flat paper position across the single-owner ledger.
+
+    A deselected index must keep receiving quotes until every paper leg is flat.
+    Read failures are allowed to propagate so the caller can fail closed.
+    """
+    open_symbols = set()
+    with SessionLocal() as db:
+        trades = db.query(BoxSpreadPaperTradeRecord).filter(
+            BoxSpreadPaperTradeRecord.status.notin_(("CLOSED", "CANCELLED"))
+        ).all()
+        for trade in trades:
+            entries = db.query(BoxSpreadPaperLedgerEntry).filter(
+                BoxSpreadPaperLedgerEntry.account_key == trade.account_key,
+                BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+            ).all()
+            signed_by_role = {}
+            for entry in entries:
+                role = str(entry.role or "").strip().upper()
+                if role not in {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}:
+                    continue
+                signed_by_role[role] = signed_by_role.get(role, 0) + (
+                    int(entry.quantity) if str(entry.action).upper() == "BUY" else -int(entry.quantity)
+                )
+            if any(quantity != 0 for quantity in signed_by_role.values()):
+                open_symbols.add(str(trade.underlying or "").strip().upper())
+    return open_symbols
+
+
 def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
     global live_box_spread_latest_results
     try:
         selected = _normalize_box_spread_index_symbols(payload.symbols)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"message": str(exc)}) from exc
+
+    current_selection = set(_get_box_spread_index_selection())
+    removed_symbols = current_selection - set(selected)
+    if removed_symbols:
+        try:
+            open_symbols = _box_spread_open_paper_symbols()
+        except Exception as exc:
+            app_logger.exception("Unable to verify open Box Spread paper positions before index deselection")
+            raise HTTPException(
+                status_code=503,
+                detail={"message": "Could not verify open paper positions. Index selection was not changed; retry after the paper ledger is available."},
+            ) from exc
+        blocked_symbols = sorted(removed_symbols & open_symbols)
+        if blocked_symbols:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Cannot deselect an index while its Box Spread paper position is still open. Close or settle every leg first.",
+                    "blocked_indices": blocked_symbols,
+                },
+            )
 
     runner = live_box_spread_runner
     prepared_targets = None
