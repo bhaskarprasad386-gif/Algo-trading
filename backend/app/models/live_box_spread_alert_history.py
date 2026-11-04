@@ -24,5 +24,8 @@ class LiveBoxSpreadAlertHistory(Base):
     high_call_bid_qty:Mapped[int|None]=mapped_column(Integer,nullable=True); high_call_ask_qty:Mapped[int|None]=mapped_column(Integer,nullable=True)
     high_put_bid_qty:Mapped[int|None]=mapped_column(Integer,nullable=True); high_put_ask_qty:Mapped[int|None]=mapped_column(Integer,nullable=True)
     executable_edge:Mapped[float]=mapped_column(Float,nullable=False); edge_per_lot:Mapped[float]=mapped_column(Float,nullable=False)
+    depth_edge_per_unit:Mapped[float|None]=mapped_column(Float,nullable=True)
+    max_executable_lots:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    tradability_status:Mapped[str|None]=mapped_column(String(16),nullable=True)
     gross_pnl:Mapped[float]=mapped_column(Float,nullable=False); lot_size:Mapped[int]=mapped_column(Integer,nullable=False)
 __all__=["LiveBoxSpreadAlertHistory"]
