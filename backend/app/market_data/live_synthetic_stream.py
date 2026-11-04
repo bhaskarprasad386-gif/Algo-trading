@@ -235,7 +235,11 @@ class LiveSyntheticOptionFutureRecorder:
             if last_timestamp_ns is not None and current_timestamp_ns < last_timestamp_ns:
                 self._out_of_order_records += 1
                 return
-            self._last_record_at_ns_by_key[key] = time_ns()
+            freshness_map = getattr(self, "_last_record_at_ns_by_key", None)
+            if freshness_map is None:
+                freshness_map = {}
+                self._last_record_at_ns_by_key = freshness_map
+            freshness_map[key] = time_ns()
             self._last_timestamp_ns_by_key[key] = current_timestamp_ns
             previous = self._latest.get(key)
             if previous is not None:
