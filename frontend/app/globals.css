@@ -463,3 +463,65 @@ html[data-theme="blue"] .box-spread-page {
 .box-trace-contrast article .text-rose-800 { color: #9f1239 !important; }
 html[data-theme="black"] .box-trace-contrast article .theme-muted, html[data-theme="blue"] .box-trace-contrast article .theme-muted { color: #e2e8f0 !important; }
 html[data-theme="black"] .box-trace-contrast article .theme-text, html[data-theme="blue"] .box-trace-contrast article .theme-text { color: #f8fafc !important; }
+
+
+/* Full-page Box Scanner contrast pass: applies to Overview, controls, live opportunities,
+   analytics, post-market history, trace, tables, badges and system-health panels. */
+.box-spread-page {
+  font-weight: 600;
+  color: var(--app-text);
+}
+.box-spread-page :is(p, span, label, a, th, td, dt, dd, small, strong, em, code) {
+  font-weight: 600;
+}
+.box-spread-page :is(h1,h2,h3,h4,h5,h6,th,strong,b) {
+  font-weight: 800 !important;
+}
+.box-spread-page :is([class*="text-slate-400"],[class*="text-slate-500"],[class*="text-slate-600"],[class*="text-gray-400"],[class*="text-gray-500"],[class*="text-zinc-400"],[class*="text-zinc-500"]) {
+  color: var(--app-muted) !important;
+}
+.box-spread-page :is([class*="border-slate-"],[class*="border-gray-"],[class*="border-zinc-"]) {
+  border-color: color-mix(in srgb, var(--app-border) 55%, var(--app-text)) !important;
+}
+.box-spread-page :is(table, thead, tbody, tr, th, td) {
+  border-color: var(--app-border);
+}
+.box-spread-page :is(button,a,[role="button"],input,select,textarea):focus-visible {
+  outline: 2px solid var(--app-accent) !important;
+  outline-offset: 2px;
+}
+.box-spread-page :is([class*="bg-emerald-"],[class*="bg-green-"]) {
+  border-color: #047857 !important;
+}
+.box-spread-page :is([class*="bg-rose-"],[class*="bg-red-"]) {
+  border-color: #be123c !important;
+}
+.box-spread-page :is([class*="bg-amber-"],[class*="bg-yellow-"]) {
+  border-color: #b45309 !important;
+}
+html[data-theme="white"] .box-spread-page {
+  --app-muted: #334155;
+  --app-border: #94a3b8;
+}
+html[data-theme="white"] .box-spread-page :is([class*="text-emerald-"],[class*="text-green-"]) { color: #065f46 !important; }
+html[data-theme="white"] .box-spread-page :is([class*="text-rose-"],[class*="text-red-"]) { color: #9f1239 !important; }
+html[data-theme="white"] .box-spread-page :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #92400e !important; }
+html[data-theme="white"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]) { color: #075985 !important; }
+html[data-theme="black"] .box-spread-page,
+html[data-theme="blue"] .box-spread-page,
+html[data-theme="dark"] .box-spread-page {
+  --app-muted: #e2e8f0;
+  --app-border: #64748b;
+}
+html[data-theme="black"] .box-spread-page :is([class*="text-emerald-"],[class*="text-green-"]) { color: #6ee7b7 !important; }
+html[data-theme="blue"] .box-spread-page :is([class*="text-emerald-"],[class*="text-green-"]) { color: #6ee7b7 !important; }
+html[data-theme="dark"] .box-spread-page :is([class*="text-emerald-"],[class*="text-green-"]) { color: #6ee7b7 !important; }
+html[data-theme="black"] .box-spread-page :is([class*="text-rose-"],[class*="text-red-"]) { color: #fda4af !important; }
+html[data-theme="blue"] .box-spread-page :is([class*="text-rose-"],[class*="text-red-"]) { color: #fda4af !important; }
+html[data-theme="dark"] .box-spread-page :is([class*="text-rose-"],[class*="text-red-"]) { color: #fda4af !important; }
+html[data-theme="black"] .box-spread-page :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #fde68a !important; }
+html[data-theme="blue"] .box-spread-page :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #fde68a !important; }
+html[data-theme="dark"] .box-spread-page :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #fde68a !important; }
+html[data-theme="black"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]) { color: #7dd3fc !important; }
+html[data-theme="blue"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]) { color: #7dd3fc !important; }
+html[data-theme="dark"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]) { color: #7dd3fc !important; }
