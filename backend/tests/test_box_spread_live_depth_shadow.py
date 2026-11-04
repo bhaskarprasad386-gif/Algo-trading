@@ -303,3 +303,24 @@ def test_snapshot_keeps_depth_readiness_waiting_until_both_option_sides_are_fres
     assert readiness["fresh_ce"] == 2
     assert readiness["fresh_pe"] == 0
     assert readiness["state"] == "WAITING_FOR_DEPTH"
+
+
+def test_depth_shadow_supports_distinct_consumer_namespace_without_touching_default():
+    active_feed = FakeFeed()
+    staged_feed = FakeFeed()
+    active = BoxLiveDepthShadowFeed(enabled=True, feed=active_feed)
+    staged = BoxLiveDepthShadowFeed(
+        enabled=True,
+        feed=staged_feed,
+        consumer="box-staged-42-live-depth-shadow",
+    )
+    active.start([_descriptor("701")])
+    staged.start([_descriptor("702")])
+
+    assert active.snapshot()["consumer"] == "box-live-depth-shadow"
+    assert staged.snapshot()["consumer"] == "box-staged-42-live-depth-shadow"
+
+    staged.stop()
+    assert staged_feed.stopped == 1
+    assert active_feed.stopped == 0
+    assert active.snapshot()["running"] is True
