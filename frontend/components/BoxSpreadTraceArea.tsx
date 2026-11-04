@@ -43,9 +43,9 @@ const fmt = (value: unknown) => value == null || !Number.isFinite(Number(value))
 const time = (value: string) => { const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString("en-IN", { timeZone:"Asia/Kolkata", dateStyle:"short", timeStyle:"medium" }); };
 const expiryDate = (value: string) => {
   const raw = String(value || "").trim().toUpperCase();
-  let m = raw.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+  let m = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  m = raw.match(/^(\\d{1,2})-([A-Z]{3})-(\\d{2,4})$/);
+  m = raw.match(/^(\d{1,2})-([A-Z]{3})-(\d{2,4})$/);
   if (m) { const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]; const y = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]); return new Date(y, months.indexOf(m[2]), Number(m[1])); }
   const d = new Date(raw); return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
 };
