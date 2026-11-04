@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from threading import Lock
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +39,15 @@ def _expiry_key(value):
         except ValueError:
             pass
     return text
+
+
+def _trace_expired(expiry):
+    parsed = _expiry_key(expiry)
+    try:
+        expiry_date = datetime.fromisoformat(parsed).date()
+    except (TypeError, ValueError):
+        return False
+    return expiry_date < datetime.now(ZoneInfo("Asia/Kolkata")).date()
 
 
 def _finite_positive(value):
@@ -330,6 +340,7 @@ def _exit_valuation(trace, quotes):
         "trace_id": trace.id, "direction": trace.direction,
         "quantity_lots": trace.quantity_lots, "quantity": qty, "lot_size": trace.lot_size,
         "gross_pnl": round(gross, 2) if can_exit and all(item["leg_gross_pnl"] is not None for item in legs) else None,
+        "gross_pnl_per_lot": round(gross / trace.quantity_lots, 2) if can_exit and trace.quantity_lots > 0 and all(item["leg_gross_pnl"] is not None for item in legs) else None,
         "max_complete_exit_lots_now": min_lots,
         "can_exit_full_quantity_now": can_exit,
         "message": ("All four legs have fresh executable depth for the traced quantity." if can_exit else
@@ -361,6 +372,17 @@ def check_trace_exit(trace_id: int):
         if trace is None:
             raise HTTPException(404, "Trace not found.")
         entry = json.loads(trace.entry_json)
+    if _trace_expired(trace.expiry):
+        return {
+            "strategy": "box-spread", "trace_id": trace.id, "status": "EXPIRED",
+            "expired": True, "checked_at": datetime.now(timezone.utc).isoformat(),
+            "entry_edge": _finite_positive(entry.get("executable_edge")),
+            "latest_edge": None, "exit_edge": None, "gross_pnl": None,
+            "gross_pnl_per_lot": None, "max_complete_exit_lots_now": 0,
+            "can_exit_full_quantity_now": False,
+            "message": "Contract expiry date has passed. This trace is historical and cannot be checked for a live exit.",
+            "legs": [], "orders_placed": False,
+        }
     descriptors = _resolve_leg_instruments(entry)
     manager = shared_common_manager()
     consumer = f"box-trace-exit-{trace_id}-{time.time_ns()}"
