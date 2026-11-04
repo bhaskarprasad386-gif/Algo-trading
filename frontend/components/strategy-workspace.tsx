@@ -1355,6 +1355,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
         </Card>
       )}
+      {slug !== "box-spread" && (
       <Card className="theme-border theme-surface px-3 py-3">
         <div className="flex items-center gap-2 text-xs font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
         <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(160px,0.7fr)_auto]">
@@ -1401,6 +1402,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
         )}
       </Card>
+      )}
 
       {slug !== "box-spread" && (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1472,20 +1474,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
       {slug === "box-spread" && <div id="box-live-opportunities" className="scroll-mt-24"><LiveOpportunityGrid /></div>}
-      {slug === "box-spread" && (
-        <section id="box-analytics" className="scroll-mt-24 rounded-2xl theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread analytics">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <div><h2 className="text-sm font-extrabold theme-text">Scanner Analytics</h2><p className="mt-1 text-xs theme-muted">Latest backend scanner counters · live observations, not estimated performance.</p></div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-200">Box Spread only</span>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {([["Eligible Boxes", metricValue("Eligible Boxes")], ["Executable Edges", metricValue("Executable Edges")], ["Signals", metricValue("Signals")], ["Last Scan", metricValue("Last Scan")]] as Array<[string, unknown]>).map(([label, raw]) => (
-              <div key={label} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-[10px] uppercase tracking-wide theme-muted">{label}</p><p className="mt-2 break-words text-lg font-extrabold tabular-nums theme-text">{String(raw ?? "—")}</p></div>
-            ))}
-          </div>
-          <p className="mt-3 text-[10px] leading-5 text-slate-500">Edge Timing Analysis remains on Custom Alert as previously decided. This panel reports scanner counters only; it is not a backtest or profit forecast.</p>
-        </section>
-      )}
 
       {slug !== "box-spread" && (
         <Card className="overflow-hidden theme-border theme-surface">
