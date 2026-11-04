@@ -12,7 +12,7 @@ import threading
 import math
 import time as time_module
 import uuid
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
@@ -150,7 +150,7 @@ def _save_box_spread_index_selection(symbols):
             db.add(saved)
         else:
             saved.symbols_json = json.dumps(list(normalized))
-            saved.updated_at = datetime.utcnow()
+            saved.updated_at = datetime.now(timezone.utc)
         db.commit()
     return normalized
 
