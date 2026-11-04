@@ -214,6 +214,17 @@ def test_four_leg_edge_accepts_one_level_on_weakest_leg_for_two_lots():
     assert min(result["depth_capacity_by_leg"].values()) == 130
     assert len(result["legs"]) == 4
     assert all(leg["selected_quantity"] == 130 for leg in result["legs"])
+    assert all(len(leg["depth_levels"]) in {1, 4, 5} for leg in result["legs"])
+    weakest = next(leg for leg in result["legs"] if leg["role"] == "LOW_CE")
+    assert weakest["depth_levels"] == [
+        {"price": 110.0, "quantity": 130.0},
+    ]
+    assert weakest["bid_depth_levels"] == [
+        {"price": 100.0, "quantity": 130.0},
+    ]
+    assert weakest["ask_depth_levels"] == [
+        {"price": 110.0, "quantity": 130.0},
+    ]
     assert result["depth_edge_per_unit"] > 0
 
 
@@ -394,3 +405,55 @@ def test_one_level_depth_is_ready_when_every_option_has_two_lots_on_both_sides()
     assert readiness["full_depth_ce"] == 0
     assert readiness["full_depth_pe"] == 2
     assert readiness["state"] == "READY"
+
+
+
+def test_four_leg_edge_rejects_one_lot_even_when_all_four_legs_have_depth():
+    """A complete-looking one-lot book must not pass the two-lot minimum."""
+    from dataclasses import replace
+    import time
+
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    specs = [
+        ("601", 25000, "CE"),
+        ("602", 26000, "CE"),
+        ("603", 26000, "PE"),
+        ("604", 25000, "PE"),
+    ]
+    descriptors = [
+        replace(
+            _descriptor(token),
+            key=InstrumentKey("NFO", "NFO", token),
+            strike=strike,
+            option_type=option_type,
+        )
+        for token, strike, option_type in specs
+    ]
+    shadow.start(descriptors)
+    callback = feed.started[0][1]
+    now = time.time_ns()
+    for token, _, _ in specs:
+        callback(_record(
+            timestamp_ns=now,
+            token=token,
+            payload={
+                # Five levels x 13 contracts = exactly one 65-contract lot.
+                "best_5_buy_data": [{"price": str((100 - level) * 100), "quantity": "13"} for level in range(5)],
+                "best_5_sell_data": [{"price": str((110 + level) * 100), "quantity": "13"} for level in range(5)],
+            },
+        ))
+
+    low = SimpleNamespace(
+        underlying="NIFTY", expiry=20261106, strike=25000, lot_size=65,
+        call_timestamp_ns=now, put_timestamp_ns=now, timestamp_ns=now,
+    )
+    high = SimpleNamespace(
+        underlying="NIFTY", expiry=20261106, strike=26000, lot_size=65,
+        call_timestamp_ns=now, put_timestamp_ns=now, timestamp_ns=now,
+    )
+    opportunity = SimpleNamespace(low=low, high=high, direction="LONG", executable_edge=5.0)
+
+    result = shadow.compare_opportunity(opportunity, now_ns=now)
+    assert result["status"] == "INCOMPLETE"
+    assert result["reason"] == "INSUFFICIENT_TWO_LOT_FOUR_LEG_DEPTH"
