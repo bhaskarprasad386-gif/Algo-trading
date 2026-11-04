@@ -24,6 +24,7 @@ from app.models.alert_rule import AlertRule
 from app.models.alert_contact import AlertContact
 from app.models.box_spread_real_owner_state import BoxSpreadRealOwnerState
 from app.models.box_spread_trace import BoxSpreadTrace, BoxSpreadTraceExitCheck
+from app.models.box_spread_index_selection import BoxSpreadIndexSelection
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
@@ -31,5 +32,5 @@ __all__ = [
     "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
     "LiveSyntheticAlertHistory", "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
     "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact", "BoxSpreadRealOwnerState",
-    "BoxSpreadTrace", "BoxSpreadTraceExitCheck",
+    "BoxSpreadTrace", "BoxSpreadTraceExitCheck", "BoxSpreadIndexSelection",
 ]
