@@ -42,6 +42,9 @@ def make_result(timestamp_ns, low_strike=22600, high_strike=23300, direction="LO
         edge_per_lot=338.0,
         gross_pnl=338.0,
         strike_distance=700.0,
+        max_executable_lots=2,
+        tradability_status="TRADABLE",
+        depth_edge_per_unit=5.2,
     )
 
 
