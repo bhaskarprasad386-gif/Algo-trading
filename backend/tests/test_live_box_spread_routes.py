@@ -199,6 +199,7 @@ def test_alert_history_falls_back_to_current_instrument_master_classification(mo
         high_call_bid=5, high_call_bid_qty=None, high_call_ask=6, high_call_ask_qty=None,
         high_put_bid=7, high_put_bid_qty=None, high_put_ask=8, high_put_ask_qty=None,
         executable_edge=1, edge_per_lot=10, gross_pnl=10, lot_size=25,
+        depth_edge_per_unit=5.0, max_executable_lots=2, tradability_status="TRADABLE",
     )
 
     class Query:
