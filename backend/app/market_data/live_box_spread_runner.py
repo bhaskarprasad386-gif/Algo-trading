@@ -160,12 +160,26 @@ class LiveBoxSpreadRunner:
         Runtime callers pass (underlying, expiry) pairs so weekly and monthly
         expiries cannot accidentally satisfy one another's readiness.
         """
+        def expiry_key(value):
+            if value is None:
+                return ""
+            raw = str(value).strip().upper()
+            if not raw:
+                return ""
+            from datetime import datetime
+            for fmt in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+                try:
+                    return datetime.strptime(raw, fmt).strftime("%Y%m%d")
+                except ValueError:
+                    continue
+            return raw
+
         required_symbols = set()
         required_expiry_groups = set()
         for item in required_targets:
             if isinstance(item, (tuple, list)) and len(item) >= 2:
                 symbol = str(item[0] or "").strip().upper()
-                expiry = str(item[1] or "").strip().upper()
+                expiry = expiry_key(item[1])
                 if symbol:
                     required_symbols.add(symbol)
                     if expiry:
@@ -193,7 +207,7 @@ class LiveBoxSpreadRunner:
                 continue
             key = (
                 str(contract.get("underlying") or "").strip().upper(),
-                str(contract.get("expiry") or "").strip().upper(),
+                expiry_key(contract.get("expiry")),
             )
             option_type = str(contract.get("option_type") or "").strip().upper()
             counts = fresh_option_groups.setdefault(key, {"CE": 0, "PE": 0})
@@ -215,27 +229,27 @@ class LiveBoxSpreadRunner:
             if not isinstance(row, dict):
                 continue
             underlying_symbol = str(row.get("underlying") or "").strip().upper()
-            expiry_key = str(row.get("expiry") or "").strip().upper()
+            expiry_value = expiry_key(row.get("expiry"))
             if underlying_symbol not in required_symbols:
                 continue
-            if required_expiry_groups and (underlying_symbol, expiry_key) not in required_expiry_groups:
+            if required_expiry_groups and (underlying_symbol, expiry_value) not in required_expiry_groups:
                 continue
-            option_counts = fresh_option_groups.get((underlying_symbol, expiry_key), {})
+            option_counts = fresh_option_groups.get((underlying_symbol, expiry_value), {})
             exact_option_ready = (
                 int(option_counts.get("CE", 0)) >= 2
                 and int(option_counts.get("PE", 0)) >= 2
             )
             depth_ready = (
                 str(row.get("state") or "").upper() == "READY"
-                and int(row.get("full_depth_ce", 0) or 0) >= 2
-                and int(row.get("full_depth_pe", 0) or 0) >= 2
+                and int(row.get("executable_depth_ce", 0) or 0) >= 2
+                and int(row.get("executable_depth_pe", 0) or 0) >= 2
                 and int(row.get("executable_depth_contracts", 0) or 0) >= 4
             )
             if depth_ready and exact_option_ready:
                 ready_depth_symbols.add(underlying_symbol)
-                ready_expiry_groups.add((underlying_symbol, expiry_key))
+                ready_expiry_groups.add((underlying_symbol, expiry_value))
             elif depth_ready and not exact_option_ready:
-                missing_option_groups.append(f"{underlying_symbol}:{expiry_key or 'UNKNOWN'}")
+                missing_option_groups.append(f"{underlying_symbol}:{expiry_value or 'UNKNOWN'}")
 
         if required_expiry_groups:
             missing_expiry_groups = sorted(required_expiry_groups - ready_expiry_groups)
@@ -254,7 +268,7 @@ class LiveBoxSpreadRunner:
         if required_expiry_groups and (not depth.get("enabled") or not depth.get("running")):
             reasons.append("depth_shadow_not_running")
         if missing_depth:
-            reasons.append("five_level_depth_or_matching_option_quotes_not_ready:" + ",".join(missing_depth))
+            reasons.append("executable_two_lot_depth_or_matching_option_quotes_not_ready:" + ",".join(missing_depth))
         if missing_expiry_groups:
             reasons.append("missing_expiry_readiness:" + ",".join(f"{symbol}:{expiry}" for symbol, expiry in missing_expiry_groups))
         return {
