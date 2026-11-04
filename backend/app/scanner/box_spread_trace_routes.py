@@ -7,6 +7,7 @@ import json
 import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 from threading import Lock
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -39,6 +40,15 @@ def _expiry_key(value):
         except ValueError:
             pass
     return text
+
+
+def _trace_expired(expiry):
+    parsed = _expiry_key(expiry)
+    try:
+        expiry_date = datetime.fromisoformat(parsed).date()
+    except (TypeError, ValueError):
+        return False
+    return expiry_date < datetime.now(ZoneInfo("Asia/Kolkata")).date()
 
 
 def _trace_expired(expiry):
@@ -340,6 +350,7 @@ def _exit_valuation(trace, quotes):
         "trace_id": trace.id, "direction": trace.direction,
         "quantity_lots": trace.quantity_lots, "quantity": qty, "lot_size": trace.lot_size,
         "gross_pnl": round(gross, 2) if can_exit and all(item["leg_gross_pnl"] is not None for item in legs) else None,
+        "gross_pnl_per_lot": round(gross / trace.quantity_lots, 2) if can_exit and trace.quantity_lots > 0 and all(item["leg_gross_pnl"] is not None for item in legs) else None,
         "gross_pnl_per_lot": round(gross / trace.quantity_lots, 2) if can_exit and trace.quantity_lots > 0 and all(item["leg_gross_pnl"] is not None for item in legs) else None,
         "max_complete_exit_lots_now": min_lots,
         "can_exit_full_quantity_now": can_exit,
