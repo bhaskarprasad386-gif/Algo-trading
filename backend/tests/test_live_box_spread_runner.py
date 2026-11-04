@@ -482,3 +482,14 @@ def test_box_spread_index_edge_thresholds_match_configured_floors():
         "SENSEX": 10.0,
         "BANKEX": 10.0,
     }
+
+
+def test_depth_edge_must_meet_the_configured_per_index_floor():
+    from app.market_data.live_box_spread_runner import _depth_edge_below_minimum
+
+    assert _depth_edge_below_minimum(5.95, 10.0) is True
+    assert _depth_edge_below_minimum(9.999, 10.0) is True
+    assert _depth_edge_below_minimum(10.0, 10.0) is False
+    assert _depth_edge_below_minimum(10.25, 10.0) is False
+    assert _depth_edge_below_minimum(4.99, 5.0) is True
+    assert _depth_edge_below_minimum(5.0, 5.0) is False
