@@ -183,3 +183,41 @@ def test_trace_exit_legacy_record_without_strikes_keeps_exit_preview_and_no_late
     assert result["status"] == "EXITABLE"
     assert result["gross_pnl"] == 200
     assert result["latest_edge"] is None
+
+
+def test_trace_expiry_helper_marks_past_contract_expired():
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from app.scanner.box_spread_trace_routes import _trace_expired
+    yesterday = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - timedelta(days=1)).strftime("%Y-%m-%d")
+    assert _trace_expired(yesterday) is True
+
+
+def test_trace_expiry_helper_keeps_today_and_future_active():
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from app.scanner.box_spread_trace_routes import _trace_expired
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().strftime("%Y-%m-%d")
+    tomorrow = (datetime.now(ZoneInfo("Asia/Kolkata")).date() + timedelta(days=1)).strftime("%Y-%m-%d")
+    assert _trace_expired(today) is False
+    assert _trace_expired(tomorrow) is False
+
+
+def test_trace_gross_profit_is_reported_per_lot():
+    trace = SimpleNamespace(
+        id=15, direction="LONG", quantity_lots=2, lot_size=10,
+        entry_json=json.dumps({
+            "low_strike": 100, "high_strike": 120, "executable_edge": 1,
+            "trace_entry_prices": {
+                "low_call": 100, "low_put": 100, "high_call": 100, "high_put": 100,
+            },
+        }),
+    )
+    result = _exit_valuation(trace, {
+        "low_call": _quote(105, 106),
+        "low_put": _quote(49, 50),
+        "high_call": _quote(79, 80),
+        "high_put": _quote(45, 46),
+    })
+    assert result["gross_pnl"] == 400
+    assert result["gross_pnl_per_lot"] == 200
