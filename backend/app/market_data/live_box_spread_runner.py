@@ -9,6 +9,7 @@ from app.core.database import SessionLocal
 from app.core.config import settings
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.market_data.instruments import InstrumentMaster
+from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
 from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
@@ -171,6 +172,29 @@ class LiveBoxSpreadRunner:
                 self.stop_event.wait(retry_delay)
                 retry_delay = min(max_retry_delay, retry_delay * 2.0)
         self.stop()
+
+    @staticmethod
+    def _depth_shadow_descriptors(subscriptions):
+        """Translate Box selector contracts into the descriptor schema required by depth feed."""
+        exchange_by_type = {2: "NFO", 4: "BFO"}
+        descriptors = []
+        for item in subscriptions:
+            exchange = exchange_by_type.get(int(item.exchange_type))
+            if exchange is None:
+                raise ValueError(f"unsupported Box Spread option exchange type: {item.exchange_type}")
+            descriptors.append(CommonStrategyMarketFeed.descriptor(
+                exchange=exchange,
+                token=item.token,
+                symbol=item.symbol,
+                instrument_type="option",
+                segment=exchange,
+                expiry=item.expiry,
+                strike=item.strike,
+                option_type=item.option_type,
+                lot_size=item.lot_size,
+                underlying=item.underlying,
+            ))
+        return tuple(descriptors)
 
     def _open_position_subscriptions(self):
         """Keep option contracts for persisted open paper positions in the common feed."""
@@ -452,7 +476,8 @@ class LiveBoxSpreadRunner:
                 if not self.depth_shadow.enabled:
                     raise RuntimeError("Box Spread live paper opportunities require the dedicated five-level depth feed")
                 # Fail closed: never start an L1-only live opportunity publisher.
-                self.depth_shadow.start(subs)
+                depth_descriptors = self._depth_shadow_descriptors(subs)
+                self.depth_shadow.start(depth_descriptors)
                 self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
