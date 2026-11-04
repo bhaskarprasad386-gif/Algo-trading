@@ -111,6 +111,16 @@ class BoxSpreadRunnerSupervisor:
                 try:
                     candidate.activate_publishing()
                 except Exception as exc:
+                    # activate_publishing may have acquired the shared gate
+                    # before a later pipeline toggle failed. Explicitly revoke
+                    # the candidate and restore the old owner before aborting.
+                    try:
+                        candidate.deactivate_publishing()
+                    finally:
+                        try:
+                            old_runner.activate_publishing()
+                        except Exception:
+                            pass
                     readiness = {
                         "ready": False,
                         "state": "PUBLISHER_TRANSFER_FAILED",
