@@ -1402,7 +1402,10 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
     if runner is not None and prepared_targets is not None:
         if supervisor is not None:
             try:
-                switch = supervisor.request_handoff(prepared_targets)
+                switch = supervisor.request_handoff(
+                    prepared_targets,
+                    on_failed=lambda: _save_box_spread_index_selection(current_selection),
+                )
             except Exception as exc:
                 app_logger.exception("Unable to start staged Box Spread runner; restoring previous selection")
                 try:
