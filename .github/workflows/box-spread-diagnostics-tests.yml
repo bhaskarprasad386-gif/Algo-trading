@@ -4,7 +4,12 @@ on:
     paths:
       - ".github/workflows/box-spread-diagnostics-tests.yml"
       - "backend/app/scanner/live_box_spread_scanner.py"
+      - "backend/app/scanner/box_spread_live_depth_shadow.py"
       - "backend/tests/test_box_spread_diagnostics.py"
+      - "backend/tests/test_box_spread_live_depth_shadow.py"
+      - "backend/tests/test_box_spread_live_depth_shadow_normalizer.py"
+      - "backend/tests/test_box_spread_snapshot_pipeline.py"
+      - "backend/tests/test_live_box_spread_snapshot_routes.py"
   workflow_dispatch:
 
 permissions:
