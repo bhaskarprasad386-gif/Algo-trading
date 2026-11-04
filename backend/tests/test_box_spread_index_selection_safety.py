@@ -195,3 +195,43 @@ def test_box_spread_all_index_selection_normalizes_to_exact_six_supported_symbol
     assert set(selected) == {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
     assert len(selected) == 6
 
+
+
+def test_weekly_only_target_builder_never_adds_monthly_contracts(monkeypatch):
+    from datetime import date
+    from types import SimpleNamespace
+
+    weekly_raw = "31DEC2099"
+    monthly_raw = "30DEC2099"
+    weekly_day = date(2099, 12, 31)
+    monthly_day = date(2099, 12, 30)
+    instruments = [
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY", "expiry": weekly_raw},
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY", "expiry": monthly_raw},
+    ]
+    monkeypatch.setattr(
+        main,
+        "classify_index_expiry_dates",
+        lambda symbol, dates: {weekly_day: "WEEKLY", monthly_day: "MONTHLY"},
+    )
+
+    weekly_targets, _ = main._box_spread_targets_from_master(
+        SimpleNamespace(instruments=instruments), ["NIFTY"], ["NIFTY"]
+    )
+    standard_targets, _ = main._box_spread_targets_from_master(
+        SimpleNamespace(instruments=instruments), ["NIFTY"]
+    )
+
+    assert [(target.expiry, target.weekly_only) for target in weekly_targets] == [(weekly_raw, True)]
+    assert {target.expiry for target in standard_targets} == {weekly_raw, monthly_raw}
+    assert all(target.weekly_only is False for target in standard_targets)
+
+
+def test_weekly_only_selection_is_limited_to_selected_nifty_or_sensex():
+    with pytest.raises(ValueError, match="weekly-only mode is supported only"):
+        main._save_box_spread_index_selection(["BANKNIFTY", "FINNIFTY"], ["FINNIFTY"])
+
+
+def test_weekly_only_selection_must_also_be_selected():
+    with pytest.raises(ValueError, match="weekly-only indices must also be included"):
+        main._save_box_spread_index_selection(["SENSEX"], ["NIFTY"])
