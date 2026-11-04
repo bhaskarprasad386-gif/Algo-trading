@@ -142,17 +142,35 @@ class LiveBoxSpreadRunner:
         if pipeline is not None:
             pipeline.set_publish_enabled(False)
     @staticmethod
-    def staged_session_readiness(snapshot, required_symbols):
-        """Fail closed unless every selected underlying and the new option/depth feeds are live."""
-        required = {str(symbol).strip().upper() for symbol in required_symbols if str(symbol).strip()}
-        if not required:
+    def staged_session_readiness(snapshot, required_targets):
+        """Fail closed unless each selected underlying and expiry has matching live quotes/depth.
+
+        Accept legacy symbol-only iterables for focused unit tests and diagnostics.
+        Runtime callers pass (underlying, expiry) pairs so weekly and monthly
+        expiries cannot accidentally satisfy one another's readiness.
+        """
+        required_symbols = set()
+        required_expiry_groups = set()
+        for item in required_targets:
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                symbol = str(item[0] or "").strip().upper()
+                expiry = str(item[1] or "").strip().upper()
+                if symbol:
+                    required_symbols.add(symbol)
+                    if expiry:
+                        required_expiry_groups.add((symbol, expiry))
+            else:
+                symbol = str(item).strip().upper()
+                if symbol:
+                    required_symbols.add(symbol)
+        if not required_symbols:
             return {"ready": False, "state": "WAITING_FOR_TARGETS", "reasons": ["no_required_symbols"]}
 
         underlying = snapshot.get("underlying_feed") or {}
         symbol_rows = underlying.get("symbols") if isinstance(underlying, dict) else {}
         symbol_rows = symbol_rows if isinstance(symbol_rows, dict) else {}
         missing_underlyings = sorted(
-            symbol for symbol in required
+            symbol for symbol in required_symbols
             if str((symbol_rows.get(symbol) or {}).get("state") or "").upper() != "LIVE"
         )
 
@@ -180,13 +198,14 @@ class LiveBoxSpreadRunner:
         depth = snapshot.get("depth_shadow") or {}
         depth_rows = depth.get("readiness") or []
         ready_depth_symbols = set()
+        ready_expiry_groups = set()
         missing_option_groups = []
         for row in depth_rows:
             if not isinstance(row, dict):
                 continue
             underlying_symbol = str(row.get("underlying") or "").strip().upper()
             expiry_key = str(row.get("expiry") or "").strip().upper()
-            if underlying_symbol not in required:
+            if underlying_symbol not in required_symbols:
                 continue
             option_counts = fresh_option_groups.get((underlying_symbol, expiry_key), {})
             exact_option_ready = (
@@ -201,24 +220,36 @@ class LiveBoxSpreadRunner:
             )
             if depth_ready and exact_option_ready:
                 ready_depth_symbols.add(underlying_symbol)
+                ready_expiry_groups.add((underlying_symbol, expiry_key))
             elif depth_ready and not exact_option_ready:
                 missing_option_groups.append(f"{underlying_symbol}:{expiry_key or 'UNKNOWN'}")
-        missing_depth = sorted(required - ready_depth_symbols)
+
+        if required_expiry_groups:
+            missing_expiry_groups = sorted(required_expiry_groups - ready_expiry_groups)
+            missing_depth = sorted({symbol for symbol, _expiry in missing_expiry_groups})
+        else:
+            missing_expiry_groups = []
+            missing_depth = sorted(required_symbols - ready_depth_symbols)
+
         reasons = []
         if missing_underlyings:
             reasons.append("underlying_ticks_not_fresh:" + ",".join(missing_underlyings))
-        if not option_ready:
+        if not option_ready and required_expiry_groups:
             reasons.append("option_recorder_not_connected")
         if missing_option_groups:
             reasons.append("exact_option_contracts_not_fresh:" + ",".join(sorted(missing_option_groups)))
-        if not depth.get("enabled") or not depth.get("running"):
+        if required_expiry_groups and (not depth.get("enabled") or not depth.get("running")):
             reasons.append("depth_shadow_not_running")
         if missing_depth:
             reasons.append("five_level_depth_or_matching_option_quotes_not_ready:" + ",".join(missing_depth))
+        if missing_expiry_groups:
+            reasons.append("missing_expiry_readiness:" + ",".join(f"{symbol}:{expiry}" for symbol, expiry in missing_expiry_groups))
         return {
             "ready": not reasons,
             "state": "READY" if not reasons else "WAITING_FOR_FEEDS",
-            "required_symbols": sorted(required),
+            "required_symbols": sorted(required_symbols),
+            "required_expiry_groups": [list(item) for item in sorted(required_expiry_groups)],
+            "missing_expiry_groups": [list(item) for item in missing_expiry_groups],
             "missing_underlying_symbols": missing_underlyings,
             "missing_depth_symbols": missing_depth,
             "option_recorder_ready": option_ready,
@@ -229,7 +260,7 @@ class LiveBoxSpreadRunner:
         """Read the live session state using the same strict gate used before handoff."""
         return self.staged_session_readiness(
             self.snapshot(),
-            {target.underlying for target in self.targets},
+            {(target.underlying, target.expiry) for target in self.targets},
         )
 
     @staticmethod
