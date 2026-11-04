@@ -348,6 +348,21 @@ def _exit_valuation(trace, quotes):
         "legs": legs, "orders_placed": False,
     }
 
+@router.delete("/{trace_id}")
+def delete_trace(trace_id: int):
+    """Delete one Box Spread trace and its trace-only exit-check history."""
+    with SessionLocal() as db:
+        trace = db.query(BoxSpreadTrace).filter(BoxSpreadTrace.id == trace_id).first()
+        if trace is None:
+            raise HTTPException(404, "Trace not found.")
+        db.query(BoxSpreadTraceExitCheck).filter(
+            BoxSpreadTraceExitCheck.trace_id == trace_id
+        ).delete(synchronize_session=False)
+        db.delete(trace)
+        db.commit()
+    return {"strategy": "box-spread", "deleted": True, "trace_id": trace_id, "orders_placed": False}
+
+
 @router.get("/{trace_id}/exit-checks")
 def list_trace_exit_checks(trace_id: int, limit: int = 50):
     limit = max(1, min(int(limit), 200))

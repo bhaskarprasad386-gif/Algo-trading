@@ -207,8 +207,8 @@ export default function LiveOpportunityGrid() {
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300"><Activity size={19}/></div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-base font-extrabold tracking-wide theme-text sm:text-lg">Live Box Opportunities</h2>
-                <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-200">Four-leg basket</span>
+                <h2 className="text-lg font-black tracking-wide text-slate-950 sm:text-xl">Live Box Opportunities</h2>
+                <span className="rounded-md border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-900">Four-leg basket</span>
               </div>
               <p className="mt-1 text-xs theme-muted">Live event stream · executable quote sides · weekly and monthly expiries stay separate</p>
             </div>

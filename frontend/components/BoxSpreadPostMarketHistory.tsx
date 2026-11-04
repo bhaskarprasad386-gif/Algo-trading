@@ -277,7 +277,7 @@ export default function BoxSpreadPostMarketHistory() {
         <div className="flex items-start gap-3">
           <Archive className="mt-0.5 h-5 w-5 theme-accent" />
           <div>
-            <h2 className="text-base font-extrabold theme-text">Opportunity History · Last 24 Hours</h2>
+            <h2 className="text-lg font-black text-slate-950 sm:text-xl">Opportunity History · Last 24 Hours</h2>
             <p className="mt-1 text-sm theme-muted">Historical qualifying scanner observations · saved snapshot prices and edge · selected history window · read-only, not live quotes or today’s alert list</p>
           </div>
         </div>
@@ -387,28 +387,28 @@ export default function BoxSpreadPostMarketHistory() {
         </button>}
       </div>}
       {checkedAt && <p className="mt-2 text-sm theme-muted">Last checked: {new Date(checkedAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST</p>}
-      {depthSnapshot && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label="Saved market depth">
-        <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border-2 border-slate-500 bg-slate-950 p-4 text-slate-100 shadow-2xl sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-600 pb-3">
-            <div><h3 className="text-lg font-extrabold">Saved Market Depth · {depthSnapshot.symbol}</h3><p className="mt-1 text-sm text-slate-300">{depthSnapshot.expiry} · {number(depthSnapshot.low_strike)}–{number(depthSnapshot.high_strike)} · {depthSnapshot.direction}</p><p className="mt-1 text-xs text-slate-400">Original quote time: {quoteTime(depthSnapshot.last_update_timestamp_ns)} · Saved: {observedTime(depthSnapshot.observed_at)} IST</p></div>
-            <button type="button" onClick={() => setDepthSnapshot(null)} className="min-h-10 rounded-lg border-2 border-slate-400 px-4 text-sm font-bold text-white">Close</button>
+      {depthSnapshot && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/35 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label="Saved market depth">
+        <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border-2 border-slate-300 bg-white p-4 text-slate-900 shadow-2xl sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
+            <div><h3 className="text-lg font-extrabold">Saved Market Depth · {depthSnapshot.symbol}</h3><p className="mt-1 text-sm text-slate-600">{depthSnapshot.expiry} · {number(depthSnapshot.low_strike)}–{number(depthSnapshot.high_strike)} · {depthSnapshot.direction}</p><p className="mt-1 text-xs text-slate-600">Original quote time: {quoteTime(depthSnapshot.last_update_timestamp_ns)} · Saved: {observedTime(depthSnapshot.observed_at)} IST</p></div>
+            <button type="button" onClick={() => setDepthSnapshot(null)} className="min-h-10 rounded-lg border-2 border-slate-400 px-4 text-sm font-bold text-slate-900">Close</button>
           </div>
-          <p className="mt-3 rounded-lg border border-cyan-700 bg-cyan-950/50 p-3 text-xs text-cyan-100">Historical broker depth captured with this exact opportunity. These levels are immutable saved data, not current quotes.</p>
-          {!depthSnapshot.depth_legs?.some(leg => (leg.bid_depth_levels?.length || 0) + (leg.ask_depth_levels?.length || 0) > 0) && <p className="mt-3 rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-xs text-amber-100">This older snapshot has no saved five-level bid/ask ladder. Its saved L1 values remain available; no current depth is substituted.</p>}
+          <p className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-xs text-cyan-950">Historical broker depth captured with this exact opportunity. These levels are immutable saved data, not current quotes.</p>
+          {!depthSnapshot.depth_legs?.some(leg => (leg.bid_depth_levels?.length || 0) + (leg.ask_depth_levels?.length || 0) > 0) && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">This older snapshot has no saved five-level bid/ask ladder. Its saved L1 values remain available; no current depth is substituted.</p>}
           <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {(depthSnapshot.depth_legs || []).map(leg => <section key={leg.role} className="rounded-xl border border-slate-600 bg-slate-900 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-extrabold">{leg.role.replaceAll("_", " ")} · EXECUTABLE {leg.side}</h4><span className="text-xs font-bold text-cyan-200">{leg.depth_status || "DEPTH"}</span></div>
-              <p className="mt-1 text-xs text-slate-300">Depth tick: {quoteTime(leg.timestamp_ns)} · VWAP: ₹{number(leg.vwap)} · Capacity: {number(leg.available_quantity)} · Sized qty: {number(leg.selected_quantity)}</p>
+            {(depthSnapshot.depth_legs || []).map(leg => <section key={leg.role} className="rounded-xl border border-slate-300 bg-slate-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-extrabold">{leg.role.replaceAll("_", " ")} · EXECUTABLE {leg.side}</h4><span className="text-xs font-bold text-cyan-800">{leg.depth_status || "DEPTH"}</span></div>
+              <p className="mt-1 text-xs text-slate-600">Depth tick: {quoteTime(leg.timestamp_ns)} · VWAP: ₹{number(leg.vwap)} · Capacity: {number(leg.available_quantity)} · Sized qty: {number(leg.selected_quantity)}</p>
               <div className="mt-3 grid grid-cols-2 gap-2">
-                {([[ "BID", leg.bid_depth_levels || [] ], [ "ASK", leg.ask_depth_levels || [] ]] as const).map(([side, levels]) => <div key={side} className="rounded-lg border border-slate-700 p-2">
+                {([[ "BID", leg.bid_depth_levels || [] ], [ "ASK", leg.ask_depth_levels || [] ]] as const).map(([side, levels]) => <div key={side} className="rounded-lg border border-slate-300 bg-white p-2">
                   <h5 className="mb-2 text-xs font-extrabold">{side} DEPTH</h5>
-                  <div className="grid grid-cols-[1fr_1fr] gap-2 text-[10px] font-bold text-slate-400"><span>PRICE</span><span className="text-right">QTY</span></div>
-                  {levels.length ? levels.map((level, index) => <div key={side + index} className="grid grid-cols-[1fr_1fr] gap-2 border-t border-slate-800 py-1 text-xs"><span>₹{number(level.price)}</span><span className="text-right tabular-nums">{number(level.quantity)}</span></div>) : <p className="py-2 text-xs text-slate-500">No saved levels</p>}
+                  <div className="grid grid-cols-[1fr_1fr] gap-2 text-[10px] font-bold text-slate-600"><span>PRICE</span><span className="text-right">QTY</span></div>
+                  {levels.length ? levels.map((level, index) => <div key={side + index} className="grid grid-cols-[1fr_1fr] gap-2 border-t border-slate-200 py-1 text-xs"><span>₹{number(level.price)}</span><span className="text-right tabular-nums">{number(level.quantity)}</span></div>) : <p className="py-2 text-xs text-slate-500">No saved levels</p>}
                 </div>)}
               </div>
             </section>)}
           </div>
-          {!depthSnapshot.depth_legs?.length && <p className="mt-4 text-sm text-amber-200">Depth was not recorded for this older snapshot. Current market data is not substituted.</p>}
+          {!depthSnapshot.depth_legs?.length && <p className="mt-4 text-sm text-amber-800">Depth was not recorded for this older snapshot. Current market data is not substituted.</p>}
         </div>
       </div>}
     </Card>
