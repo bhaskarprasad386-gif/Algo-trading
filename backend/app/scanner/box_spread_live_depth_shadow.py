@@ -236,6 +236,8 @@ class BoxLiveDepthShadowFeed:
                 return {"status": "INCOMPLETE", "reason": f"INSUFFICIENT_{role}"}
             selected.append({
                 "role": role, "side": side, "levels": levels,
+                "bid_depth_levels": list(item["bids"]),
+                "ask_depth_levels": list(item["asks"]),
                 "available_quantity": available_quantity,
                 "timestamp_ns": item["timestamp_ns"],
                 "depth_status": item["depth_status"],
@@ -260,6 +262,14 @@ class BoxLiveDepthShadowFeed:
             item["depth_levels"] = [
                 {"price": price, "quantity": quantity}
                 for price, quantity in levels
+            ]
+            item["bid_depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in item.pop("bid_depth_levels")
+            ]
+            item["ask_depth_levels"] = [
+                {"price": price, "quantity": quantity}
+                for price, quantity in item.pop("ask_depth_levels")
             ]
             item["vwap"] = self._allocate(levels, executable_quantity)
             if item["vwap"] is None:
