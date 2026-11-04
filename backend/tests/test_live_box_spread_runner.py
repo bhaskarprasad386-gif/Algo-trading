@@ -832,3 +832,60 @@ def test_staged_readiness_requires_depth_only_for_indices_with_selected_expiries
     assert result["ready"] is True
     assert result["missing_depth_symbols"] == []
     assert result["missing_expiry_groups"] == []
+
+
+def test_weekly_only_without_weekly_expiry_never_calls_selector_or_falls_back_to_monthly(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+
+    class Master:
+        _loaded = True
+        instruments = [
+            {
+                "exch_seg": "NFO", "name": "NIFTY",
+                "instrumenttype": "OPTIDX", "expiry": "26NOV2026",
+                "strike": "25000",
+            }
+        ]
+        def download(self):
+            raise AssertionError("already-loaded master must not be downloaded")
+
+    class Tracker:
+        def __init__(self, *args, **kwargs):
+            pass
+        def atm(self, symbol, now_ns, **kwargs):
+            return 25000.0
+
+    class Feed:
+        def __init__(self, *args, **kwargs):
+            pass
+        def run_forever(self):
+            pass
+        def stop(self):
+            pass
+
+    selector_calls = []
+    def selector(*args, **kwargs):
+        selector_calls.append(kwargs)
+        raise AssertionError("weekly-only mode must not infer a monthly expiry")
+
+    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"NIFTY": ()})
+    monkeypatch.setattr(mod, "select_box_contracts", selector)
+
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [mod.BoxSpreadLiveTarget("NIFTY", "INDEX", expiry=None, weekly_only=True)],
+        allowed_stock_symbols=set(),
+        future_master=Master(),
+        auth=object(),
+    )
+    monkeypatch.setattr(mod, "sleep", lambda _seconds: runner.stop_event.set())
+
+    runner._run_session()
+
+    assert selector_calls == []
+    assert runner._readiness["state"] == "waiting_for_contracts"
+    assert runner._readiness["unavailable_symbols"] == [
+        {"symbol": "NIFTY", "reason": "WEEKLY_EXPIRY_UNAVAILABLE"}
+    ]
