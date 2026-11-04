@@ -76,7 +76,7 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
     monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "select_box_contracts", select)
-    monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: None})())
+    monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: None, "set_publish_enabled": lambda self, enabled: None})())
     class Recorder:
         def __init__(self, *args, **kwargs): self.kwargs = kwargs
         def run_forever(self):
@@ -358,7 +358,7 @@ def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(m
     monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
     monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "select_box_contracts", lambda *a, **k: BoxContractSelection((descriptor,), "06NOV2026", 25000.0))
-    monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: ()})())
+    monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: (), "set_publish_enabled": lambda self, enabled: None})())
 
     class Recorder:
         def __init__(self, *args, **kwargs): pass
