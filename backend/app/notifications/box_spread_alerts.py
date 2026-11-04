@@ -11,6 +11,23 @@ class BoxSpreadAlertService:
         self._notifier=WhatsAppNotifier(WhatsAppConfig(access_token=settings.WHATSAPP_ACCESS_TOKEN,phone_number_id=settings.WHATSAPP_PHONE_NUMBER_ID,graph_api_version=settings.WHATSAPP_GRAPH_API_VERSION,enabled=settings.WHATSAPP_ENABLED))
         self._last_sent={}
     @staticmethod
+    def _eligible_results(results):
+        """Only alert on final depth-qualified opportunities with at least two common lots."""
+        minimum_lots = max(2, int(settings.LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS))
+        eligible = []
+        for result in results or ():
+            try:
+                lots = int(getattr(result, "max_executable_lots", 0) or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if (
+                str(getattr(result, "tradability_status", "") or "").strip().upper() == "TRADABLE"
+                and lots >= minimum_lots
+            ):
+                eligible.append(result)
+        return tuple(eligible)
+
+    @staticmethod
     def _qty(value):
         return "—" if value is None else str(value)
 
@@ -23,6 +40,7 @@ class BoxSpreadAlertService:
             f"HIGH CE Bid/Ask: ₹{h.call_bid:.2f} ({qty(getattr(h, 'call_bid_qty', None))})/₹{h.call_ask:.2f} ({qty(getattr(h, 'call_ask_qty', None))}) | HIGH PE Bid/Ask: ₹{h.put_bid:.2f} ({qty(getattr(h, 'put_bid_qty', None))})/₹{h.put_ask:.2f} ({qty(getattr(h, 'put_ask_qty', None))})\n"+
             f"Executable Edge: ₹{r.executable_edge:.4f} | Edge/Lot: ₹{r.edge_per_lot:.2f}\n"+f"Gross P&L: ₹{r.gross_pnl:.2f}")
     def persist(self,db,results):
+        results = self._eligible_results(results)
         retention=max(1,int(settings.LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS))
         db.query(LiveBoxSpreadAlertHistory).filter(LiveBoxSpreadAlertHistory.observed_at < datetime.utcnow()-timedelta(days=retention)).delete(synchronize_session=False)
         added=0
@@ -37,6 +55,7 @@ class BoxSpreadAlertService:
             db.add(LiveBoxSpreadAlertHistory(observed_at=datetime.utcnow(),timestamp_ns=l.timestamp_ns,symbol=l.underlying,instrument_class=l.instrument_class,expiry=l.expiry,expiry_type=expiry_type,low_strike=l.strike,high_strike=h.strike,direction=r.direction,low_call_bid=l.call_bid,low_call_ask=l.call_ask,low_put_bid=l.put_bid,low_put_ask=l.put_ask,high_call_bid=h.call_bid,high_call_ask=h.call_ask,high_put_bid=h.put_bid,high_put_ask=h.put_ask,low_call_bid_qty=getattr(l,"call_bid_qty",None),low_call_ask_qty=getattr(l,"call_ask_qty",None),low_put_bid_qty=getattr(l,"put_bid_qty",None),low_put_ask_qty=getattr(l,"put_ask_qty",None),high_call_bid_qty=getattr(h,"call_bid_qty",None),high_call_ask_qty=getattr(h,"call_ask_qty",None),high_put_bid_qty=getattr(h,"put_bid_qty",None),high_put_ask_qty=getattr(h,"put_ask_qty",None),executable_edge=r.executable_edge,edge_per_lot=r.edge_per_lot,gross_pnl=r.gross_pnl,lot_size=l.lot_size)); added+=1
         db.commit(); return added
     def notify_users(self,db,results):
+        results = self._eligible_results(results)
         if not results: return 0
         sent=0
         for r in results:
