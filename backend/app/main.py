@@ -210,7 +210,24 @@ configure_live_synthetic(lambda: live_synthetic_latest_results)
 configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
 configure_live_synthetic_pairs(lambda: None if live_synthetic_runner is None else live_synthetic_runner.pair_monitor_snapshot())
 configure_live_box_spread(lambda: live_box_spread_latest_results)
-configure_live_box_index_selection(_get_box_spread_index_selection)
+def _get_box_spread_active_index_symbols():
+    """Expose the publisher's active index universe during make-before-break handoff.
+
+    The persisted selection may already point at a staged candidate while the
+    previous runner is still publishing. Spot snapshots must follow the active
+    runner until the supervisor transfers ownership.
+    """
+    runner = live_box_spread_runner
+    if runner is None:
+        return _get_box_spread_index_selection()
+    return tuple(sorted({
+        str(target.underlying).strip().upper()
+        for target in runner.targets
+        if str(getattr(target, "underlying", "") or "").strip()
+    }))
+
+
+configure_live_box_index_selection(_get_box_spread_active_index_symbols)
 configure_live_box_spread_monitor(lambda: None if live_box_spread_runner is None or live_box_spread_runner.scanner is None else live_box_spread_runner.scanner.monitor_snapshot())
 configure_live_box_spread_diagnostics(
     lambda: None if live_box_spread_runner is None else live_box_spread_runner.snapshot().get("scanner_diagnostics")
