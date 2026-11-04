@@ -104,7 +104,15 @@ class BoxSpreadRunnerSupervisor:
                 # activate_publishing delegates to the shared gate. Its lock
                 # waits for any in-flight old publisher and transfers ownership
                 # atomically before old runner shutdown begins.
-                candidate.activate_publishing()
+                try:
+                    candidate.activate_publishing()
+                except Exception as exc:
+                    readiness = {
+                        "ready": False,
+                        "state": "PUBLISHER_TRANSFER_FAILED",
+                        "reason": str(exc)[:240],
+                    }
+                    break
                 if not candidate_thread.is_alive() or candidate.stop_event.is_set():
                     candidate.deactivate_publishing()
                     old_runner.activate_publishing()
