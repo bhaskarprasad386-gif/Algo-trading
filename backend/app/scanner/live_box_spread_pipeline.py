@@ -307,13 +307,15 @@ def _snapshot_key(row):
 
 
 class LiveBoxSpreadPipeline:
-    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None, publish_enabled=True):
+    def __init__(self, scanner, session_factory=None, alerts=None, on_results=None, spot_provider=None, result_transform=None, publish_enabled=True, publisher_gate=None, publisher_owner=None):
         self.scanner = scanner
         self.session_factory = session_factory
         self.alerts = alerts or BoxSpreadAlertService()
         self.on_results = on_results
         self.spot_provider = spot_provider
         self.result_transform = result_transform
+        self.publisher_gate = publisher_gate
+        self.publisher_owner = publisher_owner
         self._publish_lock = threading.RLock()
         self._publish_enabled = bool(publish_enabled)
 
@@ -341,6 +343,22 @@ class LiveBoxSpreadPipeline:
         # publish, append to the shared durable spool, persist snapshots, or alert.
         if not publish_enabled:
             return results
+        if not publish_enabled:
+            return results
+
+        if self.publisher_gate is None:
+            self._publish_results(results)
+        else:
+            # The shared gate holds its lock through every external side effect.
+            # A new owner therefore cannot activate until an in-flight old publish
+            # completes, and an old owner cannot publish after ownership transfers.
+            self.publisher_gate.publish(
+                self.publisher_owner,
+                lambda: self._publish_results(results),
+            )
+        return results
+
+    def _publish_results(self, results):
         if results and self.on_results:
             try:
                 self.on_results(results)
@@ -441,7 +459,6 @@ class LiveBoxSpreadPipeline:
             except Exception:
                 logger.exception("Failed to persist/send Box Spread alerts")
 
-        return results
 
 
 __all__ = ["LiveBoxSpreadPipeline"]
