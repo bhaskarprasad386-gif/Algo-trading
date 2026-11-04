@@ -207,6 +207,8 @@ class LiveBoxSpreadRunner:
             expiry_key = str(row.get("expiry") or "").strip().upper()
             if underlying_symbol not in required_symbols:
                 continue
+            if required_expiry_groups and (underlying_symbol, expiry_key) not in required_expiry_groups:
+                continue
             option_counts = fresh_option_groups.get((underlying_symbol, expiry_key), {})
             exact_option_ready = (
                 int(option_counts.get("CE", 0)) >= 2
