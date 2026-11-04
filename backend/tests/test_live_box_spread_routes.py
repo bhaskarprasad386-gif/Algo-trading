@@ -222,7 +222,7 @@ def test_snapshot_history_prefers_saved_expiry_type_over_changed_master(monkeypa
     row = SimpleNamespace(
         id=1, symbol="BANKNIFTY", expiry=20261123,
         observed_at=datetime(2026, 10, 29, tzinfo=timezone.utc).replace(tzinfo=None),
-        payload_json=json_module.dumps({"expiry_type": "WEEKLY", "symbol": "BANKNIFTY"}),
+        payload_json=json_module.dumps({"expiry_type": "WEEKLY", "symbol": "BANKNIFTY", "tradability_status": "TRADABLE", "max_executable_lots": 2, "depth_edge_per_unit": 10.0}),
     )
 
     class Query:
@@ -256,7 +256,7 @@ def test_snapshot_history_uses_current_classification_only_when_saved_type_missi
     row = SimpleNamespace(
         id=1, symbol="BANKNIFTY", expiry=20261123,
         observed_at=datetime(2026, 10, 29, tzinfo=timezone.utc).replace(tzinfo=None),
-        payload_json=json_module.dumps({"symbol": "BANKNIFTY"}),
+        payload_json=json_module.dumps({"symbol": "BANKNIFTY", "tradability_status": "TRADABLE", "max_executable_lots": 2, "depth_edge_per_unit": 10.0}),
     )
 
     class Query:
