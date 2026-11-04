@@ -153,7 +153,7 @@ def test_box_scanner_does_not_replace_newer_leg_with_out_of_order_quote():
 
 
 
-def test_box_pair_rejects_four_leg_timestamp_skew_over_three_seconds():
+def test_box_pair_rejects_four_leg_timestamp_skew_over_eight_seconds():
     from dataclasses import replace
 
     low = replace(q(1, 100, 100, 100.1, 99.1, 99.2),
