@@ -438,14 +438,30 @@ class BoxLiveDepthShadowFeed:
                     summary["fresh_ce"] += 1
                 elif option_type == "PE":
                     summary["fresh_pe"] += 1
-                if item["depth_status"] in {"DEPTH_FULL", "DEPTH_PARTIAL"} and item["bids"] and item["asks"]:
+                # A staged handoff requires all five levels on both sides.
+                # Partial depth may still be useful for existing scanner comparisons,
+                # but it is not sufficient to replace the active feed session.
+                full_depth = (
+                    item["depth_status"] == "DEPTH_FULL"
+                    and len(item["bids"]) >= 5
+                    and len(item["asks"]) >= 5
+                )
+                if full_depth:
                     summary["executable_depth_contracts"] += 1
+                    if option_type == "CE":
+                        summary["full_depth_ce"] = summary.get("full_depth_ce", 0) + 1
+                    elif option_type == "PE":
+                        summary["full_depth_pe"] = summary.get("full_depth_pe", 0) + 1
             readiness = []
             for summary in readiness_by_group.values():
+                summary.setdefault("full_depth_ce", 0)
+                summary.setdefault("full_depth_pe", 0)
                 summary["state"] = (
                     "READY"
                     if summary["fresh_ce"] >= 2
                     and summary["fresh_pe"] >= 2
+                    and summary["full_depth_ce"] >= 2
+                    and summary["full_depth_pe"] >= 2
                     and summary["executable_depth_contracts"] >= 4
                     else "WAITING_FOR_DEPTH"
                 )
