@@ -71,3 +71,31 @@ def test_index_selection_post_route_uses_save_handler():
 
     assert len(matching) == 1
     assert matching[0].endpoint is main.set_box_spread_index_selection
+
+
+
+def test_selection_fails_closed_when_active_runner_has_no_handoff_supervisor(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("NIFTY",))
+    monkeypatch.setattr(
+        main,
+        "live_box_spread_runner",
+        SimpleNamespace(stop_event=threading.Event(), master=object()),
+    )
+    monkeypatch.setattr(main, "live_box_spread_supervisor", None)
+    saved = []
+    monkeypatch.setattr(
+        main,
+        "_save_box_spread_index_selection",
+        lambda symbols: saved.append(tuple(symbols)),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        main.set_box_spread_index_selection(
+            main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY", "SENSEX"])
+        )
+
+    assert error.value.status_code == 503
+    assert saved == []
