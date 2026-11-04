@@ -18,6 +18,7 @@ from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
+from app.scanner.box_spread_publication_gate import BOX_SPREAD_PUBLICATION_GATE
 from app.scanner.box_spread import BoxSpreadScanConfig
 from app.scanner.box_spread_live_depth_shadow import BoxLiveDepthShadowFeed
 from app.scanner.box_spread_depth_shadow_diagnostics import BoxDepthShadowDiagnostics
@@ -102,7 +103,7 @@ class BoxSpreadLiveTarget:
 
 
 class LiveBoxSpreadRunner:
-    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None,consumer_namespace="box",publish_enabled=True):
+    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,policy=None,consumer_namespace="box",publish_enabled=True,publication_gate=None):
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.consumer_namespace = str(consumer_namespace or "box").strip()
         if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
@@ -110,6 +111,10 @@ class LiveBoxSpreadRunner:
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None; self.pipeline=None
         self._publish_enabled = bool(publish_enabled)
+        self.publication_gate = publication_gate or BOX_SPREAD_PUBLICATION_GATE
+        self._publisher_owner = object()
+        if self._publish_enabled:
+            self.publication_gate.activate(self._publisher_owner)
         self._reconfigure_event = Event()
         self._targets_lock = Lock()
         self._pending_targets = None
@@ -131,6 +136,7 @@ class LiveBoxSpreadRunner:
     def activate_publishing(self):
         """Allow this warmed session to become the sole live result publisher."""
         self._publish_enabled = True
+        self.publication_gate.activate(self._publisher_owner)
         pipeline = self.pipeline
         if pipeline is not None:
             pipeline.set_publish_enabled(True)
@@ -141,6 +147,7 @@ class LiveBoxSpreadRunner:
         pipeline = self.pipeline
         if pipeline is not None:
             pipeline.set_publish_enabled(False)
+        self.publication_gate.deactivate(self._publisher_owner)
     @staticmethod
     def staged_session_readiness(snapshot, required_targets):
         """Fail closed unless each selected underlying and expiry has matching live quotes/depth.
@@ -640,7 +647,7 @@ class LiveBoxSpreadRunner:
                             self._depth_shadow_last_comparisons = comparisons[-20:]
                     return tuple(gated)
 
-                pipeline=LiveBoxSpreadPipeline(scanner, SessionLocal, on_results=self.on_results, spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None, result_transform=apply_depth_gate)
+                pipeline=LiveBoxSpreadPipeline(scanner, SessionLocal, on_results=self.on_results, spot_provider=lambda symbol: self.tracker.spot_snapshot(symbol) if self.tracker is not None else None, result_transform=apply_depth_gate, publish_enabled=self._publish_enabled, publisher_gate=self.publication_gate, publisher_owner=self._publisher_owner)
                 self.pipeline = pipeline
                 subscribed_strikes = {}
                 for sub in subs:
