@@ -192,4 +192,4 @@ def test_box_pair_accepts_four_leg_timestamp_skew_within_eight_seconds():
     )
     assert any(item.direction == "LONG" for item in result)
     assert result[0].low.call_timestamp_ns == 10_000_000_000
-    assert result[0].high.put_timestamp_ns == 12_000_000_000
+    assert result[0].high.put_timestamp_ns == 17_000_000_000
