@@ -875,7 +875,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           setSavedWeeklyOnlySymbols(weeklyOnly);
           setActiveIndexSymbols(active);
           setIndexHandoffState(handoff);
-          setIndexSelectionDraft(current => current.length && handoff !== "FAILED" ? current : symbols.filter(symbol => !weeklyOnly.includes(symbol)));
+          setIndexSelectionDraft(current => current.length && handoff !== "FAILED" ? current : symbols.filter((symbol: string) => !weeklyOnly.includes(symbol)));
           setWeeklyOnlyDraft(current => current.length && handoff !== "FAILED" ? current : weeklyOnly);
           setIndexSelectionError(null);
         }
@@ -912,7 +912,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
       setSavedIndexSymbols(saved);
       setSavedWeeklyOnlySymbols(savedWeeklyOnly);
-      setIndexSelectionDraft(saved.filter(symbol => !savedWeeklyOnly.includes(symbol)));
+      setIndexSelectionDraft(saved.filter((symbol: string) => !savedWeeklyOnly.includes(symbol)));
       setWeeklyOnlyDraft(savedWeeklyOnly);
       const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
       setIndexHandoffState(handoff);
