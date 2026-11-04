@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Archive, RefreshCw } from "lucide-react";
+import { Archive, RefreshCw, Trash2 } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
@@ -94,6 +94,20 @@ export default function BoxSpreadTraceArea() {
     window.addEventListener("box-spread-trace-updated", updated);
     return () => window.removeEventListener("box-spread-trace-updated", updated);
   }, [load]);
+  const deleteTrace = async (trace: TraceEntry) => {
+    const confirmed = window.confirm(`Delete ${trace.symbol} ${trace.expiry} trace permanently? Its saved trace record and exit-check history will be deleted. Original Post-Market History snapshot remains unchanged.`);
+    if (!confirmed) return;
+    setBusy(trace.id); setError(null);
+    try {
+      const response = await fetch(api + "/" + trace.id, { method: "DELETE", cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok || body.deleted !== true) throw new Error(body.detail || "Trace could not be deleted");
+      setRecords(current => current.filter(item => item.id !== trace.id));
+      setResults(current => { const next = { ...current }; delete next[trace.id]; return next; });
+      if (selectedTrace?.id === trace.id) setSelectedTrace(null);
+    } catch (e) { setError(e instanceof Error ? e.message : "Trace could not be deleted"); }
+    finally { setBusy(null); }
+  };
   const checkExit = async (id: number) => {
     setBusy(id); setError(null);
     try {
@@ -131,7 +145,7 @@ export default function BoxSpreadTraceArea() {
             <p className="mt-1 text-xs font-semibold theme-text">Strike {fmt(trace.entry.low_strike)} – {fmt(trace.entry.high_strike)} · {trace.quantity_lots} lots · Qty {fmt(trace.quantity)}</p>
             <p className="mt-1 text-[10px] theme-muted">Trace saved: {time(trace.created_at)} · Original alert: {time(trace.entry.observed_at)}</p>
           </div>
-          {!isExpired(trace.expiry) ? <div className="flex flex-wrap gap-2"><button type="button" onClick={() => { setSelectedTrace(trace); void checkExit(trace.id); }} className="min-h-10 rounded-lg border-2 border-slate-500 px-3 text-sm font-extrabold theme-text">Open Trace · Fetch Live Depth</button><button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button></div> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
+          {!isExpired(trace.expiry) ? <div className="flex flex-wrap gap-2"><button type="button" onClick={() => { setSelectedTrace(trace); void checkExit(trace.id); }} className="min-h-10 rounded-lg border-2 border-slate-500 px-3 text-sm font-extrabold theme-text">Open Trace · Fetch Live Depth</button><button type="button" onClick={() => void checkExit(trace.id)} disabled={busy === trace.id} className="min-h-10 rounded-lg border border-slate-600 bg-white px-3 text-sm font-extrabold text-slate-950 disabled:opacity-50">{busy === trace.id ? "Fetching Live Data…" : "Check Status / Exit"}</button><button type="button" onClick={() => void deleteTrace(trace)} disabled={busy === trace.id} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-rose-700 px-3 text-sm font-bold text-rose-800 disabled:opacity-50"><Trash2 className="h-4 w-4"/> Delete</button></div> : <span className="rounded-lg border border-rose-700 bg-rose-100 px-3 py-2 text-sm font-extrabold text-rose-900">TRACE EXPIRED</span>}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {legs.map(([label,key],index) => {
@@ -168,7 +182,7 @@ export default function BoxSpreadTraceArea() {
                 <p className="mt-1 text-xs theme-muted">Saved {time(trace.created_at)} · Original alert {time(trace.entry.observed_at)}</p>
                 <p className="mt-1 text-sm font-extrabold theme-text">Entry Edge ₹{fmt(trace.entry.executable_edge)}</p>
               </div>
-              <button type="button" onClick={() => setSelectedTrace(trace)} className="min-h-9 rounded-lg border-2 border-rose-700 px-3 text-xs font-extrabold theme-text">View Saved Position</button>
+              <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setSelectedTrace(trace)} className="min-h-9 rounded-lg border-2 border-rose-700 px-3 text-xs font-extrabold theme-text">View Saved Position</button><button type="button" onClick={() => void deleteTrace(trace)} disabled={busy === trace.id} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-rose-700 px-3 text-xs font-bold text-rose-800 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5"/> Delete</button></div>
             </div>
           </article>)}
           {!records.some(trace => isExpired(trace.expiry)) && <p className="rounded-lg border theme-border theme-surface-2 p-3 text-xs theme-muted">No expired traces.</p>}
