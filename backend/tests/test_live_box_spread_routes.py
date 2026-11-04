@@ -59,9 +59,9 @@ def test_live_box_route_preserves_bse_index_identity(monkeypatch):
     assert row["high_put_bid"] == 120 and row["high_put_ask"] == 121
 
 
-def test_live_box_route_rejects_stale_high_leg(monkeypatch):
+def test_live_box_route_accepts_four_leg_skew_within_eight_seconds_when_each_leg_is_fresh(monkeypatch):
     now = time.time_ns()
-    result = _result(low_ts=now, high_ts=now - 10_000_000_000)
+    result = _result(low_ts=now, high_ts=now - 4_500_000_000)
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     assert routes.live(10, max_age_seconds=5)["count"] == 1
 
@@ -73,9 +73,9 @@ def test_live_box_route_rejects_future_dated_leg(monkeypatch):
     assert routes.live(10)["count"] == 0
 
 
-def test_live_box_route_rejects_excessive_timestamp_skew(monkeypatch):
+def test_live_box_route_rejects_leg_older_than_five_second_freshness_limit(monkeypatch):
     now = time.time_ns()
-    result = _result(low_ts=now, high_ts=now - 4_000_000_000)
+    result = _result(low_ts=now, high_ts=now - 5_500_000_000)
     monkeypatch.setattr(routes, "_latest", lambda: (result,))
     assert routes.live(10, max_age_seconds=5)["count"] == 0
 
