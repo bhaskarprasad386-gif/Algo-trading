@@ -49,7 +49,7 @@ def test_spot_feed_exposes_only_fresh_matching_index_ticks():
     nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
     feed.callback(SimpleNamespace(
         instrument=nifty.key, instrument_type=InstrumentType.INDEX,
-        timestamp_ns=10_000_000_000, ltp=24125.5,
+        timestamp_ns=10_000_000_000, ltp=24125.5, payload={"exchange_timestamp_ns": 10_000_000_000},
     ))
     assert adapter.spot_snapshot("NIFTY") is not None
     assert adapter.spot_snapshot("BANKNIFTY") is None
@@ -66,11 +66,11 @@ def test_spot_feed_rejects_out_of_order_and_stale_ticks():
     nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
     feed.callback(SimpleNamespace(
         instrument=nifty.key, instrument_type="index",
-        timestamp_ns=19_000_000_000, ltp=24000.0,
+        timestamp_ns=19_000_000_000, ltp=24000.0, payload={"exchange_timestamp_ns": 19_000_000_000},
     ))
     feed.callback(SimpleNamespace(
         instrument=nifty.key, instrument_type="index",
-        timestamp_ns=18_000_000_000, ltp=23900.0,
+        timestamp_ns=18_000_000_000, ltp=23900.0, payload={"exchange_timestamp_ns": 18_000_000_000},
     ))
     assert adapter.spot_snapshot("NIFTY").price == 24000.0
     assert adapter.spot_snapshot("NIFTY", now_ns=23_000_000_001) is None
@@ -84,7 +84,7 @@ def test_spot_feed_does_not_accept_unsubscribed_or_non_index_records():
     descriptor = feed.descriptors[0]
     feed.callback(SimpleNamespace(
         instrument=InstrumentKey("NSE", "NSE", "other-token"),
-        instrument_type="index", timestamp_ns=10_000_000_000, ltp=100.0,
+        instrument_type="index", timestamp_ns=10_000_000_000, ltp=100.0, payload={"exchange_timestamp_ns": 10_000_000_000},
     ))
     feed.callback(SimpleNamespace(
         instrument=descriptor.key, instrument_type="equity",
