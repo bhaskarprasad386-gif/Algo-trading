@@ -107,14 +107,16 @@ class IVSpotFeedAdapter:
         instrument = getattr(record, "instrument", None)
         timestamp_ns = getattr(record, "timestamp_ns", None)
         price = getattr(record, "ltp", None)
-        instrument_type = getattr(getattr(record, "instrument_type", None), "value", getattr(record, "instrument_type", None))
-        if instrument_type != InstrumentType.INDEX.value or not self._has_source_timestamp(record):
+        if not self._has_source_timestamp(record):
             return
         if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns <= 0:
             return
         if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
             return
         with self._lock:
+            # A broker token may already be registered by another shared-feed
+            # consumer with generic/different instrument metadata. The exact
+            # NSE token subscribed by this adapter is authoritative for routing.
             symbol = next((name for name, key in self._keys.items() if key == instrument), None)
             if symbol is None:
                 return
