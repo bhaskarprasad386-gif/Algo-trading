@@ -26,8 +26,12 @@ class IVSkewFlipFeedAdapter:
         *,
         feed: Any | None = None,
         clock_ns: Callable[[], int] | None = None,
+        consumer: str | None = None,
     ) -> None:
-        self.feed = feed or CommonStrategyMarketFeed(self.CONSUMER, mode=3)
+        self.consumer = str(consumer or self.CONSUMER).strip()
+        if not self.consumer:
+            raise ValueError("consumer is required")
+        self.feed = feed or CommonStrategyMarketFeed(self.consumer, mode=3)
         self._clock_ns = clock_ns
         self._lock = RLock()
         self._universe: ResolvedOptionUniverse | None = None
@@ -120,7 +124,7 @@ class IVSkewFlipFeedAdapter:
             "expiry": universe.expiry,
             "strike_count": len(universe.strikes),
             "contract_count": len(keys),
-            "consumer": self.CONSUMER,
+            "consumer": self.consumer,
         }
 
     def stop(self) -> None:
