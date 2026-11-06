@@ -58,6 +58,7 @@ class IVSkewFlipRuntime:
         self._last_error: dict[str, str] = {}
         self._last_evaluation_ns: int | None = None
         self._previous_atm_iv_diff: dict[str, float] = {}
+        self._previous_atm_strike: dict[str, float] = {}
         self._signals: dict[str, dict[str, Any]] = {}
         self._started = False
 
@@ -139,6 +140,8 @@ class IVSkewFlipRuntime:
                 self._option_feeds[symbol] = feed
                 self._samplers[symbol] = sampler
                 self._universe_tokens[symbol] = tokens
+                self._previous_atm_iv_diff.pop(symbol, None)
+                self._previous_atm_strike.pop(symbol, None)
                 self._last_error.pop(symbol, None)
         except Exception as exc:
             with self._lock:
@@ -167,12 +170,19 @@ class IVSkewFlipRuntime:
             return False
 
         skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
+        atm_strike = min({quote.strike for quote in quotes}, key=lambda strike: abs(strike - spot.price))
+        previous_diff = self._previous_atm_iv_diff.get(symbol)
+        if self._previous_atm_strike.get(symbol) != atm_strike:
+            previous_diff = None
         flip = evaluate_flip(
-            quotes, spot.price, now, now_ns, config,
-            self._previous_atm_iv_diff.get(symbol),
+            quotes, spot.price, now, now_ns, config, previous_diff,
         )
         if flip.value is not None and flip.status != "WAITING":
             self._previous_atm_iv_diff[symbol] = flip.value
+            self._previous_atm_strike[symbol] = atm_strike
+        elif previous_diff is None:
+            self._previous_atm_iv_diff.pop(symbol, None)
+            self._previous_atm_strike[symbol] = atm_strike
 
         gamma_events: list[Signal] = []
         for quote in quotes:
@@ -328,6 +338,7 @@ class IVSkewFlipRuntime:
             self._rows_by_symbol.clear()
             self._signals.clear()
             self._previous_atm_iv_diff.clear()
+            self._previous_atm_strike.clear()
             self._last_evaluation_ns = None
         return self.snapshot()
 
