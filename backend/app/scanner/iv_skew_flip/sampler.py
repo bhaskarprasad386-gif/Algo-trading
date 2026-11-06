@@ -205,6 +205,60 @@ class IVOneSecondSampler:
         universe = getattr(self.quote_source, "_universe", None)
         return None if universe is None else universe.expiry
 
+    def inherit_history(self, previous: "IVOneSecondSampler | None", universe: Any) -> int:
+        """Carry recent OI ticks only for identical contracts in the same expiry."""
+        if previous is None or previous is self:
+            return 0
+        if (
+            previous.config.symbol != self.config.symbol
+            or previous.configured_expiry != universe.expiry
+            or self.config.symbol != universe.underlying
+        ):
+            return 0
+        valid = {
+            contract.token: (contract.strike, contract.option_type)
+            for contract in universe.contracts
+        }
+        with previous._lock:
+            prior = {
+                token: tuple(rows)
+                for token, rows in previous._history.items()
+                if token in valid
+            }
+        now_ns = self.clock_ns()
+        cutoff_ns = now_ns - self.history_limit * 1_000_000_000
+        copied = 0
+        with self._lock:
+            for token, rows in prior.items():
+                strike, option_type = valid[token]
+                eligible = [
+                    item for item in rows
+                    if item.underlying == self.config.symbol
+                    and item.expiry == universe.expiry
+                    and item.strike == strike
+                    and item.option_type == option_type
+                    and item.source_timestamp_ns >= cutoff_ns
+                    and item.source_timestamp_ns <= now_ns
+                    and item.oi is not None
+                ]
+                if not eligible:
+                    continue
+                history = self._history[token]
+                known = {item.source_timestamp_ns for item in history}
+                for item in eligible:
+                    if item.source_timestamp_ns not in known:
+                        history.append(item)
+                        known.add(item.source_timestamp_ns)
+                        copied += 1
+                if history:
+                    ordered = sorted(history, key=lambda item: item.source_timestamp_ns)
+                    history.clear()
+                    history.extend(ordered)
+                    while history and history[0].source_timestamp_ns < cutoff_ns:
+                        history.popleft()
+                    self._last_source_timestamp[token] = history[-1].source_timestamp_ns
+        return copied
+
     def oi_reference(self, token: str, *, lookback_seconds: int = 300) -> OptionMetricSample | None:
         """Return the closest source-timestamped OI sample at/before 5m ago."""
         target = self.clock_ns() - lookback_seconds * 1_000_000_000
