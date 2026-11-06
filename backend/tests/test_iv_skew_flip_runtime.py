@@ -170,3 +170,23 @@ def test_runtime_rejects_naive_clock():
         assert "timezone-aware" in str(exc)
     else:
         raise AssertionError("naive runtime clock must be rejected")
+
+
+
+def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_ns=lambda: 1_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    evaluated = []
+    runtime._evaluate_symbol = lambda config, when, stamp: evaluated.append((config.symbol, stamp))
+
+    runtime._maybe_evaluate(now, 10_000_000_000)
+    runtime._maybe_evaluate(now, 69_000_000_000)
+    assert len(evaluated) == 2
+
+    runtime._maybe_evaluate(now, 70_000_000_000)
+    assert len(evaluated) == 4
