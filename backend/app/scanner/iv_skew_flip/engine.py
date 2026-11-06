@@ -233,7 +233,30 @@ def evaluate_gamma_blast(
     current: OptionQuote, prior: OptionQuote, *, min_oi_drop_pct: float = 5.0,
     min_premium_rise_pct: float = 8.0,
 ) -> Signal:
-    """Detect writer-unwinding proxy: OI contracts while premium expands."""
+    """Detect writer-unwinding proxy: OI contracts while premium expands.
+
+    Current and reference observations must describe the same option contract;
+    otherwise a cross-strike/expiry comparison could manufacture a false signal.
+    """
+    same_contract = (
+        current.underlying.strip().upper() == prior.underlying.strip().upper()
+        and current.expiry.strip().upper() == prior.expiry.strip().upper()
+        and current.strike == prior.strike
+        and current.option_type.strip().upper() == prior.option_type.strip().upper()
+        and (not current.token or not prior.token or current.token == prior.token)
+    )
+    timestamps_ordered = (
+        isinstance(current.timestamp_ns, int)
+        and not isinstance(current.timestamp_ns, bool)
+        and isinstance(prior.timestamp_ns, int)
+        and not isinstance(prior.timestamp_ns, bool)
+        and current.timestamp_ns > prior.timestamp_ns > 0
+    )
+    if not same_contract or not timestamps_ordered:
+        return Signal(
+            "GAMMA_BLAST", None, None, None, "WAITING",
+            "current and reference samples must be ordered observations of the same option contract",
+        )
     if current.oi is None or prior.oi is None or prior.oi <= 0:
         return Signal("GAMMA_BLAST", None, None, None, "WAITING", "valid current and five-minute reference OI required")
     current_mark, prior_mark = current.mark, prior.mark
