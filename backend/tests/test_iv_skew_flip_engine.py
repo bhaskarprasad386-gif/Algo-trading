@@ -149,3 +149,20 @@ def test_iv_flip_rejects_boolean_provider_timestamp():
     signal = evaluate_flip(invalid_quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
     assert signal.status == "WAITING"
     assert "ATM option quotes" in signal.reason
+
+
+@pytest.mark.parametrize("oi", [True, False, -1, 1.5, "90000"])
+def test_gamma_blast_rejects_invalid_open_interest_values(oi):
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=oi, token="N1")
+    result = evaluate_gamma_blast(current, prior)
+    assert result.status == "WAITING"
+    assert "valid current" in result.reason
+
+
+def test_gamma_blast_requires_non_empty_exact_contract_token():
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000)
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000)
+    result = evaluate_gamma_blast(current, prior)
+    assert result.status == "WAITING"
+    assert "same option contract" in result.reason
