@@ -173,3 +173,30 @@ def test_sampler_rejects_invalid_option_source_timestamps(timestamp_ns):
     result = sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
     assert result["sample_count"] == 0
     assert result["status"] == "WAITING"
+
+
+def test_sampler_clears_previously_live_metrics_when_spot_becomes_stale():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    live = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert live["status"] == "LIVE"
+    assert live["sample_count"] == 1
+    waiting = sampler.sample_once(
+        now_ns=now_ns + 10_000_000_000,
+        now=now,
+        spot=SpotSnapshot(21950, now_ns),
+    )
+    assert waiting["status"] == "WAITING"
+    assert waiting["sample_count"] == 0
+    assert waiting["live_metrics"] == []
+    assert waiting["oi_values"] == {}
+    assert waiting["iv_values"] == {}
+    assert waiting["reason"] == "fresh spot snapshot unavailable"
