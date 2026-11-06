@@ -252,6 +252,7 @@ def evaluate_gamma_blast(
         and current.expiry.strip().upper() == prior.expiry.strip().upper()
         and current.strike == prior.strike
         and current.option_type.strip().upper() == prior.option_type.strip().upper()
+        and bool(current.token)
         and current.token == prior.token
     )
     timestamps_ordered = (
@@ -266,7 +267,11 @@ def evaluate_gamma_blast(
             "GAMMA_BLAST", None, None, None, "WAITING",
             "current and reference samples must be ordered observations of the same option contract",
         )
-    if current.oi is None or prior.oi is None or prior.oi <= 0:
+    valid_oi = all(
+        isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        for value in (current.oi, prior.oi)
+    )
+    if not valid_oi or prior.oi <= 0:
         return Signal("GAMMA_BLAST", None, None, None, "WAITING", "valid current and five-minute reference OI required")
     current_mark, prior_mark = current.mark, prior.mark
     if current_mark is None or prior_mark is None or prior_mark <= 0:
