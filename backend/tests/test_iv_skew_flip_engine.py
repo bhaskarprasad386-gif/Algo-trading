@@ -1,4 +1,6 @@
 from datetime import datetime
+
+import pytest
 from zoneinfo import ZoneInfo
 
 from app.scanner.iv_skew_flip.engine import (
@@ -26,6 +28,33 @@ def test_gamma_blast_requires_oi_drop_and_premium_rise():
     assert signal.status == "SIGNAL"
     assert signal.direction == "BULLISH"
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("underlying", "BANKNIFTY"),
+        ("expiry", "2026-11-19"),
+        ("strike", 22050),
+        ("option_type", "PE"),
+        ("token", "OTHER"),
+    ],
+)
+def test_gamma_blast_rejects_reference_from_different_contract(field, value):
+    from dataclasses import replace
+
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
+    mismatched_prior = replace(prior, **{field: value})
+    result = evaluate_gamma_blast(current, mismatched_prior)
+    assert result.status == "WAITING"
+    assert "same option contract" in result.reason
+
+
+def test_gamma_blast_rejects_non_chronological_reference_sample():
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
+    result = evaluate_gamma_blast(current, prior)
+    assert result.status == "WAITING"
+    assert "ordered observations" in result.reason
 
 def test_confluence_requires_two_same_direction_signals():
     rows = [
