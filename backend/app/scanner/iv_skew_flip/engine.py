@@ -175,19 +175,30 @@ def evaluate_skew(
     config: ScannerConfig,
 ) -> Signal:
     """Average CE-IV minus PE-IV at ATM and two matched OTM strike steps."""
-    # The resolver must pass exactly one concrete expiry chain per evaluation.
-    rows = [q for q in quotes if q.underlying.upper() == config.symbol and _fresh(q, now_ns, config.max_quote_age_seconds)]
-    if len({q.expiry for q in rows}) > 1:
+    # Resolve ATM from the complete selected-expiry universe before checking
+    # freshness. Otherwise a stale ATM tick silently shifts the reference strike.
+    chain = [q for q in quotes if q.underlying.upper() == config.symbol]
+    if len({q.expiry for q in chain}) > 1:
         return Signal("IV_SKEW", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
-    strikes = sorted({q.strike for q in rows})
-    if not strikes or spot <= 0:
+    if not chain or not isfinite(float(spot)) or spot <= 0:
         return Signal("IV_SKEW", None, None, None, "WAITING", "fresh option chain or valid spot unavailable")
+    strikes = sorted({q.strike for q in chain})
+    if not strikes:
+        return Signal("IV_SKEW", None, None, None, "WAITING", "selected-expiry strike ladder unavailable")
     atm_index = min(range(len(strikes)), key=lambda i: abs(strikes[i] - spot))
+    fresh_rows = [q for q in chain if _fresh(q, now_ns, config.max_quote_age_seconds)]
+    by_key: dict[tuple[float, str], OptionQuote] = {}
+    for quote in fresh_rows:
+        key = (quote.strike, quote.option_type.upper())
+        if key in by_key:
+            return Signal("IV_SKEW", None, None, None, "WAITING", "duplicate fresh option contract in selected expiry")
+        by_key[key] = quote
     atm = strikes[atm_index]
-    years = _expiry_years(rows[0].expiry, now)
+    if (atm, "CE") not in by_key or (atm, "PE") not in by_key:
+        return Signal("IV_SKEW", None, None, None, "WAITING", "fresh ATM CE and PE quotes are required; ATM cannot shift on stale ticks")
+    years = _expiry_years(chain[0].expiry, now)
     if years is None:
         return Signal("IV_SKEW", None, None, None, "WAITING", "expiry is expired or invalid")
-    by_key = {(q.strike, q.option_type.upper()): q for q in rows}
     spreads = []
     for offset in (0, 1, 2):
         call_i, put_i = atm_index + offset, atm_index - offset
@@ -205,7 +216,6 @@ def evaluate_skew(
     value = sum(spreads) / len(spreads)
     direction = "BULLISH" if value >= config.bullish_skew_threshold else "BEARISH" if value <= config.bearish_skew_threshold else None
     return Signal("IV_SKEW", direction, round(value, 4), config.bullish_skew_threshold if direction == "BULLISH" else config.bearish_skew_threshold if direction == "BEARISH" else None, "SIGNAL" if direction else "NEUTRAL", f"mean matched CE-IV minus PE-IV across {len(spreads)} strike pairs")
-
 
 def evaluate_flip(
     quotes: Iterable[OptionQuote], spot: float, now: datetime, now_ns: int,
