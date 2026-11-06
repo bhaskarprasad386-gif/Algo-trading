@@ -58,3 +58,25 @@ def test_universe_rejects_wrong_configured_expiry_type():
             master_rows(), underlying="NIFTY", expiry_type="MONTHLY",
             spot=22000, today=date(2026, 11, 6),
         )
+
+
+def test_universe_rejects_duplicate_instrument_tokens():
+    rows = master_rows()
+    duplicate_token = rows[0]["token"]
+    rows[1]["token"] = duplicate_token
+    with pytest.raises(LookupError, match="duplicate instrument token"):
+        resolve_option_universe(
+            rows, underlying="NIFTY", expiry_type="WEEKLY",
+            spot=22000, today=date(2026, 11, 6),
+        )
+
+
+@pytest.mark.parametrize("invalid_strike", ["nan", "inf", "-inf", "not-a-number"])
+def test_universe_ignores_non_finite_or_invalid_strikes(invalid_strike):
+    rows = master_rows()
+    rows[0]["strike"] = invalid_strike
+    with pytest.raises(LookupError):
+        resolve_option_universe(
+            rows, underlying="NIFTY", expiry_type="WEEKLY",
+            spot=22000, today=date(2026, 11, 6),
+        )
