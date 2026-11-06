@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
+from math import isfinite
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
 from typing import Any, Callable
@@ -91,7 +92,14 @@ class IVOneSecondSampler:
                 return None
         else:
             return None
-        if result.price <= 0 or result.timestamp_ns <= 0:
+        if (
+            isinstance(result.price, bool)
+            or not isfinite(result.price)
+            or result.price <= 0
+            or isinstance(result.timestamp_ns, bool)
+            or not isinstance(result.timestamp_ns, int)
+            or result.timestamp_ns <= 0
+        ):
             return None
         return result
 
@@ -104,6 +112,8 @@ class IVOneSecondSampler:
     ) -> dict[str, Any]:
         sampled_at = self.clock_ns() if now_ns is None else now_ns
         sampled_datetime = self.clock_datetime() if now is None else now
+        if isinstance(sampled_at, bool) or not isinstance(sampled_at, int) or sampled_at <= 0:
+            raise ValueError("sample timestamp must be a positive integer nanosecond value")
         if sampled_datetime.tzinfo is None:
             raise ValueError("sampler datetime must be timezone-aware")
         spot_value = self._spot(self.spot_provider() if spot is None else spot)
@@ -126,7 +136,14 @@ class IVOneSecondSampler:
         for quote in quotes:
             if quote.underlying.upper() != self.config.symbol or quote.expiry != self.configured_expiry:
                 continue
-            if not quote.token or sampled_at < quote.timestamp_ns or sampled_at - quote.timestamp_ns > self.max_quote_age_ns:
+            if (
+                not quote.token
+                or isinstance(quote.timestamp_ns, bool)
+                or not isinstance(quote.timestamp_ns, int)
+                or quote.timestamp_ns <= 0
+                or sampled_at < quote.timestamp_ns
+                or sampled_at - quote.timestamp_ns > self.max_quote_age_ns
+            ):
                 continue
             mark = quote.mark
             iv = None if mark is None else implied_volatility(
@@ -137,7 +154,8 @@ class IVOneSecondSampler:
                 token=quote.token, underlying=quote.underlying, expiry=quote.expiry,
                 strike=quote.strike, option_type=quote.option_type,
                 sampled_at_ns=sampled_at, source_timestamp_ns=quote.timestamp_ns,
-                oi=quote.oi, mark=mark, iv=None if iv is None else round(iv * 100.0, 4),
+                oi=quote.oi if isinstance(quote.oi, int) and not isinstance(quote.oi, bool) and quote.oi >= 0 else None,
+                mark=mark, iv=None if iv is None else round(iv * 100.0, 4),
             )
             updates[quote.token] = sample
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
