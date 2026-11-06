@@ -5,6 +5,7 @@ and never borrows Box Spread's tracker or subscription lifecycle.
 """
 from __future__ import annotations
 
+from math import isfinite
 from threading import RLock
 from time import time_ns
 from typing import Any, Callable, Iterable
@@ -98,7 +99,7 @@ class IVSpotFeedAdapter:
                 number = float(value)
             except (TypeError, ValueError, OverflowError):
                 continue
-            if number > 0:
+            if isfinite(number) and number > 0:
                 return True
         return False
 
