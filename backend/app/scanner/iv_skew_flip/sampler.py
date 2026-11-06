@@ -173,6 +173,10 @@ class IVOneSecondSampler:
             self._latest = updates
             cutoff_ns = sampled_at - self.history_limit * 1_000_000_000
             for token, sample in new_history:
+                # sample_once may be called by the worker and a test/manual
+                # refresh concurrently; re-check under the history lock.
+                if self._last_source_timestamp.get(token) == sample.source_timestamp_ns:
+                    continue
                 history = self._history[token]
                 history.append(sample)
                 while history and history[0].source_timestamp_ns < cutoff_ns:
