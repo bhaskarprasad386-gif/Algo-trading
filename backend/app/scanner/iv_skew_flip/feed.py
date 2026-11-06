@@ -74,6 +74,9 @@ class IVSkewFlipFeedAdapter:
             universe = self._universe
             if universe is None or self._tokens.get(token) != (strike, option_type):
                 return
+            previous = self._quotes.get((strike, option_type))
+            if previous is not None and timestamp_ns <= previous.timestamp_ns:
+                return
             quote = OptionQuote(
                 underlying=universe.underlying,
                 expiry=universe.expiry,
