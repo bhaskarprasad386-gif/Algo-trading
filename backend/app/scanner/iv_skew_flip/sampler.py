@@ -39,6 +39,7 @@ class OptionMetricSample:
     oi: int | None
     mark: float | None
     iv: float | None
+    iv_input: str | None
 
     @property
     def source_age_ms(self) -> float:
@@ -163,7 +164,16 @@ class IVOneSecondSampler:
                 strike=quote.strike, option_type=quote.option_type,
                 sampled_at_ns=sampled_at, source_timestamp_ns=quote.timestamp_ns,
                 oi=quote.oi if isinstance(quote.oi, int) and not isinstance(quote.oi, bool) and quote.oi >= 0 else None,
-                mark=mark, iv=None if iv is None else round(iv * 100.0, 4),
+                mark=mark,
+                iv=None if iv is None else round(iv * 100.0, 4),
+                iv_input=(
+                    "BID_ASK_MIDPOINT"
+                    if quote.bid is not None and quote.ask is not None
+                    and isfinite(quote.bid) and isfinite(quote.ask)
+                    and 0 < quote.bid <= quote.ask
+                    else "LTP" if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0
+                    else None
+                ),
             )
             updates[quote.token] = sample
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
@@ -211,12 +221,35 @@ class IVOneSecondSampler:
             history_sizes = {token: len(rows) for token, rows in self._history.items()}
             sampled_at = self._last_sampled_at_ns
             error = self._last_error
+        live_metrics = [
+            {
+                "token": item.token,
+                "underlying": item.underlying,
+                "expiry": item.expiry,
+                "strike": item.strike,
+                "option_type": item.option_type,
+                "oi": item.oi,
+                "oi_live": item.oi is not None,
+                "iv": item.iv,
+                "iv_unit": "PERCENT",
+                "iv_live": item.iv is not None,
+                "iv_input": item.iv_input,
+                "mark": item.mark,
+                "source_timestamp_ns": item.source_timestamp_ns,
+                "source_age_ms": round(item.source_age_ms, 2),
+                "sampled_at_ns": item.sampled_at_ns,
+            }
+            for item in sorted(samples, key=lambda row: (row.strike, row.option_type))
+        ]
         return {
             "cadence_seconds": 1,
             "sampled_at_ns": sampled_at,
             "sample_count": len(samples),
+            "oi_live_count": sum(item.oi is not None for item in samples),
+            "iv_live_count": sum(item.iv is not None for item in samples),
             "oi_values": {item.token: item.oi for item in samples},
             "iv_values": {item.token: item.iv for item in samples},
+            "live_metrics": live_metrics,
             "samples": samples,
             "history_samples_by_token": history_sizes,
             "five_minute_oi_reference_available": sum(
