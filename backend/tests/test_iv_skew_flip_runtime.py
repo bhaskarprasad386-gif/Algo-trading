@@ -56,6 +56,11 @@ class FakeSampler:
     def stop(self):
         self.started = False
 
+    def inherit_history(self, previous, universe):
+        self.inherited_from = previous
+        self.inherited_universe = universe
+        return 0
+
     def snapshot(self):
         spot = self.spot_provider()
         return {"status": "LIVE" if self.started and spot else "WAITING"}
