@@ -125,3 +125,27 @@ def test_expiry_years_accepts_angel_one_master_formats():
         value = _expiry_years(expiry, now)
         assert value is not None
         assert abs(value - expected) < 1e-10
+
+
+@pytest.mark.parametrize("invalid_timestamp", [True, False, 0, -1])
+def test_iv_skew_rejects_invalid_provider_timestamps(invalid_timestamp):
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    invalid_quotes = [replace(quote, timestamp_ns=invalid_timestamp) for quote in quotes]
+    signal = evaluate_skew(invalid_quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "fresh option chain" in signal.reason
+
+
+def test_iv_flip_rejects_boolean_provider_timestamp():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    invalid_quotes = [
+        replace(quote, timestamp_ns=True) if quote.strike == 22000 else quote
+        for quote in quotes
+    ]
+    signal = evaluate_flip(invalid_quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "ATM option quotes" in signal.reason
