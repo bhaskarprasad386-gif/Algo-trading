@@ -82,12 +82,32 @@ class IVSpotFeedAdapter:
             "contract_count": len(keys),
         }
 
+    @staticmethod
+    def _has_source_timestamp(record: Any) -> bool:
+        payload = getattr(record, "payload", None)
+        if not isinstance(payload, dict):
+            return False
+        for name in (
+            "exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
+            "exchange_timestamp_ms", "timestamp", "feed_time",
+        ):
+            value = payload.get(name)
+            if value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if number > 0:
+                return True
+        return False
+
     def _on_record(self, record: Any) -> None:
         instrument = getattr(record, "instrument", None)
         timestamp_ns = getattr(record, "timestamp_ns", None)
         price = getattr(record, "ltp", None)
         instrument_type = getattr(getattr(record, "instrument_type", None), "value", getattr(record, "instrument_type", None))
-        if instrument_type != InstrumentType.INDEX.value:
+        if instrument_type != InstrumentType.INDEX.value or not self._has_source_timestamp(record):
             return
         if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns <= 0:
             return
