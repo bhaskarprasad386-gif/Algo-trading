@@ -5,6 +5,7 @@ only the iv-skew-flip consumer and never opens a broker socket or places orders.
 """
 from __future__ import annotations
 
+from math import isfinite
 from threading import RLock
 from typing import Any, Callable
 
@@ -82,7 +83,7 @@ class IVSkewFlipFeedAdapter:
                 number = float(value)
             except (TypeError, ValueError, OverflowError):
                 continue
-            if number > 0:
+            if isfinite(number) and number > 0:
                 return True
         return False
 
@@ -92,7 +93,14 @@ class IVSkewFlipFeedAdapter:
         strike = self._number(getattr(record, "strike", None))
         timestamp_ns = getattr(record, "timestamp_ns", None)
         token = str(getattr(getattr(record, "instrument", None), "token", "") or "").strip()
-        if option_type not in {"CE", "PE"} or strike is None or not isinstance(timestamp_ns, int) or not self._has_provider_timestamp(record):
+        if (
+            option_type not in {"CE", "PE"}
+            or strike is None
+            or not isinstance(timestamp_ns, int)
+            or isinstance(timestamp_ns, bool)
+            or timestamp_ns <= 0
+            or not self._has_provider_timestamp(record)
+        ):
             return
         with self._lock:
             universe = self._universe
