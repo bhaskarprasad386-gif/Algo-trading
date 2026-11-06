@@ -52,6 +52,7 @@ from app.scanner.calendar_spread_routes import router as calendar_spread_scanner
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
+from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
@@ -81,6 +82,7 @@ Base.metadata.create_all(bind=engine)
 # Reuse one process-local instrument-master manager for live feed/API resolution.
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
+iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 live_cash_future_scanner = LiveCashFutureScanner()
 configure_live_cash_future_snapshot(live_cash_future_scanner.snapshot)
 live_cash_future_runner: LiveCashFutureCommonRunner | None = None
@@ -296,7 +298,7 @@ configure_live_box_spread_websocket_depth(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, iv_skew_flip_runtime
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -325,6 +327,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # IV scanner is opt-in and owns only its named shared-feed consumers.
+        if iv_skew_flip_runtime is not None:
+            iv_skew_flip_runtime.stop()
+            iv_skew_flip_runtime = None
         # Signal blocking worker threads before cancelling their asyncio wrappers.
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
@@ -1698,6 +1704,41 @@ def live_cash_future_health_route():
         "coverage": max(int(state.get("coverage", 0)), len({row.get("symbol") for row in live_cash_future_scanner.snapshot(max_age_seconds=30, limit=50) if row.get("symbol")})),
     })
     return state
+
+
+@app.get("/api/v1/scanner/iv-skew-flip/status")
+def iv_skew_flip_status():
+    return {
+        "status": "ok",
+        "runtime": None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot(),
+        "orders_enabled": False,
+    }
+
+
+@app.post("/api/v1/scanner/iv-skew-flip/start")
+def start_iv_skew_flip_scanner():
+    global iv_skew_flip_runtime
+    if iv_skew_flip_runtime is not None:
+        return iv_skew_flip_runtime.snapshot()
+    runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
+    try:
+        snapshot = runtime.start()
+    except Exception as exc:
+        runtime.stop()
+        app_logger.exception("IV Skew / IV Flip scanner startup failed")
+        raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
+    iv_skew_flip_runtime = runtime
+    return snapshot
+
+
+@app.post("/api/v1/scanner/iv-skew-flip/stop")
+def stop_iv_skew_flip_scanner():
+    global iv_skew_flip_runtime
+    if iv_skew_flip_runtime is None:
+        return {"status": "STOPPED", "consumer": "iv-skew-flip", "orders_enabled": False}
+    snapshot = iv_skew_flip_runtime.stop()
+    iv_skew_flip_runtime = None
+    return snapshot
 
 
 @app.get("/health")
