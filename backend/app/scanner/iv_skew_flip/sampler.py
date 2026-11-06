@@ -75,9 +75,7 @@ class IVOneSecondSampler:
         self._stop = Event()
         self._thread: Thread | None = None
         self._latest: dict[str, OptionMetricSample] = {}
-        self._history: dict[str, deque[OptionMetricSample]] = defaultdict(
-            lambda: deque(maxlen=self.history_limit)
-        )
+        self._history: dict[str, deque[OptionMetricSample]] = defaultdict(deque)
         self._last_source_timestamp: dict[str, int] = {}
         self._last_sampled_at_ns: int | None = None
         self._last_error: str | None = None
@@ -87,7 +85,10 @@ class IVOneSecondSampler:
         if isinstance(value, SpotSnapshot):
             result = value
         elif isinstance(value, tuple) and len(value) == 2:
-            result = SpotSnapshot(float(value[0]), int(value[1]))
+            try:
+                result = SpotSnapshot(float(value[0]), int(value[1]))
+            except (TypeError, ValueError, OverflowError):
+                return None
         else:
             return None
         if result.price <= 0 or result.timestamp_ns <= 0:
@@ -144,8 +145,12 @@ class IVOneSecondSampler:
 
         with self._lock:
             self._latest = updates
+            cutoff_ns = sampled_at - self.history_limit * 1_000_000_000
             for token, sample in new_history:
-                self._history[token].append(sample)
+                history = self._history[token]
+                history.append(sample)
+                while history and history[0].source_timestamp_ns < cutoff_ns:
+                    history.popleft()
                 self._last_source_timestamp[token] = sample.source_timestamp_ns
             self._last_sampled_at_ns = sampled_at
             self._last_error = None if updates else "no fresh option quotes available"
