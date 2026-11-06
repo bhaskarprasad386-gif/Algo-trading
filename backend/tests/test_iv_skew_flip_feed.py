@@ -202,3 +202,38 @@ def test_feed_adapter_rejects_non_finite_provider_timestamp(invalid_value):
         payload={"exchange_timestamp_ns": invalid_value},
     ))
     assert adapter.latest_quotes() == ()
+
+
+
+def test_feed_snapshot_exposes_live_option_prices_depth_oi_and_source_age():
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_500_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key,
+        option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike,
+        timestamp_ns=10_000_000_000,
+        ltp=100.25,
+        bid=99.5,
+        bid_qty=120,
+        ask=101.0,
+        ask_qty=95,
+        oi=123456,
+        volume=789,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+
+    quote = adapter.snapshot(10_500_000_000)["quotes"][0]
+    assert quote["symbol"] == descriptor.symbol
+    assert quote["token"] == descriptor.key.token
+    assert quote["ltp"] == 100.25
+    assert quote["bid"] == 99.5
+    assert quote["bid_qty"] == 120.0
+    assert quote["ask"] == 101.0
+    assert quote["ask_qty"] == 95.0
+    assert quote["oi"] == 123456
+    assert quote["volume"] == 789
+    assert quote["age_ms"] == 500.0
+    assert quote["fresh"] is True
