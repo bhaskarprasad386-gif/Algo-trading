@@ -46,7 +46,15 @@ def test_one_second_sampler_calculates_iv_and_samples_oi_from_fresh_quotes():
     assert result["sample_count"] == 2
     assert all(value is not None and 15 < value < 25 for value in result["iv_values"].values())
     assert result["oi_values"] == {"ce-token": 12000, "pe-token": 15000}
+    assert result["oi_live_count"] == 2
+    assert result["iv_live_count"] == 2
     assert result["history_samples_by_token"] == {"ce-token": 1, "pe-token": 1}
+    assert len(result["live_metrics"]) == 2
+    assert {row["token"] for row in result["live_metrics"]} == {"ce-token", "pe-token"}
+    assert all(row["oi_live"] and row["iv_live"] for row in result["live_metrics"])
+    assert all(row["iv_unit"] == "PERCENT" for row in result["live_metrics"])
+    assert all(row["iv_input"] == "BID_ASK_MIDPOINT" for row in result["live_metrics"])
+    assert all(row["source_age_ms"] == 0.0 for row in result["live_metrics"])
 
     # A one-second UI refresh may reuse the same still-fresh broker quote,
     # but it must not pretend that OI changed or create duplicate history rows.
