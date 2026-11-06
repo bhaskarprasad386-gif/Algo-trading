@@ -243,7 +243,7 @@ def evaluate_gamma_blast(
         and current.expiry.strip().upper() == prior.expiry.strip().upper()
         and current.strike == prior.strike
         and current.option_type.strip().upper() == prior.option_type.strip().upper()
-        and (not current.token or not prior.token or current.token == prior.token)
+        and current.token == prior.token
     )
     timestamps_ordered = (
         isinstance(current.timestamp_ns, int)
