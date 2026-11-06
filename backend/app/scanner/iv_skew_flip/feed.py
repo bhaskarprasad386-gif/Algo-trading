@@ -66,13 +66,33 @@ class IVSkewFlipFeedAdapter:
         from math import isfinite
         return result if isfinite(result) else None
 
+    @staticmethod
+    def _has_provider_timestamp(record: Any) -> bool:
+        payload = getattr(record, "payload", None)
+        if not isinstance(payload, dict):
+            return False
+        for name in (
+            "exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
+            "exchange_timestamp_ms", "timestamp", "feed_time",
+        ):
+            value = payload.get(name)
+            if value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if number > 0:
+                return True
+        return False
+
     def _on_record(self, record: Any) -> None:
         option_type = getattr(getattr(record, "option_type", None), "value", getattr(record, "option_type", None))
         option_type = str(option_type or "").strip().upper()
         strike = self._number(getattr(record, "strike", None))
         timestamp_ns = getattr(record, "timestamp_ns", None)
         token = str(getattr(getattr(record, "instrument", None), "token", "") or "").strip()
-        if option_type not in {"CE", "PE"} or strike is None or not isinstance(timestamp_ns, int):
+        if option_type not in {"CE", "PE"} or strike is None or not isinstance(timestamp_ns, int) or not self._has_provider_timestamp(record):
             return
         with self._lock:
             universe = self._universe
@@ -170,7 +190,7 @@ class IVSkewFlipFeedAdapter:
             status = "WAITING_FOR_TICKS"
         return {
             "status": status,
-            "consumer": self.CONSUMER,
+            "consumer": self.consumer,
             "underlying": None if universe is None else universe.underlying,
             "expiry": None if universe is None else universe.expiry,
             "expected_contracts": expected,
