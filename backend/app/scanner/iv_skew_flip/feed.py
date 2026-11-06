@@ -196,10 +196,33 @@ class IVSkewFlipFeedAdapter:
             status = "STALE"
         else:
             status = "WAITING_FOR_TICKS"
+        contract_by_token = {} if universe is None else {
+            contract.token: contract for contract in universe.contracts
+        }
+        live_quotes = []
+        for quote in sorted(quotes, key=lambda item: (item.strike, item.option_type)):
+            contract = contract_by_token.get(quote.token or "")
+            age_ns = now_ns - quote.timestamp_ns
+            live_quotes.append({
+                "symbol": None if contract is None else contract.symbol,
+                "token": quote.token,
+                "strike": quote.strike,
+                "option_type": quote.option_type,
+                "ltp": quote.ltp,
+                "bid": quote.bid,
+                "ask": quote.ask,
+                "mark": quote.mark,
+                "oi": quote.oi,
+                "volume": quote.volume,
+                "timestamp_ns": quote.timestamp_ns,
+                "age_ms": round(age_ns / 1_000_000, 2) if age_ns >= 0 else None,
+                "fresh": 0 <= age_ns <= self.MAX_QUOTE_AGE_NS,
+            })
         return {
             "status": status,
             "consumer": self.consumer,
             "underlying": None if universe is None else universe.underlying,
+            "expiry_type": None if universe is None else universe.expiry_type,
             "expiry": None if universe is None else universe.expiry,
             "expected_contracts": expected,
             "received_contracts": len(quotes),
@@ -207,6 +230,7 @@ class IVSkewFlipFeedAdapter:
             "stale_contracts": stale,
             "last_tick_timestamp_ns": last_tick,
             "signals_allowed": bool(expected and fresh == expected),
+            "quotes": live_quotes,
         }
 
 
