@@ -216,3 +216,19 @@ def test_spot_feed_snapshot_exposes_live_price_source_age():
     assert snapshot["spot"]["NIFTY"]["price"] == 24125.5
     assert snapshot["spot"]["NIFTY"]["age_ms"] == 500.0
     assert snapshot["spot"]["NIFTY"]["fresh"] is True
+
+
+def test_spot_feed_uses_its_token_subscription_when_shared_record_metadata_is_generic():
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    # A shared registry descriptor can be generic or belong to another consumer.
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=10_000_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    assert adapter.spot_snapshot("NIFTY") is not None
+    assert adapter.spot_snapshot("NIFTY").price == 24125.5
