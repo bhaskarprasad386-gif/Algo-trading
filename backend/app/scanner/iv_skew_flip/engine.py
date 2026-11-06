@@ -25,6 +25,8 @@ class OptionQuote:
     oi: int | None = None
     volume: int | None = None
     token: str | None = None
+    bid_qty: float | None = None
+    ask_qty: float | None = None
 
     @property
     def mark(self) -> float | None:
