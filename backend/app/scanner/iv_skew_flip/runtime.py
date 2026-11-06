@@ -7,7 +7,7 @@ from time import monotonic, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from .engine import DEFAULT_CONFIGS, ScannerConfig
+from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .feed import IVSkewFlipFeedAdapter
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
@@ -32,6 +32,7 @@ class IVSkewFlipRuntime:
         clock_ns: Callable[[], int] = time_ns,
         clock_datetime: Callable[[], datetime] | None = None,
         refresh_seconds: float = 1.0,
+        evaluation_seconds: float = 60.0,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
@@ -42,7 +43,10 @@ class IVSkewFlipRuntime:
         )
         self.clock_ns = clock_ns
         self.clock_datetime = clock_datetime or (lambda: datetime.now(IST))
+        if evaluation_seconds != 60.0:
+            raise ValueError("signal evaluation cadence is fixed at 60 seconds")
         self.refresh_seconds = refresh_seconds
+        self.evaluation_seconds = evaluation_seconds
         self._lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
@@ -52,6 +56,9 @@ class IVSkewFlipRuntime:
         self._universe_tokens: dict[str, tuple[str, ...]] = {}
         self._last_refresh_ns: int | None = None
         self._last_error: dict[str, str] = {}
+        self._last_evaluation_ns: int | None = None
+        self._previous_atm_iv_diff: dict[str, float] = {}
+        self._signals: dict[str, dict[str, Any]] = {}
         self._started = False
 
     @staticmethod
@@ -137,6 +144,104 @@ class IVSkewFlipRuntime:
             with self._lock:
                 self._last_error[symbol] = f"{type(exc).__name__}: {exc}"
 
+    @staticmethod
+    def _signal_payload(signal: Signal) -> dict[str, Any]:
+        return {
+            "strategy": signal.strategy,
+            "direction": signal.direction,
+            "value": signal.value,
+            "threshold": signal.threshold,
+            "status": signal.status,
+            "reason": signal.reason,
+        }
+
+    def _evaluate_symbol(self, config: ScannerConfig, now: datetime, now_ns: int) -> None:
+        symbol = config.symbol
+        feed = self._option_feeds.get(symbol)
+        sampler = self._samplers.get(symbol)
+        spot = self.spot_feed.spot_snapshot(symbol)
+        if feed is None or sampler is None or spot is None or not hasattr(feed, "latest_quotes"):
+            return
+        quotes = tuple(feed.latest_quotes())
+        if not quotes:
+            return
+
+        skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
+        flip = evaluate_flip(
+            quotes, spot.price, now, now_ns, config,
+            self._previous_atm_iv_diff.get(symbol),
+        )
+        if flip.value is not None and flip.status != "WAITING":
+            self._previous_atm_iv_diff[symbol] = flip.value
+
+        gamma_events: list[Signal] = []
+        for quote in quotes:
+            if not quote.token:
+                continue
+            prior = sampler.oi_reference(quote.token, lookback_seconds=300)
+            if prior is None:
+                continue
+            prior_quote = OptionQuote(
+                underlying=prior.underlying, expiry=prior.expiry,
+                strike=prior.strike, option_type=prior.option_type,
+                timestamp_ns=prior.source_timestamp_ns, ltp=prior.mark,
+                oi=prior.oi, token=prior.token,
+            )
+            gamma = evaluate_gamma_blast(
+                quote, prior_quote,
+                min_oi_drop_pct=config.gamma_min_oi_drop_pct,
+                min_premium_rise_pct=config.gamma_min_premium_rise_pct,
+            )
+            if gamma.status == "SIGNAL":
+                gamma_events.append(gamma)
+
+        gamma_directions = {item.direction for item in gamma_events}
+        if len(gamma_directions) == 1:
+            direction = next(iter(gamma_directions))
+            gamma_signal = Signal(
+                "GAMMA_BLAST", direction, float(len(gamma_events)),
+                float(config.gamma_min_oi_drop_pct), "SIGNAL",
+                f"{len(gamma_events)} contracts confirm {direction} OI unwinding with premium expansion",
+            )
+        elif len(gamma_directions) > 1:
+            gamma_signal = Signal(
+                "GAMMA_BLAST", None, float(len(gamma_events)),
+                float(config.gamma_min_oi_drop_pct), "NEUTRAL",
+                "conflicting CE and PE unwinding signals; direction suppressed",
+            )
+        else:
+            gamma_signal = Signal(
+                "GAMMA_BLAST", None, 0.0,
+                float(config.gamma_min_oi_drop_pct), "WAITING",
+                "no confirmed five-minute OI reference with premium expansion",
+            )
+
+        combined = confluence((skew, flip, gamma_signal), required=2)
+        with self._lock:
+            self._signals[symbol] = {
+                "evaluated_at_ns": now_ns,
+                "evaluation_interval_seconds": self.evaluation_seconds,
+                "strategies": [
+                    self._signal_payload(skew),
+                    self._signal_payload(flip),
+                    self._signal_payload(gamma_signal),
+                ],
+                "confluence": self._signal_payload(combined),
+                "signals_allowed": all(
+                    item.status != "WAITING" for item in (skew, flip)
+                ),
+            }
+
+    def _maybe_evaluate(self, now: datetime, now_ns: int) -> None:
+        with self._lock:
+            previous = self._last_evaluation_ns
+        if previous is not None and now_ns - previous < int(self.evaluation_seconds * 1_000_000_000):
+            return
+        for config in DEFAULT_CONFIGS:
+            self._evaluate_symbol(config, now, now_ns)
+        with self._lock:
+            self._last_evaluation_ns = now_ns
+
     def refresh_once(self) -> dict[str, Any]:
         now = self.clock_datetime()
         if now.tzinfo is None:
@@ -146,8 +251,10 @@ class IVSkewFlipRuntime:
             if spot is None:
                 continue
             self._refresh_symbol(config, spot, now)
+        now_ns = self.clock_ns()
+        self._maybe_evaluate(now, now_ns)
         with self._lock:
-            self._last_refresh_ns = self.clock_ns()
+            self._last_refresh_ns = now_ns
         return self.snapshot()
 
     def _run(self) -> None:
@@ -167,12 +274,17 @@ class IVSkewFlipRuntime:
             feeds = dict(self._option_feeds)
             samplers = dict(self._samplers)
             errors = dict(self._last_error)
+            signals = dict(self._signals)
             last_refresh = self._last_refresh_ns
+            last_evaluation = self._last_evaluation_ns
         return {
             "status": "RUNNING" if started else "STOPPED",
             "consumer": "iv-skew-flip",
             "orders_enabled": False,
             "refresh_seconds": self.refresh_seconds,
+            "signal_evaluation_seconds": self.evaluation_seconds,
+            "last_evaluation_ns": last_evaluation,
+            "signals": signals,
             "spot_feed": self.spot_feed.snapshot(),
             "indices": {
                 symbol: {
@@ -180,6 +292,7 @@ class IVSkewFlipRuntime:
                     "sampler": samplers[symbol].snapshot() if symbol in samplers else {"status": "WAITING"},
                     "universe_tokens": len(self._universe_tokens.get(symbol, ())),
                     "error": errors.get(symbol),
+                    "signals": signals.get(symbol),
                 }
                 for symbol in ("NIFTY", "BANKNIFTY")
             },
@@ -206,6 +319,9 @@ class IVSkewFlipRuntime:
             self._option_feeds.clear()
             self._universe_tokens.clear()
             self._rows_by_symbol.clear()
+            self._signals.clear()
+            self._previous_atm_iv_diff.clear()
+            self._last_evaluation_ns = None
         return self.snapshot()
 
 
