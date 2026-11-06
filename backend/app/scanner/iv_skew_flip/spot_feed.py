@@ -162,7 +162,12 @@ class IVSpotFeedAdapter:
             "fresh_symbols": sorted(fresh),
             "missing_symbols": missing,
             "spot": {
-                symbol: {"price": item.price, "timestamp_ns": item.timestamp_ns}
+                symbol: {
+                    "price": item.price,
+                    "timestamp_ns": item.timestamp_ns,
+                    "age_ms": round((current - item.timestamp_ns) / 1_000_000, 2),
+                    "fresh": True,
+                }
                 for symbol, item in fresh.items()
             },
             "signals_allowed": bool(expected) and not missing,
