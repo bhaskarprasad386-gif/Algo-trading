@@ -88,14 +88,10 @@ class IVSkewFlipFeedAdapter:
         return False
 
     def _on_record(self, record: Any) -> None:
-        option_type = getattr(getattr(record, "option_type", None), "value", getattr(record, "option_type", None))
-        option_type = str(option_type or "").strip().upper()
-        strike = self._number(getattr(record, "strike", None))
         timestamp_ns = getattr(record, "timestamp_ns", None)
         token = str(getattr(getattr(record, "instrument", None), "token", "") or "").strip()
         if (
-            option_type not in {"CE", "PE"}
-            or strike is None
+            not token
             or not isinstance(timestamp_ns, int)
             or isinstance(timestamp_ns, bool)
             or timestamp_ns <= 0
@@ -104,8 +100,15 @@ class IVSkewFlipFeedAdapter:
             return
         with self._lock:
             universe = self._universe
-            if universe is None or self._tokens.get(token) != (strike, option_type):
+            # The shared registry is keyed by broker instrument identity and may
+            # already hold a descriptor registered by another consumer. Its
+            # strategy metadata can therefore be generic or belong to that
+            # consumer. Resolve strike/side from this adapter's own subscription
+            # map, never from the shared normalized descriptor.
+            contract = self._tokens.get(token)
+            if universe is None or contract is None:
                 return
+            strike, option_type = contract
             previous = self._quotes.get((strike, option_type))
             if previous is not None and timestamp_ns <= previous.timestamp_ns:
                 return
