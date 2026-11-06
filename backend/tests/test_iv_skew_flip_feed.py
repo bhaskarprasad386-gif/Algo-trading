@@ -64,7 +64,7 @@ def test_feed_adapter_accepts_only_its_subscribed_contract_and_reports_freshness
     feed.callback(record)
     quotes = adapter.latest_quotes()
     assert len(quotes) == 1
-    assert quotes[0].symbol if hasattr(quotes[0], "symbol") else quotes[0].option_type in {"CE", "PE"}
+    assert quotes[0].option_type in {"CE", "PE"}
     snapshot = adapter.snapshot(10_000_000_000)
     assert snapshot["received_contracts"] == 1
     assert snapshot["fresh_contracts"] == 1
