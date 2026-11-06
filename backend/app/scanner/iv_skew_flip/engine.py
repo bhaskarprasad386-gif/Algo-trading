@@ -148,9 +148,15 @@ def _expiry_years(expiry: str, now: datetime) -> float | None:
 
 
 def _fresh(quote: OptionQuote, now_ns: int, max_age_seconds: float) -> bool:
+    # bool is an int subclass in Python; never treat True/False as provider time.
     return (
-        isinstance(quote.timestamp_ns, int)
-        and 0 <= now_ns - quote.timestamp_ns <= max_age_seconds * 1_000_000_000
+        isinstance(now_ns, int)
+        and not isinstance(now_ns, bool)
+        and isinstance(quote.timestamp_ns, int)
+        and not isinstance(quote.timestamp_ns, bool)
+        and quote.timestamp_ns > 0
+        and now_ns >= quote.timestamp_ns
+        and now_ns - quote.timestamp_ns <= max_age_seconds * 1_000_000_000
     )
 
 
