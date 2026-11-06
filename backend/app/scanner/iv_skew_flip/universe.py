@@ -84,7 +84,7 @@ def resolve_option_universe(
 
     option_exchange = "NFO"
     spot_exchange = "NSE"
-    rows: list[tuple[date, str, float, str, int, str]] = []
+    rows: list[tuple[date, str, float, str, int, str, str]] = []
     for item in instruments:
         if str(item.get("exch_seg", "")).strip().upper() != option_exchange:
             continue
@@ -105,7 +105,7 @@ def resolve_option_universe(
             continue
         if not option_type or not token or lot_size is None or strike <= 0:
             continue
-        rows.append((expiry, str(item.get("expiry")).strip(), strike, option_type, lot_size, token))
+        rows.append((expiry, str(item.get("expiry")).strip(), strike, option_type, lot_size, token, str(item.get("symbol", "")).strip()))
 
     if not rows:
         raise LookupError(f"no valid {symbol} option contracts found in instrument master")
@@ -137,7 +137,7 @@ def resolve_option_universe(
 
     contracts = []
     seen: set[tuple[float, str]] = set()
-    for row_expiry, _, strike, option_type, lot_size, token in selected_rows:
+    for row_expiry, _, strike, option_type, lot_size, token, trading_symbol in selected_rows:
         if strike not in selected_strikes:
             continue
         key = (strike, option_type)
@@ -145,7 +145,7 @@ def resolve_option_universe(
             raise LookupError(f"duplicate {symbol} contract for strike={strike} type={option_type}")
         seen.add(key)
         contracts.append(ResolvedOptionContract(
-            symbol=f"{symbol}{row_expiry.strftime('%d%b%y').upper()}{int(strike)}{option_type}",
+            symbol=trading_symbol,
             token=token, exchange=option_exchange,
             expiry=row_expiry.isoformat(), strike=strike,
             option_type=option_type, lot_size=lot_size,
