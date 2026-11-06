@@ -166,3 +166,17 @@ def test_gamma_blast_requires_non_empty_exact_contract_token():
     result = evaluate_gamma_blast(current, prior)
     assert result.status == "WAITING"
     assert "same option contract" in result.reason
+
+
+def test_iv_skew_does_not_shift_atm_when_atm_quotes_are_stale():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    stale_atm = [
+        replace(quote, timestamp_ns=now_ns - 10_000_000_000)
+        if quote.strike == 22000 else quote
+        for quote in quotes
+    ]
+    signal = evaluate_skew(stale_atm, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "ATM CE and PE" in signal.reason
