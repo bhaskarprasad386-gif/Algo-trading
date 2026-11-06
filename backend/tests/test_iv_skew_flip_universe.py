@@ -80,3 +80,32 @@ def test_universe_ignores_non_finite_or_invalid_strikes(invalid_strike):
             rows, underlying="NIFTY", expiry_type="WEEKLY",
             spot=22000, today=date(2026, 11, 6),
         )
+
+
+@pytest.mark.parametrize("invalid_spot", [True, False, float("nan"), float("inf"), float("-inf"), 0, -1])
+def test_universe_rejects_non_finite_or_non_positive_spot(invalid_spot):
+    with pytest.raises(ValueError, match="finite positive live spot"):
+        resolve_option_universe(
+            master_rows(), underlying="NIFTY", expiry_type="WEEKLY",
+            spot=invalid_spot, today=date(2026, 11, 6),
+        )
+
+
+def test_universe_rejects_boolean_lot_size():
+    rows = master_rows()
+    rows[0]["lotsize"] = True
+    with pytest.raises(LookupError):
+        resolve_option_universe(
+            rows, underlying="NIFTY", expiry_type="WEEKLY",
+            spot=22000, today=date(2026, 11, 6),
+        )
+
+
+def test_universe_ignores_boolean_strike():
+    rows = master_rows()
+    rows[0]["strike"] = True
+    with pytest.raises(LookupError):
+        resolve_option_universe(
+            rows, underlying="NIFTY", expiry_type="WEEKLY",
+            spot=22000, today=date(2026, 11, 6),
+        )
