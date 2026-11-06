@@ -128,6 +128,9 @@ class IVOneSecondSampler:
         spot_value = self._spot(self.spot_provider() if spot is None else spot)
         if spot_value is None or sampled_at - spot_value.timestamp_ns < 0 or sampled_at - spot_value.timestamp_ns > self.max_spot_age_ns:
             with self._lock:
+                # A failed spot gate invalidates every previously calculated
+                # IV value: do not leave stale metrics exposed as LIVE.
+                self._latest.clear()
                 self._last_error = "fresh spot snapshot unavailable"
                 self._last_sampled_at_ns = sampled_at
             return self.snapshot()
@@ -135,6 +138,7 @@ class IVOneSecondSampler:
         years = _expiry_years(self.configured_expiry, sampled_datetime) if self.configured_expiry else None
         if years is None:
             with self._lock:
+                self._latest.clear()
                 self._last_error = "configured option expiry invalid or expired"
                 self._last_sampled_at_ns = sampled_at
             return self.snapshot()
@@ -274,6 +278,7 @@ class IVOneSecondSampler:
                 self.sample_once()
             except Exception as exc:  # keep sampler alive; surface error in health
                 with self._lock:
+                    self._latest.clear()
                     self._last_error = f"{type(exc).__name__}: {exc}"
             next_run += self.interval_seconds
             delay = max(0.0, next_run - monotonic())
