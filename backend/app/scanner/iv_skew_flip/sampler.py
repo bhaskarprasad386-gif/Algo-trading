@@ -166,7 +166,13 @@ class IVOneSecondSampler:
         target = self.clock_ns() - lookback_seconds * 1_000_000_000
         with self._lock:
             history = tuple(self._history.get(token, ()))
-        candidates = [item for item in history if item.source_timestamp_ns <= target and item.oi is not None]
+        max_age_ns = (lookback_seconds + 60) * 1_000_000_000
+        candidates = [
+            item for item in history
+            if item.source_timestamp_ns <= target
+            and self.clock_ns() - item.source_timestamp_ns <= max_age_ns
+            and item.oi is not None
+        ]
         return max(candidates, key=lambda item: item.source_timestamp_ns) if candidates else None
 
     def snapshot(self) -> dict[str, Any]:
