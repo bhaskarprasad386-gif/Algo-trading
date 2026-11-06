@@ -213,3 +213,39 @@ def test_runtime_clears_signal_state_when_spot_or_option_feed_is_unavailable():
     assert result["confluence"]["status"] == "WAITING"
     assert result["confluence"]["direction"] is None
     assert all(item["status"] == "WAITING" for item in result["strategies"])
+
+
+def test_runtime_refresh_worker_retries_after_transient_refresh_error(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    class StopAfterTwoWaits:
+        def __init__(self):
+            self.waits = 0
+
+        def is_set(self):
+            return False
+
+        def wait(self, timeout):
+            self.waits += 1
+            return self.waits >= 2
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    runtime._stop = StopAfterTwoWaits()
+    calls = []
+
+    def refresh():
+        calls.append(True)
+        if len(calls) == 1:
+            raise RuntimeError("temporary shared feed failure")
+        return {}
+
+    runtime.refresh_once = refresh
+    monkeypatch.setattr(runtime_module, "monotonic", lambda: 0.0)
+    runtime._run()
+
+    assert len(calls) == 2
+    assert "RUNTIME" not in runtime._last_error
