@@ -92,3 +92,76 @@ def test_one_second_sampler_fails_closed_without_fresh_spot():
     assert result["status"] == "WAITING"
     assert result["sample_count"] == 0
     assert result["reason"] == "fresh spot snapshot unavailable"
+
+
+import pytest
+
+
+@pytest.mark.parametrize("spot", [
+    SpotSnapshot(float("nan"), 1_800_000_000_000_000_000),
+    SpotSnapshot(float("inf"), 1_800_000_000_000_000_000),
+    SpotSnapshot(float("-inf"), 1_800_000_000_000_000_000),
+    SpotSnapshot(True, 1_800_000_000_000_000_000),
+    SpotSnapshot(21950.0, True),
+    SpotSnapshot(21950.0, 0),
+])
+def test_sampler_rejects_invalid_spot_snapshot_values(spot):
+    source = QuoteSource()
+    now_ns = 1_800_000_000_000_000_000
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns,
+        now=datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        spot=spot,
+    )
+    assert result["status"] == "WAITING"
+    assert result["reason"] == "fresh spot snapshot unavailable"
+
+
+@pytest.mark.parametrize("spot", [
+    (True, 1_800_000_000_000_000_000),
+    (21950.0, True),
+    (21950.0, 1_800_000_000_000_000_000.0),
+    (float("nan"), 1_800_000_000_000_000_000),
+    (float("inf"), 1_800_000_000_000_000_000),
+])
+def test_sampler_rejects_invalid_spot_tuple_values(spot):
+    source = QuoteSource()
+    now_ns = 1_800_000_000_000_000_000
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns,
+        now=datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        spot=spot,
+    )
+    assert result["status"] == "WAITING"
+
+
+@pytest.mark.parametrize("oi", [True, -1, 1.5, "1000"])
+def test_sampler_does_not_publish_invalid_oi_values(oi):
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, oi, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    assert result["oi_values"]["ce-token"] is None
+    assert sampler.oi_reference("ce-token") is None
+
+
+@pytest.mark.parametrize("timestamp_ns", [True, False, 0, -1])
+def test_sampler_rejects_invalid_option_source_timestamps(timestamp_ns):
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", timestamp_ns,
+        100.0, 99.5, 100.5, 1000, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    assert result["sample_count"] == 0
+    assert result["status"] == "WAITING"
