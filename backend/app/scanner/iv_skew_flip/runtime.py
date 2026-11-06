@@ -176,7 +176,11 @@ class IVSkewFlipRuntime:
 
         gamma_events: list[Signal] = []
         for quote in quotes:
-            if not quote.token:
+            if (
+                not quote.token
+                or now_ns < quote.timestamp_ns
+                or now_ns - quote.timestamp_ns > int(config.max_quote_age_seconds * 1_000_000_000)
+            ):
                 continue
             prior = sampler.oi_reference(quote.token, lookback_seconds=300)
             if prior is None:
