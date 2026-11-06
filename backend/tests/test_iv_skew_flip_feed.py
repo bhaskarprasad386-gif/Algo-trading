@@ -60,6 +60,7 @@ def test_feed_adapter_accepts_only_its_subscribed_contract_and_reports_freshness
         instrument=descriptor.key, option_type=OptionType(descriptor.option_type),
         strike=descriptor.strike, timestamp_ns=10_000_000_000,
         ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
     )
     feed.callback(record)
     quotes = adapter.latest_quotes()
@@ -88,6 +89,7 @@ def test_feed_adapter_drops_unsubscribed_tokens_and_stale_quotes():
         instrument=descriptor.key, option_type=OptionType(descriptor.option_type),
         strike=descriptor.strike, timestamp_ns=10_000_000_000,
         ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
     )
     feed.callback(valid)
     snapshot = adapter.snapshot(20_000_000_000)
@@ -102,3 +104,19 @@ def test_stopping_adapter_releases_only_its_feed_consumer():
     adapter.stop()
     assert feed.stop_calls == 2  # old-universe handoff + explicit stop
     assert adapter.snapshot(1)["status"] == "STOPPED"
+
+
+
+def test_feed_adapter_rejects_local_clock_fallback_without_provider_timestamp():
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    fallback = SimpleNamespace(
+        instrument=descriptor.key, option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike, timestamp_ns=10_000_000_000,
+        ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10, payload={},
+    )
+    feed.callback(fallback)
+    assert adapter.latest_quotes() == ()
+    assert adapter.snapshot(10_000_000_000)["status"] == "WAITING_FOR_TICKS"
