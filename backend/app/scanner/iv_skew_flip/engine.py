@@ -160,9 +160,10 @@ def evaluate_skew(
     config: ScannerConfig,
 ) -> Signal:
     """Average CE-IV minus PE-IV at ATM and two matched OTM strike steps."""
-    rows = [q for q in quotes if q.underlying.upper() == config.symbol and q.expiry_type if False]
-    # Expiry identity is exact; expiry-type selection happens in the resolver.
+    # The resolver must pass exactly one concrete expiry chain per evaluation.
     rows = [q for q in quotes if q.underlying.upper() == config.symbol and _fresh(q, now_ns, config.max_quote_age_seconds)]
+    if len({q.expiry for q in rows}) > 1:
+        return Signal("IV_SKEW", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
     strikes = sorted({q.strike for q in rows})
     if not strikes or spot <= 0:
         return Signal("IV_SKEW", None, None, None, "WAITING", "fresh option chain or valid spot unavailable")
@@ -196,6 +197,8 @@ def evaluate_flip(
     config: ScannerConfig, previous_atm_diff: float | None,
 ) -> Signal:
     rows = [q for q in quotes if q.underlying.upper() == config.symbol and _fresh(q, now_ns, config.max_quote_age_seconds)]
+    if len({q.expiry for q in rows}) > 1:
+        return Signal("IV_FLIP", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
     if not rows or spot <= 0:
         return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes unavailable")
     atm = min({q.strike for q in rows}, key=lambda strike: abs(strike - spot))
