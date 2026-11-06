@@ -200,3 +200,49 @@ def test_sampler_clears_previously_live_metrics_when_spot_becomes_stale():
     assert waiting["oi_values"] == {}
     assert waiting["iv_values"] == {}
     assert waiting["reason"] == "fresh spot snapshot unavailable"
+
+
+
+def test_sampler_inherits_recent_oi_history_only_for_same_selected_contracts():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (
+        OptionQuote("NIFTY", "2026-11-12", 21950, "CE", now_ns - 310_000_000_000,
+                    100.0, 99.5, 100.5, 10000, 10, "shared-ce"),
+        OptionQuote("NIFTY", "2026-11-12", 21950, "PE", now_ns - 310_000_000_000,
+                    100.0, 99.5, 100.5, 12000, 10, "shared-pe"),
+    )
+    previous = _sampler(source, lambda: now_ns)
+    previous.sample_once(
+        now_ns=now_ns - 310_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns - 310_000_000_000),
+    )
+    current = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-12",
+        "contracts": (
+            type("Contract", (), {"token": "shared-ce", "strike": 21950.0, "option_type": "CE"})(),
+            type("Contract", (), {"token": "new-token", "strike": 22000.0, "option_type": "CE"})(),
+        ),
+    })()
+
+    copied = current.inherit_history(previous, universe)
+    assert copied == 1
+    assert current.oi_reference("shared-ce") is not None
+    assert current.oi_reference("shared-pe") is None
+    assert current.oi_reference("new-token") is None
+
+
+def test_sampler_does_not_inherit_history_across_expiry():
+    now_ns = 1_800_000_000_000_000_000
+    source = QuoteSource()
+    previous = _sampler(source, lambda: now_ns)
+    current = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-19",
+        "contracts": (),
+    })()
+    assert current.inherit_history(previous, universe) == 0
