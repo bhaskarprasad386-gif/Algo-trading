@@ -12,7 +12,7 @@ def _universe():
         for side in ("CE", "PE"):
             rows.append({
                 "exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY",
-                "expiry": "12Nov2026", "symbol": f"NIFTY12NOV26{strike}{side}",
+                "expiry": "12Nov2026", "symbol": f"NIFTY12NOV26{int(strike)}{side}",
                 "strike": str(strike * 100), "token": f"{strike}-{side}", "lotsize": "75",
             })
     return resolve_option_universe(
