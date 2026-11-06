@@ -90,6 +90,10 @@ def test_spot_feed_does_not_accept_unsubscribed_or_non_index_records():
         instrument=descriptor.key, instrument_type="equity",
         timestamp_ns=10_000_000_000, ltp=100.0,
     ))
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key, instrument_type="index",
+        timestamp_ns=10_000_000_000, ltp=100.0, payload={},
+    ))
     assert adapter.snapshot()["status"] == "WAITING_FOR_TICKS"
 
 
