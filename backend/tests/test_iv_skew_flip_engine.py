@@ -45,3 +45,15 @@ def test_confluence_does_not_mix_opposite_directions():
         Signal("GAMMA_BLAST", None, None, None, "NEUTRAL", "test"),
     ]
     assert confluence(rows).status == "NEUTRAL"
+
+
+def test_expiry_years_accepts_angel_one_master_formats():
+    from app.scanner.iv_skew_flip.engine import _expiry_years
+
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    expected = _expiry_years("2026-11-12", now)
+    assert expected is not None and expected > 0
+    for expiry in ("12NOV2026", "12NOV26", "12-Nov-2026", "12-Nov-26"):
+        value = _expiry_years(expiry, now)
+        assert value is not None
+        assert abs(value - expected) < 1e-10
