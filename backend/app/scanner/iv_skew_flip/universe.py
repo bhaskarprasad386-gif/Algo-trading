@@ -84,6 +84,8 @@ def resolve_option_universe(
 
     option_exchange = "NFO"
     spot_exchange = "NSE"
+    from math import isfinite
+
     rows: list[tuple[date, str, float, str, int, str, str]] = []
     for item in instruments:
         if str(item.get("exch_seg", "")).strip().upper() != option_exchange:
@@ -103,7 +105,7 @@ def resolve_option_universe(
             strike = float(item.get("strike")) / 100.0
         except (TypeError, ValueError, OverflowError):
             continue
-        if not option_type or not token or lot_size is None or strike <= 0:
+        if not option_type or not token or lot_size is None or not isfinite(strike) or strike <= 0:
             continue
         rows.append((expiry, str(item.get("expiry")).strip(), strike, option_type, lot_size, token, str(item.get("symbol", "")).strip()))
 
@@ -137,10 +139,14 @@ def resolve_option_universe(
 
     contracts = []
     seen: set[tuple[float, str]] = set()
+    seen_tokens: set[str] = set()
     for row_expiry, _, strike, option_type, lot_size, token, trading_symbol in selected_rows:
         if strike not in selected_strikes:
             continue
         key = (strike, option_type)
+        if token in seen_tokens:
+            raise LookupError(f"duplicate instrument token in {symbol} option universe: {token}")
+        seen_tokens.add(token)
         if key in seen:
             raise LookupError(f"duplicate {symbol} contract for strike={strike} type={option_type}")
         seen.add(key)
