@@ -118,3 +118,45 @@ def test_spot_feed_rejects_duplicate_tokens_and_unsupported_symbols():
         pass
     else:
         raise AssertionError("unsupported spot symbol must fail closed")
+
+
+import pytest
+
+
+@pytest.mark.parametrize("timestamp_field", [
+    "exchange_timestamp_ns",
+    "timestamp_ns",
+    "exchange_timestamp",
+    "exchange_timestamp_ms",
+    "timestamp",
+    "feed_time",
+])
+def test_spot_feed_accepts_each_supported_provider_timestamp_alias(timestamp_field):
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_000_000_000,
+        ltp=24125.5,
+        payload={timestamp_field: 10_000_000_000},
+    ))
+    assert adapter.spot_snapshot("NIFTY") is not None
+
+
+@pytest.mark.parametrize("invalid_value", [None, 0, -1, "", "not-a-timestamp", True])
+def test_spot_feed_rejects_invalid_provider_timestamp_alias_values(invalid_value):
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_000_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp_ns": invalid_value},
+    ))
+    assert adapter.spot_snapshot("NIFTY") is None
