@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from math import isfinite
 from typing import Iterable, Mapping
 
 
@@ -91,8 +92,6 @@ def resolve_option_universe(
 
     option_exchange = "NFO"
     spot_exchange = "NSE"
-    from math import isfinite
-
     rows: list[tuple[date, str, float, str, int, str, str]] = []
     for item in instruments:
         if str(item.get("exch_seg", "")).strip().upper() != option_exchange:
