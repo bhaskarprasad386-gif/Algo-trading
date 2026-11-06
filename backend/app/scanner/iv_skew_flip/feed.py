@@ -67,11 +67,12 @@ class IVSkewFlipFeedAdapter:
         option_type = str(option_type or "").strip().upper()
         strike = self._number(getattr(record, "strike", None))
         timestamp_ns = getattr(record, "timestamp_ns", None)
+        token = str(getattr(getattr(record, "instrument", None), "token", "") or "").strip()
         if option_type not in {"CE", "PE"} or strike is None or not isinstance(timestamp_ns, int):
             return
         with self._lock:
             universe = self._universe
-            if universe is None:
+            if universe is None or self._tokens.get(token) != (strike, option_type):
                 return
             quote = OptionQuote(
                 underlying=universe.underlying,
