@@ -76,7 +76,7 @@ class IVSkewFlipFeedAdapter:
             "exchange_timestamp_ms", "timestamp", "feed_time",
         ):
             value = payload.get(name)
-            if value is None:
+            if value is None or isinstance(value, bool):
                 continue
             try:
                 number = float(value)
