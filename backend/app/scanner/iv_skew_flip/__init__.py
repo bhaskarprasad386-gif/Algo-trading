@@ -2,11 +2,12 @@
 from .universe import ResolvedOptionContract, ResolvedOptionUniverse, resolve_option_universe
 from .engine import DEFAULT_CONFIGS, OptionQuote, ScannerConfig, Signal, confluence, evaluate_flip, evaluate_gamma_blast, evaluate_skew, implied_volatility
 from .feed import IVSkewFlipFeedAdapter
+from .spot_feed import IVSpotFeedAdapter
 from .sampler import IVOneSecondSampler, OptionMetricSample, SpotSnapshot
 
 __all__ = [
     "ResolvedOptionContract", "ResolvedOptionUniverse", "resolve_option_universe",
     "DEFAULT_CONFIGS", "OptionQuote", "ScannerConfig", "Signal", "confluence",
     "evaluate_flip", "evaluate_gamma_blast", "evaluate_skew", "implied_volatility",
-    "IVSkewFlipFeedAdapter", "IVOneSecondSampler", "OptionMetricSample", "SpotSnapshot",
+    "IVSkewFlipFeedAdapter", "IVSpotFeedAdapter", "IVOneSecondSampler", "OptionMetricSample", "SpotSnapshot",
 ]
