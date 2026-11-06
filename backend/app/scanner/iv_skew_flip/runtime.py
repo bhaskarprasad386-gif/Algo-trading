@@ -133,6 +133,7 @@ class IVSkewFlipRuntime:
                 clock_datetime=self.clock_datetime,
             )
             old_sampler = self._samplers.get(symbol)
+            sampler.inherit_history(old_sampler, universe)
             if old_sampler is not None:
                 old_sampler.stop()
             sampler.start()
