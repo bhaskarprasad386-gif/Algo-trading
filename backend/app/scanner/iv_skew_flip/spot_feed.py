@@ -112,7 +112,7 @@ class IVSpotFeedAdapter:
             return
         if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns <= 0:
             return
-        if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+        if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
             return
         with self._lock:
             symbol = next((name for name, key in self._keys.items() if key == instrument), None)
