@@ -161,10 +161,10 @@ class IVSkewFlipRuntime:
         sampler = self._samplers.get(symbol)
         spot = self.spot_feed.spot_snapshot(symbol)
         if feed is None or sampler is None or spot is None or not hasattr(feed, "latest_quotes"):
-            return
+            return False
         quotes = tuple(feed.latest_quotes())
         if not quotes:
-            return
+            return False
 
         skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
         flip = evaluate_flip(
@@ -235,16 +235,19 @@ class IVSkewFlipRuntime:
                     item.status != "WAITING" for item in (skew, flip)
                 ),
             }
+        return True
 
     def _maybe_evaluate(self, now: datetime, now_ns: int) -> None:
         with self._lock:
             previous = self._last_evaluation_ns
         if previous is not None and now_ns - previous < int(self.evaluation_seconds * 1_000_000_000):
             return
+        evaluated = False
         for config in DEFAULT_CONFIGS:
-            self._evaluate_symbol(config, now, now_ns)
-        with self._lock:
-            self._last_evaluation_ns = now_ns
+            evaluated = self._evaluate_symbol(config, now, now_ns) or evaluated
+        if evaluated:
+            with self._lock:
+                self._last_evaluation_ns = now_ns
 
     def refresh_once(self) -> dict[str, Any]:
         now = self.clock_datetime()
