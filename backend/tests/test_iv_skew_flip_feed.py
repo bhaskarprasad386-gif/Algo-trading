@@ -149,8 +149,12 @@ def test_feed_adapter_accepts_each_supported_provider_timestamp_alias(timestamp_
     assert len(adapter.latest_quotes()) == 1
 
 
+@pytest.mark.parametrize("timestamp_field", [
+    "exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
+    "exchange_timestamp_ms", "timestamp", "feed_time",
+])
 @pytest.mark.parametrize("invalid_value", [None, 0, -1, "", "not-a-timestamp", True])
-def test_feed_adapter_rejects_invalid_provider_timestamp_alias_values(invalid_value):
+def test_feed_adapter_rejects_invalid_provider_timestamp_alias_values(timestamp_field, invalid_value):
     feed = FakeFeed()
     adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
     adapter.start(_universe())
@@ -161,6 +165,6 @@ def test_feed_adapter_rejects_invalid_provider_timestamp_alias_values(invalid_va
         strike=descriptor.strike,
         timestamp_ns=10_000_000_000,
         ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
-        payload={"exchange_timestamp_ns": invalid_value},
+        payload={timestamp_field: invalid_value},
     ))
     assert adapter.latest_quotes() == ()
