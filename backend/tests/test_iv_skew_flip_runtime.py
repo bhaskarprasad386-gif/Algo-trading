@@ -190,3 +190,26 @@ def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
 
     runtime._maybe_evaluate(now, 70_000_000_000)
     assert len(evaluated) == 4
+
+
+def test_runtime_clears_signal_state_when_spot_or_option_feed_is_unavailable():
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    spot = FakeSpotFeed()
+    spot.prices = {}
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=spot,
+        clock_ns=lambda: 20_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    runtime._signals["NIFTY"] = {
+        "confluence": {"direction": "BULLISH", "status": "SIGNAL"},
+        "signals_allowed": True,
+    }
+
+    assert runtime._evaluate_symbol(DEFAULT_CONFIGS[0], now, 20_000_000_000) is True
+    result = runtime.snapshot()["signals"]["NIFTY"]
+    assert result["signals_allowed"] is False
+    assert result["confluence"]["status"] == "WAITING"
+    assert result["confluence"]["direction"] is None
+    assert all(item["status"] == "WAITING" for item in result["strategies"])
