@@ -211,13 +211,16 @@ def evaluate_flip(
     quotes: Iterable[OptionQuote], spot: float, now: datetime, now_ns: int,
     config: ScannerConfig, previous_atm_diff: float | None,
 ) -> Signal:
-    rows = [q for q in quotes if q.underlying.upper() == config.symbol and _fresh(q, now_ns, config.max_quote_age_seconds)]
-    if len({q.expiry for q in rows}) > 1:
+    chain = [q for q in quotes if q.underlying.upper() == config.symbol]
+    if len({q.expiry for q in chain}) > 1:
         return Signal("IV_FLIP", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
-    if not rows or spot <= 0:
+    if not chain or spot <= 0:
         return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes unavailable")
-    atm = min({q.strike for q in rows}, key=lambda strike: abs(strike - spot))
-    pair = {q.option_type.upper(): q for q in rows if q.strike == atm}
+    # Select ATM from the complete resolved chain, then require both sides at
+    # that exact strike to be fresh. Do not silently shift ATM when its ticks stale.
+    atm = min({q.strike for q in chain}, key=lambda strike: abs(strike - spot))
+    fresh_rows = [q for q in chain if _fresh(q, now_ns, config.max_quote_age_seconds)]
+    pair = {q.option_type.upper(): q for q in fresh_rows if q.strike == atm}
     if "CE" not in pair or "PE" not in pair:
         return Signal("IV_FLIP", None, None, None, "WAITING", "ATM CE and PE pair unavailable")
     years = _expiry_years(pair["CE"].expiry, now)
