@@ -180,3 +180,19 @@ def test_spot_feed_rejects_non_finite_provider_timestamp(invalid_value):
         payload={"exchange_timestamp_ns": invalid_value},
     ))
     assert adapter.spot_snapshot("NIFTY") is None
+
+
+@pytest.mark.parametrize("invalid_price", [float("nan"), float("inf"), float("-inf")])
+def test_spot_feed_rejects_non_finite_index_prices(invalid_price):
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_000_000_000,
+        ltp=invalid_price,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    assert adapter.spot_snapshot("NIFTY") is None
