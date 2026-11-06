@@ -131,7 +131,15 @@ def _expiry_years(expiry: str, now: datetime) -> float | None:
     if now.tzinfo is None:
         return None
     try:
-        date_value = datetime.fromisoformat(expiry).date()
+        date_value = None
+        for date_format in ("%Y-%m-%d", "%d%b%Y", "%d%b%y", "%d-%b-%Y", "%d-%b-%y"):
+            try:
+                date_value = datetime.strptime(str(expiry).strip().upper(), date_format).date()
+                break
+            except ValueError:
+                continue
+        if date_value is None:
+            return None
         close = datetime.combine(date_value, time(15, 30), tzinfo=ZoneInfo("Asia/Kolkata"))
         seconds = (close - now.astimezone(ZoneInfo("Asia/Kolkata"))).total_seconds()
         return seconds / (365.0 * 24 * 60 * 60) if seconds > 0 else None
@@ -172,7 +180,7 @@ def evaluate_skew(
     atm = strikes[atm_index]
     years = _expiry_years(rows[0].expiry, now)
     if years is None:
-        return Signal("IV_SKEW", None, None, None, "WAITING", "expiry is expired, invalid, or not ISO YYYY-MM-DD")
+        return Signal("IV_SKEW", None, None, None, "WAITING", "expiry is expired or invalid")
     by_key = {(q.strike, q.option_type.upper()): q for q in rows}
     spreads = []
     for offset in (0, 1, 2):
