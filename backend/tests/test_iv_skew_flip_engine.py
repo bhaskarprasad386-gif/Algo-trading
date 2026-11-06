@@ -36,6 +36,7 @@ def test_gamma_blast_requires_oi_drop_and_premium_rise():
         ("strike", 22050),
         ("option_type", "PE"),
         ("token", "OTHER"),
+        ("token", ""),
     ],
 )
 def test_gamma_blast_rejects_reference_from_different_contract(field, value):
