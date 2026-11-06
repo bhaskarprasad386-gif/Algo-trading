@@ -62,8 +62,9 @@ def test_universe_rejects_wrong_configured_expiry_type():
 
 def test_universe_rejects_duplicate_instrument_tokens():
     rows = master_rows()
-    duplicate_token = rows[0]["token"]
-    rows[1]["token"] = duplicate_token
+    selected_ce = next(row for row in rows if row["expiry"] == "12Nov2026" and row["strike"] == "2200000" and row["symbol"].endswith("CE"))
+    selected_pe = next(row for row in rows if row["expiry"] == "12Nov2026" and row["strike"] == "2200000" and row["symbol"].endswith("PE"))
+    selected_pe["token"] = selected_ce["token"]
     with pytest.raises(LookupError, match="duplicate instrument token"):
         resolve_option_universe(
             rows, underlying="NIFTY", expiry_type="WEEKLY",
@@ -74,7 +75,8 @@ def test_universe_rejects_duplicate_instrument_tokens():
 @pytest.mark.parametrize("invalid_strike", ["nan", "inf", "-inf", "not-a-number"])
 def test_universe_ignores_non_finite_or_invalid_strikes(invalid_strike):
     rows = master_rows()
-    rows[0]["strike"] = invalid_strike
+    selected = next(row for row in rows if row["expiry"] == "12Nov2026" and row["strike"] == "2200000" and row["symbol"].endswith("CE"))
+    selected["strike"] = invalid_strike
     with pytest.raises(LookupError):
         resolve_option_universe(
             rows, underlying="NIFTY", expiry_type="WEEKLY",
@@ -93,7 +95,8 @@ def test_universe_rejects_non_finite_or_non_positive_spot(invalid_spot):
 
 def test_universe_rejects_boolean_lot_size():
     rows = master_rows()
-    rows[0]["lotsize"] = True
+    selected = next(row for row in rows if row["expiry"] == "12Nov2026" and row["strike"] == "2200000" and row["symbol"].endswith("CE"))
+    selected["lotsize"] = True
     with pytest.raises(LookupError):
         resolve_option_universe(
             rows, underlying="NIFTY", expiry_type="WEEKLY",
@@ -103,7 +106,8 @@ def test_universe_rejects_boolean_lot_size():
 
 def test_universe_ignores_boolean_strike():
     rows = master_rows()
-    rows[0]["strike"] = True
+    selected = next(row for row in rows if row["expiry"] == "12Nov2026" and row["strike"] == "2200000" and row["symbol"].endswith("CE"))
+    selected["strike"] = True
     with pytest.raises(LookupError):
         resolve_option_universe(
             rows, underlying="NIFTY", expiry_type="WEEKLY",
