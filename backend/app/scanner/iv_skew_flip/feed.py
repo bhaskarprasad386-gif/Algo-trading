@@ -85,6 +85,7 @@ class IVSkewFlipFeedAdapter:
                 ask=self._number(getattr(record, "ask", None)),
                 oi=getattr(record, "oi", None),
                 volume=getattr(record, "volume", None),
+                token=token,
             )
             self._quotes[(strike, option_type)] = quote
             self._last_tick_ns = timestamp_ns
