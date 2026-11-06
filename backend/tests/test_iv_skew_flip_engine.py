@@ -135,7 +135,7 @@ def test_iv_skew_rejects_invalid_provider_timestamps(invalid_timestamp):
     invalid_quotes = [replace(quote, timestamp_ns=invalid_timestamp) for quote in quotes]
     signal = evaluate_skew(invalid_quotes, 22000, now, now_ns, config)
     assert signal.status == "WAITING"
-    assert "fresh option chain" in signal.reason
+    assert "ATM CE and PE" in signal.reason
 
 
 def test_iv_flip_rejects_boolean_provider_timestamp():
