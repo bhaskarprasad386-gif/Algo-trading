@@ -96,7 +96,7 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
     rows = (
         make_rows("NIFTY", "12NOV2026", 100, 10)
-        + make_rows("BANKNIFTY", "26NOV2026", 200, 100)
+        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
     )
     spot = FakeSpotFeed()
     created = {}
@@ -182,7 +182,7 @@ def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
         clock_datetime=lambda: now,
     )
     evaluated = []
-    runtime._evaluate_symbol = lambda config, when, stamp: evaluated.append((config.symbol, stamp))
+    runtime._evaluate_symbol = lambda config, when, stamp: (evaluated.append((config.symbol, stamp)) or True)
 
     runtime._maybe_evaluate(now, 10_000_000_000)
     runtime._maybe_evaluate(now, 69_000_000_000)
