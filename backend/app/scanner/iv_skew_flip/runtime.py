@@ -158,16 +158,33 @@ class IVSkewFlipRuntime:
             "reason": signal.reason,
         }
 
-    def _evaluate_symbol(self, config: ScannerConfig, now: datetime, now_ns: int) -> None:
+    def _mark_waiting(self, symbol: str, now_ns: int, reason: str) -> None:
+        confluence_waiting = Signal("CONFLUENCE", None, 0.0, 2.0, "WAITING", reason)
+        with self._lock:
+            self._signals[symbol] = {
+                "evaluated_at_ns": now_ns,
+                "evaluation_interval_seconds": self.evaluation_seconds,
+                "strategies": [
+                    self._signal_payload(Signal("IV_SKEW", None, None, None, "WAITING", reason)),
+                    self._signal_payload(Signal("IV_FLIP", None, None, None, "WAITING", reason)),
+                    self._signal_payload(Signal("GAMMA_BLAST", None, None, None, "WAITING", reason)),
+                ],
+                "confluence": self._signal_payload(confluence_waiting),
+                "signals_allowed": False,
+            }
+
+    def _evaluate_symbol(self, config: ScannerConfig, now: datetime, now_ns: int) -> bool:
         symbol = config.symbol
         feed = self._option_feeds.get(symbol)
         sampler = self._samplers.get(symbol)
         spot = self.spot_feed.spot_snapshot(symbol)
         if feed is None or sampler is None or spot is None or not hasattr(feed, "latest_quotes"):
-            return False
+            self._mark_waiting(symbol, now_ns, "fresh spot, option feed and sampler are all required")
+            return True
         quotes = tuple(feed.latest_quotes())
         if not quotes:
-            return False
+            self._mark_waiting(symbol, now_ns, "no fresh option quotes are available")
+            return True
 
         skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
         atm_strike = min({quote.strike for quote in quotes}, key=lambda strike: abs(strike - spot.price))
