@@ -294,7 +294,16 @@ class IVSkewFlipRuntime:
     def _run(self) -> None:
         next_run = monotonic()
         while not self._stop.is_set():
-            self.refresh_once()
+            try:
+                self.refresh_once()
+                with self._lock:
+                    self._last_error.pop("RUNTIME", None)
+            except Exception as exc:
+                # A transient master/feed/API error must not kill the refresh
+                # worker permanently. Keep the runtime observable and retry
+                # on the next bounded cadence.
+                with self._lock:
+                    self._last_error["RUNTIME"] = f"{type(exc).__name__}: {exc}"
             next_run += self.refresh_seconds
             delay = max(0.0, next_run - monotonic())
             if self._stop.wait(delay):
