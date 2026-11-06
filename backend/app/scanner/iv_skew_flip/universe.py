@@ -48,6 +48,8 @@ def _parse_expiry(value: object) -> date | None:
 
 
 def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
     try:
         result = int(str(value).strip())
     except (TypeError, ValueError, OverflowError):
@@ -77,8 +79,13 @@ def resolve_option_universe(
     expected = {"NIFTY": "WEEKLY", "BANKNIFTY": "MONTHLY"}[symbol]
     if kind != expected:
         raise ValueError(f"{symbol} is configured for {expected} expiry only")
-    if isinstance(spot, bool) or not isinstance(spot, (int, float)) or spot <= 0:
-        raise ValueError("a positive live spot price is required")
+    if (
+        isinstance(spot, bool)
+        or not isinstance(spot, (int, float))
+        or not isfinite(float(spot))
+        or spot <= 0
+    ):
+        raise ValueError("a finite positive live spot price is required")
     if strike_count < 3 or strike_count % 2 != 1:
         raise ValueError("strike_count must be an odd integer of at least 3")
 
@@ -101,8 +108,11 @@ def resolve_option_universe(
         option_type = "CE" if option_symbol.endswith("CE") else "PE" if option_symbol.endswith("PE") else ""
         token = str(item.get("token", "")).strip()
         lot_size = _positive_int(item.get("lotsize"))
+        raw_strike = item.get("strike")
+        if isinstance(raw_strike, bool):
+            continue
         try:
-            strike = float(item.get("strike")) / 100.0
+            strike = float(raw_strike) / 100.0
         except (TypeError, ValueError, OverflowError):
             continue
         if not option_type or not token or lot_size is None or not isfinite(strike) or strike <= 0:
