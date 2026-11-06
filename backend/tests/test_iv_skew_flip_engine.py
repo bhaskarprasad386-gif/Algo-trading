@@ -22,8 +22,8 @@ def test_implied_volatility_rejects_invalid_arbitrage_price():
 
 
 def test_gamma_blast_requires_oi_drop_and_premium_rise():
-    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000)
-    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000)
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
     signal = evaluate_gamma_blast(current, prior)
     assert signal.status == "SIGNAL"
     assert signal.direction == "BULLISH"
