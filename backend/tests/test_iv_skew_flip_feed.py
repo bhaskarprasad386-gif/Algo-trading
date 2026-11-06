@@ -120,3 +120,47 @@ def test_feed_adapter_rejects_local_clock_fallback_without_provider_timestamp():
     feed.callback(fallback)
     assert adapter.latest_quotes() == ()
     assert adapter.snapshot(10_000_000_000)["status"] == "WAITING_FOR_TICKS"
+
+
+import pytest
+
+
+@pytest.mark.parametrize("timestamp_field", [
+    "exchange_timestamp_ns",
+    "timestamp_ns",
+    "exchange_timestamp",
+    "exchange_timestamp_ms",
+    "timestamp",
+    "feed_time",
+])
+def test_feed_adapter_accepts_each_supported_provider_timestamp_alias(timestamp_field):
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key,
+        option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike,
+        timestamp_ns=10_000_000_000,
+        ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
+        payload={timestamp_field: 10_000_000_000},
+    ))
+    assert len(adapter.latest_quotes()) == 1
+
+
+@pytest.mark.parametrize("invalid_value", [None, 0, -1, "", "not-a-timestamp", True])
+def test_feed_adapter_rejects_invalid_provider_timestamp_alias_values(invalid_value):
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key,
+        option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike,
+        timestamp_ns=10_000_000_000,
+        ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
+        payload={"exchange_timestamp_ns": invalid_value},
+    ))
+    assert adapter.latest_quotes() == ()
