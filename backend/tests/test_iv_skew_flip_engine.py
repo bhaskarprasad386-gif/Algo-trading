@@ -56,6 +56,44 @@ def test_gamma_blast_rejects_non_chronological_reference_sample():
     assert result.status == "WAITING"
     assert "ordered observations" in result.reason
 
+def _synthetic_chain(call_iv=0.24, put_iv=0.20):
+    from app.scanner.iv_skew_flip.engine import DEFAULT_CONFIGS, _expiry_years
+
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    now_ns = 1_800_000_000_000_000_000
+    config = DEFAULT_CONFIGS[0]
+    years = _expiry_years("12NOV2026", now)
+    assert years is not None
+    quotes = []
+    for strike in (21900, 21950, 22000, 22050, 22100):
+        for side, volatility in (("CE", call_iv), ("PE", put_iv)):
+            premium = black_scholes_price(side, 22000, strike, years, volatility)
+            quotes.append(OptionQuote("NIFTY", "12NOV2026", strike, side, now_ns - 1_000_000_000, premium, token=f"{strike}-{side}"))
+    return quotes, now, now_ns, config
+
+
+def test_iv_skew_generates_bullish_signal_from_synthetic_chain():
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "SIGNAL"
+    assert signal.direction == "BULLISH"
+    assert signal.value is not None and signal.value > config.bullish_skew_threshold
+
+
+def test_iv_flip_detects_confirmed_atm_crossover():
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "SIGNAL"
+    assert signal.direction == "BULLISH"
+
+
+def test_iv_flip_without_prior_opposite_side_does_not_signal():
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=None)
+    assert signal.status == "NEUTRAL"
+    assert signal.direction is None
+
+
 def test_confluence_requires_two_same_direction_signals():
     rows = [
         Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
