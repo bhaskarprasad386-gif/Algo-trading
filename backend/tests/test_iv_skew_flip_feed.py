@@ -45,7 +45,7 @@ def test_feed_adapter_subscribes_exactly_fourteen_contracts_and_retains_symbols(
     assert result["contract_count"] == 14
     assert len(feed.descriptors) == 14
     assert {item.symbol for item in feed.descriptors} == {
-        f"NIFTY12NOV26{strike}{side}"
+        f"NIFTY12NOV26{int(strike)}{side}"
         for strike in _universe().strikes for side in ("CE", "PE")
     }
     assert {item.key.exchange for item in feed.descriptors} == {"NFO"}
