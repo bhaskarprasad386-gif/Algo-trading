@@ -168,3 +168,37 @@ def test_feed_adapter_rejects_invalid_provider_timestamp_alias_values(timestamp_
         payload={timestamp_field: invalid_value},
     ))
     assert adapter.latest_quotes() == ()
+
+
+@pytest.mark.parametrize("timestamp_ns", [True, False, 0, -1])
+def test_feed_adapter_rejects_invalid_normalized_provider_timestamp(timestamp_ns):
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key,
+        option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike,
+        timestamp_ns=timestamp_ns,
+        ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    assert adapter.latest_quotes() == ()
+
+
+@pytest.mark.parametrize("invalid_value", ["inf", "-inf", float("inf"), float("-inf"), float("nan")])
+def test_feed_adapter_rejects_non_finite_provider_timestamp(invalid_value):
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key,
+        option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike,
+        timestamp_ns=10_000_000_000,
+        ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
+        payload={"exchange_timestamp_ns": invalid_value},
+    ))
+    assert adapter.latest_quotes() == ()
