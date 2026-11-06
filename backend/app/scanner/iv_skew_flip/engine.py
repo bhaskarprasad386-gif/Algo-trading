@@ -222,7 +222,7 @@ def evaluate_flip(
     fresh_rows = [q for q in chain if _fresh(q, now_ns, config.max_quote_age_seconds)]
     pair = {q.option_type.upper(): q for q in fresh_rows if q.strike == atm}
     if "CE" not in pair or "PE" not in pair:
-        return Signal("IV_FLIP", None, None, None, "WAITING", "ATM CE and PE pair unavailable")
+        return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes unavailable: ATM CE and PE pair unavailable")
     years = _expiry_years(pair["CE"].expiry, now)
     if years is None:
         return Signal("IV_FLIP", None, None, None, "WAITING", "invalid or expired option expiry")
