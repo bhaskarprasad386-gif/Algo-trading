@@ -237,3 +237,23 @@ def test_feed_snapshot_exposes_live_option_prices_depth_oi_and_source_age():
     assert quote["volume"] == 789
     assert quote["age_ms"] == 500.0
     assert quote["fresh"] is True
+
+
+def test_feed_adapter_uses_its_subscription_metadata_when_shared_record_is_generic():
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    # A shared registry descriptor can carry no option metadata (or metadata
+    # belonging to a different consumer); token identity remains authoritative.
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key,
+        timestamp_ns=10_000_000_000,
+        ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    quotes = adapter.latest_quotes()
+    assert len(quotes) == 1
+    assert quotes[0].strike == descriptor.strike
+    assert quotes[0].option_type == descriptor.option_type
+    assert quotes[0].token == descriptor.key.token
