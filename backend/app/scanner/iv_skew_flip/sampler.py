@@ -86,10 +86,15 @@ class IVOneSecondSampler:
         if isinstance(value, SpotSnapshot):
             result = value
         elif isinstance(value, tuple) and len(value) == 2:
-            if isinstance(value[0], bool) or isinstance(value[1], bool):
+            if (
+                isinstance(value[0], bool)
+                or not isinstance(value[0], (int, float))
+                or isinstance(value[1], bool)
+                or not isinstance(value[1], int)
+            ):
                 return None
             try:
-                result = SpotSnapshot(float(value[0]), int(value[1]))
+                result = SpotSnapshot(float(value[0]), value[1])
             except (TypeError, ValueError, OverflowError):
                 return None
         else:
