@@ -29,7 +29,7 @@ def test_nifty_weekly_resolves_nearest_expiry_and_seven_strikes():
     assert len(result.contracts) == 14
     assert {c.option_type for c in result.contracts} == {"CE", "PE"}
     assert len(set(result.tokens)) == 14
-    assert {c.symbol for c in result.contracts} == {row["symbol"] for row in master_rows() if row["expiry"] == "12Nov2026" and row["strike"] in {str(s * 100) for s in result.strikes}}
+    assert {c.symbol for c in result.contracts} == {row["symbol"] for row in master_rows() if row["expiry"] == "12Nov2026" and row["strike"] in {str(int(s * 100)) for s in result.strikes}}
 
 
 def test_banknifty_monthly_selects_last_expiry_in_nearest_available_month():
