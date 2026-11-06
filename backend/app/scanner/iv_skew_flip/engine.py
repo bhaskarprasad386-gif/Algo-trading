@@ -24,6 +24,7 @@ class OptionQuote:
     ask: float | None = None
     oi: int | None = None
     volume: int | None = None
+    token: str | None = None
 
     @property
     def mark(self) -> float | None:
