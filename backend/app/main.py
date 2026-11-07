@@ -23,6 +23,7 @@ from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.iv_scanner_control import IVScannerControl
+from app.models.iv_constituent_basket_version import IVConstituentBasketVersion  # noqa: F401 - register isolated IV basket history table
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
 from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
