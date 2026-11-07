@@ -56,7 +56,8 @@ def test_mixed_constituents_do_not_create_directional_pressure():
     result = p.snapshot(now_ns=base + 30_000_000_000)
     assert result["status"] == "LIVE"
     assert result["direction"] == "MIXED"
-    assert result["signals_allowed"] is True
+    assert result["signals_allowed"] is False
+    assert result["timeframe_agreement"] is False
 
 
 def test_rejects_out_of_order_unknown_and_invalid_prices():
