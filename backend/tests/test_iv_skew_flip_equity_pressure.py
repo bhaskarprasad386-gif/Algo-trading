@@ -77,3 +77,21 @@ def test_stale_components_are_excluded():
     result = p.snapshot(now_ns=base + 34_000_000_001)
     assert result["status"] == "STALE"
     assert result["signals_allowed"] is False
+
+
+def test_rejects_non_finite_configuration_and_weight_total():
+    import pytest
+
+    for kwargs in (
+        {"max_tick_age_seconds": float("nan")},
+        {"min_weight_coverage": float("inf")},
+        {"min_abs_return_pct": float("nan")},
+        {"min_breadth_pct": float("inf")},
+    ):
+        with pytest.raises(ValueError):
+            tracker(**kwargs)
+    with pytest.raises(ValueError):
+        EquityComponentPressure([
+            ComponentWeight("A", 1e308),
+            ComponentWeight("B", 1e308),
+        ])
