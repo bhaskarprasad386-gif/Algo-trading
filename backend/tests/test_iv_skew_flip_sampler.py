@@ -319,7 +319,10 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
         assert durable.oi == 10000
         assert durable.bid == 99.5
         assert durable.ask == 100.5
+        assert durable.spot_price == 21950.0
+        assert durable.spot_timestamp_ns == now_ns
         assert iv_only.oi is None
+        assert iv_only.spot_price == 21950.0
 
     # A fresh sampler instance recovers the source-time history from SQL.
     restarted = IVOneSecondSampler(
