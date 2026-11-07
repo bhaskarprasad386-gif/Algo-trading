@@ -27,6 +27,12 @@ const apiError = (body: Row, fallback: string) => {
   }
   return fallback;
 };
+function DeltaCell({ value, pct, suffix = "" }: { value: unknown; pct?: unknown; suffix?: string }) {
+  const amount = n(value);
+  if (amount === null) return <span className="theme-muted">—</span>;
+  const color = amount > 0 ? "text-emerald-600" : amount < 0 ? "text-rose-600" : "theme-muted";
+  return <span className={color}><span>{delta(amount, suffix, suffix === " pt" ? 4 : 2)}</span>{n(pct) !== null && <span className="block text-[10px]">{delta(pct, "%", 2)}</span>}</span>;
+}
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return <div className="rounded-xl border theme-border theme-surface p-3 min-w-0"><div className="text-[11px] uppercase tracking-wide theme-muted">{label}</div><div className="mt-1 text-lg font-bold theme-text truncate">{value}</div>{sub && <div className="mt-1 text-[11px] theme-muted">{sub}</div>}</div>;
 }
@@ -82,9 +88,9 @@ function OptionChain({ title, chain }: { title: string; chain: Chain }) {
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
           const cell=(v:unknown,d=2)=>n(v)===null?"—":fmt(v,d);
           return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
-            <td className="px-2 py-2">{cell(ce.oi,0)}</td><td className="px-2 py-2 text-emerald-600">{delta(ce.oi_change_1s, "", 0)}</td><td className="px-2 py-2 font-semibold">{ce.iv_live?cell(ce.iv,2):"—"}</td><td className="px-2 py-2 text-emerald-600">{delta(ce.iv_change_1s, " pt", 4)}</td><td className="px-2 py-2">{cell(ce.ltp ?? ce.mark)}</td><td className="px-2 py-2 text-emerald-600">{delta(ce.ltp_change_1s)}</td><td className="px-2 py-2 text-emerald-600">{cell(ce.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(ce.ask)}</td>
+            <td className="px-2 py-2">{cell(ce.oi,0)}</td><td className="px-2 py-2"><DeltaCell value={ce.oi_change_1s} pct={ce.oi_change_pct_1s}/></td><td className="px-2 py-2 font-semibold">{ce.iv_live?cell(ce.iv,2):"—"}</td><td className="px-2 py-2"><DeltaCell value={ce.iv_change_1s} suffix=" pt"/></td><td className="px-2 py-2">{cell(ce.ltp ?? ce.mark)}</td><td className="px-2 py-2"><DeltaCell value={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s}/></td><td className="px-2 py-2 text-emerald-600">{cell(ce.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(ce.ask)}</td>
             <td className={`px-3 py-2 font-bold ${strike===strikes[Math.floor(strikes.length/2)]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}</td>
-            <td className="px-2 py-2 text-emerald-600">{cell(pe.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(pe.ask)}</td><td className="px-2 py-2">{cell(pe.ltp ?? pe.mark)}</td><td className="px-2 py-2 text-emerald-600">{delta(pe.ltp_change_1s)}</td><td className="px-2 py-2 font-semibold">{pe.iv_live?cell(pe.iv,2):"—"}</td><td className="px-2 py-2 text-emerald-600">{delta(pe.iv_change_1s, " pt", 4)}</td><td className="px-2 py-2 text-emerald-600">{delta(pe.oi_change_1s, "", 0)}</td><td className="px-2 py-2">{cell(pe.oi,0)}</td>
+            <td className="px-2 py-2 text-emerald-600">{cell(pe.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(pe.ask)}</td><td className="px-2 py-2">{cell(pe.ltp ?? pe.mark)}</td><td className="px-2 py-2"><DeltaCell value={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s}/></td><td className="px-2 py-2 font-semibold">{pe.iv_live?cell(pe.iv,2):"—"}</td><td className="px-2 py-2"><DeltaCell value={pe.iv_change_1s} suffix=" pt"/></td><td className="px-2 py-2"><DeltaCell value={pe.oi_change_1s} pct={pe.oi_change_pct_1s}/></td><td className="px-2 py-2">{cell(pe.oi,0)}</td>
           </tr>;
         })}</tbody>
       </table>
