@@ -4,6 +4,7 @@ from app.scanner.iv_skew_flip.validation import (
     group_outcomes_by_date,
     measure_forward_outcomes,
     load_persisted_forward_outcomes,
+    summarize_forward_outcomes,
 )
 
 
@@ -65,6 +66,35 @@ def test_invalidated_and_invalid_events_do_not_receive_outcomes():
     points = [SpotPoint(4_011 * MINUTE, 101.0)]
     event = SignalEvent(4_000 * MINUTE, 100.0, "BULLISH", "INVALIDATED")
     assert measure_forward_outcomes(event, points) == []
+
+
+def test_stale_or_future_event_spot_baseline_is_rejected():
+    points = [SpotPoint(5_011 * MINUTE, 101.0)]
+    stale = SignalEvent(
+        5_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE",
+        spot_timestamp_ns=4_994 * MINUTE,
+    )
+    future = SignalEvent(
+        5_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE",
+        spot_timestamp_ns=5_001 * MINUTE,
+    )
+
+    assert measure_forward_outcomes(stale, points, horizons_minutes=(10,)) == []
+    assert measure_forward_outcomes(future, points, horizons_minutes=(10,)) == []
+
+
+def test_summary_reports_coverage_and_descriptive_returns_not_accuracy():
+    event = SignalEvent(6_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE")
+    outcomes = measure_forward_outcomes(
+        event, [SpotPoint(6_011 * MINUTE, 101.0)], horizons_minutes=(10,),
+    )
+    summary = summarize_forward_outcomes([event], [(event, outcomes[0])])
+
+    assert summary["eligible_events"] == 1
+    assert summary["horizons"]["10"]["observed"] == 1
+    assert summary["horizons"]["10"]["coverage_pct"] == 100.0
+    assert summary["horizons"]["10"]["mean_direction_adjusted_return_pct"] == 1.0
+    assert "not accuracy" in summary["interpretation"]
 
 
 def test_trading_date_uses_ist_across_utc_midnight():
