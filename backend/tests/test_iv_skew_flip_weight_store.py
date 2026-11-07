@@ -6,7 +6,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion
 from app.scanner.iv_skew_flip.weight_import import parse_official_weight_basket
 from app.scanner.iv_skew_flip.weight_store import persist_validated_basket_version
