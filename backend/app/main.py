@@ -54,7 +54,8 @@ from app.scanner.live_synthetic_routes import router as live_synthetic_router, c
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
-from app.scanner.iv_skew_flip.validation import load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
+from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
+from app.models.iv_signal_event import IVSignalEvent
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
@@ -1855,18 +1856,37 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
             db, underlying=symbol, expiry_type=expiry,
             horizons_minutes=(10, 30, 60),
         )
-        unique_events = {
-            (event.event_timestamp_ns, event.direction, event.state, event.underlying): event
-            for event, _ in rows
-        }
+        event_query = db.query(IVSignalEvent).filter(
+            IVSignalEvent.underlying == symbol,
+            IVSignalEvent.state.in_(("PRE_MOVE", "CONFIRMED")),
+            IVSignalEvent.direction.in_(("BULLISH", "BEARISH")),
+        )
+        if expiry:
+            event_query = event_query.filter(IVSignalEvent.expiry_type == expiry)
+        stored_events = event_query.order_by(IVSignalEvent.event_timestamp_ns.asc()).all()
+        eligible_events = [
+            SignalEvent(
+                event_timestamp_ns=item.event_timestamp_ns,
+                spot_price=item.spot_price,
+                direction=item.direction,
+                state=item.state,
+                underlying=item.underlying,
+                spot_timestamp_ns=item.spot_timestamp_ns,
+            )
+            for item in stored_events
+        ]
         return {
             "status": "ok",
             "underlying": symbol,
             "expiry_type": expiry,
             "source": "iv_spot_observations",
-            "eligible_events_with_measured_outcomes": len(unique_events),
-            "summary": summarize_forward_outcomes(unique_events.values(), rows),
-            "date_wise": summarize_walk_forward_by_date(rows),
+            "eligible_events": len(eligible_events),
+            "events_with_measured_outcomes": len({
+                (event.event_timestamp_ns, event.direction, event.state, event.underlying)
+                for event, _ in rows
+            }),
+            "summary": summarize_forward_outcomes(eligible_events, rows),
+            "date_wise": summarize_walk_forward_by_date(rows, eligible_events),
             "orders_enabled": False,
             "interpretation": "descriptive forward returns only; not accuracy, profitability, or out-of-sample validation",
         }
