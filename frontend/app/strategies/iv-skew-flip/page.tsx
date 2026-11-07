@@ -108,6 +108,7 @@ export default function IVSkewFlipPage() {
   const [error,setError]=useState("");
   const [selectedEnabled,setSelectedEnabled]=useState(false);
   const [savedEnabled,setSavedEnabled]=useState(false);
+  const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const refresh=useCallback(async()=>{
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
@@ -116,13 +117,14 @@ export default function IVSkewFlipPage() {
     setRuntime(body.runtime??null);
     setSelectedEnabled(body.saved_enabled===true);
     setSavedEnabled(body.saved_enabled===true);
+    setSettingDirty(false);
   },[base]);
   useEffect(()=>{
     let active=true;
-    const poll=async()=>{try{const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});const body=await response.json();if(active&&response.ok){setRuntime(body.runtime??null);setSelectedEnabled(body.saved_enabled===true);setSavedEnabled(body.saved_enabled===true);}}catch{/* keep last known state */}};
+    const poll=async()=>{try{const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});const body=await response.json();if(active&&response.ok){setRuntime(body.runtime??null);setSavedEnabled(body.saved_enabled===true);if(!settingDirty)setSelectedEnabled(body.saved_enabled===true);}}catch{/* keep last known state */}};
     void poll();const timer=window.setInterval(()=>{if(active)void poll();},1000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base]);
+  },[base,settingDirty]);
   async function saveRunnerSetting(){
     setBusy(true);setError("");
     try{
@@ -132,6 +134,7 @@ export default function IVSkewFlipPage() {
       setRuntime(body.runtime??null);
       setSavedEnabled(body.saved_enabled===true);
       setSelectedEnabled(body.saved_enabled===true);
+      setSettingDirty(false);
     }catch(e){setError(e instanceof Error?e.message:"IV Scanner setting save failed");}
     finally{setBusy(false);}
   }
@@ -151,8 +154,8 @@ export default function IVSkewFlipPage() {
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
         <div className="inline-flex rounded-xl border theme-border p-1" aria-label="IV Scanner desired runner state">
-          <button type="button" onClick={()=>setSelectedEnabled(true)} disabled={busy} aria-pressed={selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedEnabled?"bg-emerald-600 text-white":"theme-muted"}`}>ON</button>
-          <button type="button" onClick={()=>setSelectedEnabled(false)} disabled={busy} aria-pressed={!selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${!selectedEnabled?"bg-rose-600 text-white":"theme-muted"}`}>OFF</button>
+          <button type="button" onClick={()=>{setSelectedEnabled(true);setSettingDirty(true);}} disabled={busy} aria-pressed={selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedEnabled?"bg-emerald-600 text-white":"theme-muted"}`}>ON</button>
+          <button type="button" onClick={()=>{setSelectedEnabled(false);setSettingDirty(true);}} disabled={busy} aria-pressed={!selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${!selectedEnabled?"bg-rose-600 text-white":"theme-muted"}`}>OFF</button>
         </div>
         <button onClick={()=>void saveRunnerSetting()} disabled={busy||selectedEnabled===savedEnabled} className="rounded-xl border theme-border theme-surface px-4 py-2 text-sm font-semibold disabled:opacity-50">{busy?"Saving…":"Save"}</button>
       </div>
