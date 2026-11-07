@@ -260,6 +260,9 @@ class IVOneSecondSampler:
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
                 new_history.append((quote.token, sample))
 
+        # Commit durable observations before advancing the in-memory source cursor.
+        # If storage fails, the same broker tick remains eligible for retry.
+        self._persist_history([sample for _, sample in new_history])
         with self._lock:
             changes: dict[str, dict[str, float | int | None]] = {}
             for token, sample in updates.items():
@@ -297,7 +300,6 @@ class IVOneSecondSampler:
                 self._last_source_timestamp[token] = sample.source_timestamp_ns
             self._last_sampled_at_ns = sampled_at
             self._last_error = None if updates else "no fresh option quotes available"
-        self._persist_history([sample for _, sample in new_history])
         return self.snapshot()
 
     @property
