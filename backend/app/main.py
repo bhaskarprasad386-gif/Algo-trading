@@ -1781,15 +1781,33 @@ def save_iv_skew_flip_config(payload: dict):
     # section; otherwise a racing OFF/ON request could leave them contradictory.
     with _iv_skew_flip_runtime_lock:
         if enabled:
+            # Persist ON first. If persistence fails, the runner is never
+            # started, so a database outage cannot leave an unsaved live runner.
+            try:
+                _save_iv_scanner_enabled(True)
+            except Exception as exc:
+                app_logger.exception("IV Scanner ON state could not be persisted")
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": str(exc)}) from exc
             try:
                 snapshot = _start_iv_skew_flip_runtime()
             except Exception as exc:
+                # Compensate the desired state if backend startup fails.
+                try:
+                    _save_iv_scanner_enabled(False)
+                except Exception:
+                    app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
                 app_logger.exception("IV Scanner could not be enabled")
                 raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
-            _save_iv_scanner_enabled(True)
         else:
+            # Persist OFF first. If the database is unavailable, leave the
+            # currently running scanner untouched rather than create a
+            # STOPPED runtime with a persisted ON state that restarts later.
+            try:
+                _save_iv_scanner_enabled(False)
+            except Exception as exc:
+                app_logger.exception("IV Scanner OFF state could not be persisted")
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": str(exc)}) from exc
             snapshot = _stop_iv_skew_flip_runtime()
-            _save_iv_scanner_enabled(False)
         return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
                 "runner_status": snapshot.get("status", "STOPPED"),
                 "runtime": snapshot, "orders_enabled": False}
@@ -1799,8 +1817,15 @@ def save_iv_skew_flip_config(payload: dict):
 def start_iv_skew_flip_scanner():
     with _iv_skew_flip_runtime_lock:
         try:
-            snapshot = _start_iv_skew_flip_runtime()
             _save_iv_scanner_enabled(True)
+            try:
+                snapshot = _start_iv_skew_flip_runtime()
+            except Exception:
+                try:
+                    _save_iv_scanner_enabled(False)
+                except Exception:
+                    app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
+                raise
             return snapshot
         except Exception as exc:
             app_logger.exception("IV Skew / IV Flip scanner startup failed")
@@ -1810,9 +1835,8 @@ def start_iv_skew_flip_scanner():
 @app.post("/api/v1/scanner/iv-skew-flip/stop")
 def stop_iv_skew_flip_scanner():
     with _iv_skew_flip_runtime_lock:
-        snapshot = _stop_iv_skew_flip_runtime()
         _save_iv_scanner_enabled(False)
-        return snapshot
+        return _stop_iv_skew_flip_runtime()
 
 
 @app.get("/health")
