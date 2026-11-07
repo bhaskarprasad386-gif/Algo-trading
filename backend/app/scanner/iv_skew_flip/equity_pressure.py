@@ -176,7 +176,11 @@ class EquityComponentPressure:
             item["status"] == "READY" for item in windows.values()
         )
         directions = {str(item["direction"]) for item in windows.values() if item["direction"] != "WAITING"}
-        agreement = len(directions) == 1 and overall_ready
+        agreement = (
+            overall_ready
+            and len(directions) == 1
+            and next(iter(directions), None) in {"BULLISH", "BEARISH"}
+        )
         overall_direction = next(iter(directions)) if agreement else ("MIXED" if overall_ready else "WAITING")
         any_samples = any(histories.values())
         return {
