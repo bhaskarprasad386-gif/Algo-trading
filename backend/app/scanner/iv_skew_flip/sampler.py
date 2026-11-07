@@ -38,6 +38,7 @@ class OptionMetricSample:
     source_timestamp_ns: int
     oi: int | None
     mark: float | None
+    ltp: float | None
     iv: float | None
     iv_input: str | None
 
@@ -171,6 +172,7 @@ class IVOneSecondSampler:
                 sampled_at_ns=sampled_at, source_timestamp_ns=quote.timestamp_ns,
                 oi=quote.oi if isinstance(quote.oi, int) and not isinstance(quote.oi, bool) and quote.oi >= 0 else None,
                 mark=mark,
+                ltp=quote.ltp if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0 else None,
                 iv=None if iv is None else round(iv * 100.0, 4),
                 iv_input=(
                     "BID_ASK_MIDPOINT"
@@ -195,7 +197,7 @@ class IVOneSecondSampler:
                 # a misleading zero change.
                 if previous is not None and 500_000_000 <= elapsed_ns <= 2_500_000_000 and sample.source_timestamp_ns > previous.source_timestamp_ns:
                     oi_change = sample.oi - previous.oi if sample.oi is not None and previous.oi is not None else None
-                    ltp_change = sample.mark - previous.mark if sample.mark is not None and previous.mark is not None else None
+                    ltp_change = sample.ltp - previous.ltp if sample.ltp is not None and previous.ltp is not None else None
                     iv_change = sample.iv - previous.iv if sample.iv is not None and previous.iv is not None else None
                     changes[token] = {
                         "interval_seconds": round(elapsed_ns / 1_000_000_000, 2),
@@ -203,7 +205,7 @@ class IVOneSecondSampler:
                         "oi_change_pct": round(oi_change * 100.0 / previous.oi, 4) if oi_change is not None and previous.oi not in (None, 0) else None,
                         "iv_change": round(iv_change, 4) if iv_change is not None else None,
                         "ltp_change": round(ltp_change, 4) if ltp_change is not None else None,
-                        "ltp_change_pct": round(ltp_change * 100.0 / previous.mark, 4) if ltp_change is not None and previous.mark not in (None, 0) else None,
+                        "ltp_change_pct": round(ltp_change * 100.0 / previous.ltp, 4) if ltp_change is not None and previous.ltp not in (None, 0) else None,
                     }
             self._one_second_changes = changes
             self._previous_cycle = updates.copy()
@@ -317,6 +319,7 @@ class IVOneSecondSampler:
                 "iv_live": item.iv is not None,
                 "iv_input": item.iv_input,
                 "mark": item.mark,
+                "ltp": item.ltp,
                 "source_timestamp_ns": item.source_timestamp_ns,
                 "source_age_ms": round(item.source_age_ms, 2),
                 "sampled_at_ns": item.sampled_at_ns,
