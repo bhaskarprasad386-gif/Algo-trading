@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from math import isfinite
 from threading import RLock
 from time import time_ns
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.contracts import InstrumentType
@@ -50,7 +50,7 @@ class IVWeightedEquityFeedAdapter:
     ) -> None:
         if max_tick_age_seconds <= 0:
             raise ValueError("max_tick_age_seconds must be positive")
-        self.feed = feed or CommonStrategyMarketFeed(self.CONSUMER, mode=1)
+        self.feed = feed if feed is not None else CommonStrategyMarketFeed(self.CONSUMER, mode=1)
         self.clock_ns = clock_ns
         self.max_tick_age_ns = int(max_tick_age_seconds * 1_000_000_000)
         self._lock = RLock()
@@ -73,7 +73,7 @@ class IVWeightedEquityFeedAdapter:
     @classmethod
     def _source_timestamp_present(cls, record: Any) -> bool:
         payload = getattr(record, "payload", None)
-        if not isinstance(payload, dict):
+        if not isinstance(payload, Mapping):
             return False
         for field in ("exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
                       "exchange_timestamp_ms", "timestamp", "feed_time"):
@@ -125,7 +125,17 @@ class IVWeightedEquityFeedAdapter:
             self._by_key = {descriptor.key: item for item, descriptor in normalized}
             self._ticks.clear()
         descriptors = tuple(descriptor for _, descriptor in normalized)
-        self.feed.start(descriptors, self._on_record)
+        try:
+            self.feed.start(descriptors, self._on_record)
+        except Exception:
+            try:
+                self.feed.stop()
+            finally:
+                with self._lock:
+                    self._started = False
+                    self._by_key.clear()
+                    self._ticks.clear()
+            raise
         with self._lock:
             self._started = True
         return {
