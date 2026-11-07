@@ -276,9 +276,17 @@ class IVEarlyMoveDetector:
         if spot_confirmed and option_pressure_confirmed:
             state = "CONFIRMED"
             reason = "multi-contract option pressure is confirmed by a 60-second underlying move"
-        elif option_pressure_confirmed and spot_aligned:
+        # Early-entry setup: option pressure must lead, while spot has not
+        # materially moved yet. A small opposing wiggle is tolerated, but a
+        # meaningful adverse move suppresses the setup. This deliberately
+        # avoids waiting for spot alignment, which would make the alert late.
+        spot_not_adverse = spot_change_10s is not None and spot_change_60s is not None and (
+            (direction == "BULLISH" and spot_change_10s >= -0.03 and spot_change_60s >= -0.05)
+            or (direction == "BEARISH" and spot_change_10s <= 0.03 and spot_change_60s <= 0.05)
+        )
+        elif option_pressure_confirmed and spot_not_adverse:
             state = "PRE_MOVE"
-            reason = "multi-contract volume acceleration with rising premium and IV, aligned with spot"
+            reason = "early-entry candidate: multi-contract volume, premium and IV pressure before a material spot move"
         elif volume_watch or premium_rise or iv_rise:
             state = "WATCH"
             reason = "early pressure detected; waiting for independent confirmation"
