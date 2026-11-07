@@ -87,3 +87,54 @@ def test_early_move_detector_rejects_iv_from_a_different_option_tick():
     )
     assert result["signals_allowed"] is False
     assert result["contracts_confirming"] == 0
+
+
+
+def test_early_move_volume_baseline_counts_empty_buckets_as_zero():
+    detector = IVEarlyMoveDetector()
+    base = 300_000_000_000
+    volume = 100
+    mark = 20.0
+    iv = 18.0
+    # One small volume increment every 20 seconds leaves every alternate
+    # 10-second bucket empty. Empty buckets must lower the true time baseline.
+    for step in range(13):
+        ts = base + step * 20_000_000_000
+        if step:
+            volume += 10
+            mark += 0.01
+            iv += 0.01
+        quote = SimpleNamespace(
+            token="sparse-ce", timestamp_ns=ts, volume=volume,
+            option_type="CE", mark=mark, bid=mark - 0.1, ask=mark + 0.1,
+        )
+        metric = {
+            "token": "sparse-ce", "iv": iv,
+            "iv_input": "BID_ASK_MIDPOINT",
+            "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
+        }
+        detector.update(
+            quotes=(quote,), metrics=(metric,), spot_price=24000 + step,
+            now_ns=ts, spot_timestamp_ns=ts,
+        )
+
+    ts = base + 13 * 20_000_000_000
+    volume += 100
+    mark += 1.0
+    iv += 0.2
+    quote = SimpleNamespace(
+        token="sparse-ce", timestamp_ns=ts, volume=volume,
+        option_type="CE", mark=mark, bid=mark - 0.1, ask=mark + 0.1,
+    )
+    metric = {
+        "token": "sparse-ce", "iv": iv,
+        "iv_input": "BID_ASK_MIDPOINT",
+        "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
+    }
+    result = detector.update(
+        quotes=(quote,), metrics=(metric,), spot_price=24020,
+        now_ns=ts, spot_timestamp_ns=ts,
+    )
+    # 10 active buckets over the 20-bucket lookback => baseline 5,
+    # rather than 10 if empty buckets were incorrectly omitted.
+    assert result["volume_ratio"] == 20.0
