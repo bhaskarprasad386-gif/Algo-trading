@@ -277,9 +277,12 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_syn_alert_identity ON live_synthetic_alert_history (symbol, expiry, timestamp_ns, strike, direction)"))
         # Durable IV observations are isolated from all other scanner histories.
         # Source-time uniqueness makes retries idempotent across sampler restarts.
-        connection.execute(text("""
+        # PostgreSQL needs SERIAL for generated integer primary keys; SQLite
+        # uses INTEGER PRIMARY KEY backed by rowid.
+        observation_id_type = "SERIAL" if connection.dialect.name == "postgresql" else "INTEGER"
+        connection.execute(text(f"""
             CREATE TABLE IF NOT EXISTS iv_option_observations (
-                id INTEGER PRIMARY KEY,
+                id {observation_id_type} PRIMARY KEY,
                 token VARCHAR(64) NOT NULL,
                 underlying VARCHAR(32) NOT NULL,
                 expiry VARCHAR(32) NOT NULL,
