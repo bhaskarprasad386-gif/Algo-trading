@@ -16,6 +16,12 @@ from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
 
+CHAIN_CONFIGS = (
+    ("NIFTY_WEEKLY", DEFAULT_CONFIGS[0]),
+    ("NIFTY_MONTHLY", ScannerConfig("NIFTY", "MONTHLY", 0.8, -0.8)),
+    ("BANKNIFTY_MONTHLY", DEFAULT_CONFIGS[1]),
+)
+
 
 class IVSkewFlipRuntime:
     """Coordinate independent spot/option consumers and one-second samplers.
@@ -51,7 +57,7 @@ class IVSkewFlipRuntime:
         self._lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
-        self._rows_by_symbol: dict[str, tuple[dict[str, Any], ...]] = {}
+        self._rows_by_stream: dict[str, tuple[dict[str, Any], ...]] = {}
         self._option_feeds: dict[str, IVSkewFlipFeedAdapter] = {}
         self._samplers: dict[str, IVOneSecondSampler] = {}
         self._universe_tokens: dict[str, tuple[str, ...]] = {}
@@ -80,19 +86,19 @@ class IVSkewFlipRuntime:
         if not instruments:
             raise RuntimeError("Angel One instrument master is empty")
         rows = {
-            config.symbol: self._rows_for_symbol(instruments, config.symbol)
-            for config in DEFAULT_CONFIGS
+            stream_id: self._rows_for_symbol(instruments, config.symbol)
+            for stream_id, config in CHAIN_CONFIGS
         }
         if any(not values for values in rows.values()):
-            missing = sorted(symbol for symbol, values in rows.items() if not values)
-            raise LookupError(f"instrument master has no NFO option contracts for {missing}")
+            missing = sorted(stream_id for stream_id, values in rows.items() if not values)
+            raise LookupError(f"instrument master has no NFO option contracts for streams {missing}")
         # Resolve both NSE index tokens before subscribing, so a partial/invalid
         # master cannot leave the runtime half-started.
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
         self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
         with self._lock:
-            self._rows_by_symbol = rows
+            self._rows_by_stream = rows
             self._started = True
             self._stop.clear()
             self._thread = Thread(
@@ -103,12 +109,12 @@ class IVSkewFlipRuntime:
             self._thread.start()
         return self.snapshot()
 
-    def _refresh_symbol(self, config: ScannerConfig, spot: Any, now: datetime) -> None:
-        symbol = config.symbol
+    def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
+        symbol = stream_id
         try:
             universe = resolve_option_universe(
-                self._rows_by_symbol[symbol],
-                underlying=symbol,
+                self._rows_by_stream[symbol],
+                underlying=config.symbol,
                 expiry_type=config.expiry_type,
                 spot=spot.price,
                 today=now.astimezone(IST).date(),
@@ -127,7 +133,7 @@ class IVSkewFlipRuntime:
             feed.start(universe)
             sampler = IVOneSecondSampler(
                 quote_source=feed,
-                spot_provider=lambda name=symbol: self.spot_feed.spot_snapshot(name),
+                spot_provider=lambda name=config.symbol: self.spot_feed.spot_snapshot(name),
                 config=config,
                 interval_seconds=1.0,
                 clock_ns=self.clock_ns,
@@ -175,11 +181,11 @@ class IVSkewFlipRuntime:
                 "signals_allowed": False,
             }
 
-    def _evaluate_symbol(self, config: ScannerConfig, now: datetime, now_ns: int) -> bool:
-        symbol = config.symbol
+    def _evaluate_symbol(self, stream_id: str, config: ScannerConfig, now: datetime, now_ns: int) -> bool:
+        symbol = stream_id
         feed = self._option_feeds.get(symbol)
         sampler = self._samplers.get(symbol)
-        spot = self.spot_feed.spot_snapshot(symbol)
+        spot = self.spot_feed.spot_snapshot(config.symbol)
         if feed is None or sampler is None or spot is None or not hasattr(feed, "latest_quotes"):
             self._mark_waiting(symbol, now_ns, "fresh spot, option feed and sampler are all required")
             return True
@@ -272,8 +278,8 @@ class IVSkewFlipRuntime:
         if previous is not None and now_ns - previous < int(self.evaluation_seconds * 1_000_000_000):
             return
         evaluated = False
-        for config in DEFAULT_CONFIGS:
-            evaluated = self._evaluate_symbol(config, now, now_ns) or evaluated
+        for stream_id, config in CHAIN_CONFIGS:
+            evaluated = self._evaluate_symbol(stream_id, config, now, now_ns) or evaluated
         if evaluated:
             with self._lock:
                 self._last_evaluation_ns = now_ns
@@ -282,11 +288,11 @@ class IVSkewFlipRuntime:
         now = self.clock_datetime()
         if now.tzinfo is None:
             raise ValueError("runtime datetime must be timezone-aware")
-        for config in DEFAULT_CONFIGS:
+        for stream_id, config in CHAIN_CONFIGS:
             spot = self.spot_feed.spot_snapshot(config.symbol)
             if spot is None:
                 continue
-            self._refresh_symbol(config, spot, now)
+            self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
         self._maybe_evaluate(now, now_ns)
         with self._lock:
@@ -331,15 +337,27 @@ class IVSkewFlipRuntime:
             "last_evaluation_ns": last_evaluation,
             "signals": signals,
             "spot_feed": self.spot_feed.snapshot(),
+            "option_chains": {
+                stream_id: {
+                    "symbol": config.symbol,
+                    "expiry_type": config.expiry_type,
+                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "WAITING"},
+                    "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
+                    "error": errors.get(stream_id),
+                    "signals": signals.get(stream_id),
+                }
+                for stream_id, config in CHAIN_CONFIGS
+            },
             "indices": {
                 symbol: {
-                    "option_feed": feeds[symbol].snapshot() if symbol in feeds else {"status": "WAITING_FOR_SPOT"},
-                    "sampler": samplers[symbol].snapshot() if symbol in samplers else {"status": "WAITING"},
-                    "universe_tokens": len(self._universe_tokens.get(symbol, ())),
-                    "error": errors.get(symbol),
-                    "signals": signals.get(symbol),
+                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "WAITING"},
+                    "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
+                    "error": errors.get(stream_id),
+                    "signals": signals.get(stream_id),
                 }
-                for symbol in ("NIFTY", "BANKNIFTY")
+                for symbol, stream_id in (("NIFTY", "NIFTY_WEEKLY"), ("BANKNIFTY", "BANKNIFTY_MONTHLY"))
             },
             "last_refresh_ns": last_refresh,
         }
@@ -363,7 +381,7 @@ class IVSkewFlipRuntime:
             self._samplers.clear()
             self._option_feeds.clear()
             self._universe_tokens.clear()
-            self._rows_by_symbol.clear()
+            self._rows_by_stream.clear()
             self._signals.clear()
             self._previous_atm_iv_diff.clear()
             self._previous_atm_strike.clear()

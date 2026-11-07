@@ -36,8 +36,10 @@ class OptionMetricSample:
     option_type: str
     sampled_at_ns: int
     source_timestamp_ns: int
+    spot_timestamp_ns: int
     oi: int | None
     mark: float | None
+    ltp: float | None
     iv: float | None
     iv_input: str | None
 
@@ -77,6 +79,8 @@ class IVOneSecondSampler:
         self._stop = Event()
         self._thread: Thread | None = None
         self._latest: dict[str, OptionMetricSample] = {}
+        self._previous_cycle: dict[str, OptionMetricSample] = {}
+        self._one_second_changes: dict[str, dict[str, float | int | None]] = {}
         self._history: dict[str, deque[OptionMetricSample]] = defaultdict(deque)
         self._last_source_timestamp: dict[str, int] = {}
         self._last_sampled_at_ns: int | None = None
@@ -167,8 +171,10 @@ class IVOneSecondSampler:
                 token=quote.token, underlying=quote.underlying, expiry=quote.expiry,
                 strike=quote.strike, option_type=quote.option_type,
                 sampled_at_ns=sampled_at, source_timestamp_ns=quote.timestamp_ns,
+                spot_timestamp_ns=spot_value.timestamp_ns,
                 oi=quote.oi if isinstance(quote.oi, int) and not isinstance(quote.oi, bool) and quote.oi >= 0 else None,
                 mark=mark,
+                ltp=quote.ltp if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0 else None,
                 iv=None if iv is None else round(iv * 100.0, 4),
                 iv_input=(
                     "BID_ASK_MIDPOINT"
@@ -184,6 +190,28 @@ class IVOneSecondSampler:
                 new_history.append((quote.token, sample))
 
         with self._lock:
+            changes: dict[str, dict[str, float | int | None]] = {}
+            for token, sample in updates.items():
+                previous = self._previous_cycle.get(token)
+                elapsed_ns = 0 if previous is None else sampled_at - previous.sampled_at_ns
+                # Compare consecutive one-second sampler cycles only. A repeated
+                # broker tick is not a new market observation and must not show
+                # a misleading zero change.
+                if previous is not None and 500_000_000 <= elapsed_ns <= 1_500_000_000 and (sample.source_timestamp_ns > previous.source_timestamp_ns or sample.spot_timestamp_ns > previous.spot_timestamp_ns):
+                    new_option_tick = sample.source_timestamp_ns > previous.source_timestamp_ns
+                    oi_change = sample.oi - previous.oi if new_option_tick and sample.oi is not None and previous.oi is not None else None
+                    ltp_change = sample.ltp - previous.ltp if new_option_tick and sample.ltp is not None and previous.ltp is not None else None
+                    iv_change = sample.iv - previous.iv if sample.iv is not None and previous.iv is not None and sample.iv != previous.iv else None
+                    changes[token] = {
+                        "interval_seconds": round(elapsed_ns / 1_000_000_000, 2),
+                        "oi_change": oi_change,
+                        "oi_change_pct": round(oi_change * 100.0 / previous.oi, 4) if oi_change is not None and previous.oi not in (None, 0) else None,
+                        "iv_change": round(iv_change, 4) if iv_change is not None else None,
+                        "ltp_change": round(ltp_change, 4) if ltp_change is not None else None,
+                        "ltp_change_pct": round(ltp_change * 100.0 / previous.ltp, 4) if ltp_change is not None and previous.ltp not in (None, 0) else None,
+                    }
+            self._one_second_changes = changes
+            self._previous_cycle = updates.copy()
             self._latest = updates
             cutoff_ns = sampled_at - self.history_limit * 1_000_000_000
             for token, sample in new_history:
@@ -279,6 +307,7 @@ class IVOneSecondSampler:
             history_sizes = {token: len(rows) for token, rows in self._history.items()}
             sampled_at = self._last_sampled_at_ns
             error = self._last_error
+            changes = dict(self._one_second_changes)
         live_metrics = [
             {
                 "token": item.token,
@@ -293,9 +322,17 @@ class IVOneSecondSampler:
                 "iv_live": item.iv is not None,
                 "iv_input": item.iv_input,
                 "mark": item.mark,
+                "ltp": item.ltp,
                 "source_timestamp_ns": item.source_timestamp_ns,
+                "spot_timestamp_ns": item.spot_timestamp_ns,
                 "source_age_ms": round(item.source_age_ms, 2),
                 "sampled_at_ns": item.sampled_at_ns,
+                "change_interval_seconds": changes.get(item.token, {}).get("interval_seconds"),
+                "oi_change_1s": changes.get(item.token, {}).get("oi_change"),
+                "oi_change_pct_1s": changes.get(item.token, {}).get("oi_change_pct"),
+                "iv_change_1s": changes.get(item.token, {}).get("iv_change"),
+                "ltp_change_1s": changes.get(item.token, {}).get("ltp_change"),
+                "ltp_change_pct_1s": changes.get(item.token, {}).get("ltp_change_pct"),
             }
             for item in sorted(samples, key=lambda row: (row.strike, row.option_type))
         ]

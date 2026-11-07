@@ -61,6 +61,9 @@ def test_one_second_sampler_calculates_iv_and_samples_oi_from_fresh_quotes():
     result = sampler.sample_once(now_ns=now_ns + 1_000_000_000, now=now, spot=SpotSnapshot(21950, now_ns + 1_000_000_000))
     assert result["sample_count"] == 2
     assert result["history_samples_by_token"] == {"ce-token": 1, "pe-token": 1}
+    assert all(row["oi_change_1s"] is None for row in result["live_metrics"])
+    assert all(row["iv_change_1s"] is None for row in result["live_metrics"])
+    assert all(row["ltp_change_1s"] is None for row in result["live_metrics"])
 
 
 def test_one_second_sampler_records_new_oi_only_on_new_source_tick():
@@ -75,15 +78,22 @@ def test_one_second_sampler_records_new_oi_only_on_new_source_tick():
     sampler = _sampler(source, lambda: now_ns + 1_000_000_000)
     sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
     source.quotes = (OptionQuote(
-        "NIFTY", "2026-11-12", 21950, "CE", now_ns + 2_000_000_000,
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns + 1_000_000_000,
         premium + 5, 104.5, 105.5, 9400, 12, "ce-token",
     ),)
     result = sampler.sample_once(
-        now_ns=now_ns + 2_000_000_000, now=now,
-        spot=SpotSnapshot(21950, now_ns + 2_000_000_000),
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
     )
     assert result["oi_values"]["ce-token"] == 9400
     assert result["history_samples_by_token"]["ce-token"] == 2
+    metric = result["live_metrics"][0]
+    assert metric["change_interval_seconds"] == 1.0
+    assert metric["oi_change_1s"] == -600
+    assert metric["oi_change_pct_1s"] == -6.0
+    assert metric["ltp_change_1s"] == 5.0
+    assert metric["ltp_change_pct_1s"] == 5.0
+    assert metric["iv_change_1s"] is not None
 
 
 def test_one_second_sampler_fails_closed_without_fresh_spot():

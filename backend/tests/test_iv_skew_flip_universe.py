@@ -52,10 +52,21 @@ def test_universe_fails_closed_when_any_selected_ce_pe_is_missing():
         )
 
 
+def test_nifty_monthly_resolves_last_expiry_in_nearest_month():
+    result = resolve_option_universe(
+        master_rows(expiries=("12Nov2026", "26Nov2026", "31Dec2026")),
+        underlying="NIFTY", expiry_type="MONTHLY",
+        spot=22025, today=date(2026, 11, 6),
+    )
+    assert result.expiry == "2026-11-26"
+    assert len(result.strikes) == 7
+    assert len(result.contracts) == 14
+
+
 def test_universe_rejects_wrong_configured_expiry_type():
-    with pytest.raises(ValueError, match="configured for WEEKLY"):
+    with pytest.raises(ValueError, match="configured for MONTHLY"):
         resolve_option_universe(
-            master_rows(), underlying="NIFTY", expiry_type="MONTHLY",
+            master_rows("BANKNIFTY"), underlying="BANKNIFTY", expiry_type="WEEKLY",
             spot=22000, today=date(2026, 11, 6),
         )
 
