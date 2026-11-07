@@ -130,12 +130,12 @@ def test_database_join_uses_deduplicated_source_spot_ticks_and_event_filters():
     from sqlalchemy.orm import sessionmaker
 
     from app.core.database import Base
-    from app.models.iv_option_observation import IVOptionObservation
     from app.models.iv_signal_event import IVSignalEvent
+    from app.models.iv_spot_observation import IVSpotObservation
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine, tables=[
-        IVSignalEvent.__table__, IVOptionObservation.__table__,
+        IVSignalEvent.__table__, IVSpotObservation.__table__,
     ])
     session = sessionmaker(bind=engine)()
     minute = 60 * 1_000_000_000
@@ -149,20 +149,13 @@ def test_database_join_uses_deduplicated_source_spot_ticks_and_event_filters():
             spot_price=100.0, contracts_confirming=2,
             qualifying_tokens='["ce1","ce2"]', reason="test",
         ))
-        for token in ("ce1", "ce2"):
-            session.add(IVOptionObservation(
-                token=token, underlying="NIFTY", expiry="2026-11-12",
-                strike=100.0, option_type="CE",
-                source_timestamp_ns=10_011 * minute,
-                spot_timestamp_ns=10_011 * minute,
-                spot_price=102.0, sampled_at_ns=10_011 * minute,
-                iv=20.0, oi=100, bid=1.0, ask=1.1, ltp=1.05,
-                mark=1.05, volume=10,
-            ))
+        session.add(IVSpotObservation(
+            underlying="NIFTY", source_timestamp_ns=10_011 * minute,
+            price=102.0, received_at_ns=10_011 * minute,
+        ))
         session.commit()
 
-        # A second event has conflicting spot prices from two option rows
-        # at the same source timestamp; the loader must exclude that tick.
+        # A second event has its own dedicated spot tick.
         session.add(IVSignalEvent(
             stream_id="NIFTY_WEEKLY", underlying="NIFTY", expiry_type="WEEKLY",
             state="PRE_MOVE", direction="BULLISH",
@@ -172,29 +165,22 @@ def test_database_join_uses_deduplicated_source_spot_ticks_and_event_filters():
             spot_price=100.0, contracts_confirming=2,
             qualifying_tokens='["ce3","ce4"]', reason="conflict test",
         ))
-        for token, price in (("ce3", 102.0), ("ce4", 103.0)):
-            session.add(IVOptionObservation(
-                token=token, underlying="NIFTY", expiry="2026-11-12",
-                strike=100.0, option_type="CE",
-                source_timestamp_ns=20_011 * minute,
-                spot_timestamp_ns=20_011 * minute,
-                spot_price=price, sampled_at_ns=20_011 * minute,
-                iv=20.0, oi=100, bid=1.0, ask=1.1, ltp=1.05,
-                mark=1.05, volume=10,
-            ))
+        session.add(IVSpotObservation(
+            underlying="NIFTY", source_timestamp_ns=20_011 * minute,
+            price=102.0, received_at_ns=20_011 * minute,
+        ))
         session.commit()
 
         rows = load_persisted_forward_outcomes(
             session, underlying="NIFTY", expiry_type="WEEKLY",
             horizons_minutes=(10,),
         )
-        # First event's identical tick is deduplicated; conflicting second
-        # event tick is excluded instead of being averaged.
-        assert len(rows) == 1
-        assert rows[0][1].direction_adjusted_return_pct == 2.0
+        # Both event horizons resolve from the independent spot-tick stream.
+        assert len(rows) == 2
+        assert all(row[1].direction_adjusted_return_pct == 2.0 for row in rows)
     finally:
         session.close()
         Base.metadata.drop_all(engine, tables=[
-            IVSignalEvent.__table__, IVOptionObservation.__table__,
+            IVSignalEvent.__table__, IVSpotObservation.__table__,
         ])
         engine.dispose()
