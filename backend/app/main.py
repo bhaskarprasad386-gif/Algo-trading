@@ -22,6 +22,7 @@ from app.core.exceptions import TradingAppException, trading_exception_handler, 
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
+from app.models.iv_scanner_control import IVScannerControl
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
 from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
@@ -309,6 +310,12 @@ async def lifespan(app: FastAPI):
     # restarts. Never trust a persisted connected flag after process startup.
     with SessionLocal() as owner_state_db:
         reconcile_owner_state_on_startup(owner_state_db)
+    # Restore only the IV Scanner when its own persisted switch is ON.
+    if _get_iv_scanner_enabled():
+        try:
+            _start_iv_skew_flip_runtime()
+        except Exception:
+            app_logger.exception("Persisted IV Scanner ON could not be restored; runner remains STOPPED")
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
@@ -1706,38 +1713,92 @@ def live_cash_future_health_route():
     return state
 
 
-@app.get("/api/v1/scanner/iv-skew-flip/status")
-def iv_skew_flip_status():
-    return {
-        "status": "ok",
-        "runtime": None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot(),
-        "orders_enabled": False,
-    }
+def _get_iv_scanner_enabled() -> bool:
+    with SessionLocal() as db:
+        setting = db.get(IVScannerControl, 1)
+        return bool(setting.enabled) if setting is not None else False
 
 
-@app.post("/api/v1/scanner/iv-skew-flip/start")
-def start_iv_skew_flip_scanner():
+def _save_iv_scanner_enabled(enabled: bool) -> bool:
+    with SessionLocal() as db:
+        setting = db.get(IVScannerControl, 1)
+        if setting is None:
+            setting = IVScannerControl(id=1, enabled=bool(enabled))
+            db.add(setting)
+        else:
+            setting.enabled = bool(enabled)
+            setting.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    return bool(enabled)
+
+
+def _start_iv_skew_flip_runtime():
     global iv_skew_flip_runtime
     if iv_skew_flip_runtime is not None:
         return iv_skew_flip_runtime.snapshot()
     runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
     try:
         snapshot = runtime.start()
-    except Exception as exc:
+    except Exception:
         runtime.stop()
-        app_logger.exception("IV Skew / IV Flip scanner startup failed")
-        raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
+        raise
     iv_skew_flip_runtime = runtime
     return snapshot
 
 
-@app.post("/api/v1/scanner/iv-skew-flip/stop")
-def stop_iv_skew_flip_scanner():
+def _stop_iv_skew_flip_runtime():
     global iv_skew_flip_runtime
     if iv_skew_flip_runtime is None:
         return {"status": "STOPPED", "consumer": "iv-skew-flip", "orders_enabled": False}
     snapshot = iv_skew_flip_runtime.stop()
     iv_skew_flip_runtime = None
+    return snapshot
+
+
+@app.get("/api/v1/scanner/iv-skew-flip/status")
+def iv_skew_flip_status():
+    enabled = _get_iv_scanner_enabled()
+    runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
+    return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
+            "runner_status": "RUNNING" if runtime and runtime.get("status") == "RUNNING" else "STOPPED",
+            "runtime": runtime, "orders_enabled": False}
+
+
+@app.post("/api/v1/scanner/iv-skew-flip/config")
+def save_iv_skew_flip_config(payload: dict):
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=422, detail="enabled must be a boolean")
+    if enabled:
+        try:
+            snapshot = _start_iv_skew_flip_runtime()
+        except Exception as exc:
+            app_logger.exception("IV Scanner could not be enabled")
+            raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
+        _save_iv_scanner_enabled(True)
+    else:
+        snapshot = _stop_iv_skew_flip_runtime()
+        _save_iv_scanner_enabled(False)
+    return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
+            "runner_status": "RUNNING" if snapshot.get("status") == "RUNNING" else "STOPPED",
+            "runtime": snapshot, "orders_enabled": False}
+
+
+@app.post("/api/v1/scanner/iv-skew-flip/start")
+def start_iv_skew_flip_scanner():
+    try:
+        snapshot = _start_iv_skew_flip_runtime()
+        _save_iv_scanner_enabled(True)
+        return snapshot
+    except Exception as exc:
+        app_logger.exception("IV Skew / IV Flip scanner startup failed")
+        raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
+
+
+@app.post("/api/v1/scanner/iv-skew-flip/stop")
+def stop_iv_skew_flip_scanner():
+    snapshot = _stop_iv_skew_flip_runtime()
+    _save_iv_scanner_enabled(False)
     return snapshot
 
 

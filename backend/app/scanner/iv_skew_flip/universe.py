@@ -69,16 +69,17 @@ def resolve_option_universe(
 ) -> ResolvedOptionUniverse:
     """Resolve one exact expiry and a centered odd number of available strikes.
 
-    NIFTY WEEKLY means nearest listed expiry. BANKNIFTY MONTHLY means the last
-    listed expiry in the nearest month that has contracts. This uses the actual
-    instrument master rather than assuming a weekday or hard-coded expiry date.
+    WEEKLY means the nearest listed expiry. MONTHLY means the last listed
+    expiry in the nearest month that has contracts. NIFTY supports both types;
+    BANKNIFTY is configured for monthly only. This uses actual master rows.
     """
     symbol = str(underlying).strip().upper()
     kind = str(expiry_type).strip().upper()
     if symbol not in {"NIFTY", "BANKNIFTY"}:
         raise ValueError("only NIFTY and BANKNIFTY are configured for this scanner")
-    expected = {"NIFTY": "WEEKLY", "BANKNIFTY": "MONTHLY"}[symbol]
-    if kind != expected:
+    allowed = {"NIFTY": {"WEEKLY", "MONTHLY"}, "BANKNIFTY": {"MONTHLY"}}[symbol]
+    if kind not in allowed:
+        expected = " or ".join(sorted(allowed))
         raise ValueError(f"{symbol} is configured for {expected} expiry only")
     if (
         isinstance(spot, bool)
