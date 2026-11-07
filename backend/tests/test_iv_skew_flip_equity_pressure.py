@@ -19,6 +19,8 @@ def test_weighted_pressure_tracks_direction_and_top_contributor():
         assert p.update(ComponentSample(symbol, base, price))
         assert p.update(ComponentSample(symbol, base + 5_000_000_000, price * 1.001))
         assert p.update(ComponentSample(symbol, base + 10_000_000_000, price * 1.002))
+        assert p.update(ComponentSample(symbol, base + 20_000_000_000, price * 1.003))
+        assert p.update(ComponentSample(symbol, base + 25_000_000_000, price * 1.0035))
         assert p.update(ComponentSample(symbol, base + 30_000_000_000, price * 1.004))
     result = p.snapshot(now_ns=base + 30_000_000_000)
     assert result["status"] == "LIVE"
@@ -48,6 +50,8 @@ def test_mixed_constituents_do_not_create_directional_pressure():
         p.update(ComponentSample(symbol, base, start))
         p.update(ComponentSample(symbol, base + 5_000_000_000, end))
         p.update(ComponentSample(symbol, base + 10_000_000_000, end))
+        p.update(ComponentSample(symbol, base + 20_000_000_000, end))
+        p.update(ComponentSample(symbol, base + 25_000_000_000, end))
         p.update(ComponentSample(symbol, base + 30_000_000_000, end))
     result = p.snapshot(now_ns=base + 30_000_000_000)
     assert result["status"] == "LIVE"
