@@ -317,6 +317,38 @@ def run_schema_migrations() -> None:
             "ON iv_option_observations (source_timestamp_ns)"
         ))
 
+        # Durable IV detector transitions are separate from option observations.
+        signal_event_id_type = "SERIAL" if connection.dialect.name == "postgresql" else "INTEGER"
+        connection.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS iv_signal_events (
+                id {signal_event_id_type} PRIMARY KEY,
+                stream_id VARCHAR(32) NOT NULL,
+                underlying VARCHAR(32) NOT NULL,
+                expiry_type VARCHAR(16) NOT NULL,
+                state VARCHAR(16) NOT NULL,
+                direction VARCHAR(8) NOT NULL,
+                event_timestamp_ns BIGINT NOT NULL,
+                source_timestamp_ns BIGINT,
+                spot_timestamp_ns BIGINT,
+                spot_price FLOAT,
+                volume_ratio FLOAT,
+                premium_change_pct FLOAT,
+                iv_change_points FLOAT,
+                spot_change_pct FLOAT,
+                contracts_confirming INTEGER NOT NULL DEFAULT 0,
+                qualifying_tokens TEXT NOT NULL DEFAULT '[]',
+                reason TEXT NOT NULL DEFAULT ''
+            )
+        """))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_iv_signal_event_identity "
+            "ON iv_signal_events (stream_id, state, direction, event_timestamp_ns)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_signal_event_time "
+            "ON iv_signal_events (underlying, event_timestamp_ns)"
+        ))
+
         # A broker fill can be retried, but the same user/fill identity must
         # never create a second cash/P&L mutation. Nullable keeps legacy orders valid.
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
