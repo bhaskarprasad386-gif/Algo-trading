@@ -70,23 +70,66 @@ class IVWeightedEquityFeedAdapter:
             return None
         return result
 
-    @classmethod
-    def _source_timestamp_present(cls, record: Any) -> bool:
+    @staticmethod
+    def _source_timestamp_ns(record: Any) -> int | None:
+        """Return the exact provider timestamp after the normalizer's unit rules.
+
+        The canonical record timestamp alone is insufficient: the normalizer
+        falls back to local time when provider time is absent or malformed.
+        Verify that the selected provider field maps exactly to that canonical
+        timestamp so a different, lower-priority payload field cannot mask it.
+        """
         payload = getattr(record, "payload", None)
         if not isinstance(payload, Mapping):
-            return False
-        for field in ("exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
-                      "exchange_timestamp_ms", "timestamp", "feed_time"):
-            value = payload.get(field)
-            if value is None or isinstance(value, bool):
+            return None
+        for field in ("exchange_timestamp_ns", "timestamp_ns"):
+            raw = payload.get(field)
+            if raw is None:
                 continue
             try:
-                numeric = float(value)
+                value = int(str(raw).strip())
             except (TypeError, ValueError, OverflowError):
                 continue
-            if isfinite(numeric) and numeric > 0:
-                return True
-        return False
+            return value if value > 0 else None
+        raw = None
+        for field in ("exchange_timestamp", "exchange_timestamp_ms", "timestamp", "feed_time"):
+            if payload.get(field) is not None:
+                raw = payload.get(field)
+                break
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            text = str(raw).strip()
+            try:
+                value = int(text)
+            except (TypeError, ValueError, OverflowError):
+                number = float(raw)
+                if not isfinite(number):
+                    return None
+                value = int(number)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        magnitude = abs(value)
+        if magnitude >= 10**16:
+            return value if value > 0 else None
+        if magnitude >= 10**14:
+            value *= 1_000
+        elif magnitude >= 10**11:
+            value *= 1_000_000
+        else:
+            value *= 1_000_000_000
+        return value if value > 0 else None
+
+    @classmethod
+    def _source_timestamp_present(cls, record: Any) -> bool:
+        source_ns = cls._source_timestamp_ns(record)
+        canonical_ns = getattr(record, "timestamp_ns", None)
+        return (
+            source_ns is not None
+            and isinstance(canonical_ns, int)
+            and not isinstance(canonical_ns, bool)
+            and source_ns == canonical_ns
+        )
 
     def start(self, instrument_master: Any, basket: Iterable[WeightedEquity]) -> dict[str, Any]:
         items = tuple(basket)
