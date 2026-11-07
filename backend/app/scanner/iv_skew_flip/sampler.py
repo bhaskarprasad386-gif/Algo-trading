@@ -15,6 +15,8 @@ from time import monotonic, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+from app.models.iv_option_observation import IVOptionObservation
+
 from .engine import DEFAULT_CONFIGS, OptionQuote, ScannerConfig, _expiry_years, implied_volatility
 
 
@@ -42,6 +44,9 @@ class OptionMetricSample:
     ltp: float | None
     iv: float | None
     iv_input: str | None
+    bid: float | None = None
+    ask: float | None = None
+    volume: int | None = None
 
     @property
     def source_age_ms(self) -> float:
@@ -63,6 +68,7 @@ class IVOneSecondSampler:
         history_seconds: int = 600,
         clock_ns: Callable[[], int] = time_ns,
         clock_datetime: Callable[[], datetime] | None = None,
+        history_session_factory: Callable[[], Any] | None = None,
     ) -> None:
         if interval_seconds != 1.0:
             raise ValueError("IV/OI sampling cadence is fixed at one second")
@@ -75,6 +81,9 @@ class IVOneSecondSampler:
         self.history_limit = max(2, int(history_seconds))
         self.clock_ns = clock_ns
         self.clock_datetime = clock_datetime or (lambda: datetime.now(IST))
+        self.history_session_factory = history_session_factory
+        self._history_loaded = False
+        self._history_persisted_count = 0
         self._lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
@@ -116,6 +125,63 @@ class IVOneSecondSampler:
             return None
         return result
 
+    def _restore_history(self, now_ns: int) -> int:
+        if self.history_session_factory is None or self._history_loaded:
+            return 0
+        session = self.history_session_factory()
+        try:
+            cutoff = now_ns - self.history_limit * 1_000_000_000
+            rows = (session.query(IVOptionObservation).filter(
+                IVOptionObservation.underlying == self.config.symbol,
+                IVOptionObservation.expiry == self.configured_expiry,
+                IVOptionObservation.source_timestamp_ns >= cutoff,
+                IVOptionObservation.source_timestamp_ns <= now_ns,
+                IVOptionObservation.oi.isnot(None),
+            ).order_by(IVOptionObservation.source_timestamp_ns.asc()).all())
+            with self._lock:
+                for row in rows:
+                    sample = OptionMetricSample(
+                        token=row.token, underlying=row.underlying, expiry=row.expiry,
+                        strike=row.strike, option_type=row.option_type, sampled_at_ns=row.sampled_at_ns,
+                        source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
+                        oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
+                        iv_input='BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None else None,
+                        bid=row.bid, ask=row.ask, volume=row.volume,
+                    )
+                    history = self._history[row.token]
+                    if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
+                        history.append(sample)
+                    self._last_source_timestamp[row.token] = max(self._last_source_timestamp.get(row.token, 0), row.source_timestamp_ns)
+                self._history_loaded = True
+            return len(rows)
+        finally:
+            session.close()
+
+    def _persist_history(self, samples: list[OptionMetricSample]) -> int:
+        if self.history_session_factory is None or not samples:
+            return 0
+        session = self.history_session_factory()
+        inserted = 0
+        try:
+            for item in samples:
+                exists = session.query(IVOptionObservation.id).filter_by(token=item.token, source_timestamp_ns=item.source_timestamp_ns).first()
+                if exists:
+                    continue
+                session.add(IVOptionObservation(
+                    token=item.token, underlying=item.underlying, expiry=item.expiry, strike=item.strike,
+                    option_type=item.option_type, source_timestamp_ns=item.source_timestamp_ns,
+                    spot_timestamp_ns=item.spot_timestamp_ns, sampled_at_ns=item.sampled_at_ns,
+                    iv=item.iv, oi=item.oi, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
+                ))
+                inserted += 1
+            session.commit()
+            self._history_persisted_count += inserted
+            return inserted
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
     def sample_once(
         self,
         *,
@@ -129,6 +195,8 @@ class IVOneSecondSampler:
             raise ValueError("sample timestamp must be a positive integer nanosecond value")
         if sampled_datetime.tzinfo is None:
             raise ValueError("sampler datetime must be timezone-aware")
+        if self.history_session_factory is not None and not self._history_loaded and self.configured_expiry:
+            self._restore_history(sampled_at)
         spot_value = self._spot(self.spot_provider() if spot is None else spot)
         if spot_value is None or sampled_at - spot_value.timestamp_ns < 0 or sampled_at - spot_value.timestamp_ns > self.max_spot_age_ns:
             with self._lock:
@@ -184,6 +252,9 @@ class IVOneSecondSampler:
                     else "LTP" if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0
                     else None
                 ),
+                bid=quote.bid if quote.bid is not None and isfinite(quote.bid) and quote.bid > 0 else None,
+                ask=quote.ask if quote.ask is not None and isfinite(quote.ask) and quote.ask > 0 else None,
+                volume=quote.volume if isinstance(quote.volume, int) and not isinstance(quote.volume, bool) and quote.volume >= 0 else None,
             )
             updates[quote.token] = sample
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
@@ -226,6 +297,7 @@ class IVOneSecondSampler:
                 self._last_source_timestamp[token] = sample.source_timestamp_ns
             self._last_sampled_at_ns = sampled_at
             self._last_error = None if updates else "no fresh option quotes available"
+        self._persist_history([sample for _, sample in new_history])
         return self.snapshot()
 
     @property
@@ -347,6 +419,8 @@ class IVOneSecondSampler:
             "live_metrics": live_metrics,
             "samples": samples,
             "history_samples_by_token": history_sizes,
+            "history_persistence": "ENABLED" if self.history_session_factory is not None else "DISABLED",
+            "history_persisted_count": self._history_persisted_count,
             "five_minute_oi_reference_available": sum(
                 1 for item in samples if self.oi_reference(item.token) is not None
             ),
