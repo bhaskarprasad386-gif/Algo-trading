@@ -17,6 +17,7 @@ type Runtime = {
   option_chains?: Record<string, Chain>;
   signals?: Record<string, Row>;
   early_move?: Record<string, Row>;
+  equity_pressure?: Row;
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
@@ -186,6 +187,23 @@ export default function IVSkewFlipPage() {
           <p className="mt-1 text-[10px] theme-muted">Baseline {String(value.baseline_status??"WARMING")} • contracts {fmt(value.contracts_confirming,0)}</p>
         </div>)}
       </div>
+    </section>
+    <section className="rounded-2xl border theme-border theme-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h2 className="font-semibold theme-text">Weighted Constituents Pressure</h2><p className="mt-1 text-xs theme-muted">Research feed • 5s / 10s / 30s weighted returns • no order execution</p></div>
+        <span className="rounded-full border theme-border px-3 py-1 text-xs font-semibold">{String(runtime?.equity_pressure?.status ?? "DISABLED")}</span>
+      </div>
+      {runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">DISABLED — verified official index-weight basket is not configured. This module will not subscribe to equity constituents or generate directional pressure until a verified basket is injected.</p> : <>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Metric label="Feed" value={String((runtime.equity_pressure.feed as Row | undefined)?.status ?? "WAITING")} />
+          <Metric label="Fresh Components" value={`${fmt(runtime.equity_pressure.fresh_components,0)} / ${fmt(runtime.equity_pressure.expected_components,0)}`} />
+          <Metric label="Weight Coverage" value={`${fmt(runtime.equity_pressure.weight_coverage_pct)}%`} />
+          <Metric label="Direction" value={String(runtime.equity_pressure.direction ?? "WAITING")} sub={runtime.equity_pressure.signals_allowed === true ? "Timeframes agree" : "Directional output suppressed"} />
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {["5s","10s","30s"].map((windowKey)=>{const w=(runtime.equity_pressure?.windows as Row | undefined)?.[windowKey] as Row | undefined;return <div key={windowKey} className="rounded-xl border theme-border p-3"><div className="flex justify-between gap-2 text-sm"><b>{windowKey}</b><b>{String(w?.direction ?? "WAITING")}</b></div><div className="mt-2 text-xs theme-muted">Weighted return <b className="theme-text">{delta(w?.weighted_return_pct,"% ",4)}</b></div><div className="mt-1 text-xs theme-muted">Coverage {fmt(w?.coverage_pct)}% • Advancing {fmt(w?.advancing_weight_pct)}%</div><div className="mt-2 text-xs theme-muted">Top contributors: {Array.isArray(w?.top_contributors)?(w!.top_contributors as Row[]).slice(0,3).map(x=>String(x.symbol??"")).join(", ")||"—":"—"}</div></div>;})}
+        </div>
+      </>}
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4"><h2 className="font-semibold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=><div key={key} className="rounded-xl border theme-border p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>)}</div></section>
     <p className="text-xs theme-muted">Live data appears only after fresh Angel One ticks arrive. Select ON or OFF and press Save to control the backend runner. Runner status is reported by the backend; no broker orders are placed.</p>
