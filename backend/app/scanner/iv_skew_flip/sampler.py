@@ -197,7 +197,7 @@ class IVOneSecondSampler:
                 # Compare consecutive one-second sampler cycles only. A repeated
                 # broker tick is not a new market observation and must not show
                 # a misleading zero change.
-                if previous is not None and 500_000_000 <= elapsed_ns <= 2_500_000_000 and (sample.source_timestamp_ns > previous.source_timestamp_ns or sample.spot_timestamp_ns > previous.spot_timestamp_ns):
+                if previous is not None and 500_000_000 <= elapsed_ns <= 1_500_000_000 and (sample.source_timestamp_ns > previous.source_timestamp_ns or sample.spot_timestamp_ns > previous.spot_timestamp_ns):
                     new_option_tick = sample.source_timestamp_ns > previous.source_timestamp_ns
                     oi_change = sample.oi - previous.oi if new_option_tick and sample.oi is not None and previous.oi is not None else None
                     ltp_change = sample.ltp - previous.ltp if new_option_tick and sample.ltp is not None and previous.ltp is not None else None
