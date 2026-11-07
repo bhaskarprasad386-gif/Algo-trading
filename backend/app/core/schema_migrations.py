@@ -317,6 +317,21 @@ def run_schema_migrations() -> None:
             "ON iv_option_observations (source_timestamp_ns)"
         ))
 
+        # Dedicated source-timestamped spot ticks; never infer this series from option sampling.
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS iv_spot_observations (
+                underlying VARCHAR(32) NOT NULL,
+                source_timestamp_ns BIGINT NOT NULL,
+                price FLOAT NOT NULL,
+                received_at_ns BIGINT NOT NULL,
+                PRIMARY KEY (underlying, source_timestamp_ns)
+            )
+        """))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_spot_observation_time "
+            "ON iv_spot_observations (underlying, source_timestamp_ns)"
+        ))
+
         # Durable IV detector transitions are separate from option observations.
         signal_event_id_type = "SERIAL" if connection.dialect.name == "postgresql" else "INTEGER"
         connection.execute(text(f"""
