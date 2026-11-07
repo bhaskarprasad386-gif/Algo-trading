@@ -285,10 +285,8 @@ class IVEarlyMoveDetector:
             "reason": reason,
             "signals_allowed": state in {"PRE_MOVE", "CONFIRMED"},
             "baseline_status": "READY" if any(
-                any(
-                    (max(self._volume_buckets[token], default=first_bucket) - first_bucket) >= 12
-                    for token, first_bucket in self._first_volume_bucket.items()
-                )
+                (max(self._volume_buckets[token], default=first_bucket) - first_bucket) >= 12
+                for token, first_bucket in self._first_volume_bucket.items()
             ) else "WARMING",
         }
         return dict(self._state)
