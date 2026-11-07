@@ -27,6 +27,7 @@ from app.models.box_spread_trace import BoxSpreadTrace, BoxSpreadTraceExitCheck
 from app.models.box_spread_index_selection import BoxSpreadIndexSelection
 from app.models.iv_scanner_control import IVScannerControl
 from app.models.iv_spot_last_price import IVSpotLastPrice
+from app.models.iv_option_observation import IVOptionObservation
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
@@ -34,5 +35,5 @@ __all__ = [
     "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
     "LiveSyntheticAlertHistory", "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
     "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact", "BoxSpreadRealOwnerState",
-    "BoxSpreadTrace", "BoxSpreadTraceExitCheck", "BoxSpreadIndexSelection", "IVScannerControl", "IVSpotLastPrice",
+    "BoxSpreadTrace", "BoxSpreadTraceExitCheck", "BoxSpreadIndexSelection", "IVScannerControl", "IVSpotLastPrice", "IVOptionObservation",
 ]
