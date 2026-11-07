@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .feed import IVSkewFlipFeedAdapter
+from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
 from .universe import resolve_option_universe
@@ -75,7 +76,7 @@ class IVSkewFlipRuntime:
         with self._lock:
             if self._started:
                 return self.snapshot()
-        instruments = self.instrument_master.download()
+        instruments = download_iv_instruments(self.instrument_master)
         if not instruments:
             raise RuntimeError("Angel One instrument master is empty")
         rows = {
