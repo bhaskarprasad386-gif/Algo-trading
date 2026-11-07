@@ -161,6 +161,13 @@ def load_persisted_forward_outcomes(
     if not events:
         return []
 
+    try:
+        delay_limit = float(max_observation_delay_seconds)
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not isfinite(delay_limit) or delay_limit < 0:
+        return []
+
     max_horizon = max(
         (h for h in horizons_minutes if isinstance(h, int) and not isinstance(h, bool) and h > 0),
         default=0,
@@ -168,9 +175,9 @@ def load_persisted_forward_outcomes(
     if max_horizon <= 0:
         return []
     start_ns = min(event.event_timestamp_ns for event in events)
-    end_ns = max(event.event_timestamp_ns for event in events) + (
-        max_horizon * 60 + max_observation_delay_seconds
-    ) * 1_000_000_000
+    end_ns = max(event.event_timestamp_ns for event in events) + int(
+        (max_horizon * 60 + delay_limit) * 1_000_000_000
+    )
     observations = session.query(
         IVOptionObservation.spot_timestamp_ns,
         IVOptionObservation.spot_price,
