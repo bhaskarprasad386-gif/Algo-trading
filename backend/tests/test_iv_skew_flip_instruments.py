@@ -68,8 +68,11 @@ def test_primary_master_is_used_without_alternate_request(monkeypatch):
     assert loader.download_iv_instruments(master) == rows
 
 
-def test_alternate_official_master_is_validated_and_cached(monkeypatch):
+def test_alternate_official_master_is_validated_without_mutating_shared_cache(monkeypatch):
     rows = valid_rows()
+    shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
+    FakeMaster._cached_instruments = shared_rows
+    FakeMaster._cached_snapshot_date = "2000-01-01"
     master = FakeMaster(error=TimeoutError("primary host timeout"))
 
     class Response:
@@ -92,8 +95,8 @@ def test_alternate_official_master_is_validated_and_cached(monkeypatch):
     assert master.instruments == rows
     assert master._loaded is True
     assert master._symbol_exchange_index is None
-    assert FakeMaster._cached_instruments == rows
-    assert FakeMaster._cached_snapshot_date
+    assert FakeMaster._cached_instruments is shared_rows
+    assert FakeMaster._cached_snapshot_date == "2000-01-01"
     assert calls == [(loader.ALTERNATE_MASTER_URL, (5, 20))]
 
 
@@ -128,8 +131,11 @@ def test_alternate_master_rejects_non_list_payload(monkeypatch):
         loader.download_iv_instruments(master)
 
 
-def test_recent_validated_snapshot_is_used_when_both_hosts_fail(monkeypatch, tmp_path):
+def test_recent_validated_snapshot_is_used_without_mutating_shared_cache(monkeypatch, tmp_path):
     rows = valid_rows()
+    shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
+    FakeMaster._cached_instruments = shared_rows
+    FakeMaster._cached_snapshot_date = "2000-01-01"
     cache = tmp_path / "box_spread_instrument_master_cache.json"
     cache.write_text(json.dumps({
         "schema_version": 1,
@@ -146,7 +152,8 @@ def test_recent_validated_snapshot_is_used_when_both_hosts_fail(monkeypatch, tmp
     assert loader.download_iv_instruments(master) == rows
     assert master.instruments == rows
     assert master._loaded is True
-    assert FakeMaster._cached_instruments == rows
+    assert FakeMaster._cached_instruments is shared_rows
+    assert FakeMaster._cached_snapshot_date == "2000-01-01"
 
 
 def test_stale_or_incomplete_snapshot_is_never_used(monkeypatch, tmp_path):
