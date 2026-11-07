@@ -137,9 +137,13 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
                 primary_error or "unknown primary instrument-master error",
                 alternate_error,
             )
+            primary_detail = f"{type(primary_error).__name__}: {primary_error}" if primary_error else "unknown"
+            alternate_detail = f"{type(alternate_error).__name__}: {alternate_error}"
             raise RuntimeError(
-                "IV instrument master unavailable: primary and alternate Angel One hosts failed "
-                "and no recent complete snapshot is available"
+                "IV instrument master unavailable; "
+                f"primary Angel One source failed [{primary_detail}]; "
+                f"alternate Angel One source failed [{alternate_detail}]; "
+                "no recent validated snapshot (schema v1, max age 36h) is available"
             ) from alternate_error
 
         rows, fetched_at = cached
