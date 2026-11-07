@@ -128,6 +128,7 @@ def parse_official_weight_basket(
     headers = tuple((header or "").strip().lower() for header in (reader.fieldnames or ()))
     if len(headers) != 2 or set(headers) != set(_REQUIRED_COLUMNS):
         raise ValueError("CSV must contain exactly the symbol and weight columns")
+    reader.fieldnames = list(headers)
     parsed: dict[str, float] = {}
     for line_number, row in enumerate(reader, start=2):
         symbol = str(row.get("symbol") or "").strip().upper()
