@@ -84,6 +84,7 @@ class IVOneSecondSampler:
         self.history_session_factory = history_session_factory
         self._history_loaded = False
         self._history_persisted_count = 0
+        self._history_persistence_error: str | None = None
         self._lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
@@ -259,10 +260,22 @@ class IVOneSecondSampler:
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
                 new_history.append((quote.token, sample))
 
-        # Commit durable observations before advancing the in-memory source cursor.
-        # If storage fails, the same broker tick remains eligible for retry.
-        self._persist_history([sample for _, sample in new_history])
+        # Serialize source-cursor checks, durable inserts and in-memory history
+        # updates. Concurrent refreshes must not race past the same source tick.
         with self._lock:
+            pending_history = [
+                (token, sample) for token, sample in new_history
+                if self._last_source_timestamp.get(token) != sample.source_timestamp_ns
+            ]
+            persistence_ok = True
+            try:
+                self._persist_history([sample for _, sample in pending_history])
+                self._history_persistence_error = None
+            except Exception as exc:
+                # Persistence outages must be visible and retried, but must not
+                # take down live IV sampling. Do not advance durable cursors.
+                persistence_ok = False
+                self._history_persistence_error = f"{type(exc).__name__}: {exc}"
             changes: dict[str, dict[str, float | int | None]] = {}
             for token, sample in updates.items():
                 previous = self._previous_cycle.get(token)
@@ -287,18 +300,19 @@ class IVOneSecondSampler:
             self._previous_cycle = updates.copy()
             self._latest = updates
             cutoff_ns = sampled_at - self.history_limit * 1_000_000_000
-            for token, sample in new_history:
-                # sample_once may be called by the worker and a test/manual
-                # refresh concurrently; re-check under the history lock.
-                if self._last_source_timestamp.get(token) == sample.source_timestamp_ns:
-                    continue
+            for token, sample in pending_history:
                 history = self._history[token]
-                history.append(sample)
+                if not history or history[-1].source_timestamp_ns != sample.source_timestamp_ns:
+                    history.append(sample)
                 while history and history[0].source_timestamp_ns < cutoff_ns:
                     history.popleft()
-                self._last_source_timestamp[token] = sample.source_timestamp_ns
+                if persistence_ok:
+                    self._last_source_timestamp[token] = sample.source_timestamp_ns
             self._last_sampled_at_ns = sampled_at
-            self._last_error = None if updates else "no fresh option quotes available"
+            self._last_error = (
+                self._history_persistence_error
+                or (None if updates else "no fresh option quotes available")
+            )
         return self.snapshot()
 
     @property
@@ -422,6 +436,7 @@ class IVOneSecondSampler:
             "history_samples_by_token": history_sizes,
             "history_persistence": "ENABLED" if self.history_session_factory is not None else "DISABLED",
             "history_persisted_count": self._history_persisted_count,
+            "history_persistence_error": self._history_persistence_error,
             "five_minute_oi_reference_available": sum(
                 1 for item in samples if self.oi_reference(item.token) is not None
             ),
