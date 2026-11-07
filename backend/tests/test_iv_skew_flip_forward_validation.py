@@ -200,3 +200,18 @@ def test_date_wise_report_keeps_event_dates_separate_and_avoids_accuracy_claims(
     assert report["dates"][0]["eligible_events"] == 1
     assert "not accuracy" in report["dates"][0]["interpretation"]
     assert "no random row split" in report["grouping"]
+
+
+def test_date_wise_report_counts_events_without_observed_horizons_in_coverage():
+    observed = SignalEvent(9_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE", "NIFTY")
+    missing = SignalEvent(9_001 * MINUTE, 100.0, "BEARISH", "PRE_MOVE", "NIFTY")
+    rows = [
+        (observed, measure_forward_outcomes(
+            observed, [SpotPoint(9_011 * MINUTE, 101.0)], horizons_minutes=(10,),
+        )[0]),
+    ]
+    report = summarize_walk_forward_by_date(rows, [observed, missing])
+    day = report["dates"][0]
+    assert day["eligible_events"] == 2
+    assert day["horizons"]["10"]["observed"] == 1
+    assert day["horizons"]["10"]["coverage_pct"] == 50.0
