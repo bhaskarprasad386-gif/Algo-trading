@@ -136,7 +136,6 @@ class IVOneSecondSampler:
                 IVOptionObservation.expiry == self.configured_expiry,
                 IVOptionObservation.source_timestamp_ns >= cutoff,
                 IVOptionObservation.source_timestamp_ns <= now_ns,
-                IVOptionObservation.oi.isnot(None),
             ).order_by(IVOptionObservation.source_timestamp_ns.asc()).all())
             with self._lock:
                 for row in rows:
