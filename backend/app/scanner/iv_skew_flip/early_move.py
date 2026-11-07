@@ -65,6 +65,7 @@ class IVEarlyMoveDetector:
         now_ns: int,
         spot_timestamp_ns: int | None = None,
     ) -> dict[str, Any]:
+        previous_state = dict(self._state)
         spot = self._valid_number(spot_price)
         if spot is None or spot <= 0 or isinstance(now_ns, bool) or now_ns <= 0:
             return self._waiting(now_ns, "valid spot and timestamp required")
@@ -156,6 +157,22 @@ class IVEarlyMoveDetector:
                 "premium_change_pct": best[1],
                 "iv_change_points": best[2],
             }
+        prior_direction = previous_state.get("direction")
+        adverse_spot = (
+            spot_change_10s is not None
+            and ((prior_direction == "BULLISH" and spot_change_10s <= -0.05)
+                 or (prior_direction == "BEARISH" and spot_change_10s >= 0.05))
+        )
+        if previous_state.get("state") == "PRE_MOVE" and adverse_spot:
+            self._state = {
+                "state": "INVALIDATED", "direction": prior_direction, "score": 0,
+                "volume_ratio": None, "premium_change_pct": None,
+                "iv_change_points": None, "spot_change_pct": round(spot_change_10s, 4),
+                "contracts_confirming": 0, "updated_at_ns": now_ns,
+                "reason": "spot moved against the pre-move direction; setup invalidated",
+                "signals_allowed": False, "baseline_status": "READY",
+            }
+            return dict(self._state)
         if not summaries:
             return self._waiting(now_ns, "waiting for new volume, premium and IV ticks")
 
@@ -164,6 +181,16 @@ class IVEarlyMoveDetector:
             item[1]["premium_change_pct"], item[1]["iv_change_points"]
         ), reverse=True)
         direction, values = ranked[0]
+        if previous_state.get("state") == "PRE_MOVE" and prior_direction and direction != prior_direction:
+            self._state = {
+                "state": "INVALIDATED", "direction": prior_direction, "score": 0,
+                "volume_ratio": None, "premium_change_pct": None,
+                "iv_change_points": None, "spot_change_pct": None,
+                "contracts_confirming": 0, "updated_at_ns": now_ns,
+                "reason": "fresh option pressure reversed against the prior pre-move direction",
+                "signals_allowed": False, "baseline_status": "READY",
+            }
+            return dict(self._state)
         conflicting = len(ranked) > 1 and ranked[1][1]["contracts"] == values["contracts"]
         if conflicting:
             return self._waiting(now_ns, "conflicting CE and PE pressure; direction suppressed")
