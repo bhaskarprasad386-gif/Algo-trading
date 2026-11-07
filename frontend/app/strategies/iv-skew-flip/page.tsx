@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Activity, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
@@ -17,7 +17,6 @@ type Runtime = {
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
 const age = (v: unknown) => n(v) === null ? "—" : n(v)! < 1000 ? `${Math.round(n(v)!)} ms` : `${(n(v)! / 1000).toFixed(1)} s`;
-const stamp = (v: unknown) => n(v) === null ? "—" : new Date((v as number) / 1_000_000).toLocaleTimeString("en-IN", { hour12: false });
 const apiError = (body: Row, fallback: string) => {
   const detail = body.detail;
   if (typeof detail === "string") return detail;
@@ -40,7 +39,8 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const callIv = avg(calls), putIv = avg(puts);
   const skew = callIv !== null && putIv !== null ? callIv - putIv : null;
   const spotPrice = n(spot.price);
-  const strikes = metrics.map(x => n(x.strike)).filter((x): x is number => x !== null);
+  const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
+  const strikes = resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null);
   const atm = spotPrice !== null && strikes.length ? strikes.reduce((best, x) => Math.abs(x - spotPrice) < Math.abs(best - spotPrice) ? x : best, strikes[0]) : null;
   const atmPair = metrics.filter(x => x.strike === atm);
   const atmIv = atmPair.length ? avg(atmPair) : null;
@@ -117,7 +117,8 @@ export default function IVSkewFlipPage() {
   const chains=runtime?.option_chains??{};
   const nifty=chains[selectedNifty]??{};
   const bank=chains.BANKNIFTY_MONTHLY??{};
-  const spot=runtime?.spot_feed?.spot && typeof runtime.spot_feed.spot==="object" ? runtime.spot_feed.spot as Row : {};
+  const spotFeed = runtime?.spot_feed && typeof runtime.spot_feed === "object" ? runtime.spot_feed as Row : {};
+  const spot = spotFeed.spot && typeof spotFeed.spot === "object" ? spotFeed.spot as Row : {};
   const niftySpot=(spot.NIFTY&&typeof spot.NIFTY==="object"?spot.NIFTY:{}) as Row;
   const bankSpot=(spot.BANKNIFTY&&typeof spot.BANKNIFTY==="object"?spot.BANKNIFTY:{}) as Row;
   const running=runtime?.status==="RUNNING";
