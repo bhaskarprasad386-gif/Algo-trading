@@ -27,6 +27,7 @@ class SignalEvent:
     direction: str
     state: str
     underlying: str = ""
+    spot_timestamp_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,14 @@ def measure_forward_outcomes(
         return []
     if not _valid_timestamp(event.event_timestamp_ns):
         return []
+    # The entry price is the source-timestamped spot quote captured with the
+    # detector event. Reject impossible/future or stale baselines rather than
+    # silently treating a delayed quote as the event-time price.
+    if event.spot_timestamp_ns is not None:
+        if (not _valid_timestamp(event.spot_timestamp_ns)
+                or event.spot_timestamp_ns > event.event_timestamp_ns
+                or event.event_timestamp_ns - event.spot_timestamp_ns > 5_000_000_000):
+            return []
     try:
         entry = float(event.spot_price)
         delay_limit = float(max_observation_delay_seconds)
@@ -212,6 +221,7 @@ def load_persisted_forward_outcomes(
             direction=stored.direction,
             state=stored.state,
             underlying=stored.underlying,
+            spot_timestamp_ns=stored.spot_timestamp_ns,
         )
         for outcome in measure_forward_outcomes(
             event, spot_points,
