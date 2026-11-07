@@ -1757,7 +1757,7 @@ def _stop_iv_skew_flip_runtime():
             return {"status": "STOPPED", "consumer": "iv-skew-flip", "orders_enabled": False}
         runtime = iv_skew_flip_runtime
         snapshot = runtime.stop()
-        if iv_skew_flip_runtime is runtime:
+        if iv_skew_flip_runtime is runtime and snapshot.get("status") == "STOPPED":
             iv_skew_flip_runtime = None
         return snapshot
 
@@ -1768,7 +1768,7 @@ def iv_skew_flip_status():
     with _iv_skew_flip_runtime_lock:
         runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
     return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
-            "runner_status": "RUNNING" if runtime and runtime.get("status") == "RUNNING" else "STOPPED",
+            "runner_status": runtime.get("status", "STOPPED") if runtime else "STOPPED",
             "runtime": runtime, "orders_enabled": False}
 
 
@@ -1791,7 +1791,7 @@ def save_iv_skew_flip_config(payload: dict):
             snapshot = _stop_iv_skew_flip_runtime()
             _save_iv_scanner_enabled(False)
         return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
-                "runner_status": "RUNNING" if snapshot.get("status") == "RUNNING" else "STOPPED",
+                "runner_status": snapshot.get("status", "STOPPED"),
                 "runtime": snapshot, "orders_enabled": False}
 
 
