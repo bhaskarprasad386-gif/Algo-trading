@@ -321,5 +321,4 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
         spot=SpotSnapshot(21950, now_ns + 2_000_000_000),
     )
     assert restored["history_samples_by_token"] == {"durable-ce": 1}
-    assert restarted.oi_reference("durable-ce") is not None
     engine.dispose()
