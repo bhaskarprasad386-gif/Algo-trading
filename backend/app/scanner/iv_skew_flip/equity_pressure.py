@@ -44,7 +44,11 @@ class EquityComponentPressure:
         items = tuple(basket)
         if not items:
             raise ValueError("component basket cannot be empty")
-        if max_tick_age_seconds <= 0 or history_seconds < max(self.WINDOWS_SECONDS):
+        numeric_config = (max_tick_age_seconds, min_weight_coverage, min_abs_return_pct, min_breadth_pct)
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value)
+               for value in numeric_config):
+            raise ValueError("numeric configuration values must be finite numbers")
+        if max_tick_age_seconds <= 0 or isinstance(history_seconds, bool) or not isinstance(history_seconds, int) or history_seconds < max(self.WINDOWS_SECONDS):
             raise ValueError("invalid freshness or history configuration")
         if not 0 < min_weight_coverage <= 1:
             raise ValueError("min_weight_coverage must be in (0, 1]")
@@ -57,8 +61,11 @@ class EquityComponentPressure:
             if not symbol or weight is None or weight <= 0 or symbol in normalized:
                 raise ValueError("basket needs unique symbols and positive finite weights")
             normalized[symbol] = weight
+        weight_total = sum(normalized.values())
+        if not isfinite(weight_total) or weight_total <= 0:
+            raise ValueError("total component weight must be finite and positive")
         self._weights = normalized
-        self._weight_total = sum(normalized.values())
+        self._weight_total = weight_total
         self._max_age_ns = int(max_tick_age_seconds * 1_000_000_000)
         self._min_coverage = min_weight_coverage
         self._min_return = min_abs_return_pct
