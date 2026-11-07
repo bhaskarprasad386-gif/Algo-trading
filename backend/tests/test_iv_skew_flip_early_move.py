@@ -198,7 +198,7 @@ def test_early_move_spot_move_alone_cannot_confirm_without_multi_contract_pressu
             "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
         }
         detector.update(
-            quotes=(quote,), metrics=(metric,), spot_price=24000 + step,
+            quotes=(quote,), metrics=(metric,), spot_price=24000 + step * 10,
             now_ns=ts, spot_timestamp_ns=ts,
         )
 
@@ -218,7 +218,7 @@ def test_early_move_spot_move_alone_cannot_confirm_without_multi_contract_pressu
         "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
     }
     result = detector.update(
-        quotes=(quote,), metrics=(metric,), spot_price=24015,
+        quotes=(quote,), metrics=(metric,), spot_price=24150,
         now_ns=ts, spot_timestamp_ns=ts,
     )
 
