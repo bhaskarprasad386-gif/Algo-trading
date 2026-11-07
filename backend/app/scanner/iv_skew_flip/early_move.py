@@ -31,6 +31,7 @@ class IVEarlyMoveDetector:
     def __init__(self) -> None:
         self._last: dict[str, _Observation] = {}
         self._volume_buckets: dict[str, dict[int, int]] = defaultdict(dict)
+        self._first_volume_bucket: dict[str, int] = {}
         self._spot: deque[tuple[int, float]] = deque(maxlen=180)
         self._state: dict[str, Any] = {
             "state": "WATCH",
@@ -125,13 +126,18 @@ class IVEarlyMoveDetector:
             increment = volume - previous.volume
             bucket = ts // self.BUCKET_NS
             buckets = self._volume_buckets[token]
+            self._first_volume_bucket.setdefault(token, bucket)
             buckets[bucket] = buckets.get(bucket, 0) + increment
             for old_bucket in tuple(buckets):
                 if old_bucket * self.BUCKET_NS < cutoff:
                     del buckets[old_bucket]
-            prior_buckets = [bucket - offset for offset in range(1, self.HISTORY_BUCKETS + 1)]
-            prior_volumes = [buckets[key] for key in prior_buckets if key in buckets]
-            baseline = sum(prior_volumes) / len(prior_volumes) if len(prior_volumes) >= 12 else 0.0
+            # Empty 10-second buckets are real zero-volume observations.
+            # Excluding them would inflate the baseline for illiquid contracts.
+            elapsed_buckets = max(0, bucket - self._first_volume_bucket[token])
+            available_prior = min(self.HISTORY_BUCKETS, elapsed_buckets)
+            prior_buckets = [bucket - offset for offset in range(1, available_prior + 1)]
+            prior_volumes = [buckets.get(key, 0) for key in prior_buckets]
+            baseline = sum(prior_volumes) / available_prior if available_prior >= 12 else 0.0
             current_volume = buckets.get(bucket, 0)
             ratio = current_volume / baseline if baseline > 0 else None
             if ratio is not None:
@@ -279,7 +285,10 @@ class IVEarlyMoveDetector:
             "reason": reason,
             "signals_allowed": state in {"PRE_MOVE", "CONFIRMED"},
             "baseline_status": "READY" if any(
-                len(buckets) >= 12 for buckets in self._volume_buckets.values()
+                any(
+                    (max(self._volume_buckets[token], default=first_bucket) - first_bucket) >= 12
+                    for token, first_bucket in self._first_volume_bucket.items()
+                )
             ) else "WARMING",
         }
         return dict(self._state)
