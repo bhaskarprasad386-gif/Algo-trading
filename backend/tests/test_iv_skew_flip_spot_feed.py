@@ -74,7 +74,13 @@ def test_spot_feed_rejects_out_of_order_and_stale_ticks():
     ))
     assert adapter.spot_snapshot("NIFTY").price == 24000.0
     assert adapter.spot_snapshot("NIFTY", now_ns=23_000_000_001) is None
-    assert adapter.snapshot(now_ns=23_000_000_001)["status"] == "STALE"
+    stale = adapter.snapshot(now_ns=23_000_000_001)
+    assert stale["status"] == "STALE"
+    assert stale["signals_allowed"] is False
+    assert stale["spot"]["NIFTY"]["price"] == 24000.0
+    assert stale["spot"]["NIFTY"]["last_price"] == 24000.0
+    assert stale["spot"]["NIFTY"]["fresh"] is False
+    assert stale["spot"]["NIFTY"]["quote_status"] == "LAST_KNOWN_STALE"
 
 
 def test_spot_feed_does_not_accept_unsubscribed_or_non_index_records():
