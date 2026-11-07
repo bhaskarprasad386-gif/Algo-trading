@@ -135,10 +135,13 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
 
     # A spot move that changes the centered ATM window causes a clean
     # per-index handoff, without touching the other underlying.
+    previous_sampler = runtime._samplers["NIFTY"]
     spot.prices["NIFTY"] = SpotSnapshot(140.0, 11_000_000_000)
     runtime.refresh_once()
     assert created["NIFTY"].universe.strikes[3] == 140.0
     assert created["BANKNIFTY"].universe.strikes[3] == 200.0
+    assert runtime._samplers["NIFTY"].inherited_from is previous_sampler
+    assert runtime._samplers["NIFTY"].inherited_universe is created["NIFTY"].universe
 
 
 def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
