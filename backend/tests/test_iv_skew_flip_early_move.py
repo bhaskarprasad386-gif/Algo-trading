@@ -225,3 +225,67 @@ def test_early_move_spot_move_alone_cannot_confirm_without_multi_contract_pressu
     assert result["contracts_confirming"] == 1
     assert result["state"] != "CONFIRMED"
     assert result["signals_allowed"] is False
+
+
+
+def test_early_move_flags_option_pressure_before_spot_move_as_pre_move():
+    detector = IVEarlyMoveDetector()
+    base = 700_000_000_000
+    volumes = {"ce1": 100, "ce2": 200}
+    marks = {"ce1": 20.0, "ce2": 25.0}
+    ivs = {"ce1": 18.0, "ce2": 19.0}
+
+    # Warm 14 full 10-second buckets while spot remains nearly flat.
+    for step in range(1, 15):
+        ts = base + step * IVEarlyMoveDetector.BUCKET_NS
+        quotes = []
+        metrics = []
+        for token in ("ce1", "ce2"):
+            volumes[token] += 10
+            marks[token] += 0.01
+            ivs[token] += 0.01
+            quotes.append(SimpleNamespace(
+                token=token, timestamp_ns=ts, volume=volumes[token],
+                option_type="CE", mark=marks[token],
+                bid=marks[token] - 0.1, ask=marks[token] + 0.1,
+            ))
+            metrics.append({
+                "token": token, "iv": ivs[token],
+                "iv_input": "BID_ASK_MIDPOINT",
+                "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
+            })
+        detector.update(
+            quotes=tuple(quotes), metrics=tuple(metrics),
+            spot_price=24000.0, now_ns=ts, spot_timestamp_ns=ts,
+        )
+
+    # Both contracts show a sharp, synchronized pressure burst, but spot is
+    # still flat: the detector should flag the lead signal, not wait for a
+    # 10-second positive spot move.
+    ts = base + 15 * IVEarlyMoveDetector.BUCKET_NS
+    quotes = []
+    metrics = []
+    for token in ("ce1", "ce2"):
+        volumes[token] += 1000
+        marks[token] += 1.0
+        ivs[token] += 0.2
+        quotes.append(SimpleNamespace(
+            token=token, timestamp_ns=ts, volume=volumes[token],
+            option_type="CE", mark=marks[token],
+            bid=marks[token] - 0.1, ask=marks[token] + 0.1,
+        ))
+        metrics.append({
+            "token": token, "iv": ivs[token],
+            "iv_input": "BID_ASK_MIDPOINT",
+            "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
+        })
+
+    result = detector.update(
+        quotes=tuple(quotes), metrics=tuple(metrics),
+        spot_price=24000.0, now_ns=ts, spot_timestamp_ns=ts,
+    )
+    assert result["state"] == "PRE_MOVE"
+    assert result["direction"] == "BULLISH"
+    assert result["contracts_confirming"] == 2
+    assert result["signals_allowed"] is True
+    assert "before a material spot move" in result["reason"]
