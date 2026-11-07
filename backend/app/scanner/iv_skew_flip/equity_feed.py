@@ -89,7 +89,9 @@ class IVWeightedEquityFeedAdapter:
             try:
                 value = int(str(raw).strip())
             except (TypeError, ValueError, OverflowError):
-                continue
+                # The normalizer selects the first present field. Do not let a
+                # malformed higher-priority field be masked by a lower one.
+                return None
             return value if value > 0 else None
         raw = None
         for field in ("exchange_timestamp", "exchange_timestamp_ms", "timestamp", "feed_time"):
