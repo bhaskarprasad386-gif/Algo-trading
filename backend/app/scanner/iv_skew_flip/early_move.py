@@ -174,6 +174,30 @@ class IVEarlyMoveDetector:
             }
             return dict(self._state)
         if not summaries:
+            # Keep a just-triggered alert visible briefly while its underlying
+            # source quotes remain fresh. Do not extend the evidence clock on
+            # repeated UI/runtime refreshes: evidence_at_ns is set only when a
+            # qualifying state is first produced.
+            evidence_at_ns = previous_state.get("evidence_at_ns")
+            fresh_option_count = sum(
+                1 for quote in quotes
+                if isinstance(getattr(quote, "timestamp_ns", None), int)
+                and not isinstance(getattr(quote, "timestamp_ns", None), bool)
+                and 0 <= now_ns - quote.timestamp_ns <= self.MAX_AGE_NS
+                and self._valid_number(getattr(quote, "bid", None)) is not None
+                and self._valid_number(getattr(quote, "ask", None)) is not None
+            )
+            if (
+                previous_state.get("state") in {"PRE_MOVE", "CONFIRMED"}
+                and isinstance(evidence_at_ns, int)
+                and 0 <= now_ns - evidence_at_ns <= self.MAX_AGE_NS
+                and fresh_option_count >= 2
+            ):
+                held = dict(previous_state)
+                held["updated_at_ns"] = now_ns
+                held["reason"] = "holding recent alert while source quotes remain fresh; waiting for next market tick"
+                self._state = held
+                return dict(self._state)
             return self._waiting(now_ns, "waiting for new volume, premium and IV ticks")
 
         ranked = sorted(summaries.items(), key=lambda item: (
@@ -234,6 +258,13 @@ class IVEarlyMoveDetector:
             "spot_change_60s_pct": None if spot_change_60s is None else round(spot_change_60s, 4),
             "contracts_confirming": values["contracts"],
             "updated_at_ns": now_ns,
+            "evidence_at_ns": (
+                previous_state.get("evidence_at_ns", now_ns)
+                if state in {"PRE_MOVE", "CONFIRMED"}
+                and previous_state.get("state") == state
+                and previous_state.get("direction") == direction
+                else now_ns if state in {"PRE_MOVE", "CONFIRMED"} else None
+            ),
             "reason": reason,
             "signals_allowed": state in {"PRE_MOVE", "CONFIRMED"},
             "baseline_status": "READY" if any(
