@@ -20,6 +20,17 @@ const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
 const age = (v: unknown) => n(v) === null ? "—" : n(v)! < 1000 ? `${Math.round(n(v)!)} ms` : `${(n(v)! / 1000).toFixed(1)} s`;
 const stamp = (v: unknown) => n(v) === null ? "—" : new Date((v as number) / 1_000_000).toLocaleTimeString("en-IN", { hour12: false });
+const apiError = (body: Row, fallback: string) => {
+  const detail = body.detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    const info = detail as Row;
+    const message = typeof info.message === "string" ? info.message : "";
+    const reason = typeof info.reason === "string" ? info.reason : "";
+    return [message, reason].filter(Boolean).join(": ") || fallback;
+  }
+  return fallback;
+};
 
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return <div className="rounded-xl border theme-border theme-surface p-3"><div className="text-[11px] uppercase tracking-wide theme-muted">{label}</div><div className="mt-1 text-lg font-bold theme-text">{value}</div>{sub && <div className="mt-1 text-[11px] theme-muted">{sub}</div>}</div>;
@@ -56,7 +67,7 @@ export default function IVSkewFlipPage() {
   const refresh = useCallback(async () => {
     const response = await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`, { cache: "no-store" });
     const body = await response.json();
-    if (!response.ok) throw new Error(body?.detail?.message ?? body?.detail ?? `Status HTTP ${response.status}`);
+    if (!response.ok) throw new Error(apiError(body, `Status HTTP ${response.status}`));
     setRuntime(body.runtime ?? null);
   }, [base]);
 
@@ -79,7 +90,7 @@ export default function IVSkewFlipPage() {
     try {
       const response = await fetch(`${base}/api/v1/scanner/iv-skew-flip/${action}`, { method: "POST", cache: "no-store" });
       const body = await response.json();
-      if (!response.ok) throw new Error(body?.detail?.message ?? body?.detail ?? `Could not ${action} scanner`);
+      if (!response.ok) throw new Error(apiError(body, `Could not ${action} scanner`));
       setRuntime(body);
     } catch (e) { setError(e instanceof Error ? e.message : "Scanner control failed"); }
     finally { setBusy(false); }
