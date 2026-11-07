@@ -123,25 +123,26 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     }
 
     first = runtime.refresh_once()
-    assert first["indices"]["NIFTY"]["universe_tokens"] == 14
-    assert first["indices"]["BANKNIFTY"]["universe_tokens"] == 14
-    assert created["NIFTY"].universe.strikes[3] == 100.0
-    assert created["BANKNIFTY"].universe.strikes[3] == 200.0
+    assert first["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 14
+    assert first["option_chains"]["NIFTY_MONTHLY"]["universe_tokens"] == 14
+    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["universe_tokens"] == 14
+    assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
+    assert created["NIFTY_MONTHLY"].universe.expiry == "2026-11-26"
+    assert created["BANKNIFTY_MONTHLY"].universe.strikes[3] == 200.0
 
-    # Same 7-strike window must not churn the option subscription.
-    first_universe = created["NIFTY"].universe
+    weekly_universe = created["NIFTY_WEEKLY"].universe
+    monthly_universe = created["NIFTY_MONTHLY"].universe
     runtime.refresh_once()
-    assert created["NIFTY"].universe is first_universe
+    assert created["NIFTY_WEEKLY"].universe is weekly_universe
+    assert created["NIFTY_MONTHLY"].universe is monthly_universe
 
-    # A spot move that changes the centered ATM window causes a clean
-    # per-index handoff, without touching the other underlying.
-    previous_sampler = runtime._samplers["NIFTY"]
+    previous_sampler = runtime._samplers["NIFTY_WEEKLY"]
     spot.prices["NIFTY"] = SpotSnapshot(140.0, 11_000_000_000)
     runtime.refresh_once()
-    assert created["NIFTY"].universe.strikes[3] == 140.0
-    assert created["BANKNIFTY"].universe.strikes[3] == 200.0
-    assert runtime._samplers["NIFTY"].inherited_from is previous_sampler
-    assert runtime._samplers["NIFTY"].inherited_universe is created["NIFTY"].universe
+    assert created["NIFTY_WEEKLY"].universe.strikes[3] == 140.0
+    assert created["NIFTY_MONTHLY"].universe.strikes[3] == 140.0
+    assert created["BANKNIFTY_MONTHLY"].universe.strikes[3] == 200.0
+    assert runtime._samplers["NIFTY_WEEKLY"].inherited_from is previous_sampler
 
 
 def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
@@ -194,10 +195,10 @@ def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
 
     runtime._maybe_evaluate(now, 10_000_000_000)
     runtime._maybe_evaluate(now, 69_000_000_000)
-    assert len(evaluated) == 2
+    assert len(evaluated) == 3
 
     runtime._maybe_evaluate(now, 70_000_000_000)
-    assert len(evaluated) == 4
+    assert len(evaluated) == 6
 
 
 def test_runtime_clears_signal_state_when_spot_or_option_feed_is_unavailable():
