@@ -358,10 +358,11 @@ class IVSkewFlipRuntime:
 
     def _refresh_equity_pressure(self, now_ns: int) -> None:
         if not self.equity_pressure_enabled or self._equity_feed is None or self._equity_pressure is None:
-            self._equity_pressure_last_snapshot = {
-                "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
-                "timeframe_agreement": False, "windows": {},
-            }
+            with self._lock:
+                self._equity_pressure_last_snapshot = {
+                    "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
+                    "timeframe_agreement": False, "windows": {},
+                }
             return
         feed_snapshot = self._equity_feed.snapshot(now_ns=now_ns)
         for symbol, quote in feed_snapshot.get("quotes", {}).items():
@@ -377,19 +378,20 @@ class IVSkewFlipRuntime:
             and pressure_snapshot.get("direction") in {"BULLISH", "BEARISH"}
             and pressure_snapshot.get("timeframe_agreement")
         )
-        self._equity_pressure_last_snapshot = {
-            **pressure_snapshot,
-            "enabled": True,
-            "feed": {
-                "status": feed_snapshot.get("status"),
-                "consumer": feed_snapshot.get("consumer"),
-                "expected_symbols": feed_snapshot.get("expected_symbols", []),
-                "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
-                "missing_symbols": feed_snapshot.get("missing_symbols", []),
-                "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
-            },
-            "signals_allowed": signals_allowed,
-        }
+        with self._lock:
+            self._equity_pressure_last_snapshot = {
+                **pressure_snapshot,
+                "enabled": True,
+                "feed": {
+                    "status": feed_snapshot.get("status"),
+                    "consumer": feed_snapshot.get("consumer"),
+                    "expected_symbols": feed_snapshot.get("expected_symbols", []),
+                    "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
+                    "missing_symbols": feed_snapshot.get("missing_symbols", []),
+                    "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
+                },
+                "signals_allowed": signals_allowed,
+            }
 
     def refresh_once(self) -> dict[str, Any]:
         now = self.clock_datetime()
@@ -438,6 +440,7 @@ class IVSkewFlipRuntime:
             early_move = dict(self._early_move)
             last_refresh = self._last_refresh_ns
             last_evaluation = self._last_evaluation_ns
+            equity_pressure = dict(self._equity_pressure_last_snapshot)
         return {
             "status": "RUNNING" if started else "STOPPED",
             "consumer": "iv-skew-flip",
@@ -448,7 +451,7 @@ class IVSkewFlipRuntime:
             "signals": signals,
             "early_move": early_move,
             "equity_pressure": {
-                **self._equity_pressure_last_snapshot,
+                **equity_pressure,
                 "enabled": self.equity_pressure_enabled,
             },
             "spot_feed": self.spot_feed.snapshot(),
