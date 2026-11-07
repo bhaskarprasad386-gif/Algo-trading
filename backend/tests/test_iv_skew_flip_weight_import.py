@@ -114,3 +114,16 @@ def test_token_mapping_must_be_complete_and_unique():
         validate_basket_token_mapping(basket, {"AAA": "101"})
     with pytest.raises(ValueError, match="duplicate NSE cash"):
         validate_basket_token_mapping(basket, {"AAA": "101", "BBB": "101"})
+
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"symbol,weight\nAAA,60\nBBB\n",
+        b"symbol,weight\nAAA,60,unexpected\nBBB,40\n",
+    ],
+)
+def test_rejects_short_or_extra_csv_row_fields(raw):
+    with pytest.raises(ValueError, match="malformed CSV row"):
+        parse_official_weight_basket(raw, **BASE)
