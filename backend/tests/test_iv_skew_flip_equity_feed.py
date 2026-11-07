@@ -117,3 +117,22 @@ def test_equity_feed_stop_releases_only_its_adapter_state():
     adapter.stop()
     assert adapter.snapshot()["status"] == "STOPPED"
     assert feed.stopped >= 2
+
+
+def test_equity_feed_requires_provider_timestamp_to_match_canonical_timestamp():
+    adapter, feed = make_adapter()
+    descriptor = feed.descriptors[0]
+    # A valid lower-priority timestamp must not mask a malformed selected
+    # exchange_timestamp_ns field that made the normalizer use local time.
+    send(
+        feed, descriptor, ts=10_000_000_000,
+        payload={"exchange_timestamp_ns": "invalid", "timestamp_ns": 10_000_000_000},
+    )
+    assert adapter.snapshot()["status"] == "WAITING_FOR_TICKS"
+    # A valid provider timestamp that differs from the canonical record time
+    # must also be rejected.
+    send(
+        feed, descriptor, ts=10_000_000_000,
+        payload={"exchange_timestamp_ns": 9_000_000_000},
+    )
+    assert adapter.snapshot()["status"] == "WAITING_FOR_TICKS"
