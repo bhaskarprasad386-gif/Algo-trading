@@ -238,3 +238,59 @@ def test_spot_feed_uses_its_token_subscription_when_shared_record_metadata_is_ge
     ))
     assert adapter.spot_snapshot("NIFTY") is not None
     assert adapter.spot_snapshot("NIFTY").price == 24125.5
+
+
+def test_spot_feed_persists_and_restores_last_known_price(monkeypatch):
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    persisted = {}
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def query(self, model):
+            assert model is spot_feed_module.IVSpotLastPrice
+            return self
+
+        def all(self):
+            return [
+                SimpleNamespace(symbol=symbol, price=price, timestamp_ns=timestamp_ns)
+                for symbol, (price, timestamp_ns) in persisted.items()
+            ]
+
+        def merge(self, row):
+            persisted[row.symbol] = (row.price, row.timestamp_ns)
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", FakeSession)
+
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(
+        feed=feed, clock_ns=lambda: 10_000_000_000, persist_last_price=True,
+    )
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_000_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    assert persisted["NIFTY"] == (24125.5, 10_000_000_000)
+
+    adapter.stop()
+    restored = IVSpotFeedAdapter(
+        feed=FakeFeed(), clock_ns=lambda: 20_000_000_000, persist_last_price=True,
+    )
+    restored_snapshot = restored.snapshot(now_ns=20_000_000_000)
+    assert restored_snapshot["spot"]["NIFTY"]["price"] == 24125.5
+    assert restored_snapshot["spot"]["NIFTY"]["fresh"] is False
+    assert restored_snapshot["spot"]["NIFTY"]["quote_status"] == "LAST_KNOWN_STALE"
+    assert restored_snapshot["signals_allowed"] is False
