@@ -95,23 +95,15 @@ def _read_recent_snapshot() -> tuple[list[dict[str, Any]], datetime] | None:
 
 
 def _install_snapshot(instrument_master: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    cls = instrument_master.__class__
-    lock = getattr(cls, "_cache_lock", None)
+    """Install fallback rows on this IV-owned instance only.
 
-    def install() -> None:
-        instrument_master.instruments = rows
-        instrument_master._loaded = True
-        instrument_master._symbol_exchange_index = None
-        if hasattr(cls, "_cached_instruments"):
-            cls._cached_instruments = rows
-        if hasattr(cls, "_cached_snapshot_date"):
-            cls._cached_snapshot_date = datetime.now(IST).date().isoformat()
-
-    if lock is None:
-        install()
-    else:
-        with lock:
-            install()
+    InstrumentMaster keeps a process-wide class cache shared by Box Spread and
+    other consumers. Updating that cache from the IV fallback would leak the
+    IV-specific fallback snapshot into those consumers.
+    """
+    instrument_master.instruments = rows
+    instrument_master._loaded = True
+    instrument_master._symbol_exchange_index = None
     return rows
 
 
