@@ -174,7 +174,7 @@ class EquityComponentPressure:
         any_samples = any(histories.values())
         return {
             "status": "LIVE" if overall_ready else ("PARTIAL" if fresh else ("STALE" if any_samples else "WAITING_FOR_TICKS")) ,
-            "signals_allowed": overall_ready,
+            "signals_allowed": overall_ready and agreement and overall_direction in {"BULLISH", "BEARISH"},
             "expected_components": len(self._weights),
             "fresh_components": len(fresh),
             "weight_coverage_pct": round(coverage * 100, 2),
