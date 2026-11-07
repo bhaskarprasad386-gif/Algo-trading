@@ -259,3 +259,47 @@ def test_runtime_refresh_worker_retries_after_transient_refresh_error(monkeypatc
 
     assert len(calls) == 2
     assert "RUNTIME" not in runtime._last_error
+
+
+def test_runtime_stop_preserves_resources_while_refresh_worker_is_alive():
+    class DelayedWorker:
+        def __init__(self):
+            self.alive = True
+            self.joined = False
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            self.joined = True
+
+    class TrackedFeed(FakeSpotFeed):
+        def __init__(self):
+            super().__init__()
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    spot = TrackedFeed()
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=spot,
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    worker = DelayedWorker()
+    runtime._started = True
+    runtime._thread = worker
+
+    pending = runtime.stop()
+    assert pending["status"] == "STOPPING"
+    assert runtime._started is True
+    assert runtime._thread is worker
+    assert spot.stopped is False
+
+    worker.alive = False
+    stopped = runtime.stop()
+    assert stopped["status"] == "STOPPED"
+    assert runtime._started is False
+    assert runtime._thread is None
+    assert spot.stopped is True
