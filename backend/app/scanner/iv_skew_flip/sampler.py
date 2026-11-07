@@ -36,6 +36,7 @@ class OptionMetricSample:
     option_type: str
     sampled_at_ns: int
     source_timestamp_ns: int
+    spot_timestamp_ns: int
     oi: int | None
     mark: float | None
     ltp: float | None
@@ -170,6 +171,7 @@ class IVOneSecondSampler:
                 token=quote.token, underlying=quote.underlying, expiry=quote.expiry,
                 strike=quote.strike, option_type=quote.option_type,
                 sampled_at_ns=sampled_at, source_timestamp_ns=quote.timestamp_ns,
+                spot_timestamp_ns=spot_value.timestamp_ns,
                 oi=quote.oi if isinstance(quote.oi, int) and not isinstance(quote.oi, bool) and quote.oi >= 0 else None,
                 mark=mark,
                 ltp=quote.ltp if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0 else None,
@@ -195,9 +197,10 @@ class IVOneSecondSampler:
                 # Compare consecutive one-second sampler cycles only. A repeated
                 # broker tick is not a new market observation and must not show
                 # a misleading zero change.
-                if previous is not None and 500_000_000 <= elapsed_ns <= 2_500_000_000 and sample.source_timestamp_ns > previous.source_timestamp_ns:
-                    oi_change = sample.oi - previous.oi if sample.oi is not None and previous.oi is not None else None
-                    ltp_change = sample.ltp - previous.ltp if sample.ltp is not None and previous.ltp is not None else None
+                if previous is not None and 500_000_000 <= elapsed_ns <= 2_500_000_000 and (sample.source_timestamp_ns > previous.source_timestamp_ns or sample.spot_timestamp_ns > previous.spot_timestamp_ns):
+                    new_option_tick = sample.source_timestamp_ns > previous.source_timestamp_ns
+                    oi_change = sample.oi - previous.oi if new_option_tick and sample.oi is not None and previous.oi is not None else None
+                    ltp_change = sample.ltp - previous.ltp if new_option_tick and sample.ltp is not None and previous.ltp is not None else None
                     iv_change = sample.iv - previous.iv if sample.iv is not None and previous.iv is not None else None
                     changes[token] = {
                         "interval_seconds": round(elapsed_ns / 1_000_000_000, 2),
@@ -321,6 +324,7 @@ class IVOneSecondSampler:
                 "mark": item.mark,
                 "ltp": item.ltp,
                 "source_timestamp_ns": item.source_timestamp_ns,
+                "spot_timestamp_ns": item.spot_timestamp_ns,
                 "source_age_ms": round(item.source_age_ms, 2),
                 "sampled_at_ns": item.sampled_at_ns,
                 "change_interval_seconds": changes.get(item.token, {}).get("interval_seconds"),
