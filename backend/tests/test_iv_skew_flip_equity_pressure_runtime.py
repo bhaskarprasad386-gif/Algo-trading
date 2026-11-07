@@ -100,3 +100,34 @@ def test_partial_equity_feed_never_allows_pressure_signal():
     result = runtime.snapshot()["equity_pressure"]
     assert result["feed"]["status"] == "PARTIAL"
     assert result["signals_allowed"] is False
+
+
+
+def test_stop_stops_only_the_owned_equity_feed_and_disables_pressure():
+    basket = (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0))
+    runtime = make_runtime(equity_pressure_enabled=True, equity_basket=basket)
+    equity_feed = FakeEquityFeed({"status": "LIVE", "signals_allowed": False, "quotes": {}})
+    runtime._equity_feed = equity_feed
+
+    result = runtime.stop()
+
+    assert equity_feed.stopped is True
+    assert runtime._equity_feed is None
+    assert result["equity_pressure"]["status"] == "STOPPED"
+    assert result["equity_pressure"]["signals_allowed"] is False
+    assert result["equity_pressure"]["enabled"] is True
+
+
+def test_disabled_runtime_stop_does_not_construct_or_stop_equity_feed():
+    factory_calls = []
+    runtime = make_runtime(
+        equity_pressure_enabled=False,
+        equity_feed_factory=lambda: factory_calls.append("created"),
+    )
+
+    result = runtime.stop()
+
+    assert factory_calls == []
+    assert runtime._equity_feed is None
+    assert result["equity_pressure"]["status"] == "DISABLED"
+    assert result["equity_pressure"]["signals_allowed"] is False
