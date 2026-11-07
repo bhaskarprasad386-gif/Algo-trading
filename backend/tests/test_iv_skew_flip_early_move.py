@@ -52,3 +52,17 @@ def test_early_move_detector_requires_volume_iv_premium_and_spot_confluence():
     assert result["volume_ratio"] >= 4
     assert result["signals_allowed"] is True
     assert result["state"] in {"PRE_MOVE", "CONFIRMED"}
+
+    # Repeated runtime refreshes must not erase a valid alert while the
+    # original source quotes are still within the five-second freshness gate.
+    held = detector.update(
+        quotes=quotes,
+        metrics=metrics,
+        spot_price=24010,
+        now_ns=ts + 1_000_000_000,
+        spot_timestamp_ns=ts,
+    )
+    assert held["state"] == result["state"]
+    assert held["direction"] == result["direction"]
+    assert held["signals_allowed"] is True
+    assert "holding recent alert" in held["reason"]
