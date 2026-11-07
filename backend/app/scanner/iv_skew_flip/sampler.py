@@ -309,10 +309,7 @@ class IVOneSecondSampler:
                 if persistence_ok:
                     self._last_source_timestamp[token] = sample.source_timestamp_ns
             self._last_sampled_at_ns = sampled_at
-            self._last_error = (
-                self._history_persistence_error
-                or (None if updates else "no fresh option quotes available")
-            )
+            self._last_error = None if updates else "no fresh option quotes available"
         return self.snapshot()
 
     @property
