@@ -42,8 +42,8 @@ def _validate_rows(payload: Any) -> list[dict[str, Any]]:
         if isinstance(row, dict)
         and all(str(row.get(key, "")).strip() for key in ("symbol", "exch_seg", "token"))
     ]
-    if len(rows) != len(payload):
-        raise ValueError("Angel One instrument master contains malformed instrument rows")
+    if not rows:
+        raise ValueError("Angel One instrument master has no usable instrument rows")
 
     missing = []
     for underlying in ("NIFTY", "BANKNIFTY"):
