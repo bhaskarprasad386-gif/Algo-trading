@@ -60,7 +60,7 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const strategies = Array.isArray(signals.strategies) ? signals.strategies as Row[] : [];
   const status = (name: string) => String(strategies.find(x => x.strategy === name)?.status ?? "WAITING");
   return <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-    <Metric label={`${title} Spot`} value={fmt(spotPrice)} sub={`Tick age ${age(spot.age_ms)} • ${spot.fresh ? "FRESH" : "WAITING"}`} />
+    <Metric label={`${title} Spot`} value={fmt(spotPrice)} sub={`Last tick ${age(spot.age_ms)} • ${spot.fresh === true ? "LIVE" : spot.quote_status === "LAST_KNOWN_STALE" ? "LAST KNOWN • STALE" : "WAITING"}`} />
     <Metric label="ATM Strike" value={fmt(atm, 0)} />
     <Metric label="ATM IV" value={atmIv === null ? "—" : `${fmt(atmIv, 2)}%`} />
     <Metric label="IV Skew (CE−PE)" value={skew === null ? "—" : `${skew > 0 ? "+" : ""}${fmt(skew, 2)} pt`} />
