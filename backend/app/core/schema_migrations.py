@@ -275,6 +275,41 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_observed_at ON live_synthetic_alert_history (observed_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_symbol ON live_synthetic_alert_history (symbol, observed_at)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_syn_alert_identity ON live_synthetic_alert_history (symbol, expiry, timestamp_ns, strike, direction)"))
+        # Durable IV observations are isolated from all other scanner histories.
+        # Source-time uniqueness makes retries idempotent across sampler restarts.
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS iv_option_observations (
+                id INTEGER PRIMARY KEY,
+                token VARCHAR(64) NOT NULL,
+                underlying VARCHAR(32) NOT NULL,
+                expiry VARCHAR(32) NOT NULL,
+                strike FLOAT NOT NULL,
+                option_type VARCHAR(2) NOT NULL,
+                source_timestamp_ns BIGINT NOT NULL,
+                spot_timestamp_ns BIGINT NOT NULL,
+                sampled_at_ns BIGINT NOT NULL,
+                iv FLOAT,
+                oi BIGINT,
+                bid FLOAT,
+                ask FLOAT,
+                ltp FLOAT,
+                mark FLOAT,
+                volume BIGINT
+            )
+        """))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_iv_option_observation_source "
+            "ON iv_option_observations (token, source_timestamp_ns)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_option_observation_contract_time "
+            "ON iv_option_observations (underlying, expiry, token, source_timestamp_ns)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_option_observation_time "
+            "ON iv_option_observations (source_timestamp_ns)"
+        ))
+
         # A broker fill can be retried, but the same user/fill identity must
         # never create a second cash/P&L mutation. Nullable keeps legacy orders valid.
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
