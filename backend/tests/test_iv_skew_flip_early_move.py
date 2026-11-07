@@ -174,3 +174,54 @@ def test_early_move_does_not_assign_cross_bucket_volume_delta_to_new_bucket():
     update(same_bucket_ts, 1010, 21.1, 18.6)
     # Only the subsequent 10-contract same-bucket increment is attributable.
     assert detector._volume_buckets["boundary-ce"][new_bucket] == 10
+
+def test_early_move_spot_move_alone_cannot_confirm_without_multi_contract_pressure():
+    detector = IVEarlyMoveDetector()
+    base = 500_000_000_000
+    volume = 100
+    mark = 20.0
+    iv = 18.0
+
+    # Build at least 12 prior time buckets with one active contract.
+    for step in range(1, 15):
+        ts = base + step * IVEarlyMoveDetector.BUCKET_NS
+        volume += 10
+        mark += 0.01
+        iv += 0.01
+        quote = SimpleNamespace(
+            token="single-ce", timestamp_ns=ts, volume=volume,
+            option_type="CE", mark=mark, bid=mark - 0.1, ask=mark + 0.1,
+        )
+        metric = {
+            "token": "single-ce", "iv": iv,
+            "iv_input": "BID_ASK_MIDPOINT",
+            "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
+        }
+        detector.update(
+            quotes=(quote,), metrics=(metric,), spot_price=24000 + step,
+            now_ns=ts, spot_timestamp_ns=ts,
+        )
+
+    # One contract has a large volume/premium/IV jump, while spot has already
+    # moved >0.15% over 60s. This is not enough for multi-contract confirmation.
+    ts = base + 15 * IVEarlyMoveDetector.BUCKET_NS
+    volume += 100
+    mark += 1.0
+    iv += 0.2
+    quote = SimpleNamespace(
+        token="single-ce", timestamp_ns=ts, volume=volume,
+        option_type="CE", mark=mark, bid=mark - 0.1, ask=mark + 0.1,
+    )
+    metric = {
+        "token": "single-ce", "iv": iv,
+        "iv_input": "BID_ASK_MIDPOINT",
+        "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
+    }
+    result = detector.update(
+        quotes=(quote,), metrics=(metric,), spot_price=24015,
+        now_ns=ts, spot_timestamp_ns=ts,
+    )
+
+    assert result["contracts_confirming"] == 1
+    assert result["state"] != "CONFIRMED"
+    assert result["signals_allowed"] is False
