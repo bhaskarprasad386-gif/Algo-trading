@@ -124,10 +124,17 @@ class IVEarlyMoveDetector:
             if previous is None or ts <= previous.timestamp_ns or volume < previous.volume:
                 continue
             increment = volume - previous.volume
+            previous_bucket = previous.timestamp_ns // self.BUCKET_NS
             bucket = ts // self.BUCKET_NS
             buckets = self._volume_buckets[token]
-            self._first_volume_bucket.setdefault(token, bucket)
-            buckets[bucket] = buckets.get(bucket, 0) + increment
+            self._first_volume_bucket.setdefault(token, previous_bucket)
+            # A cumulative-volume delta spanning two 10-second buckets cannot
+            # be attributed reliably to either interval. Drop only this
+            # interval's volume contribution; retain the quote observation so
+            # premium/IV processing and later same-bucket deltas still work.
+            crossed_bucket = bucket != previous_bucket
+            if not crossed_bucket:
+                buckets[bucket] = buckets.get(bucket, 0) + increment
             for old_bucket in tuple(buckets):
                 if old_bucket * self.BUCKET_NS < cutoff:
                     del buckets[old_bucket]
@@ -139,7 +146,11 @@ class IVEarlyMoveDetector:
             prior_volumes = [buckets.get(key, 0) for key in prior_buckets]
             baseline = sum(prior_volumes) / available_prior if available_prior >= 12 else 0.0
             current_volume = buckets.get(bucket, 0)
-            ratio = current_volume / baseline if baseline > 0 else None
+            ratio = (
+                current_volume / baseline
+                if baseline > 0 and not crossed_bucket
+                else None
+            )
             if ratio is not None:
                 ratios.append(ratio)
             premium_change = (
