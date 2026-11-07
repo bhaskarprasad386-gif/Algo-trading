@@ -11,6 +11,7 @@ const nav = [
   { href: "/scanner", label: "Cash Future", icon: Activity },
   { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
+  { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/box-spread-paper", label: "Box Paper Trading", icon: ShieldCheck },
   { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
