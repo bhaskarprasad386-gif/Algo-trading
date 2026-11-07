@@ -307,6 +307,7 @@ class IVSkewFlipRuntime:
                     metrics=sampler_snapshot.get("live_metrics", ()),
                     spot_price=spot.price,
                     now_ns=now_ns,
+                    spot_timestamp_ns=getattr(spot, "timestamp_ns", None),
                 )
                 self._early_move[stream_id] = result
             except Exception as exc:
