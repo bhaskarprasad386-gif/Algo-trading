@@ -114,7 +114,7 @@ class IVSkewFlipRuntime:
         try:
             universe = resolve_option_universe(
                 self._rows_by_stream[symbol],
-                underlying=symbol,
+                underlying=config.symbol,
                 expiry_type=config.expiry_type,
                 spot=spot.price,
                 today=now.astimezone(IST).date(),
