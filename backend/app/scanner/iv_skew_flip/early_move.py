@@ -63,11 +63,16 @@ class IVEarlyMoveDetector:
         metrics: Iterable[dict[str, Any]],
         spot_price: float,
         now_ns: int,
+        spot_timestamp_ns: int | None = None,
     ) -> dict[str, Any]:
         spot = self._valid_number(spot_price)
         if spot is None or spot <= 0 or isinstance(now_ns, bool) or now_ns <= 0:
             return self._waiting(now_ns, "valid spot and timestamp required")
-        self._spot.append((now_ns, spot))
+        spot_stamp = now_ns if spot_timestamp_ns is None else spot_timestamp_ns
+        if isinstance(spot_stamp, bool) or not isinstance(spot_stamp, int) or spot_stamp <= 0 or spot_stamp > now_ns or now_ns - spot_stamp > self.MAX_AGE_NS:
+            return self._waiting(now_ns, "fresh spot tick required")
+        if not self._spot or spot_stamp > self._spot[-1][0]:
+            self._spot.append((spot_stamp, spot))
         cutoff = now_ns - self.HISTORY_BUCKETS * self.BUCKET_NS
         while self._spot and self._spot[0][0] < now_ns - 120_000_000_000:
             self._spot.popleft()
@@ -105,11 +110,9 @@ class IVEarlyMoveDetector:
             for old_bucket in tuple(buckets):
                 if old_bucket * self.BUCKET_NS < cutoff:
                     del buckets[old_bucket]
-            prior_volumes = [
-                buckets.get(bucket - offset, 0)
-                for offset in range(1, self.HISTORY_BUCKETS + 1)
-            ]
-            baseline = sum(prior_volumes) / len(prior_volumes) if prior_volumes else 0.0
+            prior_buckets = [bucket - offset for offset in range(1, self.HISTORY_BUCKETS + 1)]
+            prior_volumes = [buckets[key] for key in prior_buckets if key in buckets]
+            baseline = sum(prior_volumes) / len(prior_volumes) if len(prior_volumes) >= 12 else 0.0
             current_volume = buckets.get(bucket, 0)
             ratio = current_volume / baseline if baseline > 0 else None
             if ratio is not None:
@@ -137,11 +140,14 @@ class IVEarlyMoveDetector:
         for direction, rows in candidates.items():
             if not rows:
                 continue
+            best = max(rows, key=lambda row: row[0] + max(0.0, row[1]) + max(0.0, row[2]))
+            qualifying = sum(1 for row in rows if row[0] >= 4.0 and row[1] >= 0.75 and row[2] >= 0.15)
             summaries[direction] = {
-                "contracts": len(rows),
-                "volume_ratio": max(row[0] for row in rows),
-                "premium_change_pct": max(row[1] for row in rows),
-                "iv_change_points": max(row[2] for row in rows),
+                "contracts": qualifying,
+                "observed_contracts": len(rows),
+                "volume_ratio": best[0],
+                "premium_change_pct": best[1],
+                "iv_change_points": best[2],
             }
         if not summaries:
             return self._waiting(now_ns, "waiting for new volume, premium and IV ticks")
@@ -166,7 +172,11 @@ class IVEarlyMoveDetector:
              or (direction == "BEARISH" and spot_change_10s < 0))
         )
         score = sum((volume_watch, premium_rise, iv_rise, spot_aligned))
-        if spot_change_60s is not None and abs(spot_change_60s) >= 0.15:
+        spot_confirmed = spot_change_60s is not None and (
+            (direction == "BULLISH" and spot_change_60s >= 0.15)
+            or (direction == "BEARISH" and spot_change_60s <= -0.15)
+        )
+        if spot_confirmed:
             state = "CONFIRMED"
             reason = "underlying has moved at least 0.15% in the same direction"
         elif volume_confirm and premium_rise and iv_rise and spot_aligned and values["contracts"] >= 2:
@@ -193,7 +203,7 @@ class IVEarlyMoveDetector:
             "reason": reason,
             "signals_allowed": state in {"PRE_MOVE", "CONFIRMED"},
             "baseline_status": "READY" if any(
-                len(buckets) >= 3 for buckets in self._volume_buckets.values()
+                len(buckets) >= 12 for buckets in self._volume_buckets.values()
             ) else "WARMING",
         }
         return dict(self._state)
