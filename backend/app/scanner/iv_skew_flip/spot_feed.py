@@ -31,9 +31,11 @@ class IVSpotFeedAdapter:
         feed: Any | None = None,
         clock_ns: Callable[[], int] = time_ns,
         max_spot_age_seconds: float = 3.0,
+        persist_last_price: bool | None = None,
     ) -> None:
         if max_spot_age_seconds <= 0:
             raise ValueError("max_spot_age_seconds must be positive")
+        self._persist_last_price = (feed is None) if persist_last_price is None else bool(persist_last_price)
         self.feed = feed or CommonStrategyMarketFeed(self.CONSUMER, mode=1)
         self.clock_ns = clock_ns
         self.max_spot_age_ns = int(max_spot_age_seconds * 1_000_000_000)
@@ -41,7 +43,8 @@ class IVSpotFeedAdapter:
         self._keys: dict[str, Any] = {}
         self._latest: dict[str, SpotSnapshot] = {}
         self._started = False
-        self._restore_last_prices()
+        if self._persist_last_price:
+            self._restore_last_prices()
 
     def _restore_last_prices(self) -> None:
         """Restore durable last prices; persistence failures never block live feed."""
@@ -146,6 +149,8 @@ class IVSpotFeedAdapter:
                 return
             snapshot = SpotSnapshot(float(price), timestamp_ns)
             self._latest[symbol] = snapshot
+        if not self._persist_last_price:
+            return
         try:
             with SessionLocal() as db:
                 db.merge(IVSpotLastPrice(symbol=symbol, price=snapshot.price, timestamp_ns=snapshot.timestamp_ns))
