@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.scanner.iv_skew_flip.engine import DEFAULT_CONFIGS
+from app.scanner.iv_skew_flip.runtime import CHAIN_CONFIGS
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.sampler import SpotSnapshot
 
@@ -101,6 +101,7 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
     rows = (
         make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
         + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
     )
     spot = FakeSpotFeed()
@@ -117,9 +118,9 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
         clock_ns=lambda: 10_000_000_000,
         clock_datetime=lambda: now,
     )
-    runtime._rows_by_symbol = {
-        config.symbol: runtime._rows_for_symbol(rows, config.symbol)
-        for config in DEFAULT_CONFIGS
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
     }
 
     first = runtime.refresh_once()
@@ -158,9 +159,9 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
         option_feed_factory=lambda symbol: FakeOptionFeed(symbol),
         clock_ns=lambda: 10_000_000_000, clock_datetime=lambda: now,
     )
-    runtime._rows_by_symbol = {
-        config.symbol: runtime._rows_for_symbol(rows, config.symbol)
-        for config in DEFAULT_CONFIGS
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
     }
     result = runtime.refresh_once()
     assert result["indices"]["NIFTY"]["universe_tokens"] == 0
@@ -191,7 +192,7 @@ def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
         clock_datetime=lambda: now,
     )
     evaluated = []
-    runtime._evaluate_symbol = lambda config, when, stamp: (evaluated.append((config.symbol, stamp)) or True)
+    runtime._evaluate_symbol = lambda stream_id, config, when, stamp: (evaluated.append((stream_id, stamp)) or True)
 
     runtime._maybe_evaluate(now, 10_000_000_000)
     runtime._maybe_evaluate(now, 69_000_000_000)
@@ -211,13 +212,13 @@ def test_runtime_clears_signal_state_when_spot_or_option_feed_is_unavailable():
         clock_ns=lambda: 20_000_000_000,
         clock_datetime=lambda: now,
     )
-    runtime._signals["NIFTY"] = {
+    runtime._signals["NIFTY_WEEKLY"] = {
         "confluence": {"direction": "BULLISH", "status": "SIGNAL"},
         "signals_allowed": True,
     }
 
-    assert runtime._evaluate_symbol(DEFAULT_CONFIGS[0], now, 20_000_000_000) is True
-    result = runtime.snapshot()["signals"]["NIFTY"]
+    assert runtime._evaluate_symbol("NIFTY_WEEKLY", CHAIN_CONFIGS[0][1], now, 20_000_000_000) is True
+    result = runtime.snapshot()["signals"]["NIFTY_WEEKLY"]
     assert result["signals_allowed"] is False
     assert result["confluence"]["status"] == "WAITING"
     assert result["confluence"]["direction"] is None
