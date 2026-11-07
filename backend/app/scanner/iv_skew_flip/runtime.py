@@ -408,7 +408,14 @@ class IVSkewFlipRuntime:
                 )
                 self._early_move[stream_id] = result
                 if is_transition and result.get("state") in {"PRE_MOVE", "CONFIRMED", "INVALIDATED"}:
-                    self._persist_early_move_event(stream_id, config, spot.price, result)
+                    try:
+                        self._persist_early_move_event(stream_id, config, spot.price, result)
+                        result["history_persistence"] = "SAVED"
+                    except Exception as exc:
+                        # Persistence health must not suppress a valid live detector alert.
+                        result["history_persistence"] = "ERROR"
+                        result["history_persistence_error"] = f"{type(exc).__name__}: {exc}"
+                    self._early_move[stream_id] = result
             except Exception as exc:
                 self._early_move[stream_id] = {
                     "state": "WATCH", "direction": None, "signals_allowed": False,
