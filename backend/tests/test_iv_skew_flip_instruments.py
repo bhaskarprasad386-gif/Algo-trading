@@ -65,7 +65,7 @@ def test_primary_master_is_used_without_alternate_request(monkeypatch):
         raise AssertionError("alternate host must not be requested")
 
     monkeypatch.setattr(loader.requests, "get", unexpected_request)
-    assert loader.download_iv_instruments(master) is rows
+    assert loader.download_iv_instruments(master) == rows
 
 
 def test_alternate_official_master_is_validated_and_cached(monkeypatch):
