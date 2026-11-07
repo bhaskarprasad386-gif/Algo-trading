@@ -16,6 +16,7 @@ type Runtime = {
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
+const delta = (v: unknown, suffix = "", digits = 2) => n(v) === null ? "—" : `${Number(v) > 0 ? "+" : ""}${fmt(v, digits)}${suffix}`;
 const age = (v: unknown) => n(v) === null ? "—" : n(v)! < 1000 ? `${Math.round(n(v)!)} ms` : `${(n(v)! / 1000).toFixed(1)} s`;
 const apiError = (body: Row, fallback: string) => {
   const detail = body.detail;
@@ -74,21 +75,21 @@ function OptionChain({ title, chain }: { title: string; chain: Chain }) {
     </div>
     {chain.error && <div className="m-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-600">{chain.error}</div>}
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1050px] border-collapse text-center text-xs">
-        <thead><tr><th colSpan={6} className="bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="theme-surface-2 px-3 font-bold theme-text">Strike</th><th colSpan={6} className="bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
-          <tr className="theme-surface-2 theme-muted">{["OI (Lots)","OI Chg","IV %","LTP","Bid","Ask","Bid","Ask","LTP","IV %","OI Chg","OI (Lots)"].map((x,i)=><th key={i} className="border-y theme-border px-2 py-2 font-semibold">{x}</th>)}</tr></thead>
-        <tbody>{strikes.length === 0 ? <tr><td colSpan={13} className="p-10 theme-muted">Waiting for fresh option quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
+      <table className="w-full min-w-[1350px] border-collapse text-center text-xs">
+        <thead><tr><th colSpan={8} className="bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="theme-surface-2 px-3 font-bold theme-text">Strike</th><th colSpan={8} className="bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
+          <tr className="theme-surface-2 theme-muted">{["OI","OI Δ 1s","IV %","IV Δ 1s","LTP","LTP Δ 1s","Bid","Ask","Bid","Ask","LTP","LTP Δ 1s","IV %","IV Δ 1s","OI Δ 1s","OI"].map((x,i)=><th key={i} className="border-y theme-border px-2 py-2 font-semibold">{x}</th>)}</tr></thead>
+        <tbody>{strikes.length === 0 ? <tr><td colSpan={17} className="p-10 theme-muted">Waiting for fresh option quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
           const cell=(v:unknown,d=2)=>n(v)===null?"—":fmt(v,d);
           return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
-            <td className="px-2 py-2">{cell(ce.oi,0)}</td><td className="px-2 py-2 text-emerald-600">—</td><td className="px-2 py-2 font-semibold">{ce.iv_live?cell(ce.iv,2):"—"}</td><td className="px-2 py-2">{cell(ce.ltp)}</td><td className="px-2 py-2 text-emerald-600">{cell(ce.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(ce.ask)}</td>
+            <td className="px-2 py-2">{cell(ce.oi,0)}</td><td className="px-2 py-2 text-emerald-600">{delta(ce.oi_change_1s, "", 0)}</td><td className="px-2 py-2 font-semibold">{ce.iv_live?cell(ce.iv,2):"—"}</td><td className="px-2 py-2 text-emerald-600">{delta(ce.iv_change_1s, " pt", 4)}</td><td className="px-2 py-2">{cell(ce.ltp ?? ce.mark)}</td><td className="px-2 py-2 text-emerald-600">{delta(ce.ltp_change_1s)}</td><td className="px-2 py-2 text-emerald-600">{cell(ce.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(ce.ask)}</td>
             <td className={`px-3 py-2 font-bold ${strike===strikes[Math.floor(strikes.length/2)]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}</td>
-            <td className="px-2 py-2 text-emerald-600">{cell(pe.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(pe.ask)}</td><td className="px-2 py-2">{cell(pe.ltp)}</td><td className="px-2 py-2 font-semibold">{pe.iv_live?cell(pe.iv,2):"—"}</td><td className="px-2 py-2 text-emerald-600">—</td><td className="px-2 py-2">{cell(pe.oi,0)}</td>
+            <td className="px-2 py-2 text-emerald-600">{cell(pe.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(pe.ask)}</td><td className="px-2 py-2">{cell(pe.ltp ?? pe.mark)}</td><td className="px-2 py-2 text-emerald-600">{delta(pe.ltp_change_1s)}</td><td className="px-2 py-2 font-semibold">{pe.iv_live?cell(pe.iv,2):"—"}</td><td className="px-2 py-2 text-emerald-600">{delta(pe.iv_change_1s, " pt", 4)}</td><td className="px-2 py-2 text-emerald-600">{delta(pe.oi_change_1s, "", 0)}</td><td className="px-2 py-2">{cell(pe.oi,0)}</td>
           </tr>;
         })}</tbody>
       </table>
     </div>
-    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">IV is modeled from live bid/ask midpoint (LTP fallback). OI is the broker tick's open interest. OI Change is shown as — until a verified exchange/broker OI-change field is available.</div>
+    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">IV, OI and LTP Δ compare the latest fresh broker tick with the previous one-second sampler cycle. Repeated or stale ticks show —; IV Δ is in percentage points. OI is broker tick open interest.</div>
   </section>;
 }
 export default function IVSkewFlipPage() {
