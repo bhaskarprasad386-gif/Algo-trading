@@ -189,12 +189,11 @@ def load_persisted_forward_outcomes(
 ) -> list[tuple[SignalEvent, ForwardOutcome]]:
     """Join durable event and spot-bearing option observations, read-only.
 
-    Spot ticks are deduplicated by source spot timestamp. If option rows
-    disagree on the spot price for the same timestamp, that timestamp is
-    excluded rather than averaged. This avoids manufacturing a price series.
+    Reads the dedicated spot-tick stream, not option-sampler snapshots.
+    The composite key makes each underlying/source timestamp unique.
     """
-    from app.models.iv_option_observation import IVOptionObservation
     from app.models.iv_signal_event import IVSignalEvent
+    from app.models.iv_spot_observation import IVSpotObservation
 
     query = session.query(IVSignalEvent).filter(
         IVSignalEvent.underlying == underlying.upper(),
@@ -225,16 +224,15 @@ def load_persisted_forward_outcomes(
         (max_horizon * 60 + delay_limit) * 1_000_000_000
     )
     observations = session.query(
-        IVOptionObservation.spot_timestamp_ns,
-        IVOptionObservation.spot_price,
+        IVSpotObservation.source_timestamp_ns,
+        IVSpotObservation.price,
     ).filter(
-        IVOptionObservation.underlying == underlying.upper(),
-        IVOptionObservation.spot_timestamp_ns > start_ns,
-        IVOptionObservation.spot_timestamp_ns <= end_ns,
-        IVOptionObservation.spot_price.isnot(None),
-    ).order_by(IVOptionObservation.spot_timestamp_ns.asc()).all()
+        IVSpotObservation.underlying == underlying.upper(),
+        IVSpotObservation.source_timestamp_ns > start_ns,
+        IVSpotObservation.source_timestamp_ns <= end_ns,
+    ).order_by(IVSpotObservation.source_timestamp_ns.asc()).all()
 
-    prices_by_timestamp: dict[int, set[float]] = defaultdict(set)
+    spot_points = []
     for timestamp_ns, price in observations:
         if not _valid_timestamp(timestamp_ns):
             continue
@@ -243,13 +241,8 @@ def load_persisted_forward_outcomes(
         except (TypeError, ValueError, OverflowError):
             continue
         if isfinite(numeric_price) and numeric_price > 0:
-            prices_by_timestamp[timestamp_ns].add(numeric_price)
+            spot_points.append(SpotPoint(timestamp_ns, numeric_price))
 
-    spot_points = [
-        SpotPoint(timestamp_ns, next(iter(prices)))
-        for timestamp_ns, prices in sorted(prices_by_timestamp.items())
-        if len(prices) == 1
-    ]
     rows: list[tuple[SignalEvent, ForwardOutcome]] = []
     for stored in events:
         event = SignalEvent(
