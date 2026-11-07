@@ -45,7 +45,7 @@ def test_incomplete_weight_coverage_fails_closed():
 def test_mixed_constituents_do_not_create_directional_pressure():
     p = tracker(min_abs_return_pct=0.01, min_breadth_pct=60)
     base = 100_000_000_000
-    values = {"A": (100, 100.2), "B": (200, 199.8), "C": (300, 300.01)}
+    values = {"A": (100, 100.2), "B": (200, 199.6), "C": (300, 299.7)}
     for symbol, (start, end) in values.items():
         p.update(ComponentSample(symbol, base, start))
         p.update(ComponentSample(symbol, base + 5_000_000_000, end))
