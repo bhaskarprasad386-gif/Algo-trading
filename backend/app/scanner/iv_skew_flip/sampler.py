@@ -39,6 +39,7 @@ class OptionMetricSample:
     sampled_at_ns: int
     source_timestamp_ns: int
     spot_timestamp_ns: int
+    spot_price: float | None
     oi: int | None
     mark: float | None
     ltp: float | None
@@ -144,6 +145,7 @@ class IVOneSecondSampler:
                         token=row.token, underlying=row.underlying, expiry=row.expiry,
                         strike=row.strike, option_type=row.option_type, sampled_at_ns=row.sampled_at_ns,
                         source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
+                        spot_price=row.spot_price,
                         oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
                         iv_input='BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None else None,
                         bid=row.bid, ask=row.ask, volume=row.volume,
@@ -170,7 +172,7 @@ class IVOneSecondSampler:
                 session.add(IVOptionObservation(
                     token=item.token, underlying=item.underlying, expiry=item.expiry, strike=item.strike,
                     option_type=item.option_type, source_timestamp_ns=item.source_timestamp_ns,
-                    spot_timestamp_ns=item.spot_timestamp_ns, sampled_at_ns=item.sampled_at_ns,
+                    spot_timestamp_ns=item.spot_timestamp_ns, spot_price=getattr(item, "spot_price", None), sampled_at_ns=item.sampled_at_ns,
                     iv=item.iv, oi=item.oi, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
                 ))
                 inserted += 1
@@ -240,6 +242,7 @@ class IVOneSecondSampler:
                 strike=quote.strike, option_type=quote.option_type,
                 sampled_at_ns=sampled_at, source_timestamp_ns=quote.timestamp_ns,
                 spot_timestamp_ns=spot_value.timestamp_ns,
+                spot_price=spot_value.price,
                 oi=quote.oi if isinstance(quote.oi, int) and not isinstance(quote.oi, bool) and quote.oi >= 0 else None,
                 mark=mark,
                 ltp=quote.ltp if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0 else None,
