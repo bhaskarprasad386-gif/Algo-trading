@@ -8,11 +8,15 @@ from __future__ import annotations
 from math import isfinite
 from threading import RLock
 from time import time_ns
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Callable, Iterable
 
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.contracts import InstrumentType
 from app.market_data.registry import InstrumentDescriptor
+from app.core.database import SessionLocal
+from app.models.iv_spot_last_price import IVSpotLastPrice
 
 from .sampler import SpotSnapshot
 
@@ -37,6 +41,24 @@ class IVSpotFeedAdapter:
         self._keys: dict[str, Any] = {}
         self._latest: dict[str, SpotSnapshot] = {}
         self._started = False
+        self._restore_last_prices()
+
+    def _restore_last_prices(self) -> None:
+        """Restore durable last prices; persistence failures never block live feed."""
+        try:
+            with SessionLocal() as db:
+                rows = db.query(IVSpotLastPrice).all()
+            with self._lock:
+                self._latest.update({
+                    row.symbol: SpotSnapshot(float(row.price), int(row.timestamp_ns))
+                    for row in rows
+                    if row.symbol in self.DEFAULT_SYMBOLS
+                    and isfinite(float(row.price)) and float(row.price) > 0
+                    and int(row.timestamp_ns) > 0
+                })
+        except Exception:
+            # A database outage must not prevent the live IV market-data path.
+            return
 
     @staticmethod
     def _descriptors(instrument_master: Any, symbols: Iterable[str]) -> tuple[InstrumentDescriptor, ...]:
@@ -73,7 +95,6 @@ class IVSpotFeedAdapter:
                 str(item.underlying).upper(): item.key
                 for item in descriptors
             }
-            self._latest.clear()
         keys = self.feed.start(descriptors, self._on_record)
         self._started = True
         return {
@@ -123,7 +144,15 @@ class IVSpotFeedAdapter:
             previous = self._latest.get(symbol)
             if previous is not None and timestamp_ns <= previous.timestamp_ns:
                 return
-            self._latest[symbol] = SpotSnapshot(float(price), timestamp_ns)
+            snapshot = SpotSnapshot(float(price), timestamp_ns)
+            self._latest[symbol] = snapshot
+        try:
+            with SessionLocal() as db:
+                db.merge(IVSpotLastPrice(symbol=symbol, price=snapshot.price, timestamp_ns=snapshot.timestamp_ns))
+                db.commit()
+        except Exception:
+            # Keep the in-memory live quote even if durable storage is unavailable.
+            return
 
     def spot_snapshot(self, symbol: str, *, now_ns: int | None = None) -> SpotSnapshot | None:
         current = self.clock_ns() if now_ns is None else now_ns
@@ -171,6 +200,9 @@ class IVSpotFeedAdapter:
                     "price": item.price,
                     "last_price": item.price,
                     "timestamp_ns": item.timestamp_ns,
+                    "last_trade_time": datetime.fromtimestamp(
+                        item.timestamp_ns / 1_000_000_000, tz=timezone.utc
+                    ).astimezone(ZoneInfo("Asia/Kolkata")).isoformat(),
                     "age_ms": round((current - item.timestamp_ns) / 1_000_000, 2),
                     "fresh": symbol in fresh,
                     "quote_status": "LIVE" if symbol in fresh else "LAST_KNOWN_STALE",
@@ -184,7 +216,7 @@ class IVSpotFeedAdapter:
         self.feed.stop()
         with self._lock:
             self._started = False
-            self._latest.clear()
+            # Last prices are intentionally retained across runner OFF/ON cycles.
             self._keys.clear()
 
 
