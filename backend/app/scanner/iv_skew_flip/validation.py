@@ -260,3 +260,27 @@ def load_persisted_forward_outcomes(
         ):
             rows.append((event, outcome))
     return rows
+
+
+
+def summarize_walk_forward_by_date(
+    rows: Iterable[tuple[SignalEvent, ForwardOutcome]],
+) -> dict[str, object]:
+    """Descriptive date-grouped report; each exchange date remains a whole group."""
+    grouped = group_outcomes_by_date(rows)
+    report = []
+    for trading_date, date_rows in grouped.items():
+        unique_events = {
+            (event.event_timestamp_ns, event.direction, event.state, event.underlying): event
+            for event, _ in date_rows
+        }
+        summary = summarize_forward_outcomes(unique_events.values(), date_rows)
+        report.append({
+            "trading_date_ist": trading_date,
+            **summary,
+        })
+    return {
+        "grouping": "event trading date in Asia/Kolkata; no random row split",
+        "dates": report,
+        "interpretation": "descriptive forward returns only; not accuracy, profitability, or out-of-sample validation",
+    }
