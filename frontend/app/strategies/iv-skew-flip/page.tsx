@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
+import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
 type Row = Record<string, unknown>;
