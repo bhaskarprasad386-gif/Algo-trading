@@ -265,22 +265,30 @@ def load_persisted_forward_outcomes(
 
 def summarize_walk_forward_by_date(
     rows: Iterable[tuple[SignalEvent, ForwardOutcome]],
+    events: Iterable[SignalEvent] | None = None,
 ) -> dict[str, object]:
-    """Descriptive date-grouped report; each exchange date remains a whole group."""
-    grouped = group_outcomes_by_date(rows)
+    """Descriptive date-grouped report with eligible events as coverage denominator."""
+    outcome_rows = list(rows)
+    event_rows = list(events) if events is not None else [
+        event for event, _ in outcome_rows
+    ]
+    events_by_date: dict[str, dict[tuple, SignalEvent]] = defaultdict(dict)
+    for event in event_rows:
+        key = (event.event_timestamp_ns, event.direction, event.state, event.underlying)
+        events_by_date[trading_date_ist(event.event_timestamp_ns)][key] = event
+    outcomes_by_date = group_outcomes_by_date(outcome_rows)
     report = []
-    for trading_date, date_rows in grouped.items():
-        unique_events = {
-            (event.event_timestamp_ns, event.direction, event.state, event.underlying): event
-            for event, _ in date_rows
-        }
-        summary = summarize_forward_outcomes(unique_events.values(), date_rows)
+    for trading_date in sorted(set(events_by_date) | set(outcomes_by_date)):
+        date_events = list(events_by_date.get(trading_date, {}).values())
+        date_rows = outcomes_by_date.get(trading_date, [])
+        summary = summarize_forward_outcomes(date_events, date_rows)
         report.append({
             "trading_date_ist": trading_date,
             **summary,
         })
     return {
-        "grouping": "event trading date in Asia/Kolkata; no random row split",
+        "eligible_event_dates": len(report),
         "dates": report,
+        "grouping": "event trading date in Asia/Kolkata; no random row split",
         "interpretation": "descriptive forward returns only; not accuracy, profitability, or out-of-sample validation",
     }
