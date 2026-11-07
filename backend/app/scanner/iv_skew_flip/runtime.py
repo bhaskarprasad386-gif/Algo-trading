@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.core.database import SessionLocal
+from app.models.iv_signal_event import IVSignalEvent
 
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .early_move import IVEarlyMoveDetector
@@ -332,6 +334,50 @@ class IVSkewFlipRuntime:
             with self._lock:
                 self._last_evaluation_ns = now_ns
 
+    @staticmethod
+    def _persist_early_move_event(stream_id: str, config: ScannerConfig, spot_price: float, result: dict[str, Any]) -> None:
+        """Persist only detector state transitions; repeated refreshes are idempotent."""
+        state = str(result.get("state") or "").upper()
+        direction = str(result.get("direction") or "").upper()
+        if state not in {"PRE_MOVE", "CONFIRMED", "INVALIDATED"} or direction not in {"BULLISH", "BEARISH"}:
+            return
+        event_timestamp_ns = result.get("updated_at_ns") if state == "INVALIDATED" else result.get("evidence_at_ns")
+        if isinstance(event_timestamp_ns, bool) or not isinstance(event_timestamp_ns, int) or event_timestamp_ns <= 0:
+            return
+        session = SessionLocal()
+        try:
+            exists = session.query(IVSignalEvent.id).filter_by(
+                stream_id=stream_id, state=state, direction=direction,
+                event_timestamp_ns=event_timestamp_ns,
+            ).first()
+            if exists:
+                return
+            tokens = result.get("qualifying_tokens") or []
+            session.add(IVSignalEvent(
+                stream_id=stream_id,
+                underlying=config.symbol,
+                expiry_type=config.expiry_type,
+                state=state,
+                direction=direction,
+                event_timestamp_ns=event_timestamp_ns,
+                source_timestamp_ns=result.get("source_timestamp_ns"),
+                spot_timestamp_ns=result.get("spot_timestamp_ns"),
+                spot_price=float(spot_price),
+                volume_ratio=result.get("volume_ratio"),
+                premium_change_pct=result.get("premium_change_pct"),
+                iv_change_points=result.get("iv_change_points"),
+                spot_change_pct=result.get("spot_change_pct"),
+                contracts_confirming=int(result.get("contracts_confirming") or 0),
+                qualifying_tokens=json.dumps(sorted({str(token) for token in tokens})),
+                reason=str(result.get("reason") or ""),
+            ))
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def _evaluate_early_move(self, now_ns: int) -> None:
         """Run the short-window alert path every refresh, independently of 60s signals."""
         for stream_id, config in CHAIN_CONFIGS:
@@ -354,7 +400,15 @@ class IVSkewFlipRuntime:
                     now_ns=now_ns,
                     spot_timestamp_ns=getattr(spot, "timestamp_ns", None),
                 )
+                previous = self._early_move.get(stream_id, {})
+                is_transition = (
+                    result.get("state") != previous.get("state")
+                    or result.get("direction") != previous.get("direction")
+                    or result.get("evidence_at_ns") != previous.get("evidence_at_ns")
+                )
                 self._early_move[stream_id] = result
+                if is_transition and result.get("state") in {"PRE_MOVE", "CONFIRMED", "INVALIDATED"}:
+                    self._persist_early_move_event(stream_id, config, spot.price, result)
             except Exception as exc:
                 self._early_move[stream_id] = {
                     "state": "WATCH", "direction": None, "signals_allowed": False,
