@@ -34,6 +34,7 @@ class IVOptionObservation(Base):
     option_type: Mapped[str] = mapped_column(String(2), nullable=False)
     source_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     spot_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    spot_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     sampled_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     iv: Mapped[float | None] = mapped_column(Float, nullable=True)
     oi: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
