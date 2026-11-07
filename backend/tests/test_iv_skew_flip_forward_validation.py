@@ -161,10 +161,35 @@ def test_database_join_uses_deduplicated_source_spot_ticks_and_event_filters():
             ))
         session.commit()
 
+        # A second event has conflicting spot prices from two option rows
+        # at the same source timestamp; the loader must exclude that tick.
+        session.add(IVSignalEvent(
+            stream_id="NIFTY_WEEKLY", underlying="NIFTY", expiry_type="WEEKLY",
+            state="PRE_MOVE", direction="BULLISH",
+            event_timestamp_ns=20_000 * minute,
+            source_timestamp_ns=20_000 * minute,
+            spot_timestamp_ns=20_000 * minute,
+            spot_price=100.0, contracts_confirming=2,
+            qualifying_tokens='["ce3","ce4"]', reason="conflict test",
+        ))
+        for token, price in (("ce3", 102.0), ("ce4", 103.0)):
+            session.add(IVOptionObservation(
+                token=token, underlying="NIFTY", expiry="2026-11-12",
+                strike=100.0, option_type="CE",
+                source_timestamp_ns=20_011 * minute,
+                spot_timestamp_ns=20_011 * minute,
+                spot_price=price, sampled_at_ns=20_011 * minute,
+                iv=20.0, oi=100, bid=1.0, ask=1.1, ltp=1.05,
+                mark=1.05, volume=10,
+            ))
+        session.commit()
+
         rows = load_persisted_forward_outcomes(
             session, underlying="NIFTY", expiry_type="WEEKLY",
             horizons_minutes=(10,),
         )
+        # First event's identical tick is deduplicated; conflicting second
+        # event tick is excluded instead of being averaged.
         assert len(rows) == 1
         assert rows[0][1].direction_adjusted_return_pct == 2.0
     finally:
