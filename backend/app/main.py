@@ -84,6 +84,7 @@ Base.metadata.create_all(bind=engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
+_iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
 configure_live_cash_future_snapshot(live_cash_future_scanner.snapshot)
 live_cash_future_runner: LiveCashFutureCommonRunner | None = None
@@ -1734,31 +1735,38 @@ def _save_iv_scanner_enabled(enabled: bool) -> bool:
 
 def _start_iv_skew_flip_runtime():
     global iv_skew_flip_runtime
-    if iv_skew_flip_runtime is not None:
-        return iv_skew_flip_runtime.snapshot()
-    runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
-    try:
-        snapshot = runtime.start()
-    except Exception:
-        runtime.stop()
-        raise
-    iv_skew_flip_runtime = runtime
-    return snapshot
+    # Serialize start/stop requests so simultaneous UI/API requests cannot
+    # create duplicate IV consumers or publish a half-started runtime.
+    with _iv_skew_flip_runtime_lock:
+        if iv_skew_flip_runtime is not None:
+            return iv_skew_flip_runtime.snapshot()
+        runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
+        try:
+            snapshot = runtime.start()
+        except Exception:
+            runtime.stop()
+            raise
+        iv_skew_flip_runtime = runtime
+        return snapshot
 
 
 def _stop_iv_skew_flip_runtime():
     global iv_skew_flip_runtime
-    if iv_skew_flip_runtime is None:
-        return {"status": "STOPPED", "consumer": "iv-skew-flip", "orders_enabled": False}
-    snapshot = iv_skew_flip_runtime.stop()
-    iv_skew_flip_runtime = None
-    return snapshot
+    with _iv_skew_flip_runtime_lock:
+        if iv_skew_flip_runtime is None:
+            return {"status": "STOPPED", "consumer": "iv-skew-flip", "orders_enabled": False}
+        runtime = iv_skew_flip_runtime
+        snapshot = runtime.stop()
+        if iv_skew_flip_runtime is runtime:
+            iv_skew_flip_runtime = None
+        return snapshot
 
 
 @app.get("/api/v1/scanner/iv-skew-flip/status")
 def iv_skew_flip_status():
     enabled = _get_iv_scanner_enabled()
-    runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
+    with _iv_skew_flip_runtime_lock:
+        runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
     return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
             "runner_status": "RUNNING" if runtime and runtime.get("status") == "RUNNING" else "STOPPED",
             "runtime": runtime, "orders_enabled": False}
