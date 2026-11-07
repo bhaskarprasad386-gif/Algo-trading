@@ -281,6 +281,10 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
             "NIFTY", "2026-11-12", 21950, "CE", now_ns,
             100.0, 99.5, 100.5, 10000, 250, "durable-ce",
         ),
+        OptionQuote(
+            "NIFTY", "2026-11-12", 22000, "PE", now_ns,
+            100.0, 99.5, 100.5, None, 125, "durable-iv-only",
+        ),
     )
     first = IVOneSecondSampler(
         quote_source=source,
@@ -293,7 +297,7 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
         now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
     )
     assert result["history_persistence"] == "ENABLED"
-    assert result["history_persisted_count"] == 1
+    assert result["history_persisted_count"] == 2
 
     # Re-reading an unchanged broker tick must not create a duplicate row.
     first.sample_once(
@@ -302,11 +306,14 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
     )
     with Session() as session:
         rows = session.query(IVOptionObservation).all()
-        assert len(rows) == 1
-        assert rows[0].volume == 250
-        assert rows[0].oi == 10000
-        assert rows[0].bid == 99.5
-        assert rows[0].ask == 100.5
+        assert len(rows) == 2
+        durable = next(row for row in rows if row.token == "durable-ce")
+        iv_only = next(row for row in rows if row.token == "durable-iv-only")
+        assert durable.volume == 250
+        assert durable.oi == 10000
+        assert durable.bid == 99.5
+        assert durable.ask == 100.5
+        assert iv_only.oi is None
 
     # A fresh sampler instance recovers the source-time history from SQL.
     restarted = IVOneSecondSampler(
@@ -320,7 +327,7 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
         now_ns=now_ns + 2_000_000_000, now=now,
         spot=SpotSnapshot(21950, now_ns + 2_000_000_000),
     )
-    assert restored["history_samples_by_token"] == {"durable-ce": 1}
+    assert restored["history_samples_by_token"] == {"durable-ce": 1, "durable-iv-only": 1}
     engine.dispose()
 
 
