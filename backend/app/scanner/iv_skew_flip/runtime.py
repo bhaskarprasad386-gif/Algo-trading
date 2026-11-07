@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .early_move import IVEarlyMoveDetector
+from .equity_feed import IVWeightedEquityFeedAdapter, WeightedEquity
+from .equity_pressure import ComponentSample, ComponentWeight, EquityComponentPressure
 from .feed import IVSkewFlipFeedAdapter
 from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
@@ -41,6 +43,9 @@ class IVSkewFlipRuntime:
         clock_datetime: Callable[[], datetime] | None = None,
         refresh_seconds: float = 1.0,
         evaluation_seconds: float = 60.0,
+        equity_pressure_enabled: bool = False,
+        equity_basket: tuple[WeightedEquity, ...] | None = None,
+        equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
@@ -55,6 +60,26 @@ class IVSkewFlipRuntime:
             raise ValueError("signal evaluation cadence is fixed at 60 seconds")
         self.refresh_seconds = refresh_seconds
         self.evaluation_seconds = evaluation_seconds
+        if not isinstance(equity_pressure_enabled, bool):
+            raise ValueError("equity_pressure_enabled must be boolean")
+        self.equity_pressure_enabled = equity_pressure_enabled
+        self.equity_basket = tuple(equity_basket or ())
+        if self.equity_pressure_enabled and not self.equity_basket:
+            raise ValueError("equity pressure requires an injected verified weight basket")
+        self.equity_feed_factory = equity_feed_factory or (
+            lambda: IVWeightedEquityFeedAdapter(clock_ns=clock_ns)
+        )
+        self._equity_feed: IVWeightedEquityFeedAdapter | None = None
+        self._equity_pressure = (
+            EquityComponentPressure(
+                tuple(ComponentWeight(item.symbol, item.weight) for item in self.equity_basket)
+            )
+            if self.equity_pressure_enabled else None
+        )
+        self._equity_pressure_last_snapshot: dict[str, Any] = {
+            "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
+            "timeframe_agreement": False, "windows": {},
+        }
         self._lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
@@ -99,7 +124,21 @@ class IVSkewFlipRuntime:
         # master cannot leave the runtime half-started.
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
+        if self.equity_pressure_enabled:
+            equity_feed = self.equity_feed_factory()
+            try:
+                equity_feed.start(self.instrument_master, self.equity_basket)
+            except Exception:
+                equity_feed.stop()
+                raise
+            self._equity_feed = equity_feed
+        try:
+            self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
+        except Exception:
+            if self._equity_feed is not None:
+                self._equity_feed.stop()
+                self._equity_feed = None
+            raise
         with self._lock:
             self._rows_by_stream = rows
             self._started = True
@@ -317,6 +356,41 @@ class IVSkewFlipRuntime:
                     "baseline_status": "WARMING",
                 }
 
+    def _refresh_equity_pressure(self, now_ns: int) -> None:
+        if not self.equity_pressure_enabled or self._equity_feed is None or self._equity_pressure is None:
+            self._equity_pressure_last_snapshot = {
+                "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
+                "timeframe_agreement": False, "windows": {},
+            }
+            return
+        feed_snapshot = self._equity_feed.snapshot(now_ns=now_ns)
+        for symbol, quote in feed_snapshot.get("quotes", {}).items():
+            self._equity_pressure.update(ComponentSample(
+                symbol=symbol,
+                timestamp_ns=quote["timestamp_ns"],
+                ltp=quote["ltp"],
+            ))
+        pressure_snapshot = self._equity_pressure.snapshot(now_ns=now_ns)
+        signals_allowed = bool(
+            feed_snapshot.get("signals_allowed")
+            and pressure_snapshot.get("signals_allowed")
+            and pressure_snapshot.get("direction") in {"BULLISH", "BEARISH"}
+            and pressure_snapshot.get("timeframe_agreement")
+        )
+        self._equity_pressure_last_snapshot = {
+            **pressure_snapshot,
+            "enabled": True,
+            "feed": {
+                "status": feed_snapshot.get("status"),
+                "consumer": feed_snapshot.get("consumer"),
+                "expected_symbols": feed_snapshot.get("expected_symbols", []),
+                "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
+                "missing_symbols": feed_snapshot.get("missing_symbols", []),
+                "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
+            },
+            "signals_allowed": signals_allowed,
+        }
+
     def refresh_once(self) -> dict[str, Any]:
         now = self.clock_datetime()
         if now.tzinfo is None:
@@ -327,6 +401,7 @@ class IVSkewFlipRuntime:
                 continue
             self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
+        self._refresh_equity_pressure(now_ns)
         self._evaluate_early_move(now_ns)
         self._maybe_evaluate(now, now_ns)
         with self._lock:
@@ -372,6 +447,10 @@ class IVSkewFlipRuntime:
             "last_evaluation_ns": last_evaluation,
             "signals": signals,
             "early_move": early_move,
+            "equity_pressure": {
+                **self._equity_pressure_last_snapshot,
+                "enabled": self.equity_pressure_enabled,
+            },
             "spot_feed": self.spot_feed.snapshot(),
             "option_chains": {
                 stream_id: {
@@ -412,6 +491,9 @@ class IVSkewFlipRuntime:
         for feed in feeds:
             feed.stop()
         self.spot_feed.stop()
+        if self._equity_feed is not None:
+            self._equity_feed.stop()
+            self._equity_feed = None
         with self._lock:
             self._started = False
             self._thread = None
@@ -421,6 +503,15 @@ class IVSkewFlipRuntime:
             self._rows_by_stream.clear()
             self._signals.clear()
             self._early_move.clear()
+            if self.equity_pressure_enabled:
+                self._equity_pressure = EquityComponentPressure(
+                    tuple(ComponentWeight(item.symbol, item.weight) for item in self.equity_basket)
+                )
+            self._equity_pressure_last_snapshot = {
+                "status": "DISABLED" if not self.equity_pressure_enabled else "STOPPED",
+                "signals_allowed": False, "direction": "WAITING",
+                "timeframe_agreement": False, "windows": {},
+            }
             self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
             self._previous_atm_iv_diff.clear()
             self._previous_atm_strike.clear()
