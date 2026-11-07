@@ -299,11 +299,17 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
     assert result["history_persistence"] == "ENABLED"
     assert result["history_persisted_count"] == 2
 
-    # Re-reading an unchanged broker tick must not create a duplicate row.
-    first.sample_once(
-        now_ns=now_ns + 1_000_000_000, now=now,
-        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
-    )
+    # Concurrent refreshes of the same broker tick must remain idempotent.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def repeat_refresh(_):
+        return first.sample_once(
+            now_ns=now_ns + 1_000_000_000, now=now,
+            spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(repeat_refresh, range(8)))
     with Session() as session:
         rows = session.query(IVOptionObservation).all()
         assert len(rows) == 2
