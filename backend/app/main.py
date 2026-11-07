@@ -1777,37 +1777,42 @@ def save_iv_skew_flip_config(payload: dict):
     enabled = payload.get("enabled")
     if not isinstance(enabled, bool):
         raise HTTPException(status_code=422, detail="enabled must be a boolean")
-    if enabled:
-        try:
-            snapshot = _start_iv_skew_flip_runtime()
-        except Exception as exc:
-            app_logger.exception("IV Scanner could not be enabled")
-            raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
-        _save_iv_scanner_enabled(True)
-    else:
-        snapshot = _stop_iv_skew_flip_runtime()
-        _save_iv_scanner_enabled(False)
-    return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
-            "runner_status": "RUNNING" if snapshot.get("status") == "RUNNING" else "STOPPED",
-            "runtime": snapshot, "orders_enabled": False}
+    # Keep runtime transition and persisted desired state in one critical
+    # section; otherwise a racing OFF/ON request could leave them contradictory.
+    with _iv_skew_flip_runtime_lock:
+        if enabled:
+            try:
+                snapshot = _start_iv_skew_flip_runtime()
+            except Exception as exc:
+                app_logger.exception("IV Scanner could not be enabled")
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
+            _save_iv_scanner_enabled(True)
+        else:
+            snapshot = _stop_iv_skew_flip_runtime()
+            _save_iv_scanner_enabled(False)
+        return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
+                "runner_status": "RUNNING" if snapshot.get("status") == "RUNNING" else "STOPPED",
+                "runtime": snapshot, "orders_enabled": False}
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/start")
 def start_iv_skew_flip_scanner():
-    try:
-        snapshot = _start_iv_skew_flip_runtime()
-        _save_iv_scanner_enabled(True)
-        return snapshot
-    except Exception as exc:
-        app_logger.exception("IV Skew / IV Flip scanner startup failed")
-        raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
+    with _iv_skew_flip_runtime_lock:
+        try:
+            snapshot = _start_iv_skew_flip_runtime()
+            _save_iv_scanner_enabled(True)
+            return snapshot
+        except Exception as exc:
+            app_logger.exception("IV Skew / IV Flip scanner startup failed")
+            raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/stop")
 def stop_iv_skew_flip_scanner():
-    snapshot = _stop_iv_skew_flip_runtime()
-    _save_iv_scanner_enabled(False)
-    return snapshot
+    with _iv_skew_flip_runtime_lock:
+        snapshot = _stop_iv_skew_flip_runtime()
+        _save_iv_scanner_enabled(False)
+        return snapshot
 
 
 @app.get("/health")
