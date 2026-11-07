@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from math import isfinite
 from typing import Iterable
 
@@ -112,11 +113,13 @@ def measure_forward_outcomes(
     return outcomes
 
 
-def trading_date_utc(timestamp_ns: int) -> str:
-    """Stable UTC date key for date-grouped splits; convert to exchange TZ upstream if needed."""
+def trading_date_ist(timestamp_ns: int) -> str:
+    """NSE/BSE exchange-local date key for date-grouped validation splits."""
     if not _valid_timestamp(timestamp_ns):
         raise ValueError("timestamp_ns must be a positive integer")
-    return datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=timezone.utc).date().isoformat()
+    return datetime.fromtimestamp(
+        timestamp_ns / 1_000_000_000, tz=ZoneInfo("Asia/Kolkata")
+    ).date().isoformat()
 
 
 def group_outcomes_by_date(
@@ -125,5 +128,88 @@ def group_outcomes_by_date(
     """Group event/outcome pairs by event date; never split individual rows randomly."""
     grouped: dict[str, list[tuple[SignalEvent, ForwardOutcome]]] = defaultdict(list)
     for event, outcome in rows:
-        grouped[trading_date_utc(event.event_timestamp_ns)].append((event, outcome))
+        grouped[trading_date_ist(event.event_timestamp_ns)].append((event, outcome))
     return dict(sorted(grouped.items()))
+
+
+
+def load_persisted_forward_outcomes(
+    session,
+    *,
+    underlying: str,
+    expiry_type: str | None = None,
+    horizons_minutes: tuple[int, ...] = (10, 30, 60),
+    max_observation_delay_seconds: float = 120.0,
+) -> list[tuple[SignalEvent, ForwardOutcome]]:
+    """Join durable event and spot-bearing option observations, read-only.
+
+    Spot ticks are deduplicated by source spot timestamp. If option rows
+    disagree on the spot price for the same timestamp, that timestamp is
+    excluded rather than averaged. This avoids manufacturing a price series.
+    """
+    from app.models.iv_option_observation import IVOptionObservation
+    from app.models.iv_signal_event import IVSignalEvent
+
+    query = session.query(IVSignalEvent).filter(
+        IVSignalEvent.underlying == underlying.upper(),
+        IVSignalEvent.state.in_(("PRE_MOVE", "CONFIRMED")),
+        IVSignalEvent.direction.in_(("BULLISH", "BEARISH")),
+    )
+    if expiry_type:
+        query = query.filter(IVSignalEvent.expiry_type == expiry_type.upper())
+    events = query.order_by(IVSignalEvent.event_timestamp_ns.asc()).all()
+    if not events:
+        return []
+
+    max_horizon = max(
+        (h for h in horizons_minutes if isinstance(h, int) and not isinstance(h, bool) and h > 0),
+        default=0,
+    )
+    if max_horizon <= 0:
+        return []
+    start_ns = min(event.event_timestamp_ns for event in events)
+    end_ns = max(event.event_timestamp_ns for event in events) + (
+        max_horizon * 60 + max_observation_delay_seconds
+    ) * 1_000_000_000
+    observations = session.query(
+        IVOptionObservation.spot_timestamp_ns,
+        IVOptionObservation.spot_price,
+    ).filter(
+        IVOptionObservation.underlying == underlying.upper(),
+        IVOptionObservation.spot_timestamp_ns > start_ns,
+        IVOptionObservation.spot_timestamp_ns <= end_ns,
+        IVOptionObservation.spot_price.isnot(None),
+    ).order_by(IVOptionObservation.spot_timestamp_ns.asc()).all()
+
+    prices_by_timestamp: dict[int, set[float]] = defaultdict(set)
+    for timestamp_ns, price in observations:
+        if not _valid_timestamp(timestamp_ns):
+            continue
+        try:
+            numeric_price = float(price)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if isfinite(numeric_price) and numeric_price > 0:
+            prices_by_timestamp[timestamp_ns].add(numeric_price)
+
+    spot_points = [
+        SpotPoint(timestamp_ns, next(iter(prices)))
+        for timestamp_ns, prices in sorted(prices_by_timestamp.items())
+        if len(prices) == 1
+    ]
+    rows: list[tuple[SignalEvent, ForwardOutcome]] = []
+    for stored in events:
+        event = SignalEvent(
+            event_timestamp_ns=stored.event_timestamp_ns,
+            spot_price=stored.spot_price,
+            direction=stored.direction,
+            state=stored.state,
+            underlying=stored.underlying,
+        )
+        for outcome in measure_forward_outcomes(
+            event, spot_points,
+            horizons_minutes=horizons_minutes,
+            max_observation_delay_seconds=max_observation_delay_seconds,
+        ):
+            rows.append((event, outcome))
+    return rows
