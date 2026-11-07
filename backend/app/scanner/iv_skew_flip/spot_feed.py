@@ -17,6 +17,7 @@ from app.market_data.contracts import InstrumentType
 from app.market_data.registry import InstrumentDescriptor
 from app.core.database import SessionLocal
 from app.models.iv_spot_last_price import IVSpotLastPrice
+from app.models.iv_spot_observation import IVSpotObservation
 
 from .sampler import SpotSnapshot
 
@@ -152,8 +153,15 @@ class IVSpotFeedAdapter:
         if not self._persist_last_price:
             return
         try:
+            received_at_ns = self.clock_ns()
             with SessionLocal() as db:
                 db.merge(IVSpotLastPrice(symbol=symbol, price=snapshot.price, timestamp_ns=snapshot.timestamp_ns))
+                db.merge(IVSpotObservation(
+                    underlying=symbol,
+                    source_timestamp_ns=snapshot.timestamp_ns,
+                    price=snapshot.price,
+                    received_at_ns=received_at_ns,
+                ))
                 db.commit()
         except Exception:
             # Keep the in-memory live quote even if durable storage is unavailable.
