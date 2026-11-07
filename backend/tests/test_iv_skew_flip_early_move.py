@@ -287,5 +287,8 @@ def test_early_move_flags_option_pressure_before_spot_move_as_pre_move():
     assert result["state"] == "PRE_MOVE"
     assert result["direction"] == "BULLISH"
     assert result["contracts_confirming"] == 2
+    assert result["qualifying_tokens"] == ["ce1", "ce2"]
+    assert result["source_timestamp_ns"] == ts
+    assert result["spot_timestamp_ns"] == ts
     assert result["signals_allowed"] is True
     assert "before a material spot move" in result["reason"]

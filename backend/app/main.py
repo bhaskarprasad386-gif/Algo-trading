@@ -54,6 +54,8 @@ from app.scanner.live_synthetic_routes import router as live_synthetic_router, c
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
+from app.models.iv_signal_event import IVSignalEvent
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
@@ -84,6 +86,7 @@ Base.metadata.create_all(bind=engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
+_iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
 configure_live_cash_future_snapshot(live_cash_future_scanner.snapshot)
 live_cash_future_runner: LiveCashFutureCommonRunner | None = None
@@ -1734,33 +1737,40 @@ def _save_iv_scanner_enabled(enabled: bool) -> bool:
 
 def _start_iv_skew_flip_runtime():
     global iv_skew_flip_runtime
-    if iv_skew_flip_runtime is not None:
-        return iv_skew_flip_runtime.snapshot()
-    runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
-    try:
-        snapshot = runtime.start()
-    except Exception:
-        runtime.stop()
-        raise
-    iv_skew_flip_runtime = runtime
-    return snapshot
+    # Serialize start/stop requests so simultaneous UI/API requests cannot
+    # create duplicate IV consumers or publish a half-started runtime.
+    with _iv_skew_flip_runtime_lock:
+        if iv_skew_flip_runtime is not None:
+            return iv_skew_flip_runtime.snapshot()
+        runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
+        try:
+            snapshot = runtime.start()
+        except Exception:
+            runtime.stop()
+            raise
+        iv_skew_flip_runtime = runtime
+        return snapshot
 
 
 def _stop_iv_skew_flip_runtime():
     global iv_skew_flip_runtime
-    if iv_skew_flip_runtime is None:
-        return {"status": "STOPPED", "consumer": "iv-skew-flip", "orders_enabled": False}
-    snapshot = iv_skew_flip_runtime.stop()
-    iv_skew_flip_runtime = None
-    return snapshot
+    with _iv_skew_flip_runtime_lock:
+        if iv_skew_flip_runtime is None:
+            return {"status": "STOPPED", "consumer": "iv-skew-flip", "orders_enabled": False}
+        runtime = iv_skew_flip_runtime
+        snapshot = runtime.stop()
+        if iv_skew_flip_runtime is runtime and snapshot.get("status") == "STOPPED":
+            iv_skew_flip_runtime = None
+        return snapshot
 
 
 @app.get("/api/v1/scanner/iv-skew-flip/status")
 def iv_skew_flip_status():
     enabled = _get_iv_scanner_enabled()
-    runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
+    with _iv_skew_flip_runtime_lock:
+        runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
     return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
-            "runner_status": "RUNNING" if runtime and runtime.get("status") == "RUNNING" else "STOPPED",
+            "runner_status": runtime.get("status", "STOPPED") if runtime else "STOPPED",
             "runtime": runtime, "orders_enabled": False}
 
 
@@ -1769,37 +1779,119 @@ def save_iv_skew_flip_config(payload: dict):
     enabled = payload.get("enabled")
     if not isinstance(enabled, bool):
         raise HTTPException(status_code=422, detail="enabled must be a boolean")
-    if enabled:
-        try:
-            snapshot = _start_iv_skew_flip_runtime()
-        except Exception as exc:
-            app_logger.exception("IV Scanner could not be enabled")
-            raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
-        _save_iv_scanner_enabled(True)
-    else:
-        snapshot = _stop_iv_skew_flip_runtime()
-        _save_iv_scanner_enabled(False)
-    return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
-            "runner_status": "RUNNING" if snapshot.get("status") == "RUNNING" else "STOPPED",
-            "runtime": snapshot, "orders_enabled": False}
+    # Keep runtime transition and persisted desired state in one critical
+    # section; otherwise a racing OFF/ON request could leave them contradictory.
+    with _iv_skew_flip_runtime_lock:
+        if enabled:
+            # Persist ON first. If persistence fails, the runner is never
+            # started, so a database outage cannot leave an unsaved live runner.
+            try:
+                _save_iv_scanner_enabled(True)
+            except Exception as exc:
+                app_logger.exception("IV Scanner ON state could not be persisted")
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": str(exc)}) from exc
+            try:
+                snapshot = _start_iv_skew_flip_runtime()
+            except Exception as exc:
+                # Compensate the desired state if backend startup fails.
+                try:
+                    _save_iv_scanner_enabled(False)
+                except Exception:
+                    app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
+                app_logger.exception("IV Scanner could not be enabled")
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
+        else:
+            # Persist OFF first. If the database is unavailable, leave the
+            # currently running scanner untouched rather than create a
+            # STOPPED runtime with a persisted ON state that restarts later.
+            try:
+                _save_iv_scanner_enabled(False)
+            except Exception as exc:
+                app_logger.exception("IV Scanner OFF state could not be persisted")
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": str(exc)}) from exc
+            snapshot = _stop_iv_skew_flip_runtime()
+        return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
+                "runner_status": snapshot.get("status", "STOPPED"),
+                "runtime": snapshot, "orders_enabled": False}
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/start")
 def start_iv_skew_flip_scanner():
-    try:
-        snapshot = _start_iv_skew_flip_runtime()
-        _save_iv_scanner_enabled(True)
-        return snapshot
-    except Exception as exc:
-        app_logger.exception("IV Skew / IV Flip scanner startup failed")
-        raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
+    with _iv_skew_flip_runtime_lock:
+        try:
+            _save_iv_scanner_enabled(True)
+            try:
+                snapshot = _start_iv_skew_flip_runtime()
+            except Exception:
+                try:
+                    _save_iv_scanner_enabled(False)
+                except Exception:
+                    app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
+                raise
+            return snapshot
+        except Exception as exc:
+            app_logger.exception("IV Skew / IV Flip scanner startup failed")
+            raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/stop")
 def stop_iv_skew_flip_scanner():
-    snapshot = _stop_iv_skew_flip_runtime()
-    _save_iv_scanner_enabled(False)
-    return snapshot
+    with _iv_skew_flip_runtime_lock:
+        _save_iv_scanner_enabled(False)
+        return _stop_iv_skew_flip_runtime()
+
+
+@app.get("/api/v1/scanner/iv-skew-flip/validation")
+def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None = None):
+    """Read-only descriptive forward outcomes from the dedicated spot-tick history."""
+    symbol = str(underlying or "").strip().upper()
+    if symbol not in {"NIFTY", "BANKNIFTY"}:
+        raise HTTPException(status_code=422, detail="underlying must be NIFTY or BANKNIFTY")
+    expiry = str(expiry_type).strip().upper() if expiry_type else None
+    if expiry is not None and expiry not in {"WEEKLY", "MONTHLY"}:
+        raise HTTPException(status_code=422, detail="expiry_type must be WEEKLY or MONTHLY")
+    db = SessionLocal()
+    try:
+        rows = load_persisted_forward_outcomes(
+            db, underlying=symbol, expiry_type=expiry,
+            horizons_minutes=(10, 30, 60),
+        )
+        event_query = db.query(IVSignalEvent).filter(
+            IVSignalEvent.underlying == symbol,
+            IVSignalEvent.state.in_(("PRE_MOVE", "CONFIRMED")),
+            IVSignalEvent.direction.in_(("BULLISH", "BEARISH")),
+        )
+        if expiry:
+            event_query = event_query.filter(IVSignalEvent.expiry_type == expiry)
+        stored_events = event_query.order_by(IVSignalEvent.event_timestamp_ns.asc()).all()
+        eligible_events = [
+            SignalEvent(
+                event_timestamp_ns=item.event_timestamp_ns,
+                spot_price=item.spot_price,
+                direction=item.direction,
+                state=item.state,
+                underlying=item.underlying,
+                spot_timestamp_ns=item.spot_timestamp_ns,
+            )
+            for item in stored_events
+        ]
+        return {
+            "status": "ok",
+            "underlying": symbol,
+            "expiry_type": expiry,
+            "source": "iv_spot_observations",
+            "eligible_events": len(eligible_events),
+            "events_with_measured_outcomes": len({
+                (event.event_timestamp_ns, event.direction, event.state, event.underlying)
+                for event, _ in rows
+            }),
+            "summary": summarize_forward_outcomes(eligible_events, rows),
+            "date_wise": summarize_walk_forward_by_date(rows, eligible_events),
+            "orders_enabled": False,
+            "interpretation": "descriptive forward returns only; not accuracy, profitability, or out-of-sample validation",
+        }
+    finally:
+        db.close()
 
 
 @app.get("/health")

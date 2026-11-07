@@ -1,0 +1,217 @@
+from app.scanner.iv_skew_flip.validation import (
+    SignalEvent,
+    SpotPoint,
+    group_outcomes_by_date,
+    measure_forward_outcomes,
+    load_persisted_forward_outcomes,
+    summarize_forward_outcomes,
+    summarize_walk_forward_by_date,
+)
+
+
+MINUTE = 60 * 1_000_000_000
+
+
+def test_forward_outcomes_use_first_observation_at_or_after_target():
+    event = SignalEvent(
+        event_timestamp_ns=1_000 * MINUTE,
+        spot_price=100.0,
+        direction="BULLISH",
+        state="PRE_MOVE",
+        underlying="NIFTY",
+    )
+    points = [
+        SpotPoint(1_009 * MINUTE, 105.0),  # before target: must not be used
+        SpotPoint(1_011 * MINUTE, 102.0),  # first observation after 10m target
+        SpotPoint(1_031 * MINUTE, 103.0),
+    ]
+
+    outcomes = measure_forward_outcomes(
+        event, points, horizons_minutes=(10,), max_observation_delay_seconds=120,
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].observed_timestamp_ns == 1_011 * MINUTE
+    assert outcomes[0].raw_return_pct == 2.0
+    assert outcomes[0].direction_adjusted_return_pct == 2.0
+    assert outcomes[0].observation_delay_seconds == 60.0
+
+
+def test_bearish_direction_adjusts_return_and_missing_future_is_omitted():
+    event = SignalEvent(
+        event_timestamp_ns=2_000 * MINUTE,
+        spot_price=200.0,
+        direction="BEARISH",
+        state="CONFIRMED",
+    )
+    points = [SpotPoint(2_011 * MINUTE, 196.0)]
+
+    outcomes = measure_forward_outcomes(event, points, horizons_minutes=(10, 30))
+
+    assert len(outcomes) == 1
+    assert outcomes[0].raw_return_pct == -2.0
+    assert outcomes[0].direction_adjusted_return_pct == 2.0
+    assert outcomes[0].horizon_minutes == 10
+
+
+def test_late_future_observation_is_not_filled_or_interpolated():
+    event = SignalEvent(3_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE")
+    points = [SpotPoint(3_014 * MINUTE, 101.0)]
+
+    assert measure_forward_outcomes(
+        event, points, horizons_minutes=(10,), max_observation_delay_seconds=120,
+    ) == []
+
+
+def test_invalidated_and_invalid_events_do_not_receive_outcomes():
+    points = [SpotPoint(4_011 * MINUTE, 101.0)]
+    event = SignalEvent(4_000 * MINUTE, 100.0, "BULLISH", "INVALIDATED")
+    assert measure_forward_outcomes(event, points) == []
+
+
+def test_stale_or_future_event_spot_baseline_is_rejected():
+    points = [SpotPoint(5_011 * MINUTE, 101.0)]
+    stale = SignalEvent(
+        5_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE",
+        spot_timestamp_ns=4_994 * MINUTE,
+    )
+    future = SignalEvent(
+        5_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE",
+        spot_timestamp_ns=5_001 * MINUTE,
+    )
+
+    assert measure_forward_outcomes(stale, points, horizons_minutes=(10,)) == []
+    assert measure_forward_outcomes(future, points, horizons_minutes=(10,)) == []
+
+
+def test_summary_reports_coverage_and_descriptive_returns_not_accuracy():
+    event = SignalEvent(6_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE")
+    outcomes = measure_forward_outcomes(
+        event, [SpotPoint(6_011 * MINUTE, 101.0)], horizons_minutes=(10,),
+    )
+    summary = summarize_forward_outcomes([event], [(event, outcomes[0])])
+
+    assert summary["eligible_events"] == 1
+    assert summary["horizons"]["10"]["observed"] == 1
+    assert summary["horizons"]["10"]["coverage_pct"] == 100.0
+    assert summary["horizons"]["10"]["mean_direction_adjusted_return_pct"] == 1.0
+    assert "not accuracy" in summary["interpretation"]
+
+
+def test_trading_date_uses_ist_across_utc_midnight():
+    from datetime import datetime, timezone
+
+    from app.scanner.iv_skew_flip.validation import trading_date_ist
+
+    # 20:00 UTC on Jan 1 is 01:30 IST on Jan 2.
+    timestamp_ns = int(datetime(
+        2026, 1, 1, 20, 0, tzinfo=timezone.utc
+    ).timestamp() * 1_000_000_000)
+
+    assert trading_date_ist(timestamp_ns) == "2026-01-02"
+
+
+def test_outcomes_are_grouped_by_event_date_not_random_rows():
+    first = SignalEvent(1_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE")
+    second = SignalEvent(2_000 * MINUTE, 100.0, "BEARISH", "CONFIRMED")
+    rows = [
+        (first, measure_forward_outcomes(first, [SpotPoint(1_011 * MINUTE, 101.0)])[0]),
+        (second, measure_forward_outcomes(second, [SpotPoint(2_011 * MINUTE, 99.0)])[0]),
+    ]
+
+    grouped = group_outcomes_by_date(rows)
+
+    assert sum(map(len, grouped.values())) == 2
+    assert list(grouped) == sorted(grouped)
+
+
+
+def test_database_join_uses_deduplicated_source_spot_ticks_and_event_filters():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.database import Base
+    from app.models.iv_signal_event import IVSignalEvent
+    from app.models.iv_spot_observation import IVSpotObservation
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[
+        IVSignalEvent.__table__, IVSpotObservation.__table__,
+    ])
+    session = sessionmaker(bind=engine)()
+    minute = 60 * 1_000_000_000
+    try:
+        session.add(IVSignalEvent(
+            stream_id="NIFTY_WEEKLY", underlying="NIFTY", expiry_type="WEEKLY",
+            state="PRE_MOVE", direction="BULLISH",
+            event_timestamp_ns=10_000 * minute,
+            source_timestamp_ns=10_000 * minute,
+            spot_timestamp_ns=10_000 * minute,
+            spot_price=100.0, contracts_confirming=2,
+            qualifying_tokens='["ce1","ce2"]', reason="test",
+        ))
+        session.add(IVSpotObservation(
+            underlying="NIFTY", source_timestamp_ns=10_011 * minute,
+            price=102.0, received_at_ns=10_011 * minute,
+        ))
+        session.commit()
+
+        # A second event has its own dedicated spot tick.
+        session.add(IVSignalEvent(
+            stream_id="NIFTY_WEEKLY", underlying="NIFTY", expiry_type="WEEKLY",
+            state="PRE_MOVE", direction="BULLISH",
+            event_timestamp_ns=20_000 * minute,
+            source_timestamp_ns=20_000 * minute,
+            spot_timestamp_ns=20_000 * minute,
+            spot_price=100.0, contracts_confirming=2,
+            qualifying_tokens='["ce3","ce4"]', reason="conflict test",
+        ))
+        session.add(IVSpotObservation(
+            underlying="NIFTY", source_timestamp_ns=20_011 * minute,
+            price=102.0, received_at_ns=20_011 * minute,
+        ))
+        session.commit()
+
+        rows = load_persisted_forward_outcomes(
+            session, underlying="NIFTY", expiry_type="WEEKLY",
+            horizons_minutes=(10,),
+        )
+        # Both event horizons resolve from the independent spot-tick stream.
+        assert len(rows) == 2
+        assert all(row[1].direction_adjusted_return_pct == 2.0 for row in rows)
+    finally:
+        session.close()
+        Base.metadata.drop_all(engine, tables=[
+            IVSignalEvent.__table__, IVSpotObservation.__table__,
+        ])
+        engine.dispose()
+
+
+
+def test_date_wise_report_keeps_event_dates_separate_and_avoids_accuracy_claims():
+    first = SignalEvent(7_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE", "NIFTY")
+    second = SignalEvent(9_000 * MINUTE, 100.0, "BEARISH", "CONFIRMED", "NIFTY")
+    rows = [
+        (first, measure_forward_outcomes(first, [SpotPoint(7_011 * MINUTE, 101.0)], horizons_minutes=(10,))[0]),
+        (second, measure_forward_outcomes(second, [SpotPoint(9_011 * MINUTE, 99.0)], horizons_minutes=(10,))[0]),
+    ]
+    report = summarize_walk_forward_by_date(rows)
+    assert len(report["dates"]) == 2
+    assert report["dates"][0]["eligible_events"] == 1
+    assert "not accuracy" in report["dates"][0]["interpretation"]
+    assert "no random row split" in report["grouping"]
+
+
+def test_date_wise_report_counts_events_without_observed_horizons_in_coverage():
+    observed = SignalEvent(9_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE", "NIFTY")
+    missing = SignalEvent(9_001 * MINUTE, 100.0, "BEARISH", "PRE_MOVE", "NIFTY")
+    rows = [
+        (observed, measure_forward_outcomes(
+            observed, [SpotPoint(9_011 * MINUTE, 101.0)], horizons_minutes=(10,),
+        )[0]),
+    ]
+    report = summarize_walk_forward_by_date(rows, [observed, missing])
+    day = report["dates"][0]
+    assert day["eligible_events"] == 2
+    assert day["horizons"]["10"]["observed"] == 1
+    assert day["horizons"]["10"]["coverage_pct"] == 50.0

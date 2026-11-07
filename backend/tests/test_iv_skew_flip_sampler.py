@@ -256,3 +256,126 @@ def test_sampler_does_not_inherit_history_across_expiry():
         "contracts": (),
     })()
     assert current.inherit_history(previous, universe) == 0
+
+
+def test_sampler_persists_source_ticks_and_restores_history_after_restart():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (
+        OptionQuote(
+            "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+            100.0, 99.5, 100.5, 10000, 250, "durable-ce",
+        ),
+        OptionQuote(
+            "NIFTY", "2026-11-12", 22000, "PE", now_ns,
+            100.0, 99.5, 100.5, None, 125, "durable-iv-only",
+        ),
+    )
+    first = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=Session,
+    )
+    result = first.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert result["history_persistence"] == "ENABLED"
+    assert result["history_persisted_count"] == 2
+
+    # Concurrent refreshes of the same broker tick must remain idempotent.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def repeat_refresh(_):
+        return first.sample_once(
+            now_ns=now_ns + 1_000_000_000, now=now,
+            spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(repeat_refresh, range(8)))
+    with Session() as session:
+        rows = session.query(IVOptionObservation).all()
+        assert len(rows) == 2
+        durable = next(row for row in rows if row.token == "durable-ce")
+        iv_only = next(row for row in rows if row.token == "durable-iv-only")
+        assert durable.volume == 250
+        assert durable.oi == 10000
+        assert durable.bid == 99.5
+        assert durable.ask == 100.5
+        assert durable.spot_price == 21950.0
+        assert durable.spot_timestamp_ns == now_ns
+        assert iv_only.oi is None
+        assert iv_only.spot_price == 21950.0
+
+    # A fresh sampler instance recovers the source-time history from SQL.
+    restarted = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: SpotSnapshot(21950, now_ns + 2_000_000_000),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns + 2_000_000_000,
+        history_session_factory=Session,
+    )
+    restored = restarted.sample_once(
+        now_ns=now_ns + 2_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 2_000_000_000),
+    )
+    assert restored["history_samples_by_token"] == {"durable-ce": 1, "durable-iv-only": 1}
+    engine.dispose()
+
+
+def test_sampler_keeps_live_metrics_and_retries_history_after_storage_failure():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "retry-ce",
+    ),)
+    attempts = []
+
+    def unavailable_storage():
+        attempts.append(True)
+        raise RuntimeError("database temporarily unavailable")
+
+    sampler = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=unavailable_storage,
+    )
+    # Skip restore so this test isolates the write path.
+    sampler._history_loaded = True
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert first["status"] == "LIVE"
+    assert first["sample_count"] == 1
+    assert first["history_samples_by_token"] == {"retry-ce": 1}
+    assert "database temporarily unavailable" in first["history_persistence_error"]
+
+    second = sampler.sample_once(
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    assert second["sample_count"] == 1
+    assert second["history_samples_by_token"] == {"retry-ce": 1}
+    assert len(attempts) == 2
+    assert "database temporarily unavailable" in second["history_persistence_error"]

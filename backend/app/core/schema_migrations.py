@@ -275,6 +275,95 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_observed_at ON live_synthetic_alert_history (observed_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_symbol ON live_synthetic_alert_history (symbol, observed_at)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_syn_alert_identity ON live_synthetic_alert_history (symbol, expiry, timestamp_ns, strike, direction)"))
+        # Durable IV observations are isolated from all other scanner histories.
+        # Source-time uniqueness makes retries idempotent across sampler restarts.
+        # PostgreSQL needs SERIAL for generated integer primary keys; SQLite
+        # uses INTEGER PRIMARY KEY backed by rowid.
+        observation_id_type = "SERIAL" if connection.dialect.name == "postgresql" else "INTEGER"
+        connection.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS iv_option_observations (
+                id {observation_id_type} PRIMARY KEY,
+                token VARCHAR(64) NOT NULL,
+                underlying VARCHAR(32) NOT NULL,
+                expiry VARCHAR(32) NOT NULL,
+                strike FLOAT NOT NULL,
+                option_type VARCHAR(2) NOT NULL,
+                source_timestamp_ns BIGINT NOT NULL,
+                spot_timestamp_ns BIGINT NOT NULL,
+                spot_price FLOAT,
+                sampled_at_ns BIGINT NOT NULL,
+                iv FLOAT,
+                oi BIGINT,
+                bid FLOAT,
+                ask FLOAT,
+                ltp FLOAT,
+                mark FLOAT,
+                volume BIGINT
+            )
+        """))
+        observation_columns = {column["name"] for column in inspect(connection).get_columns("iv_option_observations")}
+        if "spot_price" not in observation_columns:
+            connection.execute(text("ALTER TABLE iv_option_observations ADD COLUMN spot_price FLOAT"))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_iv_option_observation_source "
+            "ON iv_option_observations (token, source_timestamp_ns)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_option_observation_contract_time "
+            "ON iv_option_observations (underlying, expiry, token, source_timestamp_ns)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_option_observation_time "
+            "ON iv_option_observations (source_timestamp_ns)"
+        ))
+
+        # Dedicated source-timestamped spot ticks; never infer this series from option sampling.
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS iv_spot_observations (
+                underlying VARCHAR(32) NOT NULL,
+                source_timestamp_ns BIGINT NOT NULL,
+                price FLOAT NOT NULL,
+                received_at_ns BIGINT NOT NULL,
+                PRIMARY KEY (underlying, source_timestamp_ns)
+            )
+        """))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_spot_observation_time "
+            "ON iv_spot_observations (underlying, source_timestamp_ns)"
+        ))
+
+        # Durable IV detector transitions are separate from option observations.
+        signal_event_id_type = "SERIAL" if connection.dialect.name == "postgresql" else "INTEGER"
+        connection.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS iv_signal_events (
+                id {signal_event_id_type} PRIMARY KEY,
+                stream_id VARCHAR(32) NOT NULL,
+                underlying VARCHAR(32) NOT NULL,
+                expiry_type VARCHAR(16) NOT NULL,
+                state VARCHAR(16) NOT NULL,
+                direction VARCHAR(8) NOT NULL,
+                event_timestamp_ns BIGINT NOT NULL,
+                source_timestamp_ns BIGINT,
+                spot_timestamp_ns BIGINT,
+                spot_price FLOAT,
+                volume_ratio FLOAT,
+                premium_change_pct FLOAT,
+                iv_change_points FLOAT,
+                spot_change_pct FLOAT,
+                contracts_confirming INTEGER NOT NULL DEFAULT 0,
+                qualifying_tokens TEXT NOT NULL DEFAULT '[]',
+                reason TEXT NOT NULL DEFAULT ''
+            )
+        """))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_iv_signal_event_identity "
+            "ON iv_signal_events (stream_id, state, direction, event_timestamp_ns)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_signal_event_time "
+            "ON iv_signal_events (underlying, event_timestamp_ns)"
+        ))
+
         # A broker fill can be retried, but the same user/fill identity must
         # never create a second cash/P&L mutation. Nullable keeps legacy orders valid.
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
