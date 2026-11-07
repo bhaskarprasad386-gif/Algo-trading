@@ -18,7 +18,7 @@ def test_early_move_detector_does_not_double_count_repeated_volume_ticks():
         token="ce", timestamp_ns=100_000_000_000, volume=100,
         option_type="CE", mark=20.0, bid=19.9, ask=20.1,
     )
-    metric = {"token": "ce", "iv": 18.0, "iv_input": "BID_ASK_MIDPOINT"}
+    metric = {"token": "ce", "iv": 18.0, "iv_input": "BID_ASK_MIDPOINT", "source_timestamp_ns": 100_000_000_000, "spot_timestamp_ns": 100_000_000_000}
     detector.update(quotes=(quote,), metrics=(metric,), spot_price=24000, now_ns=100_000_000_000)
     first = detector.update(quotes=(quote,), metrics=(metric,), spot_price=24000, now_ns=101_000_000_000)
     assert first["signals_allowed"] is False
@@ -36,8 +36,8 @@ def test_early_move_detector_requires_volume_iv_premium_and_spot_confluence():
             SimpleNamespace(token="ce2", timestamp_ns=ts, volume=200 + i * 10, option_type="CE", mark=25.0 + i * .01, bid=24.9 + i * .01, ask=25.1 + i * .01),
         )
         metrics = (
-            {"token": "ce1", "iv": 18.0 + i * .01, "iv_input": "BID_ASK_MIDPOINT"},
-            {"token": "ce2", "iv": 19.0 + i * .01, "iv_input": "BID_ASK_MIDPOINT"},
+            {"token": "ce1", "iv": 18.0 + i * .01, "iv_input": "BID_ASK_MIDPOINT", "source_timestamp_ns": ts, "spot_timestamp_ns": ts},
+            {"token": "ce2", "iv": 19.0 + i * .01, "iv_input": "BID_ASK_MIDPOINT", "source_timestamp_ns": ts, "spot_timestamp_ns": ts},
         )
         detector.update(quotes=quotes, metrics=metrics, spot_price=24000 + i * .01, now_ns=ts)
     # A sharp new burst across two contracts.
@@ -46,7 +46,7 @@ def test_early_move_detector_requires_volume_iv_premium_and_spot_confluence():
         SimpleNamespace(token="ce1", timestamp_ns=ts, volume=1000, option_type="CE", mark=22.0, bid=21.9, ask=22.1),
         SimpleNamespace(token="ce2", timestamp_ns=ts, volume=1100, option_type="CE", mark=27.0, bid=26.9, ask=27.1),
     )
-    metrics = ({"token": "ce1", "iv": 20.0, "iv_input": "BID_ASK_MIDPOINT"}, {"token": "ce2", "iv": 21.0, "iv_input": "BID_ASK_MIDPOINT"})
+    metrics = ({"token": "ce1", "iv": 20.0, "iv_input": "BID_ASK_MIDPOINT", "source_timestamp_ns": ts, "spot_timestamp_ns": ts}, {"token": "ce2", "iv": 21.0, "iv_input": "BID_ASK_MIDPOINT", "source_timestamp_ns": ts, "spot_timestamp_ns": ts})
     result = detector.update(quotes=quotes, metrics=metrics, spot_price=24010, now_ns=ts)
     assert result["direction"] == "BULLISH"
     assert result["volume_ratio"] >= 4
@@ -66,3 +66,24 @@ def test_early_move_detector_requires_volume_iv_premium_and_spot_confluence():
     assert held["direction"] == result["direction"]
     assert held["signals_allowed"] is True
     assert "holding recent alert" in held["reason"]
+
+
+
+def test_early_move_detector_rejects_iv_from_a_different_option_tick():
+    detector = IVEarlyMoveDetector()
+    ts = 200_000_000_000
+    quote = SimpleNamespace(
+        token="ce", timestamp_ns=ts, volume=100,
+        option_type="CE", mark=20.0, bid=19.9, ask=20.1,
+    )
+    stale_metric = {
+        "token": "ce", "iv": 18.5, "iv_input": "BID_ASK_MIDPOINT",
+        "source_timestamp_ns": ts - 1_000_000_000,
+        "spot_timestamp_ns": ts,
+    }
+    result = detector.update(
+        quotes=(quote,), metrics=(stale_metric,), spot_price=24000,
+        now_ns=ts, spot_timestamp_ns=ts,
+    )
+    assert result["signals_allowed"] is False
+    assert result["contracts_confirming"] == 0
