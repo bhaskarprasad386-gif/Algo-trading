@@ -82,8 +82,9 @@ def test_equity_feed_requires_every_basket_member_fresh_before_signals():
 def test_equity_feed_rejects_stale_out_of_order_and_missing_source_timestamp():
     adapter, feed = make_adapter()
     descriptor = feed.descriptors[0]
-    send(feed, descriptor, ts=1_000_000_000)
-    send(feed, descriptor, ts=8_000_000_000, ltp=90.0)
+    send(feed, descriptor, ts=6_000_000_000)
+    # Older updates and records without provider source time must not refresh it.
+    send(feed, descriptor, ts=5_000_000_000, ltp=90.0)
     send(feed, descriptor, ts=10_000_000_000, payload={})
     assert adapter.snapshot()["status"] == "STALE"
 
