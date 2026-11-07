@@ -83,7 +83,7 @@ class IVEarlyMoveDetector:
             str(row.get("token")): row for row in metrics
             if isinstance(row, dict) and row.get("token") is not None
         }
-        candidates: dict[str, list[tuple[float, float, float]]] = {
+        candidates: dict[str, list[tuple[float, float, float, str, int]]] = {
             "BULLISH": [], "BEARISH": [],
         }
         ratios: list[float] = []
@@ -169,7 +169,7 @@ class IVEarlyMoveDetector:
             iv_change = iv - previous.iv if iv is not None and previous.iv is not None else None
             if ratio is not None and premium_change is not None and iv_change is not None:
                 direction = "BULLISH" if side == "CE" else "BEARISH"
-                candidates[direction].append((ratio, premium_change, iv_change))
+                candidates[direction].append((ratio, premium_change, iv_change, token, ts))
 
         if len(self._spot) < 2:
             return self._waiting(now_ns, "collecting spot history")
@@ -192,6 +192,8 @@ class IVEarlyMoveDetector:
                 "volume_ratio": best[0],
                 "premium_change_pct": best[1],
                 "iv_change_points": best[2],
+                "qualifying_tokens": sorted(row[3] for row in rows if row[0] >= 4.0 and row[1] >= 0.75 and row[2] >= 0.15),
+                "source_timestamp_ns": max(row[4] for row in rows),
             }
         prior_direction = previous_state.get("direction")
         adverse_spot = (
@@ -304,6 +306,9 @@ class IVEarlyMoveDetector:
             "spot_change_pct": None if spot_change_10s is None else round(spot_change_10s, 4),
             "spot_change_60s_pct": None if spot_change_60s is None else round(spot_change_60s, 4),
             "contracts_confirming": values["contracts"],
+            "qualifying_tokens": values["qualifying_tokens"],
+            "source_timestamp_ns": values["source_timestamp_ns"],
+            "spot_timestamp_ns": spot_stamp,
             "updated_at_ns": now_ns,
             "evidence_at_ns": (
                 previous_state.get("evidence_at_ns", now_ns)
