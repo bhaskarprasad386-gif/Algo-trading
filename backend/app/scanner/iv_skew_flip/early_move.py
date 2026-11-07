@@ -90,8 +90,15 @@ class IVEarlyMoveDetector:
             ts = getattr(quote, "timestamp_ns", None)
             volume = getattr(quote, "volume", None)
             side = str(getattr(quote, "option_type", "")).upper()
-            mark = self._valid_number(getattr(quote, "mark", None))
+            bid = self._valid_number(getattr(quote, "bid", None))
+            ask = self._valid_number(getattr(quote, "ask", None))
             metric = metric_by_token.get(token, {})
+            if (bid is None or ask is None or bid <= 0 or ask < bid
+                    or metric.get("iv_input") != "BID_ASK_MIDPOINT"):
+                continue
+            mark = (bid + ask) / 2.0
+            if mark <= 0 or (ask - bid) * 100.0 / mark > 8.0:
+                continue
             iv = self._valid_number(metric.get("iv"))
             if (not token or side not in {"CE", "PE"} or isinstance(ts, bool)
                     or not isinstance(ts, int) or ts <= 0 or ts > now_ns
