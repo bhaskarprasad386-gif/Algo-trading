@@ -117,10 +117,12 @@ def _install_snapshot(instrument_master: Any, rows: list[dict[str, Any]]) -> lis
 
 def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
     """Try primary host, official alternate host, then a recent validated snapshot."""
+    primary_error: Exception | None = None
     try:
         rows = _validate_rows(instrument_master.download())
         return rows
-    except Exception as primary_error:
+    except Exception as exc:
+        primary_error = exc
         app_logger.warning(
             "IV scanner primary instrument-master download failed; trying official alternate host: {}",
             primary_error,
@@ -142,7 +144,7 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
             app_logger.error(
                 "IV instrument master unavailable: primary host failed ({}); "
                 "alternate host failed ({}); no recent validated snapshot exists",
-                primary_error,
+                primary_error or "unknown primary instrument-master error",
                 alternate_error,
             )
             raise RuntimeError(
