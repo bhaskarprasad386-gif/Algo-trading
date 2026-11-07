@@ -63,7 +63,8 @@ function OptionChain({ title, chain }: { title: string; chain: Chain }) {
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
   const byToken = new Map(metrics.map(x => [String(x.token ?? ""), x]));
   const merged = quotes.map(q => ({ ...q, ...(byToken.get(String(q.token ?? "")) ?? {}) }));
-  const strikes = [...new Set(merged.map(x => n(x.strike)).filter((x): x is number => x !== null))].sort((a,b)=>a-b);
+  const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
+  const strikes = resolvedStrikes.length ? resolvedStrikes : [...new Set(merged.map(x => n(x.strike)).filter((x): x is number => x !== null))].sort((a,b)=>a-b);
   const byKey = new Map(merged.map(x => [`${x.strike}:${x.option_type}`, x]));
   const spotFeed = feed.status ?? "WAITING";
   return <section className="overflow-hidden rounded-2xl border theme-border theme-surface">
@@ -78,7 +79,6 @@ function OptionChain({ title, chain }: { title: string; chain: Chain }) {
           <tr className="theme-surface-2 theme-muted">{["OI (Lots)","OI Chg","IV %","LTP","Bid","Ask","Bid","Ask","LTP","IV %","OI Chg","OI (Lots)"].map((x,i)=><th key={i} className="border-y theme-border px-2 py-2 font-semibold">{x}</th>)}</tr></thead>
         <tbody>{strikes.length === 0 ? <tr><td colSpan={13} className="p-10 theme-muted">Waiting for fresh option quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
-          const ceFresh=ce.fresh===true, peFresh=pe.fresh===true;
           const cell=(v:unknown,d=2)=>n(v)===null?"—":fmt(v,d);
           return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
             <td className="px-2 py-2">{cell(ce.oi,0)}</td><td className="px-2 py-2 text-emerald-600">—</td><td className="px-2 py-2 font-semibold">{ce.iv_live?cell(ce.iv,2):"—"}</td><td className="px-2 py-2">{cell(ce.ltp)}</td><td className="px-2 py-2 text-emerald-600">{cell(ce.bid)}</td><td className="px-2 py-2 text-rose-600">{cell(ce.ask)}</td>
