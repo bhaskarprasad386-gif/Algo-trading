@@ -8,6 +8,9 @@ type Row = Record<string, unknown>;
 type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; error?: string | null; signals?: Row };
 type Runtime = {
   status?: string;
+  desired_state?: "ON" | "OFF";
+  saved_enabled?: boolean;
+  runner_status?: "RUNNING" | "STOPPED";
   refresh_seconds?: number;
   signal_evaluation_seconds?: number;
   spot_feed?: Row;
@@ -103,23 +106,34 @@ export default function IVSkewFlipPage() {
   const [selectedNifty,setSelectedNifty]=useState<"NIFTY_WEEKLY"|"NIFTY_MONTHLY">("NIFTY_WEEKLY");
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
+  const [selectedEnabled,setSelectedEnabled]=useState(false);
+  const [savedEnabled,setSavedEnabled]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const refresh=useCallback(async()=>{
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
     setRuntime(body.runtime??null);
+    setSelectedEnabled(body.saved_enabled===true);
+    setSavedEnabled(body.saved_enabled===true);
   },[base]);
   useEffect(()=>{
     let active=true;
-    const poll=async()=>{try{const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});const body=await response.json();if(active&&response.ok)setRuntime(body.runtime??null);}catch{/* keep last known state */}};
+    const poll=async()=>{try{const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});const body=await response.json();if(active&&response.ok){setRuntime(body.runtime??null);setSelectedEnabled(body.saved_enabled===true);setSavedEnabled(body.saved_enabled===true);}}catch{/* keep last known state */}};
     void poll();const timer=window.setInterval(()=>{if(active)void poll();},1000);
     return()=>{active=false;window.clearInterval(timer);};
   },[base]);
-  async function control(action:"start"|"stop"){
+  async function saveRunnerSetting(){
     setBusy(true);setError("");
-    try{const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/${action}`,{method:"POST",cache:"no-store"});const body=await response.json();if(!response.ok)throw new Error(apiError(body,`Could not ${action} scanner`));setRuntime(body);}
-    catch(e){setError(e instanceof Error?e.message:"Scanner control failed");}finally{setBusy(false);}
+    try{
+      const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:selectedEnabled}),cache:"no-store"});
+      const body=await response.json();
+      if(!response.ok)throw new Error(apiError(body,"Could not save IV Scanner runner setting"));
+      setRuntime(body.runtime??null);
+      setSavedEnabled(body.saved_enabled===true);
+      setSelectedEnabled(body.saved_enabled===true);
+    }catch(e){setError(e instanceof Error?e.message:"IV Scanner setting save failed");}
+    finally{setBusy(false);}
   }
   const chains=runtime?.option_chains??{};
   const nifty=chains[selectedNifty]??{};
@@ -134,9 +148,16 @@ export default function IVSkewFlipPage() {
   return <main className="space-y-4 p-3 sm:p-5 theme-text">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly + Monthly • BANKNIFTY Monthly • Live OI and modeled IV</p></div>
-      <div className="flex gap-2"><button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button><button onClick={()=>void control(running?"stop":"start")} disabled={busy} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${running?"border-rose-500/40 bg-rose-500/10 text-rose-600":"border-emerald-500/40 bg-emerald-500/10 text-emerald-600"}`}>{running?<Square size={15}/>:<Play size={15}/>} {running?"Stop Live Feed":"Start Live Feed"}</button></div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
+        <div className="inline-flex rounded-xl border theme-border p-1" aria-label="IV Scanner desired runner state">
+          <button type="button" onClick={()=>setSelectedEnabled(true)} disabled={busy} aria-pressed={selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedEnabled?"bg-emerald-600 text-white":"theme-muted"}`}>ON</button>
+          <button type="button" onClick={()=>setSelectedEnabled(false)} disabled={busy} aria-pressed={!selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${!selectedEnabled?"bg-rose-600 text-white":"theme-muted"}`}>OFF</button>
+        </div>
+        <button onClick={()=>void saveRunnerSetting()} disabled={busy||selectedEnabled===savedEnabled} className="rounded-xl border theme-border theme-surface px-4 py-2 text-sm font-semibold disabled:opacity-50">{busy?"Saving…":"Save"}</button>
+      </div>
     </header>
-    <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border theme-border px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {runtime?.status??"NOT STARTED"}</span><span className="rounded-full border theme-border px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Orders OFF</span></div>
+    <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border theme-border px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border theme-border px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Orders OFF</span></div>
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Option Chain</h2><div className="inline-flex rounded-xl border theme-border p-1"><button onClick={()=>setSelectedNifty("NIFTY_WEEKLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_WEEKLY"?"bg-blue-600 text-white":"theme-muted"}`}>Weekly</button><button onClick={()=>setSelectedNifty("NIFTY_MONTHLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_MONTHLY"?"bg-blue-600 text-white":"theme-muted"}`}>Monthly</button></div></div>
@@ -145,6 +166,6 @@ export default function IVSkewFlipPage() {
     </section>
     <section className="space-y-3 pt-2"><div className="flex items-center justify-between gap-2"><h2 className="text-xl font-bold theme-text">BANKNIFTY Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-sm font-semibold">Monthly</span></div><OptionChain title="BANKNIFTY Monthly" chain={bank}/><SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/></section>
     <section className="rounded-2xl border theme-border theme-surface p-4"><h2 className="font-semibold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=><div key={key} className="rounded-xl border theme-border p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>)}</div></section>
-    <p className="text-xs theme-muted">Live data appears only after fresh Angel One ticks arrive. No broker orders are placed. OI Change is intentionally not fabricated when the provider does not supply a verified field.</p>
+    <p className="text-xs theme-muted">Live data appears only after fresh Angel One ticks arrive. Select ON or OFF and press Save to control the backend runner. Runner status is reported by the backend; no broker orders are placed.</p>
   </main>;
 }
