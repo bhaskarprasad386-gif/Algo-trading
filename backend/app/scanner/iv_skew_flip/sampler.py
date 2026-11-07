@@ -201,7 +201,7 @@ class IVOneSecondSampler:
                     new_option_tick = sample.source_timestamp_ns > previous.source_timestamp_ns
                     oi_change = sample.oi - previous.oi if new_option_tick and sample.oi is not None and previous.oi is not None else None
                     ltp_change = sample.ltp - previous.ltp if new_option_tick and sample.ltp is not None and previous.ltp is not None else None
-                    iv_change = sample.iv - previous.iv if sample.iv is not None and previous.iv is not None else None
+                    iv_change = sample.iv - previous.iv if sample.iv is not None and previous.iv is not None and sample.iv != previous.iv else None
                     changes[token] = {
                         "interval_seconds": round(elapsed_ns / 1_000_000_000, 2),
                         "oi_change": oi_change,
