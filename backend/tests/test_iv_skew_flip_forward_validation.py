@@ -3,6 +3,7 @@ from app.scanner.iv_skew_flip.validation import (
     SpotPoint,
     group_outcomes_by_date,
     measure_forward_outcomes,
+    load_persisted_forward_outcomes,
 )
 
 
@@ -78,3 +79,54 @@ def test_outcomes_are_grouped_by_event_date_not_random_rows():
 
     assert sum(map(len, grouped.values())) == 2
     assert list(grouped) == sorted(grouped)
+
+
+
+def test_database_join_uses_deduplicated_source_spot_ticks_and_event_filters():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+    from app.models.iv_signal_event import IVSignalEvent
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[
+        IVSignalEvent.__table__, IVOptionObservation.__table__,
+    ])
+    session = sessionmaker(bind=engine)()
+    minute = 60 * 1_000_000_000
+    try:
+        session.add(IVSignalEvent(
+            stream_id="NIFTY_WEEKLY", underlying="NIFTY", expiry_type="WEEKLY",
+            state="PRE_MOVE", direction="BULLISH",
+            event_timestamp_ns=10_000 * minute,
+            source_timestamp_ns=10_000 * minute,
+            spot_timestamp_ns=10_000 * minute,
+            spot_price=100.0, contracts_confirming=2,
+            qualifying_tokens='["ce1","ce2"]', reason="test",
+        ))
+        for token in ("ce1", "ce2"):
+            session.add(IVOptionObservation(
+                token=token, underlying="NIFTY", expiry="2026-11-12",
+                strike=100.0, option_type="CE",
+                source_timestamp_ns=10_011 * minute,
+                spot_timestamp_ns=10_011 * minute,
+                spot_price=102.0, sampled_at_ns=10_011 * minute,
+                iv=20.0, oi=100, bid=1.0, ask=1.1, ltp=1.05,
+                mark=1.05, volume=10,
+            ))
+        session.commit()
+
+        rows = load_persisted_forward_outcomes(
+            session, underlying="NIFTY", expiry_type="WEEKLY",
+            horizons_minutes=(10,),
+        )
+        assert len(rows) == 1
+        assert rows[0][1].direction_adjusted_return_pct == 2.0
+    finally:
+        session.close()
+        Base.metadata.drop_all(engine, tables=[
+            IVSignalEvent.__table__, IVOptionObservation.__table__,
+        ])
+        engine.dispose()
