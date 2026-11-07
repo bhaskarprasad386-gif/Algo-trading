@@ -132,7 +132,15 @@ class IVEarlyMoveDetector:
             # be attributed reliably to either interval. Drop only this
             # interval's volume contribution; retain the quote observation so
             # premium/IV processing and later same-bucket deltas still work.
-            crossed_bucket = bucket != previous_bucket
+            crossed_bucket = (
+                bucket != previous_bucket
+                and ts - previous.timestamp_ns < self.MAX_AGE_NS
+            )
+            # Suppress only short, fresh intervals that straddle a boundary:
+            # their full cumulative delta could be a boundary artefact. For
+            # wider sampling gaps (e.g. 10s/20s baseline observations), retain
+            # the established endpoint-bucket attribution so time baselines
+            # continue to accumulate normally.
             if not crossed_bucket:
                 buckets[bucket] = buckets.get(bucket, 0) + increment
             for old_bucket in tuple(buckets):
