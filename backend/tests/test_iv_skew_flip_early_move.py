@@ -138,3 +138,39 @@ def test_early_move_volume_baseline_counts_empty_buckets_as_zero():
     # 10 active buckets over the 20-bucket lookback => baseline 5,
     # rather than 10 if empty buckets were incorrectly omitted.
     assert result["volume_ratio"] == 20.0
+
+
+
+def test_early_move_does_not_assign_cross_bucket_volume_delta_to_new_bucket():
+    detector = IVEarlyMoveDetector()
+    first_ts = IVEarlyMoveDetector.BUCKET_NS - 1
+    crossed_ts = IVEarlyMoveDetector.BUCKET_NS + 1
+    same_bucket_ts = IVEarlyMoveDetector.BUCKET_NS + 2
+
+    def update(ts, volume, mark, iv):
+        quote = SimpleNamespace(
+            token="boundary-ce", timestamp_ns=ts, volume=volume,
+            option_type="CE", mark=mark, bid=mark - 0.1, ask=mark + 0.1,
+        )
+        metric = {
+            "token": "boundary-ce", "iv": iv,
+            "iv_input": "BID_ASK_MIDPOINT",
+            "source_timestamp_ns": ts, "spot_timestamp_ns": ts,
+        }
+        return detector.update(
+            quotes=(quote,), metrics=(metric,), spot_price=24000,
+            now_ns=ts, spot_timestamp_ns=ts,
+        )
+
+    update(first_ts, 100, 20.0, 18.0)
+    crossed = update(crossed_ts, 1000, 21.0, 18.5)
+    new_bucket = crossed_ts // IVEarlyMoveDetector.BUCKET_NS
+
+    # The 900-contract cumulative delta spans the boundary and is not
+    # credited to the new bucket or used to create a volume-ratio spike.
+    assert detector._volume_buckets["boundary-ce"].get(new_bucket, 0) == 0
+    assert crossed["volume_ratio"] is None
+
+    update(same_bucket_ts, 1010, 21.1, 18.6)
+    # Only the subsequent 10-contract same-bucket increment is attributable.
+    assert detector._volume_buckets["boundary-ce"][new_bucket] == 10
