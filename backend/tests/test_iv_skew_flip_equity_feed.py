@@ -83,7 +83,7 @@ def test_equity_feed_rejects_stale_out_of_order_and_missing_source_timestamp():
     adapter, feed = make_adapter()
     descriptor = feed.descriptors[0]
     send(feed, descriptor, ts=1_000_000_000)
-    send(feed, descriptor, ts=8_000_000_000, ltp=90.0)
+    send(feed, descriptor, ts=6_000_000_000, ltp=90.0)
     send(feed, descriptor, ts=10_000_000_000, payload={})
     assert adapter.snapshot()["status"] == "STALE"
 
