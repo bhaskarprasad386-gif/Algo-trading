@@ -16,6 +16,7 @@ type Runtime = {
   spot_feed?: Row;
   option_chains?: Record<string, Chain>;
   signals?: Record<string, Row>;
+  early_move?: Record<string, Row>;
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
@@ -168,6 +169,24 @@ export default function IVSkewFlipPage() {
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
     <section className="space-y-3 pt-2"><div className="flex items-center justify-between gap-2"><h2 className="text-xl font-bold theme-text">BANKNIFTY Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-sm font-semibold">Monthly</span></div><OptionChain title="BANKNIFTY Monthly" chain={bank}/><SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/></section>
+    <section className="rounded-2xl border theme-border theme-surface p-4">
+      <h2 className="font-semibold theme-text">Early Move Monitor</h2>
+      <p className="mt-1 text-xs theme-muted">1-second refresh • rolling 10-second volume buckets • IV/premium/spot confluence. Alert-only; no orders.</p>
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        {Object.entries(runtime?.early_move??{}).map(([key,value])=><div key={key} className="rounded-xl border theme-border p-3">
+          <div className="flex items-center justify-between gap-2"><b className="text-sm">{key.replaceAll("_"," ")}</b><span className={`rounded-full px-2 py-1 text-xs font-bold ${value.state==="PRE_MOVE"?"bg-amber-500/15 text-amber-700":value.state==="CONFIRMED"?"bg-emerald-500/15 text-emerald-700":"theme-surface-2 theme-muted"}`}>{String(value.state??"WATCH")}</span></div>
+          <div className="mt-2 text-lg font-bold">{String(value.direction??"—")}</div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+            <div><span className="theme-muted">Volume ratio</span><b className="block">{fmt(value.volume_ratio)}x</b></div>
+            <div><span className="theme-muted">Premium Δ</span><b className="block">{delta(value.premium_change_pct,"%")}</b></div>
+            <div><span className="theme-muted">IV Δ</span><b className="block">{delta(value.iv_change_points," pt",4)}</b></div>
+            <div><span className="theme-muted">Spot Δ 10s</span><b className="block">{delta(value.spot_change_pct,"%",4)}</b></div>
+          </div>
+          <p className="mt-2 text-xs theme-muted">{String(value.reason??"Waiting for fresh ticks")}</p>
+          <p className="mt-1 text-[10px] theme-muted">Baseline {String(value.baseline_status??"WARMING")} • contracts {fmt(value.contracts_confirming,0)}</p>
+        </div>)}
+      </div>
+    </section>
     <section className="rounded-2xl border theme-border theme-surface p-4"><h2 className="font-semibold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=><div key={key} className="rounded-xl border theme-border p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>)}</div></section>
     <p className="text-xs theme-muted">Live data appears only after fresh Angel One ticks arrive. Select ON or OFF and press Save to control the backend runner. Runner status is reported by the backend; no broker orders are placed.</p>
   </main>;

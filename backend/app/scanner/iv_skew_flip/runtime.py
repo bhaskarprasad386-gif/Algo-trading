@@ -8,6 +8,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
+from .early_move import IVEarlyMoveDetector
 from .feed import IVSkewFlipFeedAdapter
 from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
@@ -67,6 +68,8 @@ class IVSkewFlipRuntime:
         self._previous_atm_iv_diff: dict[str, float] = {}
         self._previous_atm_strike: dict[str, float] = {}
         self._signals: dict[str, dict[str, Any]] = {}
+        self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
+        self._early_move: dict[str, dict[str, Any]] = {}
         self._started = False
 
     @staticmethod
@@ -284,6 +287,36 @@ class IVSkewFlipRuntime:
             with self._lock:
                 self._last_evaluation_ns = now_ns
 
+    def _evaluate_early_move(self, now_ns: int) -> None:
+        """Run the short-window alert path every refresh, independently of 60s signals."""
+        for stream_id, config in CHAIN_CONFIGS:
+            feed = self._option_feeds.get(stream_id)
+            sampler = self._samplers.get(stream_id)
+            spot = self.spot_feed.spot_snapshot(config.symbol)
+            if feed is None or sampler is None or spot is None:
+                self._early_move[stream_id] = {
+                    "state": "WATCH", "direction": None, "signals_allowed": False,
+                    "reason": "waiting for fresh spot, option feed and sampler",
+                    "baseline_status": "WARMING",
+                }
+                continue
+            try:
+                sampler_snapshot = sampler.snapshot()
+                result = self._early_move_detectors[stream_id].update(
+                    quotes=feed.latest_quotes(),
+                    metrics=sampler_snapshot.get("live_metrics", ()),
+                    spot_price=spot.price,
+                    now_ns=now_ns,
+                    spot_timestamp_ns=getattr(spot, "timestamp_ns", None),
+                )
+                self._early_move[stream_id] = result
+            except Exception as exc:
+                self._early_move[stream_id] = {
+                    "state": "WATCH", "direction": None, "signals_allowed": False,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "baseline_status": "WARMING",
+                }
+
     def refresh_once(self) -> dict[str, Any]:
         now = self.clock_datetime()
         if now.tzinfo is None:
@@ -294,6 +327,7 @@ class IVSkewFlipRuntime:
                 continue
             self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
+        self._evaluate_early_move(now_ns)
         self._maybe_evaluate(now, now_ns)
         with self._lock:
             self._last_refresh_ns = now_ns
@@ -326,6 +360,7 @@ class IVSkewFlipRuntime:
             samplers = dict(self._samplers)
             errors = dict(self._last_error)
             signals = dict(self._signals)
+            early_move = dict(self._early_move)
             last_refresh = self._last_refresh_ns
             last_evaluation = self._last_evaluation_ns
         return {
@@ -336,6 +371,7 @@ class IVSkewFlipRuntime:
             "signal_evaluation_seconds": self.evaluation_seconds,
             "last_evaluation_ns": last_evaluation,
             "signals": signals,
+            "early_move": early_move,
             "spot_feed": self.spot_feed.snapshot(),
             "option_chains": {
                 stream_id: {
@@ -346,6 +382,7 @@ class IVSkewFlipRuntime:
                     "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
                     "error": errors.get(stream_id),
                     "signals": signals.get(stream_id),
+                    "early_move": early_move.get(stream_id),
                 }
                 for stream_id, config in CHAIN_CONFIGS
             },
@@ -383,6 +420,8 @@ class IVSkewFlipRuntime:
             self._universe_tokens.clear()
             self._rows_by_stream.clear()
             self._signals.clear()
+            self._early_move.clear()
+            self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
             self._previous_atm_iv_diff.clear()
             self._previous_atm_strike.clear()
             self._last_evaluation_ns = None
