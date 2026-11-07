@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from math import isfinite
+from statistics import median
 from typing import Iterable
 
 
@@ -120,6 +121,42 @@ def measure_forward_outcomes(
             observation_delay_seconds=round(delay_seconds, 3),
         ))
     return outcomes
+
+
+def summarize_forward_outcomes(
+    events: Iterable[SignalEvent],
+    rows: Iterable[tuple[SignalEvent, ForwardOutcome]],
+) -> dict[str, object]:
+    """Return descriptive horizon coverage and returns, never an accuracy score."""
+    event_rows = list(events)
+    outcome_rows = list(rows)
+    summaries: dict[str, object] = {}
+    for horizon in (10, 30, 60):
+        values = [
+            outcome.direction_adjusted_return_pct
+            for _, outcome in outcome_rows
+            if outcome.horizon_minutes == horizon
+            and isfinite(outcome.direction_adjusted_return_pct)
+        ]
+        summaries[str(horizon)] = {
+            "observed": len(values),
+            "eligible_events": len(event_rows),
+            "coverage_pct": round(len(values) * 100.0 / len(event_rows), 2)
+            if event_rows else None,
+            "mean_direction_adjusted_return_pct": round(sum(values) / len(values), 6)
+            if values else None,
+            "median_direction_adjusted_return_pct": round(median(values), 6)
+            if values else None,
+            "positive_return_count": sum(value > 0 for value in values),
+            "negative_return_count": sum(value < 0 for value in values),
+            "flat_return_count": sum(value == 0 for value in values),
+        }
+    return {
+        "eligible_events": len(event_rows),
+        "measured_outcomes": len(outcome_rows),
+        "horizons": summaries,
+        "interpretation": "descriptive forward returns only; not accuracy or profitability",
+    }
 
 
 def trading_date_ist(timestamp_ns: int) -> str:
