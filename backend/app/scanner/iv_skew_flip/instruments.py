@@ -11,7 +11,6 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import requests
 
@@ -22,7 +21,6 @@ ALTERNATE_MASTER_URL = (
     "https://margincalculator.angelone.in/"
     "OpenAPI_File/files/OpenAPIScripMaster.json"
 )
-IST = ZoneInfo("Asia/Kolkata")
 MAX_CACHE_AGE_SECONDS = 36 * 60 * 60
 
 
