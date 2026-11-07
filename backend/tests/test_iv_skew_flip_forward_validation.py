@@ -67,6 +67,19 @@ def test_invalidated_and_invalid_events_do_not_receive_outcomes():
     assert measure_forward_outcomes(event, points) == []
 
 
+def test_trading_date_uses_ist_across_utc_midnight():
+    from datetime import datetime, timezone
+
+    from app.scanner.iv_skew_flip.validation import trading_date_ist
+
+    # 20:00 UTC on Jan 1 is 01:30 IST on Jan 2.
+    timestamp_ns = int(datetime(
+        2026, 1, 1, 20, 0, tzinfo=timezone.utc
+    ).timestamp() * 1_000_000_000)
+
+    assert trading_date_ist(timestamp_ns) == "2026-01-02"
+
+
 def test_outcomes_are_grouped_by_event_date_not_random_rows():
     first = SignalEvent(1_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE")
     second = SignalEvent(2_000 * MINUTE, 100.0, "BEARISH", "CONFIRMED")
