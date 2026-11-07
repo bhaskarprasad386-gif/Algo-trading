@@ -157,6 +157,9 @@ class IVSpotFeedAdapter:
             status = "STALE"
         else:
             status = "WAITING_FOR_TICKS"
+        # Keep the last broker-traded spot visible after the freshness window
+        # expires (including after market close). Signal eligibility continues
+        # to depend exclusively on fresh_symbols / spot_snapshot().
         return {
             "status": status,
             "consumer": self.CONSUMER,
@@ -166,11 +169,13 @@ class IVSpotFeedAdapter:
             "spot": {
                 symbol: {
                     "price": item.price,
+                    "last_price": item.price,
                     "timestamp_ns": item.timestamp_ns,
                     "age_ms": round((current - item.timestamp_ns) / 1_000_000, 2),
-                    "fresh": True,
+                    "fresh": symbol in fresh,
+                    "quote_status": "LIVE" if symbol in fresh else "LAST_KNOWN_STALE",
                 }
-                for symbol, item in fresh.items()
+                for symbol, item in latest.items()
             },
             "signals_allowed": bool(expected) and not missing,
         }
