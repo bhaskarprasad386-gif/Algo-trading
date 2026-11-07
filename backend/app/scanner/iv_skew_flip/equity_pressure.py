@@ -104,6 +104,9 @@ class EquityComponentPressure:
                 latest = sample
         if baseline is None or latest is None or baseline.ltp <= 0:
             return None
+        # Avoid silently turning a 5-second return into a longer-window return.
+        if target_ns - baseline.timestamp_ns > 2_000_000_000:
+            return None
         if now_ns - latest.timestamp_ns > self._max_age_ns:
             return None
         return (latest.ltp / baseline.ltp - 1.0) * 100.0
@@ -168,8 +171,9 @@ class EquityComponentPressure:
         directions = {str(item["direction"]) for item in windows.values() if item["direction"] != "WAITING"}
         agreement = len(directions) == 1 and overall_ready
         overall_direction = next(iter(directions)) if agreement else ("MIXED" if overall_ready else "WAITING")
+        any_samples = any(histories.values())
         return {
-            "status": "LIVE" if overall_ready else ("PARTIAL" if fresh else "STALE"),
+            "status": "LIVE" if overall_ready else ("PARTIAL" if fresh else ("STALE" if any_samples else "WAITING_FOR_TICKS")) ,
             "signals_allowed": overall_ready,
             "expected_components": len(self._weights),
             "fresh_components": len(fresh),
