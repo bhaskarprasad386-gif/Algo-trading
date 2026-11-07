@@ -270,10 +270,13 @@ class IVEarlyMoveDetector:
             (direction == "BULLISH" and spot_change_60s >= 0.15)
             or (direction == "BEARISH" and spot_change_60s <= -0.15)
         )
-        if spot_confirmed:
+        option_pressure_confirmed = (
+            volume_confirm and premium_rise and iv_rise and values["contracts"] >= 2
+        )
+        if spot_confirmed and option_pressure_confirmed:
             state = "CONFIRMED"
-            reason = "underlying has moved at least 0.15% in the same direction"
-        elif volume_confirm and premium_rise and iv_rise and spot_aligned and values["contracts"] >= 2:
+            reason = "multi-contract option pressure is confirmed by a 60-second underlying move"
+        elif option_pressure_confirmed and spot_aligned:
             state = "PRE_MOVE"
             reason = "multi-contract volume acceleration with rising premium and IV, aligned with spot"
         elif volume_watch or premium_rise or iv_rise:
