@@ -130,8 +130,8 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
     class Master:
         instruments = [
             {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "22OCT2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "0"},
-            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "26NOV2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "1"},
-            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "05NOV2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "2"},
+            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "25NOV2027", "strike": "10000", "symbol": "NIFTY100CE", "token": "1"},
+            {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "11NOV2027", "strike": "10000", "symbol": "NIFTY100CE", "token": "2"},
         ]
         def download(self): pass
 
@@ -169,8 +169,8 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
         runner._run_session()
     except RuntimeError as exc:
         assert str(exc) == "stop-after-selection"
-    assert seeded == ["05NOV2026"]
-    assert selected_expiries == ["05NOV2026"]
+    assert seeded == ["11NOV2027"]
+    assert selected_expiries == ["11NOV2027"]
 
 
 def test_sensex_weekly_expiry_uses_bfo_option_master_without_future_contracts(monkeypatch):
@@ -179,8 +179,8 @@ def test_sensex_weekly_expiry_uses_bfo_option_master_without_future_contracts(mo
     class Master:
         instruments = [
             {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "22OCT2026", "strike": "10000"},
-            {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "26NOV2026", "strike": "10000"},
-            {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "05NOV2026", "strike": "10000"},
+            {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "30NOV2027", "strike": "10000"},
+            {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "09NOV2027", "strike": "10000"},
         ]
         def download(self): pass
 
@@ -219,8 +219,8 @@ def test_sensex_weekly_expiry_uses_bfo_option_master_without_future_contracts(mo
     except RuntimeError as exc:
         assert str(exc) == "stop-after-selection"
 
-    assert seeded == [("05NOV2026", "BFO")]
-    assert selected == [("05NOV2026", "SENSEX")]
+    assert seeded == [("09NOV2027", "BFO")]
+    assert selected == [("09NOV2027", "SENSEX")]
 
 
 def test_nifty_and_sensex_targets_are_ordered_before_other_indices_and_stocks():
