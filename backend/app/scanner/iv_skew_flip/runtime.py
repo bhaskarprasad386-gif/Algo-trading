@@ -96,6 +96,7 @@ class IVSkewFlipRuntime:
         self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
         self._early_move: dict[str, dict[str, Any]] = {}
         self._started = False
+        self._stopping = False
 
     @staticmethod
     def _rows_for_symbol(instruments: list[dict[str, Any]], symbol: str) -> tuple[dict[str, Any], ...]:
@@ -108,6 +109,8 @@ class IVSkewFlipRuntime:
 
     def start(self) -> dict[str, Any]:
         with self._lock:
+            if self._stopping:
+                raise RuntimeError("IV scanner runtime is still stopping; retry after shutdown completes")
             if self._started:
                 return self.snapshot()
         instruments = download_iv_instruments(self.instrument_master)
@@ -442,7 +445,7 @@ class IVSkewFlipRuntime:
             last_evaluation = self._last_evaluation_ns
             equity_pressure = dict(self._equity_pressure_last_snapshot)
         return {
-            "status": "RUNNING" if started else "STOPPED",
+            "status": "STOPPING" if self._stopping else ("RUNNING" if started else "STOPPED"),
             "consumer": "iv-skew-flip",
             "orders_enabled": False,
             "refresh_seconds": self.refresh_seconds,
@@ -486,6 +489,12 @@ class IVSkewFlipRuntime:
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=3.0)
+        if thread is not None and thread.is_alive():
+            # Do not tear down feeds while refresh_once() may still be using
+            # them. Keep the runtime registered and allow a later stop retry.
+            with self._lock:
+                self._stopping = True
+            return self.snapshot()
         with self._lock:
             samplers = tuple(self._samplers.values())
             feeds = tuple(self._option_feeds.values())
@@ -499,6 +508,7 @@ class IVSkewFlipRuntime:
             self._equity_feed = None
         with self._lock:
             self._started = False
+            self._stopping = False
             self._thread = None
             self._samplers.clear()
             self._option_feeds.clear()
