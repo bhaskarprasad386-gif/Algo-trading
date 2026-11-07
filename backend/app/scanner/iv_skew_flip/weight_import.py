@@ -131,6 +131,8 @@ def parse_official_weight_basket(
     reader.fieldnames = list(headers)
     parsed: dict[str, float] = {}
     for line_number, row in enumerate(reader, start=2):
+        if None in row or row.get("symbol") is None or row.get("weight") is None:
+            raise ValueError(f"malformed CSV row on line {line_number}")
         symbol = str(row.get("symbol") or "").strip().upper()
         raw_weight = str(row.get("weight") or "").strip()
         if not _SYMBOL_RE.fullmatch(symbol):
