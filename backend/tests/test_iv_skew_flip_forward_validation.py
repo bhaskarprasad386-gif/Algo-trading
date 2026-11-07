@@ -5,6 +5,7 @@ from app.scanner.iv_skew_flip.validation import (
     measure_forward_outcomes,
     load_persisted_forward_outcomes,
     summarize_forward_outcomes,
+    summarize_walk_forward_by_date,
 )
 
 
@@ -184,3 +185,18 @@ def test_database_join_uses_deduplicated_source_spot_ticks_and_event_filters():
             IVSignalEvent.__table__, IVSpotObservation.__table__,
         ])
         engine.dispose()
+
+
+
+def test_date_wise_report_keeps_event_dates_separate_and_avoids_accuracy_claims():
+    first = SignalEvent(7_000 * MINUTE, 100.0, "BULLISH", "PRE_MOVE", "NIFTY")
+    second = SignalEvent(8_000 * MINUTE, 100.0, "BEARISH", "CONFIRMED", "NIFTY")
+    rows = [
+        (first, measure_forward_outcomes(first, [SpotPoint(7_011 * MINUTE, 101.0)], horizons_minutes=(10,))[0]),
+        (second, measure_forward_outcomes(second, [SpotPoint(8_011 * MINUTE, 99.0)], horizons_minutes=(10,))[0]),
+    ]
+    report = summarize_walk_forward_by_date(rows)
+    assert len(report["dates"]) == 2
+    assert report["dates"][0]["eligible_events"] == 1
+    assert "not accuracy" in report["dates"][0]["interpretation"]
+    assert "no random row split" in report["grouping"]
