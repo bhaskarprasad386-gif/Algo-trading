@@ -7,6 +7,8 @@ from time import monotonic, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+from app.core.database import SessionLocal
+
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .early_move import IVEarlyMoveDetector
 from .equity_feed import IVWeightedEquityFeedAdapter, WeightedEquity
@@ -183,6 +185,7 @@ class IVSkewFlipRuntime:
                 interval_seconds=1.0,
                 clock_ns=self.clock_ns,
                 clock_datetime=self.clock_datetime,
+                history_session_factory=SessionLocal,
             )
             old_sampler = self._samplers.get(symbol)
             sampler.inherit_history(old_sampler, universe)
