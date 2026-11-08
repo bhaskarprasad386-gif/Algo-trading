@@ -110,3 +110,35 @@ def test_rejects_missing_official_index_pdf(monkeypatch):
             expected_symbols=("AAA", "BBB"),
             as_of=__import__("datetime").date(2026, 11, 8),
         )
+
+
+
+def test_current_master_loader_retries_same_official_url_with_longer_timeout():
+    from scripts import import_iv_official_baskets as importer
+
+    rows = [{"symbol": "AAA", "exch_seg": "NSE", "token": "123"}]
+
+    class FakeMaster:
+        def __init__(self):
+            self.calls = []
+
+        def download(self, *, force=False, timeout=30):
+            self.calls.append((force, timeout))
+            if len(self.calls) == 1:
+                raise TimeoutError("primary request timeout")
+            return rows
+
+    master = FakeMaster()
+    assert importer._load_current_instrument_master(master) == rows
+    assert master.calls == [(False, 30), (True, (15, 120))]
+
+
+def test_current_master_loader_fails_closed_after_retry_failure():
+    from scripts import import_iv_official_baskets as importer
+
+    class FakeMaster:
+        def download(self, *, force=False, timeout=30):
+            raise TimeoutError("Angel One unavailable")
+
+    with pytest.raises(RuntimeError, match="failed on both attempts"):
+        importer._load_current_instrument_master(FakeMaster())
