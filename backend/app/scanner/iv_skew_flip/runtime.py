@@ -54,6 +54,7 @@ class IVSkewFlipRuntime:
         equity_baskets: dict[str, tuple[WeightedEquity, ...]] | None = None,
         equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
         equity_feed_factory_by_underlying: Callable[[str], IVWeightedEquityFeedAdapter] | None = None,
+        equity_pressure_unavailable_reason: str | None = None,
         future_feed: IVIndexFutureFeedAdapter | None = None,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
@@ -76,6 +77,10 @@ class IVSkewFlipRuntime:
         if not isinstance(equity_pressure_enabled, bool):
             raise ValueError("equity_pressure_enabled must be boolean")
         self.equity_pressure_enabled = equity_pressure_enabled
+        self.equity_pressure_unavailable_reason = (
+            str(equity_pressure_unavailable_reason).strip()
+            if equity_pressure_unavailable_reason else None
+        )
         self.equity_basket = tuple(equity_basket or ())
         self.equity_baskets = {
             str(symbol).strip().upper(): tuple(items)
@@ -111,7 +116,9 @@ class IVSkewFlipRuntime:
             if self.equity_pressure_enabled and self.equity_basket else None
         )
         self._equity_pressure_last_snapshot: dict[str, Any] = {
-            "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
+            "status": "UNAVAILABLE" if self.equity_pressure_unavailable_reason else "DISABLED",
+            "reason": self.equity_pressure_unavailable_reason,
+            "signals_allowed": False, "direction": "WAITING",
             "timeframe_agreement": False, "windows": {},
         }
         self._lock = RLock()
