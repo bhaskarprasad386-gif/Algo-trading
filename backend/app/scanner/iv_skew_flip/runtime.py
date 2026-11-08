@@ -650,7 +650,9 @@ class IVSkewFlipRuntime:
         if not self.equity_pressure_enabled or self._equity_feed is None or self._equity_pressure is None:
             with self._lock:
                 self._equity_pressure_last_snapshot = {
-                    "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
+                    "status": "UNAVAILABLE" if self.equity_pressure_unavailable_reason else "DISABLED",
+                    "reason": self.equity_pressure_unavailable_reason,
+                    "signals_allowed": False, "direction": "WAITING",
                     "timeframe_agreement": False, "windows": {},
                 }
             return
