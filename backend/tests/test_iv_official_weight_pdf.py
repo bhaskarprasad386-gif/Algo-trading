@@ -182,7 +182,9 @@ def test_fetch_roster_reports_received_header_when_symbol_is_absent():
             pass
 
     class FakeSession:
-        def get(self, _url, timeout):
+        def get(self, _url, *, headers, timeout):
+            assert headers["User-Agent"] == "Mozilla/5.0"
+            assert headers["Accept"] == "text/csv,text/plain,*/*"
             return FakeResponse()
 
     with pytest.raises(ValueError, match="first rows"):
