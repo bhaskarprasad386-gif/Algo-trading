@@ -134,44 +134,43 @@ def test_disabled_runtime_stop_does_not_construct_or_stop_equity_feed():
 
 
 
-def test_dual_index_pressure_uses_independent_baskets_feeds_and_snapshots():
+def test_dual_index_pressure_deduplicates_shared_constituent_quotes():
     nifty = (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0))
-    bank = (WeightedEquity("CCC", 70.0), WeightedEquity("DDD", 30.0))
+    bank = (WeightedEquity("AAA", 30.0), WeightedEquity("CCC", 70.0))
     runtime = make_runtime(
         equity_pressure_enabled=True,
         equity_baskets={"NIFTY": nifty, "BANKNIFTY": bank},
     )
-    feeds = {
-        "NIFTY": FakeEquityFeed({
-            "status": "LIVE", "consumer": "iv-skew-flip-equities-nifty",
-            "signals_allowed": True, "expected_symbols": ["AAA", "BBB"],
-            "fresh_symbols": ["AAA", "BBB"], "missing_symbols": [],
-            "quotes": {
-                "AAA": {"timestamp_ns": 40_000_000_000, "ltp": 101.0},
-                "BBB": {"timestamp_ns": 40_000_000_000, "ltp": 201.0},
-            },
-        }),
-        "BANKNIFTY": FakeEquityFeed({
-            "status": "PARTIAL", "consumer": "iv-skew-flip-equities-banknifty",
-            "signals_allowed": False, "expected_symbols": ["CCC", "DDD"],
-            "fresh_symbols": ["CCC"], "missing_symbols": ["DDD"],
-            "quotes": {"CCC": {"timestamp_ns": 40_000_000_000, "ltp": 301.0}},
-        }),
-    }
-    runtime._equity_feeds = feeds
+    shared = FakeEquityFeed({
+        "status": "LIVE", "consumer": "iv-skew-flip-equities",
+        "signals_allowed": True,
+        "expected_symbols": ["AAA", "BBB", "CCC"],
+        "fresh_symbols": ["AAA", "BBB", "CCC"], "missing_symbols": [],
+        "quotes": {
+            "AAA": {"timestamp_ns": 40_000_000_000, "ltp": 101.0},
+            "BBB": {"timestamp_ns": 40_000_000_000, "ltp": 201.0},
+            "CCC": {"timestamp_ns": 40_000_000_000, "ltp": 301.0},
+        },
+    })
+    runtime._equity_feed = shared
 
     runtime._refresh_equity_pressure(40_000_000_000)
     result = runtime.snapshot()["equity_pressure_by_underlying"]
 
     assert set(result) == {"NIFTY", "BANKNIFTY"}
-    assert result["NIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-nifty"
-    assert result["BANKNIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-banknifty"
+    assert result["NIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities"
+    assert result["BANKNIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities"
+    assert result["NIFTY"]["feed"]["expected_symbols"] == ["AAA", "BBB"]
+    assert result["BANKNIFTY"]["feed"]["expected_symbols"] == ["AAA", "CCC"]
+    assert result["NIFTY"]["feed"]["fresh_symbols"] == ["AAA", "BBB"]
+    assert result["BANKNIFTY"]["feed"]["fresh_symbols"] == ["AAA", "CCC"]
+    assert result["NIFTY"]["feed"]["shared_unique_symbols"] == ["AAA", "BBB", "CCC"]
+    assert result["BANKNIFTY"]["feed"]["shared_unique_symbols"] == ["AAA", "BBB", "CCC"]
     assert result["NIFTY"]["feed"]["status"] == "LIVE"
-    assert result["BANKNIFTY"]["feed"]["status"] == "PARTIAL"
-    assert result["BANKNIFTY"]["signals_allowed"] is False
+    assert result["BANKNIFTY"]["feed"]["status"] == "LIVE"
     assert result["NIFTY"]["signals_allowed"] is False  # warm-up windows are not ready
+    assert result["BANKNIFTY"]["signals_allowed"] is False
     assert runtime.snapshot()["equity_pressure"]["enabled"] is True
-
 
 def test_single_nifty_pressure_basket_is_supported_without_banknifty():
     nifty = (WeightedEquity("AAA", 70.0), WeightedEquity("BBB", 30.0))
