@@ -131,3 +131,73 @@ def test_disabled_runtime_stop_does_not_construct_or_stop_equity_feed():
     assert runtime._equity_feed is None
     assert result["equity_pressure"]["status"] == "DISABLED"
     assert result["equity_pressure"]["signals_allowed"] is False
+
+
+
+def test_dual_index_pressure_uses_independent_baskets_feeds_and_snapshots():
+    nifty = (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0))
+    bank = (WeightedEquity("CCC", 70.0), WeightedEquity("DDD", 30.0))
+    runtime = make_runtime(
+        equity_pressure_enabled=True,
+        equity_baskets={"NIFTY": nifty, "BANKNIFTY": bank},
+    )
+    feeds = {
+        "NIFTY": FakeEquityFeed({
+            "status": "LIVE", "consumer": "iv-skew-flip-equities-nifty",
+            "signals_allowed": True, "expected_symbols": ["AAA", "BBB"],
+            "fresh_symbols": ["AAA", "BBB"], "missing_symbols": [],
+            "quotes": {
+                "AAA": {"timestamp_ns": 40_000_000_000, "ltp": 101.0},
+                "BBB": {"timestamp_ns": 40_000_000_000, "ltp": 201.0},
+            },
+        }),
+        "BANKNIFTY": FakeEquityFeed({
+            "status": "PARTIAL", "consumer": "iv-skew-flip-equities-banknifty",
+            "signals_allowed": False, "expected_symbols": ["CCC", "DDD"],
+            "fresh_symbols": ["CCC"], "missing_symbols": ["DDD"],
+            "quotes": {"CCC": {"timestamp_ns": 40_000_000_000, "ltp": 301.0}},
+        }),
+    }
+    runtime._equity_feeds = feeds
+
+    runtime._refresh_equity_pressure(40_000_000_000)
+    result = runtime.snapshot()["equity_pressure_by_underlying"]
+
+    assert set(result) == {"NIFTY", "BANKNIFTY"}
+    assert result["NIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-nifty"
+    assert result["BANKNIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-banknifty"
+    assert result["NIFTY"]["feed"]["status"] == "LIVE"
+    assert result["BANKNIFTY"]["feed"]["status"] == "PARTIAL"
+    assert result["BANKNIFTY"]["signals_allowed"] is False
+    assert result["NIFTY"]["signals_allowed"] is False  # warm-up windows are not ready
+    assert runtime.snapshot()["equity_pressure"]["enabled"] is True
+
+
+def test_dual_index_pressure_requires_both_index_baskets():
+    nifty = (WeightedEquity("AAA", 100.0),)
+    with pytest.raises(ValueError, match="both NIFTY and BANKNIFTY"):
+        make_runtime(
+            equity_pressure_enabled=True,
+            equity_baskets={"NIFTY": nifty},
+        )
+
+
+def test_dual_index_pressure_stop_stops_both_owned_feeds():
+    nifty = (WeightedEquity("AAA", 100.0),)
+    bank = (WeightedEquity("BBB", 100.0),)
+    runtime = make_runtime(
+        equity_pressure_enabled=True,
+        equity_baskets={"NIFTY": nifty, "BANKNIFTY": bank},
+    )
+    feeds = {
+        "NIFTY": FakeEquityFeed({"status": "LIVE", "signals_allowed": False, "quotes": {}}),
+        "BANKNIFTY": FakeEquityFeed({"status": "LIVE", "signals_allowed": False, "quotes": {}}),
+    }
+    runtime._equity_feeds = feeds
+
+    result = runtime.stop()
+
+    assert all(feed.stopped for feed in feeds.values())
+    assert runtime._equity_feeds == {}
+    assert set(result["equity_pressure_by_underlying"]) == {"NIFTY", "BANKNIFTY"}
+    assert all(not item["signals_allowed"] for item in result["equity_pressure_by_underlying"].values())
