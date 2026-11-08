@@ -211,3 +211,24 @@ def test_confluence_suppresses_conflicting_signals_within_iv_surface_family():
     result = confluence(rows)
     assert result.status == "NEUTRAL"
     assert result.direction is None
+
+
+def test_confluence_ignores_unreviewed_strategy_names():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("UNREVIEWED_ALPHA", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("UNREVIEWED_BETA", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_rejects_invalid_required_family_count():
+    import pytest
+
+    rows = [Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test")]
+    with pytest.raises(ValueError):
+        confluence(rows, required=True)
+    with pytest.raises(ValueError):
+        confluence(rows, required=0)
