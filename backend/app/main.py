@@ -1757,6 +1757,9 @@ def _start_iv_skew_flip_runtime():
             # A fully stopped runtime may remain registered after an interrupted
             # transition. Clear it before constructing the next isolated runtime.
             iv_skew_flip_runtime = None
+        # Constituent pressure is deliberately not auto-activated from environment
+        # flags or registry freshness. The registry is informational until a separate
+        # explicit activation workflow is reviewed and authorized.
         runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
         try:
             snapshot = runtime.start()

@@ -136,3 +136,15 @@ def test_equity_feed_requires_provider_timestamp_to_match_canonical_timestamp():
         payload={"exchange_timestamp_ns": 9_000_000_000},
     )
     assert adapter.snapshot()["status"] == "WAITING_FOR_TICKS"
+
+
+def test_equity_feed_supports_distinct_validated_consumer_names():
+    feed = FakeFeed()
+    adapter = IVWeightedEquityFeedAdapter(feed=feed, consumer="iv-skew-flip-equities-nifty")
+    adapter.start(FakeMaster(), (WeightedEquity("HDFCBANK", 100.0),))
+    assert adapter.snapshot()["consumer"] == "iv-skew-flip-equities-nifty"
+
+
+def test_equity_feed_rejects_invalid_consumer_name():
+    with pytest.raises(ValueError, match="consumer"):
+        IVWeightedEquityFeedAdapter(feed=FakeFeed(), consumer=" " * 65)
