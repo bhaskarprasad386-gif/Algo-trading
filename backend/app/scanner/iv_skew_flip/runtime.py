@@ -583,10 +583,15 @@ class IVSkewFlipRuntime:
             # into both independent weighted pressure calculators without
             # fetching/subscribing a common constituent twice.
             shared_feed = self._equity_feed
-            shared_snapshot = (
-                shared_feed.snapshot(now_ns=now_ns) if shared_feed is not None
-                else {"status": "STOPPED", "quotes": {}, "signals_allowed": False}
-            )
+            shared_error: Exception | None = None
+            try:
+                shared_snapshot = (
+                    shared_feed.snapshot(now_ns=now_ns) if shared_feed is not None
+                    else {"status": "STOPPED", "quotes": {}, "signals_allowed": False}
+                )
+            except Exception as exc:
+                shared_error = exc
+                shared_snapshot = {"status": "ERROR", "quotes": {}, "signals_allowed": False}
             shared_quotes = shared_snapshot.get("quotes", {})
             snapshots: dict[str, dict[str, Any]] = {}
             for underlying, basket in self.equity_baskets.items():
@@ -602,6 +607,8 @@ class IVSkewFlipRuntime:
                 )
                 feed_allowed = bool(expected) and not missing_symbols
                 try:
+                    if shared_error is not None:
+                        raise shared_error
                     for symbol, quote in quotes.items():
                         pressure.update(ComponentSample(
                             symbol=symbol, timestamp_ns=quote["timestamp_ns"], ltp=quote["ltp"]
