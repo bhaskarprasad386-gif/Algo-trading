@@ -220,3 +220,31 @@ def test_iv_snapshot_path_is_not_box_spread_cache(monkeypatch):
     monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", "/tmp/box-only-cache.json")
     assert loader._cache_path().name == "iv_instrument_master_cache.json"
     assert "box-only-cache" not in str(loader._cache_path())
+
+
+@pytest.mark.parametrize("field,value", [
+    ("symbol", None),
+    ("exch_seg", None),
+    ("token", None),
+    ("token", True),
+    ("token", "NaN"),
+])
+def test_master_rejects_null_boolean_and_non_numeric_identifiers(field, value):
+    rows = valid_rows()
+    rows[0][field] = value
+    with pytest.raises(ValueError, match="malformed or incomplete"):
+        loader._validate_rows(rows)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("expiry", "not-a-date"),
+    ("strike", "NaN"),
+    ("strike", "0"),
+    ("lotsize", "1.5"),
+    ("lotsize", "0"),
+])
+def test_master_rejects_invalid_required_option_contract_fields(field, value):
+    rows = valid_rows()
+    rows[0][field] = value
+    with pytest.raises(ValueError, match="missing complete NFO options"):
+        loader._validate_rows(rows)
