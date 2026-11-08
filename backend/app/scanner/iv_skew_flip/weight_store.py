@@ -21,6 +21,7 @@ from app.scanner.iv_skew_flip.weight_import import (
     VerifiedBasketComponent,
     WEIGHT_SUM_TOLERANCE,
     validate_basket_token_mapping,
+    is_official_nse_source_url,
 )
 
 
@@ -32,9 +33,8 @@ _SYMBOL_RE = re.compile(r"^[A-Z0-9&._-]{1,32}$")
 def _require_https_source(name: str, url: str, label: str) -> tuple[str, str]:
     clean_name = str(name or "").strip()
     clean_url = str(url or "").strip()
-    parsed = urlparse(clean_url)
-    if not clean_name or parsed.scheme != "https" or not parsed.netloc:
-        raise ValueError(f"{label} name and HTTPS URL are required")
+    if not clean_name or not is_official_nse_source_url(clean_url):
+        raise ValueError(f"{label} name and official NSE HTTPS URL are required")
     return clean_name, parsed.geturl()
 
 
