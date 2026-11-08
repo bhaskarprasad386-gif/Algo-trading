@@ -252,7 +252,9 @@ class IVOneSecondSampler:
                     if quote.bid is not None and quote.ask is not None
                     and isfinite(quote.bid) and isfinite(quote.ask)
                     and 0 < quote.bid <= quote.ask
-                    else "LTP" if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0
+                    and (quote.ask - quote.bid) * 100.0 / ((quote.ask + quote.bid) / 2.0) <= 8.0
+                    else "LTP" if mark is not None and quote.ltp is not None
+                    and isfinite(quote.ltp) and quote.ltp > 0
                     else None
                 ),
                 bid=quote.bid if quote.bid is not None and isfinite(quote.bid) and quote.bid > 0 else None,
