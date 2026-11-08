@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from threading import Lock
 
@@ -136,10 +137,11 @@ def test_recent_validated_snapshot_is_used_without_mutating_shared_cache(monkeyp
     shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
     FakeMaster._cached_instruments = shared_rows
     FakeMaster._cached_snapshot_date = "2000-01-01"
-    cache = tmp_path / "box_spread_instrument_master_cache.json"
+    cache = tmp_path / "iv_instrument_master_cache.json"
     cache.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": loader.CACHE_SCHEMA_VERSION,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "content_sha256": hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest(),
         "instruments": rows,
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "_cache_path", lambda: cache)
@@ -159,8 +161,9 @@ def test_recent_validated_snapshot_is_used_without_mutating_shared_cache(monkeyp
 def test_stale_or_incomplete_snapshot_is_never_used(monkeypatch, tmp_path):
     cache = tmp_path / "stale.json"
     cache.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": loader.CACHE_SCHEMA_VERSION,
         "fetched_at": (datetime.now(timezone.utc) - timedelta(hours=37)).isoformat(),
+        "content_sha256": hashlib.sha256(json.dumps(valid_rows(), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest(),
         "instruments": valid_rows(),
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "_cache_path", lambda: cache)
@@ -189,3 +192,30 @@ def test_total_master_failure_exposes_both_source_errors(monkeypatch, tmp_path):
     assert "primary Angel One source failed [TimeoutError: primary host timed out]" in message
     assert "alternate Angel One source failed [TimeoutError: alternate host timed out]" in message
     assert "no recent validated snapshot" in message
+
+
+
+def test_snapshot_content_tampering_is_rejected(monkeypatch, tmp_path):
+    rows = valid_rows()
+    cache = tmp_path / "iv_snapshot.json"
+    loader._write_snapshot(rows)
+    # _write_snapshot uses the configured path, so point it at this file.
+    monkeypatch.setattr(loader, "_cache_path", lambda: cache)
+    loader._write_snapshot(rows)
+    payload = json.loads(cache.read_text(encoding="utf-8"))
+    payload["instruments"][0]["token"] = "tampered-token"
+    cache.write_text(json.dumps(payload), encoding="utf-8")
+    assert loader._read_recent_snapshot() is None
+
+
+def test_malformed_master_row_is_not_silently_dropped():
+    rows = valid_rows() + [{"symbol": "BROKEN", "exch_seg": "NSE"}]
+    with pytest.raises(ValueError, match="malformed or incomplete"):
+        loader._validate_rows(rows)
+
+
+def test_iv_snapshot_path_is_not_box_spread_cache(monkeypatch):
+    monkeypatch.delenv("IV_INSTRUMENT_MASTER_CACHE_PATH", raising=False)
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", "/tmp/box-only-cache.json")
+    assert loader._cache_path().name == "iv_instrument_master_cache.json"
+    assert "box-only-cache" not in str(loader._cache_path())
