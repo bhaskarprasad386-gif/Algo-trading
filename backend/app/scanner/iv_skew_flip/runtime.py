@@ -508,31 +508,49 @@ class IVSkewFlipRuntime:
             snapshots: dict[str, dict[str, Any]] = {}
             for underlying, feed in self._equity_feeds.items():
                 pressure = self._equity_pressures[underlying]
-                feed_snapshot = feed.snapshot(now_ns=now_ns)
-                for symbol, quote in feed_snapshot.get("quotes", {}).items():
-                    pressure.update(ComponentSample(
-                        symbol=symbol, timestamp_ns=quote["timestamp_ns"], ltp=quote["ltp"]
-                    ))
-                pressure_snapshot = pressure.snapshot(now_ns=now_ns)
-                allowed = bool(
-                    feed_snapshot.get("signals_allowed")
-                    and pressure_snapshot.get("signals_allowed")
-                    and pressure_snapshot.get("direction") in {"BULLISH", "BEARISH"}
-                    and pressure_snapshot.get("timeframe_agreement")
-                )
-                snapshots[underlying] = {
-                    **pressure_snapshot,
-                    "enabled": True,
-                    "feed": {
-                        "status": feed_snapshot.get("status"),
-                        "consumer": feed_snapshot.get("consumer"),
-                        "expected_symbols": feed_snapshot.get("expected_symbols", []),
-                        "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
-                        "missing_symbols": feed_snapshot.get("missing_symbols", []),
-                        "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
-                    },
-                    "signals_allowed": allowed,
-                }
+                try:
+                    feed_snapshot = feed.snapshot(now_ns=now_ns)
+                    for symbol, quote in feed_snapshot.get("quotes", {}).items():
+                        pressure.update(ComponentSample(
+                            symbol=symbol, timestamp_ns=quote["timestamp_ns"], ltp=quote["ltp"]
+                        ))
+                    pressure_snapshot = pressure.snapshot(now_ns=now_ns)
+                    allowed = bool(
+                        feed_snapshot.get("signals_allowed")
+                        and pressure_snapshot.get("signals_allowed")
+                        and pressure_snapshot.get("direction") in {"BULLISH", "BEARISH"}
+                        and pressure_snapshot.get("timeframe_agreement")
+                    )
+                    snapshots[underlying] = {
+                        **pressure_snapshot,
+                        "enabled": True,
+                        "feed": {
+                            "status": feed_snapshot.get("status"),
+                            "consumer": feed_snapshot.get("consumer"),
+                            "expected_symbols": feed_snapshot.get("expected_symbols", []),
+                            "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
+                            "missing_symbols": feed_snapshot.get("missing_symbols", []),
+                            "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
+                        },
+                        "signals_allowed": allowed,
+                    }
+                except Exception as exc:
+                    # One broken constituent consumer must not interrupt the
+                    # independent option-IV scanner or the other index feed.
+                    snapshots[underlying] = {
+                        "status": "ERROR",
+                        "enabled": True,
+                        "direction": "WAITING",
+                        "timeframe_agreement": False,
+                        "windows": {},
+                        "signals_allowed": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "feed": {
+                            "status": "ERROR",
+                            "consumer": getattr(feed, "consumer", None),
+                            "signals_allowed": False,
+                        },
+                    }
             with self._lock:
                 self._equity_pressure_by_underlying = snapshots
                 self._equity_pressure_last_snapshot = snapshots.get("NIFTY", {
