@@ -182,7 +182,6 @@ def test_runtime_rejects_naive_clock():
         raise AssertionError("naive runtime clock must be rejected")
 
 
-
 def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
     now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
     runtime = IVSkewFlipRuntime(
@@ -323,6 +322,9 @@ def test_runtime_stop_attempts_every_resource_and_retries_failed_cleanup():
             calls[self.key] += 1
             if self.fail_first and calls[self.key] == 1:
                 raise RuntimeError("temporary shutdown failure")
+
+        def snapshot(self):
+            return {"status": "STOPPED"}
 
     class StopSpotFeed(FakeSpotFeed):
         def stop(self):
