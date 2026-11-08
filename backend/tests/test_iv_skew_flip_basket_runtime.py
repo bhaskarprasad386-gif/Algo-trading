@@ -53,7 +53,7 @@ def test_missing_one_index_fails_closed():
         record("NIFTY", [{"symbol": "AAA", "weight": 100.0}], {"AAA": "101"}),
     ]
 
-    with pytest.raises(RuntimeError, match="verified NIFTY and BANKNIFTY baskets are required"):
+    with pytest.raises(RuntimeError, match="verified index baskets are required"):
         load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
 
 
@@ -87,3 +87,36 @@ def test_current_instrument_master_token_mismatch_fails_closed():
 
     with pytest.raises(RuntimeError, match="stale for AAA"):
         load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
+
+
+
+def test_nifty_pressure_can_select_dynamic_top_two_after_full_basket_verification():
+    components = [
+        {"symbol": "AAA", "weight": 10.0},
+        {"symbol": "BBB", "weight": 35.0},
+        {"symbol": "CCC", "weight": 25.0},
+        {"symbol": "DDD", "weight": 30.0},
+    ]
+    rows = [record("NIFTY", components, {
+        "AAA": "101", "BBB": "102", "CCC": "201", "DDD": "202",
+    })]
+
+    baskets = load_verified_runtime_baskets(
+        rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster(),
+        underlyings=("NIFTY",), top_n=2,
+    )
+
+    assert set(baskets) == {"NIFTY"}
+    assert [(item.symbol, item.weight) for item in baskets["NIFTY"]] == [
+        ("BBB", 35.0), ("DDD", 30.0),
+    ]
+
+
+def test_top_n_rejects_invalid_values():
+    rows = [record("NIFTY", [{"symbol": "AAA", "weight": 100.0}], {"AAA": "101"})]
+    for invalid in (0, -1, True, 1.5):
+        with pytest.raises(ValueError, match="top_n"):
+            load_verified_runtime_baskets(
+                rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster(),
+                underlyings=("NIFTY",), top_n=invalid,
+            )
