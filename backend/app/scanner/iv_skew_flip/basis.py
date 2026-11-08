@@ -110,14 +110,27 @@ def calculate_basis(
     spot_age = now_ns - spot_timestamp_ns
     future_age = now_ns - future_timestamp_ns
     skew = abs(spot_timestamp_ns - future_timestamp_ns)
+
+    # Exchange timestamps can differ from the local monotonic clock by a few
+    # hundred nanoseconds during paired-feed delivery. Tolerate at most 1 ms
+    # of clock lead, but never use that tolerance for a materially future tick.
+    clock_jitter_tolerance_ns = 1_000_000
+    effective_spot_age = max(0, spot_age) if -clock_jitter_tolerance_ns <= spot_age < 0 else spot_age
+    effective_future_age = max(0, future_age) if -clock_jitter_tolerance_ns <= future_age < 0 else future_age
     fresh = (
-        0 <= spot_age <= max_age_ns
-        and 0 <= future_age <= max_age_ns
+        0 <= effective_spot_age <= max_age_ns
+        and 0 <= effective_future_age <= max_age_ns
         and skew <= max_pair_skew_ns
     )
+    if fresh:
+        status = "LIVE"
+    elif skew > max_pair_skew_ns or (spot_age >= 0 and future_age >= 0):
+        status = "STALE"
+    else:
+        status = "INVALID_TIMESTAMP"
     basis = future_price - spot_price
     return {
-        "status": "LIVE" if fresh else ("STALE" if spot_age >= 0 and future_age >= 0 else "INVALID_TIMESTAMP"),
+        "status": status,
         "spot": spot_price,
         "future": future_price,
         "basis_points": round(basis, 4),
