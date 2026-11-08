@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text, event
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -33,3 +33,13 @@ class IVConstituentBasketVersion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+
+
+@event.listens_for(IVConstituentBasketVersion, "before_update")
+def _reject_basket_version_update(_mapper, _connection, _target) -> None:
+    raise ValueError("IV constituent basket versions are append-only and cannot be updated")
+
+
+@event.listens_for(IVConstituentBasketVersion, "before_delete")
+def _reject_basket_version_delete(_mapper, _connection, _target) -> None:
+    raise ValueError("IV constituent basket versions are append-only and cannot be deleted")
