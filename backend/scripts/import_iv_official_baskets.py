@@ -1,4 +1,4 @@
-""""Import the latest official NSE Indices NIFTY and BANKNIFTY monthly baskets.
+"""Import the latest official NSE Indices NIFTY and BANKNIFTY monthly baskets.
 
 Run from the activated backend virtualenv on the VPS:
     cd /opt/Algo-Trading/backend && python -m scripts.import_iv_official_baskets
@@ -26,13 +26,6 @@ from app.scanner.iv_skew_flip.weight_store import persist_validated_basket_versi
 NIFTY_ROSTER_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
 BANK_ROSTER_URL = "https://www.niftyindices.com/IndexConstituent/ind_niftybanklist.csv"
 ARCHIVE_BASE = "https://www.niftyindices.com/Indices_-_Market_Capitalisation_and_Weightage"
-# Angel One publishes the same instrument master from this alternate official
-# host. Keep the fallback IV-importer-local: do not couple it to Box Spread's
-# isolated cache or relax any of the IV token-resolution checks.
-ANGEL_ONE_ALTERNATE_MASTER_URL = (
-    "https://margincalculator.angelone.in/"
-    "OpenAPI_File/files/OpenAPIScripMaster.json"
-)
 INDEXES = {
     "NIFTY": {
         "roster_url": NIFTY_ROSTER_URL,
@@ -66,51 +59,28 @@ def _fetch_roster(session: requests.Session, url: str) -> tuple[tuple[str, ...],
     return symbols, hashlib.sha256(raw).hexdigest()
 
 
-def _load_alternate_official_master(master: InstrumentMaster) -> list[dict]:
-    """Load Angel One's alternate official host into this CLI's master view."""
-    response = requests.get(ANGEL_ONE_ALTERNATE_MASTER_URL, timeout=(15, 90))
-    response.raise_for_status()
-    rows = response.json()
-    if (
-        not isinstance(rows, list)
-        or not rows
-        or not all(isinstance(row, dict) for row in rows)
-        or not any(
-            str(row.get("symbol", "")).strip()
-            and str(row.get("exch_seg", "")).strip()
-            and str(row.get("token", "")).strip()
-            for row in rows
-        )
-    ):
-        raise ValueError("Angel One alternate instrument master is invalid or empty")
-
-    master.instruments = rows
-    master._loaded = True
-    master._symbol_exchange_index = None
-    return rows
-
-
 def _load_current_instrument_master(master: InstrumentMaster) -> list[dict]:
-    """Prefer the primary Angel One URL, then its official alternate host."""
+    """Retry Angel One's documented master URL once with a longer timeout."""
     try:
-        return master.download()
+        rows = master.download()
     except Exception as primary_error:
         print(
-            "Primary Angel One instrument-master URL failed; "
-            "trying Angel One's alternate official host: "
+            "Angel One instrument-master request failed; retrying the same "
+            "documented official URL with an extended timeout: "
             f"{type(primary_error).__name__}: {primary_error}"
         )
         try:
-            rows = _load_alternate_official_master(master)
-        except Exception as alternate_error:
+            rows = master.download(force=True, timeout=(15, 120))
+        except Exception as retry_error:
             raise RuntimeError(
-                "Both official Angel One instrument-master hosts failed; "
+                "Angel One official instrument master failed on both attempts; "
                 "no basket was imported. "
-                f"Primary: {primary_error}; alternate: {alternate_error}"
-            ) from alternate_error
-        print(f"Alternate official Angel One master loaded: rows={len(rows)}")
-        return rows
-
+                f"First attempt: {primary_error}; retry: {retry_error}"
+            ) from retry_error
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("Angel One official instrument master is empty; no basket was imported")
+    print(f"Official Angel One instrument master loaded: rows={len(rows)}")
+    return rows
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
