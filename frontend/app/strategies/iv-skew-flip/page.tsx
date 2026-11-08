@@ -38,6 +38,7 @@ type Runtime = {
   signals?: Record<string, Row>;
   early_move?: Record<string, Row>;
   equity_pressure?: Row;
+  equity_pressure_by_underlying?: Record<string, Row>;
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
@@ -238,7 +239,24 @@ export default function IVSkewFlipPage() {
         <div><h2 className="font-semibold theme-text">Weighted Constituents Pressure</h2><p className="mt-1 text-xs theme-muted">Research feed • 5s / 10s / 30s weighted returns • no order execution</p></div>
         <span className="rounded-full border theme-border px-3 py-1 text-xs font-semibold">{String(runtime?.equity_pressure?.status ?? "DISABLED")}</span>
       </div>
-      {runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">DISABLED — verified official index-weight basket is not configured. This module will not subscribe to equity constituents or generate directional pressure until a verified basket is injected.</p> : <>
+      {Object.keys(runtime?.equity_pressure_by_underlying ?? {}).length > 0 ? (
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          {Object.entries(runtime?.equity_pressure_by_underlying ?? {}).map(([symbol, pressure]) => (
+            <div key={symbol} className="rounded-xl border theme-border p-3">
+              <div className="flex items-center justify-between gap-2"><b className="text-sm theme-text">{symbol}</b><span className="rounded-full border theme-border px-2 py-1 text-xs">{String(pressure.status ?? "WAITING")}</span></div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Metric label="Feed" value={String((pressure.feed as Row | undefined)?.status ?? "WAITING")} />
+                <Metric label="Fresh Components" value={`${fmt(pressure.fresh_components,0)} / ${fmt(pressure.expected_components,0)}`} />
+                <Metric label="Weight Coverage" value={`${fmt(pressure.weight_coverage_pct)}%`} />
+                <Metric label="Direction" value={String(pressure.direction ?? "WAITING")} sub={pressure.signals_allowed === true ? "Timeframes agree" : "Directional output suppressed"} />
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {["5s","10s","30s"].map((windowKey)=>{const w=(pressure.windows as Row | undefined)?.[windowKey] as Row | undefined;return <div key={windowKey} className="rounded-lg border theme-border p-2"><div className="flex justify-between gap-2 text-xs"><b>{windowKey}</b><b>{String(w?.direction ?? "WAITING")}</b></div><div className="mt-2 text-[11px] theme-muted">Return <b className="theme-text">{delta(w?.weighted_return_pct,"% ",4)}</b></div><div className="mt-1 text-[11px] theme-muted">Coverage {fmt(w?.coverage_pct)}% • Advancing {fmt(w?.advancing_weight_pct)}%</div><div className="mt-2 text-[11px] theme-muted">Top: {Array.isArray(w?.top_contributors)?(w!.top_contributors as Row[]).slice(0,3).map(x=>String(x.symbol??"")).join(", ")||"—":"—"}</div></div>;})}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">DISABLED — both NIFTY and BANKNIFTY require separately verified official constituent baskets and an explicit runtime opt-in. No equity subscriptions or directional pressure are started by default.</p> : <>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Metric label="Feed" value={String((runtime.equity_pressure.feed as Row | undefined)?.status ?? "WAITING")} />
           <Metric label="Fresh Components" value={`${fmt(runtime.equity_pressure.fresh_components,0)} / ${fmt(runtime.equity_pressure.expected_components,0)}`} />
