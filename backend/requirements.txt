@@ -14,3 +14,4 @@ passlib[bcrypt]
 bcrypt==4.3.0
 httpx
 google-auth
+pypdf>=5.0,<7

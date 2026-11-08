@@ -44,7 +44,7 @@ def _validate_basket_payload(basket: VerifiedBasketImport) -> tuple[tuple[Verifi
         raise ValueError("validated basket underlying is invalid")
     if not isinstance(basket.effective_date, date) or isinstance(basket.effective_date, datetime):
         raise ValueError("validated basket effective date must be a calendar date")
-    if str(basket.file_format or "").upper() not in {"CSV", "ZIP"}:
+    if str(basket.file_format or "").upper() not in {"CSV", "ZIP", "PDFZIP"}:
         raise ValueError("validated basket file format is invalid")
     if not isinstance(basket.components, (tuple, list)) or not basket.components:
         raise ValueError("validated basket must contain components")
@@ -93,6 +93,7 @@ def persist_validated_basket_version(
     roster_source_url: str,
     roster_sha256: str,
     created_by_user_id: int | None = None,
+    commit: bool = True,
 ) -> IVConstituentBasketVersion:
     """Append a revalidated basket and complete provenance as VALID only.
 
@@ -143,8 +144,9 @@ def persist_validated_basket_version(
     db.add(record)
     try:
         db.flush()
-        db.commit()
-        db.refresh(record)
+        if commit:
+            db.commit()
+            db.refresh(record)
     except IntegrityError as exc:
         db.rollback()
         raise ValueError("this exact source file was already imported for the underlying") from exc
