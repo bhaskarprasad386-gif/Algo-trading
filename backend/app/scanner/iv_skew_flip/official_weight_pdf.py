@@ -151,7 +151,7 @@ def parse_official_weight_pdf_archive(
         reader = PdfReader(io.BytesIO(pdf_bytes), strict=True)
         if len(reader.pages) < 1 or len(reader.pages) > 10:
             raise ValueError("official constituent PDF has an invalid page count")
-        extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
+        extracted = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
     except Exception as exc:
         raise ValueError("official constituent PDF could not be safely parsed") from exc
 
