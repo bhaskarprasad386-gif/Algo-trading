@@ -95,7 +95,6 @@ class IVSkewFlipRuntime:
             lambda: IVWeightedEquityFeedAdapter(clock_ns=clock_ns)
         )
         self._equity_feed: IVWeightedEquityFeedAdapter | None = None
-        self._equity_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
         self._equity_pressures: dict[str, EquityComponentPressure] = {
             symbol: EquityComponentPressure(
                 tuple(ComponentWeight(item.symbol, item.weight) for item in items)
@@ -207,9 +206,6 @@ class IVSkewFlipRuntime:
             if self._equity_feed is not None:
                 self._equity_feed.stop()
                 self._equity_feed = None
-            for equity_feed in tuple(self._equity_feeds.values()):
-                equity_feed.stop()
-            self._equity_feeds.clear()
             raise
         with self._lock:
             self._rows_by_stream = rows
@@ -818,9 +814,6 @@ class IVSkewFlipRuntime:
         if self._equity_feed is not None:
             self._equity_feed.stop()
             self._equity_feed = None
-        for equity_feed in tuple(self._equity_feeds.values()):
-            equity_feed.stop()
-        self._equity_feeds.clear()
         with self._lock:
             self._started = False
             self._stopping = False
