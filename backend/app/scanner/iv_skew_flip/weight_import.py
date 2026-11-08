@@ -65,9 +65,15 @@ class VerifiedBasketImport:
 
 
 def _normalized_symbols(values: Iterable[str]) -> set[str]:
+    # A bare string is iterable too, but treating its characters as symbols
+    # can accidentally turn malformed caller input into a plausible roster.
+    if isinstance(values, (str, bytes, bytearray)) or values is None:
+        raise ValueError("authoritative expected constituent roster must be a collection of symbols")
     result: set[str] = set()
     for value in values:
-        symbol = str(value or "").strip().upper()
+        if not isinstance(value, str):
+            raise ValueError("expected constituent roster symbols must be strings")
+        symbol = value.strip().upper()
         if not symbol or not _SYMBOL_RE.fullmatch(symbol) or symbol in result:
             raise ValueError("expected constituent roster must contain unique valid symbols")
         result.add(symbol)
