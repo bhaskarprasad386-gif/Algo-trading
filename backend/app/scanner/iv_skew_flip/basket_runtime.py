@@ -37,7 +37,7 @@ def load_verified_runtime_baskets(
         if baskets.get(symbol, {}).get("status") != "VERIFIED_FRESH"
     }
     if invalid:
-        raise RuntimeError(f"verified NIFTY and BANKNIFTY baskets are required: {invalid}")
+        raise RuntimeError(f"verified index baskets are required: {invalid}")
 
     latest: dict[str, tuple[tuple[str, str, int], Any]] = {}
     for record in record_rows:
