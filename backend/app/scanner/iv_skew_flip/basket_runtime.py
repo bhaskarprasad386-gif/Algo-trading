@@ -10,17 +10,27 @@ from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.equity_feed import WeightedEquity
 
 
-def load_verified_runtime_baskets(records, *, as_of: date, instrument_master: Any) -> dict[str, tuple[WeightedEquity, ...]]:
-    """Return NIFTY and BANKNIFTY baskets or fail closed for either invalid index.
+def load_verified_runtime_baskets(
+    records, *, as_of: date, instrument_master: Any,
+    underlyings: tuple[str, ...] = ("NIFTY", "BANKNIFTY"),
+    top_n: int | None = None,
+) -> dict[str, tuple[WeightedEquity, ...]]:
+    """Load verified index weights and optionally retain only the heaviest names.
 
-    Registry freshness/provenance/hash/weight/token checks are reused. The
-    Runtime token mapping is compared with the current NSE instrument master;
-    a changed, missing, or stale token mapping blocks the entire dual-index load.
+    The complete imported basket is verified first, including its 100% weight
+    total, official provenance, freshness, roster and every current NSE token.
+    Only after those checks pass may ``top_n`` select the largest weights.
+    This keeps ranking dynamic and prevents a partial upload from masquerading
+    as a complete official index basket.
     """
+    required = tuple(str(item).strip().upper() for item in underlyings)
+    if not required or len(set(required)) != len(required) or set(required) - {"NIFTY", "BANKNIFTY"}:
+        raise ValueError("underlyings must be a unique non-empty subset of NIFTY/BANKNIFTY")
+    if top_n is not None and (isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 1):
+        raise ValueError("top_n must be a positive integer when supplied")
     record_rows = list(records)
     registry = summarize_basket_registry(record_rows, as_of=as_of)
     baskets = registry.get("baskets", {})
-    required = ("NIFTY", "BANKNIFTY")
     invalid = {
         symbol: baskets.get(symbol, {}).get("status", "MISSING")
         for symbol in required
@@ -85,5 +95,7 @@ def load_verified_runtime_baskets(records, *, as_of: date, instrument_master: An
             rows.append(WeightedEquity(name, numeric_weight))
         if not rows or set(token_mapping) != seen:
             raise RuntimeError(f"{symbol} basket token mapping does not match its components")
+        if top_n is not None:
+            rows = sorted(rows, key=lambda item: (-item.weight, item.symbol))[:top_n]
         result[symbol] = tuple(rows)
     return result
