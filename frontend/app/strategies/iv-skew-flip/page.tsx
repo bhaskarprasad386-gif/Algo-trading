@@ -6,6 +6,26 @@ import { appConfig } from "@/lib/config";
 
 type Row = Record<string, unknown>;
 type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; error?: string | null; signals?: Row };
+type BasketEntry = {
+  status?: string;
+  signals_allowed?: boolean;
+  reason?: string;
+  effective_date?: string;
+  age_days?: number;
+  constituent_count?: number;
+  mapped_token_count?: number;
+  weight_sum?: number;
+  source_name?: string;
+  source_url?: string;
+  imported_at?: string | null;
+};
+type BasketRegistry = {
+  as_of?: string;
+  max_age_days?: number;
+  activation_enabled?: boolean;
+  signals_allowed?: boolean;
+  baskets?: Record<string, BasketEntry>;
+};
 type Runtime = {
   status?: string;
   desired_state?: "ON" | "OFF";
@@ -116,6 +136,7 @@ function OptionChain({ title, chain }: { title: string; chain: Chain }) {
 }
 export default function IVSkewFlipPage() {
   const [runtime,setRuntime]=useState<Runtime|null>(null);
+  const [basketRegistry,setBasketRegistry]=useState<BasketRegistry|null>(null);
   const [selectedNifty,setSelectedNifty]=useState<"NIFTY_WEEKLY"|"NIFTY_MONTHLY">("NIFTY_WEEKLY");
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
@@ -123,6 +144,19 @@ export default function IVSkewFlipPage() {
   const [savedEnabled,setSavedEnabled]=useState(false);
   const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
+  useEffect(()=>{
+    let active=true;
+    const poll=async()=>{
+      try{
+        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/baskets`,{cache:"no-store"});
+        const body=await response.json();
+        if(active&&response.ok)setBasketRegistry(body as BasketRegistry);
+      }catch{/* keep last known basket registry state */}
+    };
+    void poll();
+    const timer=window.setInterval(()=>{if(active)void poll();},10000);
+    return()=>{active=false;window.clearInterval(timer);};
+  },[base]);
   const refresh=useCallback(async()=>{
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
@@ -215,6 +249,32 @@ export default function IVSkewFlipPage() {
           {["5s","10s","30s"].map((windowKey)=>{const w=(runtime.equity_pressure?.windows as Row | undefined)?.[windowKey] as Row | undefined;return <div key={windowKey} className="rounded-xl border theme-border p-3"><div className="flex justify-between gap-2 text-sm"><b>{windowKey}</b><b>{String(w?.direction ?? "WAITING")}</b></div><div className="mt-2 text-xs theme-muted">Weighted return <b className="theme-text">{delta(w?.weighted_return_pct,"% ",4)}</b></div><div className="mt-1 text-xs theme-muted">Coverage {fmt(w?.coverage_pct)}% • Advancing {fmt(w?.advancing_weight_pct)}%</div><div className="mt-2 text-xs theme-muted">Top contributors: {Array.isArray(w?.top_contributors)?(w!.top_contributors as Row[]).slice(0,3).map(x=>String(x.symbol??"")).join(", ")||"—":"—"}</div></div>;})}
         </div>
       </>}
+    </section>
+    <section className="rounded-2xl border theme-border theme-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h2 className="font-semibold theme-text">Official Index Weight Registry</h2><p className="mt-1 text-xs theme-muted">NIFTY and BANKNIFTY • read-only provenance and freshness • no automatic activation</p></div>
+        <span className="rounded-full border theme-border px-3 py-1 text-xs font-semibold">As of {basketRegistry?.as_of ?? "—"}</span>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {(["NIFTY","BANKNIFTY"] as const).map((symbol)=>{
+          const item=basketRegistry?.baskets?.[symbol]??{};
+          const verified=item.status==="VERIFIED_FRESH";
+          return <div key={symbol} className="rounded-xl border theme-border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm theme-text">{symbol}</b><span className={`rounded-full px-2 py-1 text-xs font-semibold ${verified?"bg-emerald-500/10 text-emerald-700":"bg-amber-500/10 text-amber-700"}`}>{item.status??"LOADING"}</span></div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <div><span className="theme-muted">Effective date</span><b className="block theme-text">{item.effective_date??"—"}</b></div>
+              <div><span className="theme-muted">Age</span><b className="block theme-text">{item.age_days===undefined?"—":`${item.age_days} days`}</b></div>
+              <div><span className="theme-muted">Constituents</span><b className="block theme-text">{fmt(item.constituent_count,0)}</b></div>
+              <div><span className="theme-muted">Mapped tokens</span><b className="block theme-text">{fmt(item.mapped_token_count,0)}</b></div>
+              <div><span className="theme-muted">Weight total</span><b className="block theme-text">{item.weight_sum===undefined?"—":`${fmt(item.weight_sum,4)}%`}</b></div>
+              <div><span className="theme-muted">Pressure signals</span><b className="block text-rose-600">BLOCKED</b></div>
+            </div>
+            <p className="mt-3 text-[11px] theme-muted">{item.reason??(verified?"Basket passed stored-data integrity checks. Runtime activation remains separately disabled.":"No verified current basket available.")}</p>
+            {item.source_name&&<p className="mt-1 text-[11px] theme-muted">Source: {item.source_name}</p>}
+          </div>;
+        })}
+      </div>
+      <p className="mt-3 text-[11px] theme-muted">Registry max age {basketRegistry?.max_age_days??45} days • Activation {basketRegistry?.activation_enabled===true?"ON":"OFF"} • Signals {basketRegistry?.signals_allowed===true?"ALLOWED":"BLOCKED"}. A green verification state is provenance validation only; it does not turn on weighted pressure.</p>
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4"><h2 className="font-semibold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=>{const finalSignal=value.confluence&&typeof value.confluence==="object"?value.confluence as Row:{};return <div key={key} className="rounded-xl border theme-border p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b><div className="mt-2 rounded-lg border theme-border bg-blue-500/5 p-2"><div className="flex justify-between gap-2 text-xs"><span className="font-semibold">FINAL CONFLUENCE</span><b>{String(finalSignal.direction??"—")} • {String(finalSignal.status??"WAITING")}</b></div><p className="mt-1 text-[11px] theme-muted">{String(finalSignal.reason??"Waiting for independent confirmations")}</p><p className="mt-1 text-[10px] theme-muted">Signal gate: {value.signals_allowed===true?"ALLOWED":"BLOCKED"} • Data: {value.data_ready===true?"READY":"WAITING"}</p></div>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>})}</div></section>
     <p className="text-xs theme-muted">Live data appears only after fresh Angel One ticks arrive. Select ON or OFF and press Save to control the backend runner. Runner status is reported by the backend; no broker orders are placed.</p>
