@@ -13,7 +13,7 @@ import math
 import re
 import zipfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable, Mapping
 from urllib.parse import urlparse
 
@@ -101,7 +101,7 @@ def parse_official_weight_basket(
     index = str(underlying or "").strip().upper()
     if not re.fullmatch(r"[A-Z0-9_-]{2,24}", index):
         raise ValueError("underlying is invalid")
-    if not isinstance(as_of, date) or isinstance(as_of, __import__("datetime").datetime):
+    if not isinstance(as_of, date) or isinstance(as_of, datetime):
         raise ValueError("as_of must be a calendar date")
     if not isinstance(raw, bytes):
         raise ValueError("upload content must be bytes")
