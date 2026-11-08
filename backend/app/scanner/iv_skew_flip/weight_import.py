@@ -23,6 +23,27 @@ MAX_ZIP_RATIO = 100
 WEIGHT_SUM_TOLERANCE = 0.25
 _REQUIRED_COLUMNS = ("symbol", "weight")
 _SYMBOL_RE = re.compile(r"^[A-Z0-9&._-]{1,32}$")
+_OFFICIAL_SOURCE_DOMAINS = ("niftyindices.com", "nseindia.com")
+
+
+def is_official_nse_source_url(value: str) -> bool:
+    """Accept HTTPS provenance only from NSE/NSE Indices-owned domains."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = urlparse(value.strip())
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.lower() == "https"
+        and bool(host)
+        and (port is None or port == 443)
+        and parsed.username is None
+        and parsed.password is None
+        and any(host == domain or host.endswith("." + domain) for domain in _OFFICIAL_SOURCE_DOMAINS)
+    )
 
 
 @dataclass(frozen=True)
@@ -126,8 +147,8 @@ def parse_official_weight_basket(
         raise ValueError("source name and HTTPS source URL are required")
     source = source_name.strip()
     parsed_url = urlparse(source_url.strip())
-    if not source or parsed_url.scheme != "https" or not parsed_url.netloc:
-        raise ValueError("source name and HTTPS source URL are required")
+    if not source or not is_official_nse_source_url(source_url):
+        raise ValueError("source name and official NSE HTTPS source URL are required")
 
     try:
         expected = _normalized_symbols(expected_symbols)
