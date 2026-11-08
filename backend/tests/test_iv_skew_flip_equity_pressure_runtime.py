@@ -173,13 +173,10 @@ def test_dual_index_pressure_uses_independent_baskets_feeds_and_snapshots():
     assert runtime.snapshot()["equity_pressure"]["enabled"] is True
 
 
-def test_dual_index_pressure_requires_both_index_baskets():
-    nifty = (WeightedEquity("AAA", 100.0),)
-    with pytest.raises(ValueError, match="both NIFTY and BANKNIFTY"):
-        make_runtime(
-            equity_pressure_enabled=True,
-            equity_baskets={"NIFTY": nifty},
-        )
+def test_single_nifty_pressure_basket_is_supported_without_banknifty():
+    nifty = (WeightedEquity("AAA", 70.0), WeightedEquity("BBB", 30.0))
+    runtime = make_runtime(equity_pressure_enabled=True, equity_baskets={"NIFTY": nifty})
+    assert set(runtime._equity_pressures) == {"NIFTY"}
 
 
 def test_dual_index_pressure_stop_stops_both_owned_feeds():
@@ -302,10 +299,10 @@ def test_dual_index_pressure_keeps_nifty_and_banknifty_feeds_and_snapshots_isola
 
 
 def test_dual_index_pressure_rejects_partial_or_malformed_basket_configuration():
-    with pytest.raises(ValueError, match="both NIFTY and BANKNIFTY"):
+    with pytest.raises(ValueError, match="only NIFTY and BANKNIFTY"):
         make_runtime(
             equity_pressure_enabled=True,
-            equity_baskets={"NIFTY": (WeightedEquity("AAA", 100.0),)},
+            equity_baskets={"SENSEX": (WeightedEquity("AAA", 100.0),)},
         )
     with pytest.raises(ValueError, match="non-empty"):
         make_runtime(
