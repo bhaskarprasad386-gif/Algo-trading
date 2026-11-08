@@ -8,7 +8,21 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: iv_basket_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d iv_basket_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -16,7 +30,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install -r backend/requirements.txt pytest pytest-timeout
+      - run: pip install -r backend/requirements.txt pytest pytest-timeout "psycopg[binary]"
 
       - run: rm -f backend/*.db || true
 
@@ -25,6 +39,7 @@ jobs:
           SECRET_KEY: ci-test-secret-key-not-for-production
           PYTHONPATH: backend
           DATABASE_URL: "sqlite:///:memory:"
+          IV_TEST_POSTGRES_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/iv_basket_test"
           # CI must not start broker-backed live collectors; those are exercised by dedicated integration/runtime checks.
           LIVE_CASH_FUTURE_DATA_ENABLED: "false"
           LIVE_CALENDAR_SPREAD_DATA_ENABLED: "false"
