@@ -274,7 +274,7 @@ export default function IVSkewFlipPage() {
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="font-semibold theme-text">NIFTY Top 10 Heavyweight Pressure</h2><p className="mt-1 text-xs theme-muted">NIFTY ke highest-weight 10 constituents • 5s / 10s / 30s weighted returns • no order execution</p></div>
+        <div><h2 className="font-semibold theme-text">NIFTY + BANKNIFTY Top 10 Heavyweight Pressure</h2><p className="mt-1 text-xs theme-muted">Dono indices ke independently ranked highest-weight 10 constituents • 5s / 10s / 30s weighted returns • no order execution</p></div>
         <span className="rounded-full border theme-border px-3 py-1 text-xs font-semibold">{String(runtime?.equity_pressure?.status ?? "DISABLED")}</span>
       </div>
       {Object.keys(runtime?.equity_pressure_by_underlying ?? {}).length > 0 ? (
@@ -294,7 +294,7 @@ export default function IVSkewFlipPage() {
             </div>
           ))}
         </div>
-      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">DISABLED — NIFTY ke complete, verified official weight basket se dynamic Top 10 selection aur explicit runtime activation zaroori hai. No equity subscriptions or directional pressure are started by default.</p> : <>
+      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">DISABLED — NIFTY aur BANKNIFTY ke complete verified official weight baskets zaroori hain. Har index ke top 10 weights dynamically select honge; missing/stale basket par pressure safely unavailable rahega. No orders.</p> : <>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Metric label="Feed" value={String((runtime.equity_pressure.feed as Row | undefined)?.status ?? "WAITING")} />
           <Metric label="Fresh Components" value={`${fmt(runtime.equity_pressure.fresh_components,0)} / ${fmt(runtime.equity_pressure.expected_components,0)}`} />
