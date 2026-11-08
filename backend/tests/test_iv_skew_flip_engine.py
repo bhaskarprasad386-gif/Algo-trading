@@ -271,3 +271,15 @@ def test_iv_skew_rejects_invalid_spot(invalid_spot):
     signal = evaluate_skew(quotes, invalid_spot, now, now_ns, config)
     assert signal.status == "WAITING"
     assert "valid spot" in signal.reason
+
+
+
+def test_iv_skew_waits_when_strike_ladder_is_not_equidistant():
+    quotes, now, now_ns, config = _synthetic_chain()
+    quotes = [
+        quote for quote in quotes
+        if not (quote.strike == 22050)
+    ]
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "non-uniform strike ladder" in signal.reason
