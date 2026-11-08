@@ -10,12 +10,12 @@ from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.equity_feed import WeightedEquity
 
 
-def load_verified_runtime_baskets(records, *, as_of: date) -> dict[str, tuple[WeightedEquity, ...]]:
+def load_verified_runtime_baskets(records, *, as_of: date, instrument_master: Any) -> dict[str, tuple[WeightedEquity, ...]]:
     """Return NIFTY and BANKNIFTY baskets or fail closed for either invalid index.
 
     Registry freshness/provenance/hash/weight/token checks are reused. The
-    runtime receives weights only; the feed adapter independently resolves
-    current NSE cash instruments before subscribing.
+    Runtime token mapping is compared with the current NSE instrument master;
+    a changed, missing, or stale token mapping blocks the entire dual-index load.
     """
     record_rows = list(records)
     registry = summarize_basket_registry(record_rows, as_of=as_of)
@@ -74,6 +74,13 @@ def load_verified_runtime_baskets(records, *, as_of: date) -> dict[str, tuple[We
             token = token_mapping.get(name)
             if not isinstance(token, str) or not token.isdigit() or int(token) <= 0:
                 raise RuntimeError(f"{symbol} basket has an invalid token mapping for {name}")
+            try:
+                current_row = instrument_master.resolve_cash_instrument(name, "NSE")
+            except Exception as exc:
+                raise RuntimeError(f"{symbol} current NSE instrument mapping is unavailable for {name}") from exc
+            current_token = str(current_row.get("token", "")).strip() if isinstance(current_row, dict) else ""
+            if not current_token or current_token != token:
+                raise RuntimeError(f"{symbol} stored NSE token mapping is stale for {name}")
             seen.add(name)
             rows.append(WeightedEquity(name, numeric_weight))
         if not rows or set(token_mapping) != seen:
