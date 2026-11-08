@@ -110,3 +110,81 @@ def test_rejects_missing_official_index_pdf(monkeypatch):
             expected_symbols=("AAA", "BBB"),
             as_of=__import__("datetime").date(2026, 11, 8),
         )
+
+
+
+def test_alternate_official_angel_master_is_loaded_into_importer_view(monkeypatch):
+    from scripts import import_iv_official_baskets as importer
+
+    rows = [
+        {"symbol": "AAA", "exch_seg": "NSE", "token": "123", "instrumenttype": "EQ"}
+    ]
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return rows
+
+    requested = {}
+
+    def fake_get(url, *, timeout):
+        requested["url"] = url
+        requested["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(importer.requests, "get", fake_get)
+    master = SimpleNamespace(
+        instruments=[],
+        _loaded=False,
+        _symbol_exchange_index="stale",
+    )
+
+    loaded = importer._load_alternate_official_master(master)
+
+    assert loaded == rows
+    assert master.instruments == rows
+    assert master._loaded is True
+    assert master._symbol_exchange_index is None
+    assert requested["url"] == importer.ANGEL_ONE_ALTERNATE_MASTER_URL
+    assert requested["timeout"] == (15, 90)
+
+
+def test_invalid_alternate_official_angel_master_is_rejected(monkeypatch):
+    from scripts import import_iv_official_baskets as importer
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [{"symbol": "AAA", "exch_seg": "NSE", "token": ""}]
+
+    monkeypatch.setattr(
+        importer.requests,
+        "get",
+        lambda *_args, **_kwargs: FakeResponse(),
+    )
+    master = SimpleNamespace(
+        instruments=[],
+        _loaded=False,
+        _symbol_exchange_index=None,
+    )
+
+    with pytest.raises(ValueError, match="invalid or empty"):
+        importer._load_alternate_official_master(master)
+
+
+def test_current_master_loader_uses_alternate_after_primary_failure(monkeypatch):
+    from scripts import import_iv_official_baskets as importer
+
+    rows = [{"symbol": "AAA", "exch_seg": "NSE", "token": "123"}]
+    master = SimpleNamespace(download=lambda: (_ for _ in ()).throw(TimeoutError("primary timeout")))
+    monkeypatch.setattr(
+        importer,
+        "_load_alternate_official_master",
+        lambda _master: rows,
+    )
+
+    assert importer._load_current_instrument_master(master) == rows
