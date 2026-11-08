@@ -49,7 +49,9 @@ class IVSkewFlipRuntime:
         evaluation_seconds: float = 60.0,
         equity_pressure_enabled: bool = False,
         equity_basket: tuple[WeightedEquity, ...] | None = None,
+        equity_baskets: dict[str, tuple[WeightedEquity, ...]] | None = None,
         equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
+        equity_feed_factory_by_underlying: Callable[[str], IVWeightedEquityFeedAdapter] | None = None,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
@@ -68,17 +70,38 @@ class IVSkewFlipRuntime:
             raise ValueError("equity_pressure_enabled must be boolean")
         self.equity_pressure_enabled = equity_pressure_enabled
         self.equity_basket = tuple(equity_basket or ())
-        if self.equity_pressure_enabled and not self.equity_basket:
+        self.equity_baskets = {
+            str(symbol).strip().upper(): tuple(items)
+            for symbol, items in (equity_baskets or {}).items()
+        }
+        if self.equity_baskets and set(self.equity_baskets) != {"NIFTY", "BANKNIFTY"}:
+            raise ValueError("dual-index equity pressure requires both NIFTY and BANKNIFTY baskets")
+        if any(not items for items in self.equity_baskets.values()):
+            raise ValueError("each index requires a non-empty verified weight basket")
+        if self.equity_pressure_enabled and not self.equity_basket and not self.equity_baskets:
             raise ValueError("equity pressure requires an injected verified weight basket")
         self.equity_feed_factory = equity_feed_factory or (
             lambda: IVWeightedEquityFeedAdapter(clock_ns=clock_ns)
         )
+        self.equity_feed_factory_by_underlying = equity_feed_factory_by_underlying or (
+            lambda symbol: IVWeightedEquityFeedAdapter(
+                clock_ns=clock_ns, consumer=f"iv-skew-flip-equities-{symbol.lower()}"
+            )
+        )
         self._equity_feed: IVWeightedEquityFeedAdapter | None = None
+        self._equity_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
+        self._equity_pressures: dict[str, EquityComponentPressure] = {
+            symbol: EquityComponentPressure(
+                tuple(ComponentWeight(item.symbol, item.weight) for item in items)
+            )
+            for symbol, items in self.equity_baskets.items()
+        }
+        self._equity_pressure_by_underlying: dict[str, dict[str, Any]] = {}
         self._equity_pressure = (
             EquityComponentPressure(
                 tuple(ComponentWeight(item.symbol, item.weight) for item in self.equity_basket)
             )
-            if self.equity_pressure_enabled else None
+            if self.equity_pressure_enabled and self.equity_basket else None
         )
         self._equity_pressure_last_snapshot: dict[str, Any] = {
             "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
@@ -131,7 +154,19 @@ class IVSkewFlipRuntime:
         # master cannot leave the runtime half-started.
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        if self.equity_pressure_enabled:
+        if self.equity_pressure_enabled and self.equity_baskets:
+            started_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
+            try:
+                for underlying, basket in self.equity_baskets.items():
+                    equity_feed = self.equity_feed_factory_by_underlying(underlying)
+                    equity_feed.start(self.instrument_master, basket)
+                    started_feeds[underlying] = equity_feed
+            except Exception:
+                for equity_feed in started_feeds.values():
+                    equity_feed.stop()
+                raise
+            self._equity_feeds = started_feeds
+        elif self.equity_pressure_enabled:
             equity_feed = self.equity_feed_factory()
             try:
                 equity_feed.start(self.instrument_master, self.equity_basket)
@@ -427,6 +462,42 @@ class IVSkewFlipRuntime:
                 }
 
     def _refresh_equity_pressure(self, now_ns: int) -> None:
+        if self.equity_pressure_enabled and self.equity_baskets:
+            snapshots: dict[str, dict[str, Any]] = {}
+            for underlying, feed in self._equity_feeds.items():
+                pressure = self._equity_pressures[underlying]
+                feed_snapshot = feed.snapshot(now_ns=now_ns)
+                for symbol, quote in feed_snapshot.get("quotes", {}).items():
+                    pressure.update(ComponentSample(
+                        symbol=symbol, timestamp_ns=quote["timestamp_ns"], ltp=quote["ltp"]
+                    ))
+                pressure_snapshot = pressure.snapshot(now_ns=now_ns)
+                allowed = bool(
+                    feed_snapshot.get("signals_allowed")
+                    and pressure_snapshot.get("signals_allowed")
+                    and pressure_snapshot.get("direction") in {"BULLISH", "BEARISH"}
+                    and pressure_snapshot.get("timeframe_agreement")
+                )
+                snapshots[underlying] = {
+                    **pressure_snapshot,
+                    "enabled": True,
+                    "feed": {
+                        "status": feed_snapshot.get("status"),
+                        "consumer": feed_snapshot.get("consumer"),
+                        "expected_symbols": feed_snapshot.get("expected_symbols", []),
+                        "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
+                        "missing_symbols": feed_snapshot.get("missing_symbols", []),
+                        "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
+                    },
+                    "signals_allowed": allowed,
+                }
+            with self._lock:
+                self._equity_pressure_by_underlying = snapshots
+                self._equity_pressure_last_snapshot = snapshots.get("NIFTY", {
+                    "status": "WAITING_FOR_FEED", "enabled": True, "signals_allowed": False,
+                    "direction": "WAITING", "timeframe_agreement": False, "windows": {},
+                })
+            return
         if not self.equity_pressure_enabled or self._equity_feed is None or self._equity_pressure is None:
             with self._lock:
                 self._equity_pressure_last_snapshot = {
@@ -511,6 +582,9 @@ class IVSkewFlipRuntime:
             last_refresh = self._last_refresh_ns
             last_evaluation = self._last_evaluation_ns
             equity_pressure = dict(self._equity_pressure_last_snapshot)
+            equity_pressure_by_underlying = {
+                symbol: dict(value) for symbol, value in self._equity_pressure_by_underlying.items()
+            }
         return {
             "status": "STOPPING" if self._stopping else ("RUNNING" if started else "STOPPED"),
             "consumer": "iv-skew-flip",
@@ -524,6 +598,7 @@ class IVSkewFlipRuntime:
                 **equity_pressure,
                 "enabled": self.equity_pressure_enabled,
             },
+            "equity_pressure_by_underlying": equity_pressure_by_underlying,
             "spot_feed": self.spot_feed.snapshot(),
             "option_chains": {
                 stream_id: {
@@ -573,6 +648,9 @@ class IVSkewFlipRuntime:
         if self._equity_feed is not None:
             self._equity_feed.stop()
             self._equity_feed = None
+        for equity_feed in tuple(self._equity_feeds.values()):
+            equity_feed.stop()
+        self._equity_feeds.clear()
         with self._lock:
             self._started = False
             self._stopping = False
@@ -583,10 +661,23 @@ class IVSkewFlipRuntime:
             self._rows_by_stream.clear()
             self._signals.clear()
             self._early_move.clear()
-            if self.equity_pressure_enabled:
+            if self.equity_pressure_enabled and self.equity_basket:
                 self._equity_pressure = EquityComponentPressure(
                     tuple(ComponentWeight(item.symbol, item.weight) for item in self.equity_basket)
                 )
+            self._equity_pressures = {
+                symbol: EquityComponentPressure(
+                    tuple(ComponentWeight(item.symbol, item.weight) for item in items)
+                )
+                for symbol, items in self.equity_baskets.items()
+            }
+            self._equity_pressure_by_underlying = {
+                symbol: {
+                    "status": "STOPPED", "enabled": True, "signals_allowed": False,
+                    "direction": "WAITING", "timeframe_agreement": False, "windows": {},
+                }
+                for symbol in self.equity_baskets
+            }
             self._equity_pressure_last_snapshot = {
                 "status": "DISABLED" if not self.equity_pressure_enabled else "STOPPED",
                 "signals_allowed": False, "direction": "WAITING",
