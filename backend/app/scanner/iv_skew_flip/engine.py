@@ -195,8 +195,11 @@ def evaluate_skew(
     ):
         return Signal("IV_SKEW", None, None, None, "WAITING", "fresh option chain or valid spot unavailable")
     strikes = sorted({q.strike for q in chain})
-    if not strikes:
+    if len(strikes) < 3:
         return Signal("IV_SKEW", None, None, None, "WAITING", "selected-expiry strike ladder unavailable")
+    strike_steps = [right - left for left, right in zip(strikes, strikes[1:])]
+    if any(step <= 0 for step in strike_steps) or any(abs(step - strike_steps[0]) > 1e-8 for step in strike_steps):
+        return Signal("IV_SKEW", None, None, None, "WAITING", "non-uniform strike ladder; equidistant IV skew pairs unavailable")
     atm_index = min(range(len(strikes)), key=lambda i: abs(strikes[i] - spot))
     fresh_rows = [q for q in chain if _fresh(q, now_ns, config.max_quote_age_seconds)]
     by_key: dict[tuple[float, str], OptionQuote] = {}
