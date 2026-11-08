@@ -154,13 +154,17 @@ def test_fetch_roster_accepts_metadata_and_normalises_symbol_header(monkeypatch)
             b"Example Bank,Financial Services,AAA,EQ\r\n"
             b"Another Bank,Financial Services,BBB,EQ\r\n"
         )
+        headers = {"Content-Type": "application/octet-stream"}
 
         def raise_for_status(self):
             pass
 
     class FakeSession:
-        def get(self, _url, timeout):
+        def get(self, _url, *, headers, timeout):
             assert timeout == 60
+            assert headers["User-Agent"] == "Mozilla/5.0"
+            assert headers["Accept"] == "text/csv,text/plain,*/*"
+            assert headers["Referer"].endswith("/nifty-bank")
             return FakeResponse()
 
     symbols, digest = importer._fetch_roster(FakeSession(), "https://official.example/roster.csv")
@@ -178,8 +182,29 @@ def test_fetch_roster_reports_received_header_when_symbol_is_absent():
             pass
 
     class FakeSession:
-        def get(self, _url, timeout):
+        def get(self, _url, *, headers, timeout):
+            assert headers["User-Agent"] == "Mozilla/5.0"
+            assert headers["Accept"] == "text/csv,text/plain,*/*"
             return FakeResponse()
 
     with pytest.raises(ValueError, match="first rows"):
         importer._fetch_roster(FakeSession(), "https://official.example/roster.csv")
+
+def test_fetch_roster_rejects_html_edge_response_before_csv_parsing():
+    from scripts import import_iv_official_baskets as importer
+
+    class FakeResponse:
+        content = b"<!DOCTYPE html><html><title>Access denied</title></html>"
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        def raise_for_status(self):
+            pass
+
+    class FakeSession:
+        def get(self, _url, *, headers, timeout):
+            assert headers["Accept"] == "text/csv,text/plain,*/*"
+            return FakeResponse()
+
+    with pytest.raises(ValueError, match="returned HTML instead of CSV"):
+        importer._fetch_roster(FakeSession(), "https://www.niftyindices.com/roster.csv")
+

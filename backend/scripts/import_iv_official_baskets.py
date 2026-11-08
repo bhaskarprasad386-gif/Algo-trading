@@ -52,10 +52,27 @@ def _normalise_csv_header(value: str | None) -> str:
 
 
 def _fetch_roster(session: requests.Session, url: str) -> tuple[tuple[str, ...], str]:
-    response = session.get(url, timeout=60)
+    # Nifty Indices may return its HTML edge page to generic server requests.
+    # Use the same browser-like request headers verified against the official
+    # BANKNIFTY download; octet-stream is valid for this CSV endpoint.
+    response = session.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/csv,text/plain,*/*",
+            "Referer": "https://www.niftyindices.com/indices/equity/sectoral-indices/nifty-bank",
+        },
+        timeout=60,
+    )
     response.raise_for_status()
     raw = response.content
     text = raw.decode("utf-8-sig")
+    if text.lstrip().lower().startswith(("<!doctype html", "<html")):
+        raise ValueError(
+            f"official roster endpoint returned HTML instead of CSV: {url}; "
+            f"content_type={response.headers.get('Content-Type', 'unknown')!r}; "
+            f"preview={text[:240]!r}"
+        )
     csv_rows = list(csv.reader(io.StringIO(text)))
     # Some official constituent downloads prepend metadata or vary header case/
     # whitespace. Locate the actual Symbol header instead of assuming row one.
