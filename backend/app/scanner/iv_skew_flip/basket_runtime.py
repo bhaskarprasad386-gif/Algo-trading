@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+import math
+from datetime import date
+from typing import Any
 
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.equity_feed import WeightedEquity
@@ -27,7 +29,7 @@ def load_verified_runtime_baskets(records, *, as_of: date) -> dict[str, tuple[We
     if invalid:
         raise RuntimeError(f"verified NIFTY and BANKNIFTY baskets are required: {invalid}")
 
-    latest: dict[str, object] = {}
+    latest: dict[str, tuple[tuple[str, str, int], Any]] = {}
     for record in record_rows:
         symbol = str(getattr(record, "underlying", "") or "").strip().upper()
         if symbol not in required:
@@ -67,7 +69,7 @@ def load_verified_runtime_baskets(records, *, as_of: date) -> dict[str, tuple[We
                 numeric_weight = float(weight)
             except (TypeError, ValueError, OverflowError) as exc:
                 raise RuntimeError(f"{symbol} basket has an invalid weight for {name}") from exc
-            if numeric_weight <= 0:
+            if not math.isfinite(numeric_weight) or numeric_weight <= 0:
                 raise RuntimeError(f"{symbol} basket has a non-positive weight for {name}")
             token = token_mapping.get(name)
             if not isinstance(token, str) or not token.isdigit() or int(token) <= 0:
