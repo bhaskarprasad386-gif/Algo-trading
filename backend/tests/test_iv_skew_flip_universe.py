@@ -148,3 +148,27 @@ def test_nifty_weekly_fails_closed_when_master_contains_only_monthly_expiries():
             rows, underlying="NIFTY", expiry_type="WEEKLY",
             spot=22000, today=date(2026, 11, 20),
         )
+
+
+
+def test_universe_fails_closed_on_non_uniform_strike_ladder():
+    rows = master_rows()
+    # Remove a complete CE/PE strike pair: the remaining ladder has a gap.
+    rows = [
+        row for row in rows
+        if not (row["expiry"] == "12Nov2026" and row["strike"] == "2205000")
+    ]
+    with pytest.raises(LookupError, match="not uniformly spaced"):
+        resolve_option_universe(
+            rows, underlying="NIFTY", expiry_type="WEEKLY",
+            spot=22000, today=date(2026, 11, 6),
+        )
+
+
+@pytest.mark.parametrize("strike_count", [True, False, 7.0, "7", 2, 4])
+def test_universe_rejects_invalid_strike_count(strike_count):
+    with pytest.raises(ValueError, match="odd integer"):
+        resolve_option_universe(
+            master_rows(), underlying="NIFTY", expiry_type="WEEKLY",
+            spot=22000, today=date(2026, 11, 6), strike_count=strike_count,
+        )
