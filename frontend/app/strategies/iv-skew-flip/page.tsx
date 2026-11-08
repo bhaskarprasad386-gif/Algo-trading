@@ -294,7 +294,7 @@ export default function IVSkewFlipPage() {
             </div>
           ))}
         </div>
-      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">DISABLED — NIFTY aur BANKNIFTY ke complete verified official weight baskets zaroori hain. Har index ke top 10 weights dynamically select honge; missing/stale basket par pressure safely unavailable rahega. No orders.</p> : <>
+      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">{String(runtime?.equity_pressure?.reason ?? "NIFTY aur BANKNIFTY ke complete verified official weight baskets zaroori hain. Har index ke top 10 weights dynamically select honge; missing/stale basket par pressure safely unavailable rahega.")} No orders.</p> : <>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Metric label="Feed" value={String((runtime.equity_pressure.feed as Row | undefined)?.status ?? "WAITING")} />
           <Metric label="Fresh Components" value={`${fmt(runtime.equity_pressure.fresh_components,0)} / ${fmt(runtime.equity_pressure.expected_components,0)}`} />
