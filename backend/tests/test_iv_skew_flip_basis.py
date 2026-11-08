@@ -85,3 +85,65 @@ def test_basis_history_ignores_stale_and_out_of_order_observations():
     assert result["trend"] == "WIDENING"
     assert result["windows"]["1m"]["basis_change_points"] == 10
     assert result["sample_count"] == 2
+
+
+def test_runtime_publishes_spot_future_basis_as_context_only():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.scanner.iv_skew_flip.basis import BasisHistory, IndexFutureContract
+    from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+    from app.scanner.iv_skew_flip.sampler import SpotSnapshot
+
+    stamp = 1_800_000_000_000_000_000
+
+    class SpotFeed:
+        def spot_snapshot(self, symbol, *, now_ns=None):
+            return SpotSnapshot(24000.0, stamp)
+
+        def snapshot(self):
+            return {"status": "LIVE"}
+
+        def stop(self):
+            pass
+
+    class FutureFeed:
+        def snapshot(self, *, now_ns=None):
+            return {
+                "status": "LIVE",
+                "quotes": {
+                    "nifty-front": {
+                        "price": 24060.0, "timestamp_ns": stamp,
+                        "fresh": True,
+                    },
+                    "nifty-next": {
+                        "price": 24120.0, "timestamp_ns": stamp,
+                        "fresh": True,
+                    },
+                },
+            }
+
+        def stop(self):
+            pass
+
+    class Master:
+        pass
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=Master(), spot_feed=SpotFeed(), future_feed=FutureFeed(),
+        clock_ns=lambda: stamp,
+        clock_datetime=lambda: datetime(2026, 11, 2, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+    )
+    runtime._future_contracts = (
+        IndexFutureContract("NIFTY", "NIFTY-FRONT", "nifty-front", "NFO", date(2026, 11, 26)),
+        IndexFutureContract("NIFTY", "NIFTY-NEXT", "nifty-next", "NFO", date(2026, 12, 31)),
+    )
+    runtime._basis_histories = {
+        f"NIFTY:{item.expiry.isoformat()}": BasisHistory()
+        for item in runtime._future_contracts
+    }
+    runtime._refresh_basis_analysis(stamp)
+    result = runtime.snapshot()["spot_future_basis"]["NIFTY"]
+    assert result["status"] == "LIVE"
+    assert [item["basis_points"] for item in result["expiry_contracts"]] == [60.0, 120.0]
+    assert result["signals_allowed"] is False
