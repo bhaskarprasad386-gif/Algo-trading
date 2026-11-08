@@ -257,46 +257,6 @@ def test_disabled_dual_index_pressure_does_not_change_legacy_early_move():
     assert runtime._apply_equity_pressure_confirmation("NIFTY", original) == original
 
 
-def test_dual_index_pressure_keeps_nifty_and_banknifty_feeds_and_snapshots_isolated():
-    baskets = {
-        "NIFTY": (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0)),
-        "BANKNIFTY": (WeightedEquity("CCC", 70.0), WeightedEquity("DDD", 30.0)),
-    }
-
-    class PerIndexFeed(FakeEquityFeed):
-        def __init__(self, underlying):
-            self.stopped = False
-            self.payload = {
-                "status": "LIVE",
-                "consumer": f"iv-skew-flip-equities-{underlying.lower()}",
-                "signals_allowed": True,
-                "expected_symbols": [item.symbol for item in baskets[underlying]],
-                "fresh_symbols": [item.symbol for item in baskets[underlying]],
-                "missing_symbols": [],
-                "quotes": {
-                    item.symbol: {"timestamp_ns": 40_000_000_000, "ltp": 100.0 + index}
-                    for index, item in enumerate(baskets[underlying])
-                },
-            }
-
-    runtime = make_runtime(
-        equity_pressure_enabled=True,
-        equity_baskets=baskets,
-        equity_feed_factory_by_underlying=PerIndexFeed,
-    )
-    runtime._equity_feeds = {key: PerIndexFeed(key) for key in baskets}
-    runtime._refresh_equity_pressure(40_000_000_000)
-    result = runtime.snapshot()["equity_pressure_by_underlying"]
-
-    assert set(result) == {"NIFTY", "BANKNIFTY"}
-    assert result["NIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-nifty"
-    assert result["BANKNIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-banknifty"
-    assert result["NIFTY"]["feed"]["expected_symbols"] == ["AAA", "BBB"]
-    assert result["BANKNIFTY"]["feed"]["expected_symbols"] == ["CCC", "DDD"]
-    assert result["NIFTY"]["signals_allowed"] is False
-    assert result["BANKNIFTY"]["signals_allowed"] is False
-
-
 def test_dual_index_pressure_rejects_partial_or_malformed_basket_configuration():
     with pytest.raises(ValueError, match="only NIFTY and BANKNIFTY"):
         make_runtime(
@@ -313,44 +273,35 @@ def test_dual_index_pressure_rejects_partial_or_malformed_basket_configuration()
         )
 
 
-def test_one_index_pressure_feed_error_does_not_abort_other_index_snapshot():
+def test_shared_equity_feed_error_fails_closed_for_both_index_snapshots():
     baskets = {
-        "NIFTY": (WeightedEquity("AAA", 100.0),),
-        "BANKNIFTY": (WeightedEquity("BBB", 100.0),),
+        "NIFTY": (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0)),
+        "BANKNIFTY": (WeightedEquity("AAA", 30.0), WeightedEquity("CCC", 70.0)),
     }
 
     class BrokenFeed:
-        consumer = "iv-skew-flip-equities-nifty"
+        consumer = "iv-skew-flip-equities"
 
         def snapshot(self, *, now_ns=None):
-            raise RuntimeError("temporary NIFTY feed failure")
+            raise RuntimeError("temporary shared constituent feed failure")
 
         def stop(self):
             pass
 
-    bank_feed = FakeEquityFeed({
-        "status": "PARTIAL",
-        "consumer": "iv-skew-flip-equities-banknifty",
-        "signals_allowed": False,
-        "expected_symbols": ["BBB"],
-        "fresh_symbols": [],
-        "missing_symbols": ["BBB"],
-        "quotes": {},
-    })
     runtime = make_runtime(equity_pressure_enabled=True, equity_baskets=baskets)
-    runtime._equity_feeds = {"NIFTY": BrokenFeed(), "BANKNIFTY": bank_feed}
-
+    runtime._equity_feed = BrokenFeed()
     runtime._refresh_equity_pressure(40_000_000_000)
     result = runtime.snapshot()["equity_pressure_by_underlying"]
 
+    assert set(result) == {"NIFTY", "BANKNIFTY"}
     assert result["NIFTY"]["status"] == "ERROR"
+    assert result["BANKNIFTY"]["status"] == "ERROR"
     assert result["NIFTY"]["signals_allowed"] is False
-    assert "temporary NIFTY feed failure" in result["NIFTY"]["error"]
-    assert result["BANKNIFTY"]["feed"]["status"] == "PARTIAL"
     assert result["BANKNIFTY"]["signals_allowed"] is False
+    assert "temporary shared constituent feed failure" in result["NIFTY"]["error"]
+    assert "temporary shared constituent feed failure" in result["BANKNIFTY"]["error"]
 
-
-def test_dual_index_start_rolls_back_current_and_previous_feeds_on_partial_start_failure(monkeypatch):
+def test_dual_index_start_subscribes_union_once_and_rolls_back_shared_feed(monkeypatch):
     import app.scanner.iv_skew_flip.runtime as runtime_module
 
     rows = [
@@ -364,23 +315,23 @@ def test_dual_index_start_rolls_back_current_and_previous_feeds_on_partial_start
             return {"token": "1", "symbol": symbol}
 
     class TrackedFeed:
-        def __init__(self, underlying, fail=False):
-            self.underlying = underlying
-            self.fail = fail
+        def __init__(self):
             self.stopped = False
+            self.received_symbols = []
 
         def start(self, master, basket):
-            if self.fail:
-                raise RuntimeError("partial subscription failure")
+            self.received_symbols = [item.symbol for item in basket]
+            raise RuntimeError("shared subscription failure")
 
         def stop(self):
             self.stopped = True
 
-    created = {}
+    created = []
 
-    def factory(underlying):
-        created[underlying] = TrackedFeed(underlying, fail=underlying == "BANKNIFTY")
-        return created[underlying]
+    def factory():
+        feed = TrackedFeed()
+        created.append(feed)
+        return feed
 
     monkeypatch.setattr(runtime_module, "download_iv_instruments", lambda master: rows)
     runtime = IVSkewFlipRuntime(
@@ -389,16 +340,19 @@ def test_dual_index_start_rolls_back_current_and_previous_feeds_on_partial_start
         clock_datetime=lambda: datetime(2026, 11, 7, 10, 0, tzinfo=IST),
         equity_pressure_enabled=True,
         equity_baskets={
-            "NIFTY": (WeightedEquity("AAA", 100.0),),
-            "BANKNIFTY": (WeightedEquity("BBB", 100.0),),
+            "NIFTY": (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0)),
+            "BANKNIFTY": (WeightedEquity("AAA", 30.0), WeightedEquity("CCC", 70.0)),
         },
-        equity_feed_factory_by_underlying=factory,
+        equity_feed_factory=factory,
     )
 
-    with pytest.raises(RuntimeError, match="partial subscription failure"):
+    with pytest.raises(RuntimeError, match="shared subscription failure"):
         runtime.start()
 
-    assert created["NIFTY"].stopped is True
-    assert created["BANKNIFTY"].stopped is True
+    assert len(created) == 1
+    assert created[0].received_symbols == ["AAA", "BBB", "CCC"]
+    assert len(created[0].received_symbols) == len(set(created[0].received_symbols))
+    assert created[0].stopped is True
+    assert runtime._equity_feed is None
     assert runtime._equity_feeds == {}
     assert runtime.snapshot()["status"] == "STOPPED"
