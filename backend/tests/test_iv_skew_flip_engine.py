@@ -192,3 +192,11 @@ def test_iv_skew_does_not_shift_atm_when_atm_quotes_are_stale():
     signal = evaluate_skew(stale_atm, 22000, now, now_ns, config)
     assert signal.status == "WAITING"
     assert "ATM CE and PE" in signal.reason
+
+
+def test_option_mark_rejects_wide_book_instead_of_falling_back_to_ltp():
+    quote = OptionQuote(
+        "NIFTY", "2026-11-12", 22000, "CE", 1,
+        ltp=100.0, bid=90.0, ask=110.0, token="wide-book",
+    )
+    assert quote.mark is None
