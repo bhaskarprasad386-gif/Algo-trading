@@ -181,27 +181,23 @@ def test_single_nifty_pressure_basket_is_supported_without_banknifty():
     assert set(runtime._equity_pressures) == {"NIFTY"}
 
 
-def test_dual_index_pressure_stop_stops_both_owned_feeds():
-    nifty = (WeightedEquity("AAA", 100.0),)
-    bank = (WeightedEquity("BBB", 100.0),)
+def test_dual_index_pressure_stop_stops_the_single_shared_feed():
+    nifty = (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0))
+    bank = (WeightedEquity("AAA", 30.0), WeightedEquity("CCC", 70.0))
     runtime = make_runtime(
         equity_pressure_enabled=True,
         equity_baskets={"NIFTY": nifty, "BANKNIFTY": bank},
     )
-    feeds = {
-        "NIFTY": FakeEquityFeed({"status": "LIVE", "signals_allowed": False, "quotes": {}}),
-        "BANKNIFTY": FakeEquityFeed({"status": "LIVE", "signals_allowed": False, "quotes": {}}),
-    }
-    runtime._equity_feeds = feeds
+    shared_feed = FakeEquityFeed({"status": "LIVE", "signals_allowed": False, "quotes": {}})
+    runtime._equity_feed = shared_feed
 
     result = runtime.stop()
 
-    assert all(feed.stopped for feed in feeds.values())
+    assert shared_feed.stopped is True
+    assert runtime._equity_feed is None
     assert runtime._equity_feeds == {}
     assert set(result["equity_pressure_by_underlying"]) == {"NIFTY", "BANKNIFTY"}
     assert all(not item["signals_allowed"] for item in result["equity_pressure_by_underlying"].values())
-
-
 
 def test_enabled_dual_index_early_move_waits_for_fresh_pressure_confirmation():
     nifty = (WeightedEquity("AAA", 100.0),)
