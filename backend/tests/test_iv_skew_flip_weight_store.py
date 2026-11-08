@@ -101,3 +101,24 @@ def test_duplicate_source_import_is_idempotently_rejected(db):
         persist_validated_basket_version(db, *args, **provenance())
     rows = db.scalars(select(IVConstituentBasketVersion)).all()
     assert len(rows) == 1
+
+
+
+def test_persisted_basket_versions_reject_orm_update_and_delete(db):
+    record = persist_validated_basket_version(
+        db,
+        basket(),
+        {"AAA": "101", "BBB": "202"},
+        **provenance(),
+    )
+    record.status = "REVOKED"
+    with pytest.raises(ValueError, match="append-only"):
+        db.flush()
+    db.rollback()
+
+    record = db.get(IVConstituentBasketVersion, record.id)
+    db.delete(record)
+    with pytest.raises(ValueError, match="append-only"):
+        db.flush()
+    db.rollback()
+    assert len(db.scalars(select(IVConstituentBasketVersion)).all()) == 1
