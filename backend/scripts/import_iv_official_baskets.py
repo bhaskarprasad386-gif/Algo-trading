@@ -12,6 +12,7 @@ import argparse
 import csv
 import hashlib
 import io
+import re
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -46,16 +47,47 @@ def _previous_month_label(today: date) -> str:
     return previous.strftime("%b%Y")
 
 
+def _normalise_csv_header(value: str | None) -> str:
+    return re.sub(r"[^a-z]", "", (value or "").replace("\ufeff", "").strip().lower())
+
+
 def _fetch_roster(session: requests.Session, url: str) -> tuple[tuple[str, ...], str]:
     response = session.get(url, timeout=60)
     response.raise_for_status()
     raw = response.content
-    rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
-    if not rows or "Symbol" not in (rows[0].keys() if rows else ()):
-        raise ValueError(f"official roster has no Symbol column: {url}")
-    symbols = tuple(str(row.get("Symbol") or "").strip().upper() for row in rows)
-    if any(not symbol for symbol in symbols) or len(set(symbols)) != len(symbols):
-        raise ValueError(f"official roster contains blank or duplicate symbols: {url}")
+    text = raw.decode("utf-8-sig")
+    csv_rows = list(csv.reader(io.StringIO(text)))
+    # Some official constituent downloads prepend metadata or vary header case/
+    # whitespace. Locate the actual Symbol header instead of assuming row one.
+    header_index = next(
+        (
+            index for index, row in enumerate(csv_rows)
+            if any(_normalise_csv_header(cell) == "symbol" for cell in row)
+        ),
+        None,
+    )
+    if header_index is None:
+        preview = " | ".join(",".join(row) for row in csv_rows[:3])
+        raise ValueError(
+            f"official roster has no Symbol column: {url}; "
+            f"received {len(csv_rows)} CSV rows; first rows: {preview[:300]!r}"
+        )
+
+    headers = csv_rows[header_index]
+    symbol_index = next(
+        index for index, cell in enumerate(headers)
+        if _normalise_csv_header(cell) == "symbol"
+    )
+    symbols_list = []
+    for row in csv_rows[header_index + 1:]:
+        if not row or not any(cell.strip() for cell in row):
+            continue
+        symbol = row[symbol_index].strip().upper() if symbol_index < len(row) else ""
+        symbols_list.append(symbol)
+
+    symbols = tuple(symbols_list)
+    if not symbols or any(not symbol for symbol in symbols) or len(set(symbols)) != len(symbols):
+        raise ValueError(f"official roster contains no symbols, blanks, or duplicate symbols: {url}")
     return symbols, hashlib.sha256(raw).hexdigest()
 
 
@@ -82,6 +114,7 @@ def _load_current_instrument_master(master: InstrumentMaster) -> list[dict]:
     print(f"Official Angel One instrument master loaded: rows={len(rows)}")
     return rows
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -96,7 +129,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     as_of = date.fromisoformat(args.as_of)
-    if not __import__("re").fullmatch(r"[A-Z][a-z]{2}[0-9]{4}", args.archive_month):
+    if not re.fullmatch(r"[A-Z][a-z]{2}[0-9]{4}", args.archive_month):
         parser.error("--archive-month must look like Oct2026")
 
     archive_url = f"{ARCHIVE_BASE}/indices_data{args.archive_month}.zip"
