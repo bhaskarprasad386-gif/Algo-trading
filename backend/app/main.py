@@ -1744,7 +1744,18 @@ def _start_iv_skew_flip_runtime():
     # create duplicate IV consumers or publish a half-started runtime.
     with _iv_skew_flip_runtime_lock:
         if iv_skew_flip_runtime is not None:
-            return iv_skew_flip_runtime.snapshot()
+            existing = iv_skew_flip_runtime.snapshot()
+            if existing.get("status") == "STOPPING":
+                # A timed-out shutdown still owns feed/socket resources. Never
+                # report ON or create a second consumer until that worker exits.
+                raise RuntimeError(
+                    "IV Scanner is still STOPPING; retry ON after shutdown completes"
+                )
+            if existing.get("status") == "RUNNING":
+                return existing
+            # A fully stopped runtime may remain registered after an interrupted
+            # transition. Clear it before constructing the next isolated runtime.
+            iv_skew_flip_runtime = None
         runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
         try:
             snapshot = runtime.start()
