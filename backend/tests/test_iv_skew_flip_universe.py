@@ -124,3 +124,27 @@ def test_universe_ignores_boolean_strike():
             rows, underlying="NIFTY", expiry_type="WEEKLY",
             spot=22000, today=date(2026, 11, 6),
         )
+
+
+def test_nifty_weekly_skips_monthly_expiry_and_uses_next_distinct_weekly():
+    rows = master_rows(expiries=("26Nov2026", "03Dec2026", "10Dec2026", "31Dec2026"))
+    weekly = resolve_option_universe(
+        rows, underlying="NIFTY", expiry_type="WEEKLY",
+        spot=22000, today=date(2026, 11, 20),
+    )
+    monthly = resolve_option_universe(
+        rows, underlying="NIFTY", expiry_type="MONTHLY",
+        spot=22000, today=date(2026, 11, 20),
+    )
+    assert monthly.expiry == "2026-11-26"
+    assert weekly.expiry == "2026-12-03"
+    assert weekly.expiry != monthly.expiry
+
+
+def test_nifty_weekly_fails_closed_when_master_contains_only_monthly_expiries():
+    rows = master_rows(expiries=("26Nov2026", "31Dec2026"))
+    with pytest.raises(LookupError, match="no distinct weekly"):
+        resolve_option_universe(
+            rows, underlying="NIFTY", expiry_type="WEEKLY",
+            spot=22000, today=date(2026, 11, 20),
+        )
