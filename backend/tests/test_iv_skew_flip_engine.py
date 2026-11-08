@@ -263,3 +263,11 @@ def test_option_mark_rejects_invalid_two_sided_book_without_ltp_fallback(bid, as
         ltp=100.0, bid=bid, ask=ask, token="invalid-book",
     )
     assert quote.mark is None
+
+
+@pytest.mark.parametrize("invalid_spot", [True, False, float("nan"), float("inf"), 0, -1])
+def test_iv_skew_rejects_invalid_spot(invalid_spot):
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_skew(quotes, invalid_spot, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "valid spot" in signal.reason
