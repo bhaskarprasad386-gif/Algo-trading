@@ -283,3 +283,14 @@ def test_iv_skew_waits_when_strike_ladder_is_not_equidistant():
     signal = evaluate_skew(quotes, 22000, now, now_ns, config)
     assert signal.status == "WAITING"
     assert "non-uniform strike ladder" in signal.reason
+
+
+def test_iv_skew_rejects_duplicate_fresh_contract_instead_of_overwriting():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    atm_call = next(q for q in quotes if q.strike == 22000 and q.option_type == "CE")
+    quotes.append(replace(atm_call, token="duplicate-atm-call"))
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "duplicate fresh option contract" in signal.reason
