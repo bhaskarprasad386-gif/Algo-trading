@@ -314,14 +314,22 @@ def confluence(signals: Iterable[Signal], required: int = 2) -> Signal:
         signal for signal in signals
         if signal.status == "SIGNAL" and signal.direction in {"BULLISH", "BEARISH"}
     ]
-    families_by_direction: dict[str, set[str]] = {
-        "BULLISH": set(), "BEARISH": set(),
-    }
+    directions_by_family: dict[str, set[str]] = {}
     for signal in active:
         strategy = str(signal.strategy or "").strip().upper()
         family = "IV_SURFACE" if strategy in {"IV_SKEW", "IV_FLIP"} else strategy
         if family:
-            families_by_direction[signal.direction].add(family)
+            directions_by_family.setdefault(family, set()).add(signal.direction)
+    # If correlated members of a family disagree (e.g. skew bullish but
+    # flip bearish), suppress that entire family rather than selecting the
+    # convenient member that happens to agree with another indicator.
+    families_by_direction: dict[str, set[str]] = {
+        "BULLISH": set(), "BEARISH": set(),
+    }
+    for family, directions in directions_by_family.items():
+        if len(directions) == 1:
+            direction = next(iter(directions))
+            families_by_direction[direction].add(family)
     counts = {direction: len(families) for direction, families in families_by_direction.items()}
     winner = max(counts, key=counts.get)
     if counts[winner] >= required:
