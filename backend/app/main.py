@@ -1764,7 +1764,11 @@ def _start_iv_skew_flip_runtime():
         try:
             snapshot = runtime.start()
         except Exception:
-            runtime.stop()
+            # If rollback itself cannot release a partially registered feed,
+            # retain the runtime so the OFF/stop endpoint can retry cleanup.
+            cleanup = runtime.stop()
+            if cleanup.get("status") != "STOPPED":
+                iv_skew_flip_runtime = runtime
             raise
         iv_skew_flip_runtime = runtime
         return snapshot
