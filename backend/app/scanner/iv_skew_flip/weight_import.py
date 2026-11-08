@@ -176,12 +176,21 @@ def validate_basket_token_mapping(
     symbol_to_token: Mapping[str, object],
 ) -> dict[str, str]:
     """Require a unique concrete instrument token for every imported symbol."""
+    expected_symbols = {component.symbol for component in basket.components}
+    supplied_symbols = {str(symbol).strip().upper() for symbol in symbol_to_token}
+    unexpected = sorted(supplied_symbols - expected_symbols)
+    if unexpected:
+        raise ValueError(f"unexpected symbols in NSE cash token mapping: {unexpected}")
+
     mapped: dict[str, str] = {}
     seen_tokens: set[str] = set()
     for component in basket.components:
-        token = str(symbol_to_token.get(component.symbol) or "").strip()
-        if not token:
-            raise ValueError(f"missing NSE cash instrument token for {component.symbol}")
+        raw_token = symbol_to_token.get(component.symbol)
+        if isinstance(raw_token, bool) or raw_token is None:
+            raise ValueError(f"missing or invalid NSE cash instrument token for {component.symbol}")
+        token = str(raw_token).strip()
+        if not re.fullmatch(r"[1-9][0-9]*", token):
+            raise ValueError(f"invalid NSE cash instrument token for {component.symbol}")
         if token in seen_tokens:
             raise ValueError(f"duplicate NSE cash instrument token: {token}")
         seen_tokens.add(token)
