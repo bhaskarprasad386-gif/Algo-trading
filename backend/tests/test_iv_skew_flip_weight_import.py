@@ -184,3 +184,9 @@ def test_parser_rejects_ambiguous_or_malformed_metadata(overrides, error):
 def test_parser_rejects_non_bytes_upload_content():
     with pytest.raises(ValueError, match="upload content must be bytes"):
         parse_official_weight_basket("symbol,weight", **BASE)
+
+
+@pytest.mark.parametrize("roster", ["AAA,BBB", b"AAA,BBB", ["AAA", 123], []])
+def test_parser_rejects_malformed_expected_symbol_roster_types(roster):
+    with pytest.raises(ValueError, match="authoritative expected constituent roster|symbols must be strings"):
+        parse_official_weight_basket(CSV, **{**BASE, "expected_symbols": roster})
