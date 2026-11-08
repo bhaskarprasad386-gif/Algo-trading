@@ -297,10 +297,35 @@ def evaluate_gamma_blast(
 
 
 def confluence(signals: Iterable[Signal], required: int = 2) -> Signal:
-    """Emit a directional alert only when >= required independent signals agree."""
-    active = [s for s in signals if s.status == "SIGNAL" and s.direction in {"BULLISH", "BEARISH"}]
-    counts = {direction: sum(s.direction == direction for s in active) for direction in ("BULLISH", "BEARISH")}
+    """Require agreement across independent signal families, not duplicate metrics.
+
+    IV_SKEW and IV_FLIP both derive from the same CE/PE implied-volatility
+    surface, so they count as one IV_SURFACE family. GAMMA_BLAST adds a separate
+    OI/premium-flow family. Repeated signals from one family cannot manufacture
+    confluence.
+    """
+    if isinstance(required, bool) or not isinstance(required, int) or required < 1:
+        raise ValueError("required independent signal families must be a positive integer")
+    active = [
+        signal for signal in signals
+        if signal.status == "SIGNAL" and signal.direction in {"BULLISH", "BEARISH"}
+    ]
+    families_by_direction: dict[str, set[str]] = {
+        "BULLISH": set(), "BEARISH": set(),
+    }
+    for signal in active:
+        strategy = str(signal.strategy or "").strip().upper()
+        family = "IV_SURFACE" if strategy in {"IV_SKEW", "IV_FLIP"} else strategy
+        if family:
+            families_by_direction[signal.direction].add(family)
+    counts = {direction: len(families) for direction, families in families_by_direction.items()}
     winner = max(counts, key=counts.get)
     if counts[winner] >= required:
-        return Signal("CONFLUENCE", winner, float(counts[winner]), float(required), "SIGNAL", f"{counts[winner]} independent strategies agree")
-    return Signal("CONFLUENCE", None, float(max(counts.values())), float(required), "NEUTRAL", "insufficient same-direction confirmations")
+        return Signal(
+            "CONFLUENCE", winner, float(counts[winner]), float(required), "SIGNAL",
+            f"{counts[winner]} independent signal families agree",
+        )
+    return Signal(
+        "CONFLUENCE", None, float(max(counts.values())), float(required), "NEUTRAL",
+        "insufficient agreement across independent signal families",
+    )
