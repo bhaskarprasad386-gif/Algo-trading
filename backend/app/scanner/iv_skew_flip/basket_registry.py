@@ -64,7 +64,16 @@ def _valid_record(record, as_of: date) -> tuple[bool, str, dict]:
         weights.append(numeric_weight)
 
     total = math.fsum(weights)
-    if abs(total - 100.0) > WEIGHT_SUM_TOLERANCE or abs(float(record.weight_sum) - total) > 1e-9:
+    try:
+        declared_total = float(record.weight_sum)
+    except (TypeError, ValueError, OverflowError):
+        declared_total = math.nan
+    if (
+        not math.isfinite(total)
+        or not math.isfinite(declared_total)
+        or abs(total - 100.0) > WEIGHT_SUM_TOLERANCE
+        or abs(declared_total - total) > 1e-9
+    ):
         return False, "INVALID_WEIGHT_TOTAL", {"effective_date": effective_day.isoformat(), "age_days": age_days}
     if set(tokens) != set(symbols) or len(tokens) != len(symbols):
         return False, "INCOMPLETE_TOKEN_MAPPING", {"effective_date": effective_day.isoformat(), "age_days": age_days}
