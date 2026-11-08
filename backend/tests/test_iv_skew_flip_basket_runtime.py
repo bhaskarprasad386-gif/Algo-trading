@@ -126,9 +126,7 @@ def test_top_n_rejects_invalid_values():
 def test_top_ten_selection_applies_independently_to_nifty_and_banknifty():
     nifty_symbols = [f"N{i:02d}" for i in range(12)]
     bank_symbols = [f"B{i:02d}" for i in range(12)]
-    # Descending weights sum to 100; final two are intentionally smallest.
-    weights = [16, 14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 6]
-    # Keep the fixture valid and deterministic while ensuring top ten are obvious.
+    # Weights sum to 100; the two smallest constituents fall outside top ten.
     weights = [18, 14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 4]
     tokens = {
         symbol: str(1000 + index)
