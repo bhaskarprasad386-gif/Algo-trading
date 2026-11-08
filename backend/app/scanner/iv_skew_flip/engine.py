@@ -31,12 +31,14 @@ class OptionQuote:
     @property
     def mark(self) -> float | None:
         if self.bid is not None and self.ask is not None:
-            if isfinite(self.bid) and isfinite(self.ask) and 0 < self.bid <= self.ask:
-                midpoint = (self.bid + self.ask) / 2.0
-                spread_pct = (self.ask - self.bid) * 100.0 / midpoint
-                # A very wide but technically non-crossed book is not a
-                # reliable IV mark. Do not silently fall back to an old LTP.
-                return midpoint if spread_pct <= 8.0 else None
+            # When both sides are supplied, the book must itself be valid.
+            # Crossed, zero, non-finite or very wide books are rejected rather
+            # than hidden by falling back to an LTP from the same tick.
+            if not isfinite(self.bid) or not isfinite(self.ask) or not (0 < self.bid <= self.ask):
+                return None
+            midpoint = (self.bid + self.ask) / 2.0
+            spread_pct = (self.ask - self.bid) * 100.0 / midpoint
+            return midpoint if spread_pct <= 8.0 else None
         if self.ltp is not None and isfinite(self.ltp) and self.ltp > 0:
             return self.ltp
         return None
