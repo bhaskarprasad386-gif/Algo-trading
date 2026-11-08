@@ -196,7 +196,7 @@ def validate_basket_token_mapping(
     for component in basket.components:
         raw_token = normalized_mapping.get(component.symbol)
         if isinstance(raw_token, bool) or raw_token is None:
-            raise ValueError(f"missing NSE cash instrument token or invalid token value for {component.symbol}")
+            raise ValueError(f"invalid NSE cash instrument token or missing NSE cash instrument token for {component.symbol}")
         token = str(raw_token).strip()
         if not re.fullmatch(r"[1-9][0-9]*", token):
             raise ValueError(f"invalid NSE cash instrument token for {component.symbol}")
