@@ -58,16 +58,36 @@ def valid_rows():
     return rows
 
 
-def test_primary_master_is_used_without_alternate_request(monkeypatch):
+def test_primary_master_is_used_without_shared_cache_or_alternate_request(monkeypatch):
     rows = valid_rows()
     monkeypatch.setattr(loader, "_write_snapshot", lambda rows: None)
-    master = FakeMaster(result=rows)
+    shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
+    FakeMaster._cached_instruments = shared_rows
+    FakeMaster._cached_snapshot_date = "2000-01-01"
+    master = FakeMaster()
 
-    def unexpected_request(*args, **kwargs):
-        raise AssertionError("alternate host must not be requested")
+    class Response:
+        def raise_for_status(self):
+            pass
 
-    monkeypatch.setattr(loader.requests, "get", unexpected_request)
+        def json(self):
+            return rows
+
+    calls = []
+
+    def fake_get(url, timeout):
+        calls.append((url, timeout))
+        if url != loader.PRIMARY_MASTER_URL:
+            raise AssertionError("alternate host must not be requested")
+        return Response()
+
+    monkeypatch.setattr(loader.requests, "get", fake_get)
     assert loader.download_iv_instruments(master) == rows
+    assert master.instruments == rows
+    assert master._loaded is True
+    assert FakeMaster._cached_instruments is shared_rows
+    assert FakeMaster._cached_snapshot_date == "2000-01-01"
+    assert calls == [(loader.PRIMARY_MASTER_URL, (5, 20))]
 
 
 def test_alternate_official_master_is_validated_without_mutating_shared_cache(monkeypatch):
@@ -89,6 +109,8 @@ def test_alternate_official_master_is_validated_without_mutating_shared_cache(mo
 
     def fake_get(url, timeout):
         calls.append((url, timeout))
+        if url == loader.PRIMARY_MASTER_URL:
+            raise TimeoutError("primary host timeout")
         return Response()
 
     monkeypatch.setattr(loader.requests, "get", fake_get)
