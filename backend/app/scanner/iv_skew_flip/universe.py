@@ -69,9 +69,10 @@ def resolve_option_universe(
 ) -> ResolvedOptionUniverse:
     """Resolve one exact expiry and a centered odd number of available strikes.
 
-    WEEKLY means the nearest listed expiry. MONTHLY means the last listed
-    expiry in the nearest month that has contracts. NIFTY supports both types;
-    BANKNIFTY is configured for monthly only. This uses actual master rows.
+    WEEKLY excludes the final listed expiry in each calendar month (the
+    monthly contract), then selects the nearest remaining expiry. MONTHLY
+    selects the final listed expiry in the nearest month with future contracts.
+    This prevents the same monthly contract from appearing in both streams.
     """
     symbol = str(underlying).strip().upper()
     kind = str(expiry_type).strip().upper()
@@ -123,11 +124,24 @@ def resolve_option_universe(
         raise LookupError(f"no valid {symbol} option contracts found in instrument master")
 
     expiry_dates = sorted({row[0] for row in rows})
+    # The instrument master is the source of truth for the actual expiry
+    # calendar. For each month, its final listed expiry is the monthly
+    # contract; weekly selection must never reuse that same date.
+    monthly_expiries = {
+        max(day for day in expiry_dates if (day.year, day.month) == (year, month))
+        for year, month in {(day.year, day.month) for day in expiry_dates}
+    }
     if kind == "WEEKLY":
-        selected_date = expiry_dates[0]
+        weekly_expiries = [day for day in expiry_dates if day not in monthly_expiries]
+        if not weekly_expiries:
+            raise LookupError(f"no distinct weekly {symbol} expiry found in instrument master")
+        selected_date = weekly_expiries[0]
     else:
-        month = (expiry_dates[0].year, expiry_dates[0].month)
-        selected_date = max(day for day in expiry_dates if (day.year, day.month) == month)
+        nearest_month = (expiry_dates[0].year, expiry_dates[0].month)
+        selected_date = max(
+            day for day in expiry_dates
+            if (day.year, day.month) == nearest_month
+        )
     selected_rows = [row for row in rows if row[0] == selected_date]
     raw_expiries = {row[1] for row in selected_rows}
     if len(raw_expiries) != 1:
