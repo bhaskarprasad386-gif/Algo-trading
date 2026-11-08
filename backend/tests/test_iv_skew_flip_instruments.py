@@ -60,6 +60,7 @@ def valid_rows():
 
 def test_primary_master_is_used_without_alternate_request(monkeypatch):
     rows = valid_rows()
+    monkeypatch.setattr(loader, "_write_snapshot", lambda rows: None)
     master = FakeMaster(result=rows)
 
     def unexpected_request(*args, **kwargs):
@@ -71,6 +72,7 @@ def test_primary_master_is_used_without_alternate_request(monkeypatch):
 
 def test_alternate_official_master_is_validated_without_mutating_shared_cache(monkeypatch):
     rows = valid_rows()
+    monkeypatch.setattr(loader, "_write_snapshot", lambda rows: None)
     shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
     FakeMaster._cached_instruments = shared_rows
     FakeMaster._cached_snapshot_date = "2000-01-01"
