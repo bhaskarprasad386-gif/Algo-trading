@@ -696,6 +696,8 @@ class IVSkewFlipRuntime:
                 for symbol, stream_id in (("NIFTY", "NIFTY_WEEKLY"), ("BANKNIFTY", "BANKNIFTY_MONTHLY"))
             },
             "last_refresh_ns": last_refresh,
+            "last_error": errors.get("RUNTIME"),
+            "cleanup_errors": errors.get("CLEANUP"),
         }
 
     def stop(self) -> dict[str, Any]:
@@ -704,31 +706,54 @@ class IVSkewFlipRuntime:
         if thread is not None and thread.is_alive():
             thread.join(timeout=3.0)
         if thread is not None and thread.is_alive():
-            # Do not tear down feeds while refresh_once() may still be using
-            # them. Keep the runtime registered and allow a later stop retry.
+            # Never tear down feeds while refresh_once() may still be using
+            # them. Keep every resource registered for a later stop retry.
             with self._lock:
                 self._stopping = True
             return self.snapshot()
+
         with self._lock:
-            samplers = tuple(self._samplers.values())
-            feeds = tuple(self._option_feeds.values())
-        for sampler in samplers:
-            sampler.stop()
-        for feed in feeds:
-            feed.stop()
-        self.spot_feed.stop()
-        if self._equity_feed is not None:
-            self._equity_feed.stop()
-            self._equity_feed = None
-        for equity_feed in tuple(self._equity_feeds.values()):
-            equity_feed.stop()
-        self._equity_feeds.clear()
+            samplers = tuple(self._samplers.items())
+            feeds = tuple(self._option_feeds.items())
+            equity_feed = self._equity_feed
+            equity_feeds = tuple(self._equity_feeds.items())
+
+        # A failure in one consumer must not prevent cleanup of independent
+        # consumers. Keep references until every stop succeeds so another
+        # stop request can retry any resource whose shutdown failed.
+        cleanup_errors: dict[str, str] = {}
+
+        def stop_resource(name: str, resource: Any) -> None:
+            try:
+                resource.stop()
+            except Exception as exc:
+                cleanup_errors[name] = f"{type(exc).__name__}: {exc}"
+
+        for name, sampler in samplers:
+            stop_resource(f"sampler:{name}", sampler)
+        for name, feed in feeds:
+            stop_resource(f"option_feed:{name}", feed)
+        stop_resource("spot_feed", self.spot_feed)
+        if equity_feed is not None:
+            stop_resource("equity_feed", equity_feed)
+        for name, feed in equity_feeds:
+            stop_resource(f"equity_feed:{name}", feed)
+
+        if cleanup_errors:
+            with self._lock:
+                self._stopping = True
+                self._last_error["CLEANUP"] = json.dumps(cleanup_errors, sort_keys=True)
+            return self.snapshot()
+
         with self._lock:
             self._started = False
             self._stopping = False
             self._thread = None
+            self._last_error.pop("CLEANUP", None)
             self._samplers.clear()
             self._option_feeds.clear()
+            self._equity_feed = None
+            self._equity_feeds.clear()
             self._universe_tokens.clear()
             self._rows_by_stream.clear()
             self._signals.clear()
