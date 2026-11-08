@@ -228,6 +228,7 @@ class IVSkewFlipRuntime:
                     self._signal_payload(Signal("GAMMA_BLAST", None, None, None, "WAITING", reason)),
                 ],
                 "confluence": self._signal_payload(confluence_waiting),
+                "data_ready": False,
                 "signals_allowed": False,
             }
 
@@ -316,9 +317,11 @@ class IVSkewFlipRuntime:
                     self._signal_payload(gamma_signal),
                 ],
                 "confluence": self._signal_payload(combined),
-                "signals_allowed": all(
-                    item.status != "WAITING" for item in (skew, flip)
-                ),
+                "data_ready": all(item.status != "WAITING" for item in (skew, flip)),
+                # A directional output is allowed only after two independent
+                # signal families agree. IV_SKEW and IV_FLIP alone are one
+                # correlated IV-surface family and cannot authorize a signal.
+                "signals_allowed": combined.status == "SIGNAL",
             }
         return True
 
