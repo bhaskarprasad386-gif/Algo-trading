@@ -32,7 +32,11 @@ class OptionQuote:
     def mark(self) -> float | None:
         if self.bid is not None and self.ask is not None:
             if isfinite(self.bid) and isfinite(self.ask) and 0 < self.bid <= self.ask:
-                return (self.bid + self.ask) / 2.0
+                midpoint = (self.bid + self.ask) / 2.0
+                spread_pct = (self.ask - self.bid) * 100.0 / midpoint
+                # A very wide but technically non-crossed book is not a
+                # reliable IV mark. Do not silently fall back to an old LTP.
+                return midpoint if spread_pct <= 8.0 else None
         if self.ltp is not None and isfinite(self.ltp) and self.ltp > 0:
             return self.ltp
         return None
