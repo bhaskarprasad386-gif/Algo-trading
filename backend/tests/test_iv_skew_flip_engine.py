@@ -232,3 +232,22 @@ def test_confluence_rejects_invalid_required_family_count():
         confluence(rows, required=True)
     with pytest.raises(ValueError):
         confluence(rows, required=0)
+
+
+@pytest.mark.parametrize("invalid_spot", [True, False, float("nan"), float("inf"), 0, -1])
+def test_iv_flip_rejects_invalid_spot(invalid_spot):
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_flip(quotes, invalid_spot, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "valid spot" in signal.reason
+
+
+def test_iv_flip_rejects_duplicate_fresh_atm_contracts():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    atm_call = next(q for q in quotes if q.strike == 22000 and q.option_type == "CE")
+    quotes.append(replace(atm_call, token="duplicate-atm-call"))
+    signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "duplicate fresh ATM" in signal.reason
