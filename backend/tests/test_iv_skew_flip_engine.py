@@ -95,15 +95,27 @@ def test_iv_flip_without_prior_opposite_side_does_not_signal():
     assert signal.direction is None
 
 
-def test_confluence_requires_two_same_direction_signals():
+def test_confluence_does_not_double_count_correlated_iv_surface_signals():
     rows = [
         Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
         Signal("IV_FLIP", "BULLISH", 0.2, 0.15, "SIGNAL", "test"),
         Signal("GAMMA_BLAST", "BEARISH", 6.0, 5.0, "SIGNAL", "test"),
     ]
     result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_requires_independent_iv_and_gamma_families():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BULLISH", 0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", "BULLISH", 6.0, 5.0, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
     assert result.status == "SIGNAL"
     assert result.direction == "BULLISH"
+    assert result.value == 2.0
 
 
 def test_confluence_does_not_mix_opposite_directions():
