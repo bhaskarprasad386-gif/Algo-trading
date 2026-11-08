@@ -53,7 +53,6 @@ class IVSkewFlipRuntime:
         equity_basket: tuple[WeightedEquity, ...] | None = None,
         equity_baskets: dict[str, tuple[WeightedEquity, ...]] | None = None,
         equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
-        equity_feed_factory_by_underlying: Callable[[str], IVWeightedEquityFeedAdapter] | None = None,
         equity_pressure_unavailable_reason: str | None = None,
         future_feed: IVIndexFutureFeedAdapter | None = None,
     ) -> None:
@@ -94,11 +93,6 @@ class IVSkewFlipRuntime:
             raise ValueError("equity pressure requires an injected verified weight basket")
         self.equity_feed_factory = equity_feed_factory or (
             lambda: IVWeightedEquityFeedAdapter(clock_ns=clock_ns)
-        )
-        self.equity_feed_factory_by_underlying = equity_feed_factory_by_underlying or (
-            lambda symbol: IVWeightedEquityFeedAdapter(
-                clock_ns=clock_ns, consumer=f"iv-skew-flip-equities-{symbol.lower()}"
-            )
         )
         self._equity_feed: IVWeightedEquityFeedAdapter | None = None
         self._equity_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
