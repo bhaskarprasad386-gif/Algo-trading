@@ -303,3 +303,53 @@ def test_runtime_stop_preserves_resources_while_refresh_worker_is_alive():
     assert runtime._started is False
     assert runtime._thread is None
     assert spot.stopped is True
+
+
+def test_runtime_stop_attempts_every_resource_and_retries_failed_cleanup():
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: now,
+    )
+    calls = {"sampler": 0, "option": 0, "spot": 0, "equity": 0}
+
+    class StopResource:
+        def __init__(self, key, fail_first=False):
+            self.key = key
+            self.fail_first = fail_first
+
+        def stop(self):
+            calls[self.key] += 1
+            if self.fail_first and calls[self.key] == 1:
+                raise RuntimeError("temporary shutdown failure")
+
+    class StopSpotFeed(FakeSpotFeed):
+        def stop(self):
+            calls["spot"] += 1
+            if calls["spot"] == 1:
+                raise RuntimeError("temporary spot shutdown failure")
+
+    runtime._started = True
+    runtime._samplers = {"NIFTY_WEEKLY": StopResource("sampler")}
+    runtime._option_feeds = {"NIFTY_WEEKLY": StopResource("option")}
+    runtime.spot_feed = StopSpotFeed()
+    runtime._equity_feed = StopResource("equity", fail_first=True)
+
+    first = runtime.stop()
+    assert first["status"] == "STOPPING"
+    assert "spot_feed" in first["cleanup_errors"]
+    assert "equity_feed" in first["cleanup_errors"]
+    assert calls == {"sampler": 1, "option": 1, "spot": 1, "equity": 1}
+    # References remain available, and all independent resources were tried.
+    assert runtime._started is True
+    assert runtime._samplers
+    assert runtime._option_feeds
+
+    second = runtime.stop()
+    assert second["status"] == "STOPPED"
+    assert second["cleanup_errors"] is None
+    assert calls == {"sampler": 2, "option": 2, "spot": 2, "equity": 2}
+    assert runtime._samplers == {}
+    assert runtime._option_feeds == {}
+    assert runtime._equity_feed is None
