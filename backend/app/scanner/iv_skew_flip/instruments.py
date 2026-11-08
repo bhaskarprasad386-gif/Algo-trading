@@ -19,6 +19,10 @@ import requests
 from app.core.logger import app_logger
 
 
+PRIMARY_MASTER_URL = (
+    "https://margincalculator.angelbroking.com/"
+    "OpenAPI_File/files/OpenAPIScripMaster.json"
+)
 ALTERNATE_MASTER_URL = (
     "https://margincalculator.angelone.in/"
     "OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -183,9 +187,14 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
     """Try primary host, official alternate host, then a recent integrity-checked IV snapshot."""
     primary_error: Exception | None = None
     try:
-        rows = _validate_rows(instrument_master.download())
-        _write_snapshot(rows)
-        return rows
+        # Do not call InstrumentMaster.download(): it reads/writes a
+        # process-wide cache shared with Box Spread and other consumers.
+        response = requests.get(PRIMARY_MASTER_URL, timeout=(5, 20))
+        response.raise_for_status()
+        rows = _validate_rows(response.json())
+        installed = _install_snapshot(instrument_master, rows)
+        _write_snapshot(installed)
+        return installed
     except Exception as exc:
         primary_error = exc
         app_logger.warning(
