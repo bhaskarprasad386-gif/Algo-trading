@@ -259,3 +259,59 @@ def test_disabled_dual_index_pressure_does_not_change_legacy_early_move():
     }
 
     assert runtime._apply_equity_pressure_confirmation("NIFTY", original) == original
+
+
+def test_dual_index_pressure_keeps_nifty_and_banknifty_feeds_and_snapshots_isolated():
+    baskets = {
+        "NIFTY": (WeightedEquity("AAA", 60.0), WeightedEquity("BBB", 40.0)),
+        "BANKNIFTY": (WeightedEquity("CCC", 70.0), WeightedEquity("DDD", 30.0)),
+    }
+
+    class PerIndexFeed(FakeEquityFeed):
+        def __init__(self, underlying):
+            self.stopped = False
+            self.payload = {
+                "status": "LIVE",
+                "consumer": f"iv-skew-flip-equities-{underlying.lower()}",
+                "signals_allowed": True,
+                "expected_symbols": [item.symbol for item in baskets[underlying]],
+                "fresh_symbols": [item.symbol for item in baskets[underlying]],
+                "missing_symbols": [],
+                "quotes": {
+                    item.symbol: {"timestamp_ns": 40_000_000_000, "ltp": 100.0 + index}
+                    for index, item in enumerate(baskets[underlying])
+                },
+            }
+
+    runtime = make_runtime(
+        equity_pressure_enabled=True,
+        equity_baskets=baskets,
+        equity_feed_factory_by_underlying=PerIndexFeed,
+    )
+    runtime._equity_feeds = {key: PerIndexFeed(key) for key in baskets}
+    runtime._refresh_equity_pressure(40_000_000_000)
+    result = runtime.snapshot()["equity_pressure_by_underlying"]
+
+    assert set(result) == {"NIFTY", "BANKNIFTY"}
+    assert result["NIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-nifty"
+    assert result["BANKNIFTY"]["feed"]["consumer"] == "iv-skew-flip-equities-banknifty"
+    assert result["NIFTY"]["feed"]["expected_symbols"] == ["AAA", "BBB"]
+    assert result["BANKNIFTY"]["feed"]["expected_symbols"] == ["CCC", "DDD"]
+    assert result["NIFTY"]["signals_allowed"] is False
+    assert result["BANKNIFTY"]["signals_allowed"] is False
+
+
+def test_dual_index_pressure_rejects_partial_or_malformed_basket_configuration():
+    with pytest.raises(ValueError, match="both NIFTY and BANKNIFTY"):
+        make_runtime(
+            equity_pressure_enabled=True,
+            equity_baskets={"NIFTY": (WeightedEquity("AAA", 100.0),)},
+        )
+    with pytest.raises(ValueError, match="non-empty"):
+        make_runtime(
+            equity_pressure_enabled=True,
+            equity_baskets={
+                "NIFTY": (WeightedEquity("AAA", 100.0),),
+                "BANKNIFTY": (),
+            },
+        )
