@@ -188,7 +188,11 @@ def evaluate_skew(
     chain = [q for q in quotes if q.underlying.upper() == config.symbol]
     if len({q.expiry for q in chain}) > 1:
         return Signal("IV_SKEW", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
-    if not chain or not isfinite(float(spot)) or spot <= 0:
+    if (
+        not chain or isinstance(spot, bool)
+        or not isinstance(spot, (int, float))
+        or not isfinite(float(spot)) or spot <= 0
+    ):
         return Signal("IV_SKEW", None, None, None, "WAITING", "fresh option chain or valid spot unavailable")
     strikes = sorted({q.strike for q in chain})
     if not strikes:
