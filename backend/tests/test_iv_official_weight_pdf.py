@@ -142,3 +142,44 @@ def test_current_master_loader_fails_closed_after_retry_failure():
 
     with pytest.raises(RuntimeError, match="failed on both attempts"):
         importer._load_current_instrument_master(FakeMaster())
+
+
+def test_fetch_roster_accepts_metadata_and_normalises_symbol_header(monkeypatch):
+    from scripts import import_iv_official_baskets as importer
+
+    class FakeResponse:
+        content = (
+            b"\xef\xbb\xbfConstituent List\r\n"
+            b" Company Name , Industry , SYMBOL  , Series\r\n"
+            b"Example Bank,Financial Services,AAA,EQ\r\n"
+            b"Another Bank,Financial Services,BBB,EQ\r\n"
+        )
+
+        def raise_for_status(self):
+            pass
+
+    class FakeSession:
+        def get(self, _url, timeout):
+            assert timeout == 60
+            return FakeResponse()
+
+    symbols, digest = importer._fetch_roster(FakeSession(), "https://official.example/roster.csv")
+    assert symbols == ("AAA", "BBB")
+    assert len(digest) == 64
+
+
+def test_fetch_roster_reports_received_header_when_symbol_is_absent():
+    from scripts import import_iv_official_baskets as importer
+
+    class FakeResponse:
+        content = b"Company,Industry\nExample Bank,Finance\n"
+
+        def raise_for_status(self):
+            pass
+
+    class FakeSession:
+        def get(self, _url, timeout):
+            return FakeResponse()
+
+    with pytest.raises(ValueError, match="first rows"):
+        importer._fetch_roster(FakeSession(), "https://official.example/roster.csv")
