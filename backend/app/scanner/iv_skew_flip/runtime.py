@@ -181,29 +181,20 @@ class IVSkewFlipRuntime:
                 future_resolution_errors[symbol] = str(exc)
         future_contracts = tuple(future_contracts_list)
         if self.equity_pressure_enabled and self.equity_baskets:
-            started_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
-            current_feed: IVWeightedEquityFeedAdapter | None = None
+            # One physical quote consumer for the union of both top-10 baskets.
+            # Shared constituents are resolved/subscribed once; each index still
+            # applies its own official weight in its independent pressure engine.
+            unique: dict[str, WeightedEquity] = {}
+            for basket in self.equity_baskets.values():
+                for item in basket:
+                    unique.setdefault(item.symbol.strip().upper(), item)
+            equity_feed = self.equity_feed_factory()
             try:
-                for underlying, basket in self.equity_baskets.items():
-                    current_feed = self.equity_feed_factory_by_underlying(underlying)
-                    current_feed.start(self.instrument_master, basket)
-                    started_feeds[underlying] = current_feed
-                    current_feed = None
+                equity_feed.start(self.instrument_master, tuple(unique.values()))
             except Exception:
-                # The failing adapter may have partially registered its
-                # consumer before raising; release it as well as prior feeds.
-                if current_feed is not None:
-                    try:
-                        current_feed.stop()
-                    except Exception:
-                        pass
-                for equity_feed in started_feeds.values():
-                    try:
-                        equity_feed.stop()
-                    except Exception:
-                        pass
+                equity_feed.stop()
                 raise
-            self._equity_feeds = started_feeds
+            self._equity_feed = equity_feed
         elif self.equity_pressure_enabled:
             equity_feed = self.equity_feed_factory()
             try:
@@ -594,18 +585,36 @@ class IVSkewFlipRuntime:
 
     def _refresh_equity_pressure(self, now_ns: int) -> None:
         if self.equity_pressure_enabled and self.equity_baskets:
+            # The shared feed has one quote per unique symbol. Fan those quotes
+            # into both independent weighted pressure calculators without
+            # fetching/subscribing a common constituent twice.
+            shared_feed = self._equity_feed
+            shared_snapshot = (
+                shared_feed.snapshot(now_ns=now_ns) if shared_feed is not None
+                else {"status": "STOPPED", "quotes": {}, "signals_allowed": False}
+            )
+            shared_quotes = shared_snapshot.get("quotes", {})
             snapshots: dict[str, dict[str, Any]] = {}
-            for underlying, feed in self._equity_feeds.items():
+            for underlying, basket in self.equity_baskets.items():
                 pressure = self._equity_pressures[underlying]
+                expected = sorted(item.symbol for item in basket)
+                quotes = {symbol: shared_quotes[symbol] for symbol in expected if symbol in shared_quotes}
+                fresh_symbols = sorted(quotes)
+                missing_symbols = sorted(set(expected) - set(fresh_symbols))
+                feed_status = (
+                    "LIVE" if not missing_symbols else
+                    "PARTIAL" if fresh_symbols else
+                    shared_snapshot.get("status", "WAITING_FOR_TICKS")
+                )
+                feed_allowed = bool(expected) and not missing_symbols
                 try:
-                    feed_snapshot = feed.snapshot(now_ns=now_ns)
-                    for symbol, quote in feed_snapshot.get("quotes", {}).items():
+                    for symbol, quote in quotes.items():
                         pressure.update(ComponentSample(
                             symbol=symbol, timestamp_ns=quote["timestamp_ns"], ltp=quote["ltp"]
                         ))
                     pressure_snapshot = pressure.snapshot(now_ns=now_ns)
                     allowed = bool(
-                        feed_snapshot.get("signals_allowed")
+                        feed_allowed
                         and pressure_snapshot.get("signals_allowed")
                         and pressure_snapshot.get("direction") in {"BULLISH", "BEARISH"}
                         and pressure_snapshot.get("timeframe_agreement")
@@ -614,18 +623,17 @@ class IVSkewFlipRuntime:
                         **pressure_snapshot,
                         "enabled": True,
                         "feed": {
-                            "status": feed_snapshot.get("status"),
-                            "consumer": feed_snapshot.get("consumer"),
-                            "expected_symbols": feed_snapshot.get("expected_symbols", []),
-                            "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
-                            "missing_symbols": feed_snapshot.get("missing_symbols", []),
-                            "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
+                            "status": feed_status,
+                            "consumer": shared_snapshot.get("consumer"),
+                            "expected_symbols": expected,
+                            "fresh_symbols": fresh_symbols,
+                            "missing_symbols": missing_symbols,
+                            "signals_allowed": feed_allowed,
+                            "shared_unique_symbols": shared_snapshot.get("expected_symbols", []),
                         },
                         "signals_allowed": allowed,
                     }
                 except Exception as exc:
-                    # One broken constituent consumer must not interrupt the
-                    # independent option-IV scanner or the other index feed.
                     snapshots[underlying] = {
                         "status": "ERROR",
                         "enabled": True,
@@ -636,8 +644,11 @@ class IVSkewFlipRuntime:
                         "error": f"{type(exc).__name__}: {exc}",
                         "feed": {
                             "status": "ERROR",
-                            "consumer": getattr(feed, "consumer", None),
+                            "consumer": getattr(shared_feed, "consumer", None),
                             "signals_allowed": False,
+                            "expected_symbols": expected,
+                            "fresh_symbols": fresh_symbols,
+                            "missing_symbols": missing_symbols,
                         },
                     }
             with self._lock:
