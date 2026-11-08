@@ -251,3 +251,15 @@ def test_iv_flip_rejects_duplicate_fresh_atm_contracts():
     signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
     assert signal.status == "WAITING"
     assert "duplicate fresh ATM" in signal.reason
+
+
+@pytest.mark.parametrize(
+    "bid,ask",
+    [(101.0, 100.0), (0.0, 100.0), (-1.0, 100.0), (float("nan"), 100.0)],
+)
+def test_option_mark_rejects_invalid_two_sided_book_without_ltp_fallback(bid, ask):
+    quote = OptionQuote(
+        "NIFTY", "2026-11-12", 22000, "CE", 1,
+        ltp=100.0, bid=bid, ask=ask, token="invalid-book",
+    )
+    assert quote.mark is None
