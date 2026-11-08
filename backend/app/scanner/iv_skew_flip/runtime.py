@@ -180,6 +180,9 @@ class IVSkewFlipRuntime:
             if self._equity_feed is not None:
                 self._equity_feed.stop()
                 self._equity_feed = None
+            for equity_feed in tuple(self._equity_feeds.values()):
+                equity_feed.stop()
+            self._equity_feeds.clear()
             raise
         with self._lock:
             self._rows_by_stream = rows
