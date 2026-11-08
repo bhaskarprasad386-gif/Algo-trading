@@ -600,10 +600,12 @@ class IVSkewFlipRuntime:
                 quotes = {symbol: shared_quotes[symbol] for symbol in expected if symbol in shared_quotes}
                 fresh_symbols = sorted(quotes)
                 missing_symbols = sorted(set(expected) - set(fresh_symbols))
+                shared_status = shared_snapshot.get("status", "WAITING_FOR_TICKS")
                 feed_status = (
                     "LIVE" if not missing_symbols else
                     "PARTIAL" if fresh_symbols else
-                    shared_snapshot.get("status", "WAITING_FOR_TICKS")
+                    "WAITING_FOR_TICKS" if shared_status == "PARTIAL" else
+                    shared_status
                 )
                 feed_allowed = bool(expected) and not missing_symbols
                 try:
