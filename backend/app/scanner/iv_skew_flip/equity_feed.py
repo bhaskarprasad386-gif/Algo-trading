@@ -47,10 +47,15 @@ class IVWeightedEquityFeedAdapter:
         feed: Any | None = None,
         clock_ns: Callable[[], int] = time_ns,
         max_tick_age_seconds: float = 3.0,
+        consumer: str | None = None,
     ) -> None:
         if max_tick_age_seconds <= 0:
             raise ValueError("max_tick_age_seconds must be positive")
-        self.feed = feed if feed is not None else CommonStrategyMarketFeed(self.CONSUMER, mode=1)
+        selected_consumer = str(consumer or self.CONSUMER).strip()
+        if not selected_consumer or len(selected_consumer) > 64:
+            raise ValueError("consumer must be a non-empty identifier of at most 64 characters")
+        self.consumer = selected_consumer
+        self.feed = feed if feed is not None else CommonStrategyMarketFeed(self.consumer, mode=1)
         self.clock_ns = clock_ns
         self.max_tick_age_ns = int(max_tick_age_seconds * 1_000_000_000)
         self._lock = RLock()
@@ -185,7 +190,7 @@ class IVWeightedEquityFeedAdapter:
             self._started = True
         return {
             "status": "SUBSCRIBED",
-            "consumer": self.CONSUMER,
+            "consumer": self.consumer,
             "symbols": sorted(symbols),
             "contract_count": len(descriptors),
             "weight_sum": round(sum(item.weight for item, _ in normalized), 8),
@@ -245,7 +250,7 @@ class IVWeightedEquityFeedAdapter:
             status = "WAITING_FOR_TICKS"
         return {
             "status": status,
-            "consumer": self.CONSUMER,
+            "consumer": self.consumer,
             "expected_symbols": sorted(expected),
             "fresh_symbols": sorted(fresh),
             "missing_symbols": missing,
