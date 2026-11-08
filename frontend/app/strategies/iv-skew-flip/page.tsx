@@ -142,6 +142,8 @@ export default function IVSkewFlipPage() {
   const [error,setError]=useState("");
   const [selectedEnabled,setSelectedEnabled]=useState(false);
   const [savedEnabled,setSavedEnabled]=useState(false);
+  const [settingDirty,setSettingDirty]=useState(false);
+  const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -155,8 +157,6 @@ export default function IVSkewFlipPage() {
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
   },[base]);
-  const [settingDirty,setSettingDirty]=useState(false);
-  const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const refresh=useCallback(async()=>{
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
