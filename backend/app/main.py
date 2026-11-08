@@ -21,6 +21,7 @@ from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
+from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.iv_scanner_control import IVScannerControl
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion  # noqa: F401 - register isolated IV basket history table
@@ -82,6 +83,7 @@ from app.scanner import box_spread_paper_ledger as _box_spread_paper_ledger_mode
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
+install_iv_basket_immutability_guards(engine)
 
 # Reuse one process-local instrument-master manager for live feed/API resolution.
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
