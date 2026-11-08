@@ -101,24 +101,38 @@ def parse_official_weight_basket(
     index = str(underlying or "").strip().upper()
     if not re.fullmatch(r"[A-Z0-9_-]{2,24}", index):
         raise ValueError("underlying is invalid")
-    if not isinstance(as_of, date):
-        raise ValueError("as_of must be a date")
+    if not isinstance(as_of, date) or isinstance(as_of, __import__("datetime").datetime):
+        raise ValueError("as_of must be a calendar date")
+    if not isinstance(raw, bytes):
+        raise ValueError("upload content must be bytes")
+    if not isinstance(filename, str) or not filename.strip():
+        raise ValueError("upload filename is required")
     if isinstance(max_age_days, bool) or not isinstance(max_age_days, int) or max_age_days < 0:
         raise ValueError("max_age_days must be a non-negative integer")
     try:
-        effective = effective_date if isinstance(effective_date, date) else date.fromisoformat(str(effective_date))
+        if isinstance(effective_date, date) and not isinstance(effective_date, __import__("datetime").datetime):
+            effective = effective_date
+        elif isinstance(effective_date, str):
+            effective = date.fromisoformat(effective_date)
+        else:
+            raise ValueError("effective_date must be a calendar date or ISO date string")
     except (TypeError, ValueError) as exc:
         raise ValueError("effective_date must be an ISO date") from exc
     if effective > as_of:
         raise ValueError("future-dated constituent weights are not accepted")
     if (as_of - effective).days > max_age_days:
         raise ValueError("constituent weights are stale; import the latest official file")
-    source = str(source_name or "").strip()
-    parsed_url = urlparse(str(source_url or "").strip())
+    if not isinstance(source_name, str) or not isinstance(source_url, str):
+        raise ValueError("source name and HTTPS source URL are required")
+    source = source_name.strip()
+    parsed_url = urlparse(source_url.strip())
     if not source or parsed_url.scheme != "https" or not parsed_url.netloc:
         raise ValueError("source name and HTTPS source URL are required")
 
-    expected = _normalized_symbols(expected_symbols)
+    try:
+        expected = _normalized_symbols(expected_symbols)
+    except TypeError as exc:
+        raise ValueError("authoritative expected constituent roster is required") from exc
     csv_bytes, file_format = _extract_csv(raw, filename)
     try:
         text = csv_bytes.decode("utf-8-sig")
