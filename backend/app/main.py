@@ -57,6 +57,7 @@ from app.scanner.live_synthetic_trace_routes import router as live_synthetic_tra
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
+from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
@@ -1757,10 +1758,36 @@ def _start_iv_skew_flip_runtime():
             # A fully stopped runtime may remain registered after an interrupted
             # transition. Clear it before constructing the next isolated runtime.
             iv_skew_flip_runtime = None
-        # Constituent pressure is deliberately not auto-activated from environment
-        # flags or registry freshness. The registry is informational until a separate
-        # explicit activation workflow is reviewed and authorized.
-        runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
+        # Runner ON is the user's explicit activation for IV market-data analysis.
+        # Load both official index baskets, verify the complete rosters/token mappings,
+        # then subscribe only to each index's dynamically ranked top 10 constituents.
+        # If basket provenance is missing/stale, keep the IV option scanner running
+        # but fail closed for constituent pressure (no partial/guessed basket).
+        equity_baskets = {}
+        equity_pressure_error = None
+        try:
+            with SessionLocal() as db:
+                basket_records = (
+                    db.query(IVConstituentBasketVersion)
+                    .filter(IVConstituentBasketVersion.underlying.in_(("NIFTY", "BANKNIFTY")))
+                    .all()
+                )
+            equity_baskets = load_verified_runtime_baskets(
+                basket_records,
+                as_of=datetime.now(timezone.utc).date(),
+                instrument_master=instrument_master,
+                underlyings=("NIFTY", "BANKNIFTY"),
+                top_n=10,
+            )
+        except Exception as exc:
+            equity_pressure_error = f"{type(exc).__name__}: {exc}"
+            app_logger.warning("IV top-10 constituent pressure unavailable: %s", equity_pressure_error)
+        runtime = IVSkewFlipRuntime(
+            instrument_master=instrument_master,
+            equity_pressure_enabled=bool(equity_baskets),
+            equity_baskets=equity_baskets,
+            equity_pressure_unavailable_reason=equity_pressure_error,
+        )
         try:
             snapshot = runtime.start()
         except Exception:
