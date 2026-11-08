@@ -156,14 +156,26 @@ class IVSkewFlipRuntime:
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
         if self.equity_pressure_enabled and self.equity_baskets:
             started_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
+            current_feed: IVWeightedEquityFeedAdapter | None = None
             try:
                 for underlying, basket in self.equity_baskets.items():
-                    equity_feed = self.equity_feed_factory_by_underlying(underlying)
-                    equity_feed.start(self.instrument_master, basket)
-                    started_feeds[underlying] = equity_feed
+                    current_feed = self.equity_feed_factory_by_underlying(underlying)
+                    current_feed.start(self.instrument_master, basket)
+                    started_feeds[underlying] = current_feed
+                    current_feed = None
             except Exception:
+                # The failing adapter may have partially registered its
+                # consumer before raising; release it as well as prior feeds.
+                if current_feed is not None:
+                    try:
+                        current_feed.stop()
+                    except Exception:
+                        pass
                 for equity_feed in started_feeds.values():
-                    equity_feed.stop()
+                    try:
+                        equity_feed.stop()
+                    except Exception:
+                        pass
                 raise
             self._equity_feeds = started_feeds
         elif self.equity_pressure_enabled:
