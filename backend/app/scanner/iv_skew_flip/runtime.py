@@ -161,13 +161,18 @@ class IVSkewFlipRuntime:
         # master cannot leave the runtime half-started.
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        future_contracts = tuple(
-            contract
-            for symbol in ("NIFTY", "BANKNIFTY")
-            for contract in resolve_index_future_contracts(
-                instruments, underlying=symbol, today=self.clock_datetime().astimezone(IST).date(), limit=2
-            )
-        )
+        future_contracts_list = []
+        future_resolution_errors = {}
+        for symbol in ("NIFTY", "BANKNIFTY"):
+            try:
+                future_contracts_list.extend(resolve_index_future_contracts(
+                    instruments, underlying=symbol,
+                    today=self.clock_datetime().astimezone(IST).date(), limit=2,
+                ))
+            except LookupError as exc:
+                # Basis is additive context; missing FUTIDX rows must not block IV.
+                future_resolution_errors[symbol] = str(exc)
+        future_contracts = tuple(future_contracts_list)
         if self.equity_pressure_enabled and self.equity_baskets:
             started_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
             current_feed: IVWeightedEquityFeedAdapter | None = None
@@ -202,8 +207,11 @@ class IVSkewFlipRuntime:
             self._equity_feed = equity_feed
         try:
             self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
-            self.future_feed.start(future_contracts)
+            if future_contracts:
+                self.future_feed.start(future_contracts)
         except Exception:
+            self.future_feed.stop()
+            self.spot_feed.stop()
             if self._equity_feed is not None:
                 self._equity_feed.stop()
                 self._equity_feed = None
@@ -215,6 +223,7 @@ class IVSkewFlipRuntime:
             self._rows_by_stream = rows
             self._future_contracts = future_contracts
             self._basis_histories = {f"{item.underlying}:{item.expiry.isoformat()}": BasisHistory() for item in future_contracts}
+            self._basis_analysis = {symbol: {"status": "UNAVAILABLE", "error": error, "signals_allowed": False} for symbol, error in future_resolution_errors.items()}
             self._started = True
             self._stop.clear()
             self._thread = Thread(
