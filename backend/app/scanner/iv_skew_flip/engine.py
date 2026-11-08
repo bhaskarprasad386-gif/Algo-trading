@@ -230,13 +230,19 @@ def evaluate_flip(
     chain = [q for q in quotes if q.underlying.upper() == config.symbol]
     if len({q.expiry for q in chain}) > 1:
         return Signal("IV_FLIP", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
-    if not chain or spot <= 0:
-        return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes unavailable")
+    if not chain or isinstance(spot, bool) or not isinstance(spot, (int, float)) or not isfinite(float(spot)) or spot <= 0:
+        return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes or valid spot unavailable")
     # Select ATM from the complete resolved chain, then require both sides at
     # that exact strike to be fresh. Do not silently shift ATM when its ticks stale.
     atm = min({q.strike for q in chain}, key=lambda strike: abs(strike - spot))
     fresh_rows = [q for q in chain if _fresh(q, now_ns, config.max_quote_age_seconds)]
-    pair = {q.option_type.upper(): q for q in fresh_rows if q.strike == atm}
+    pair_rows = [q for q in fresh_rows if q.strike == atm]
+    pair: dict[str, OptionQuote] = {}
+    for quote in pair_rows:
+        side = quote.option_type.upper()
+        if side in pair:
+            return Signal("IV_FLIP", None, None, None, "WAITING", "duplicate fresh ATM option contract")
+        pair[side] = quote
     if "CE" not in pair or "PE" not in pair:
         return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes unavailable: ATM CE and PE pair unavailable")
     years = _expiry_years(pair["CE"].expiry, now)
