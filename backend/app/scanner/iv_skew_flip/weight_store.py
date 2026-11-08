@@ -1,4 +1,4 @@
-"""Durable, append-only storage for validated IV constituent baskets.
+""""Durable, append-only storage for validated IV constituent baskets.
 
 This module intentionally has no HTTP route and never changes runtime switches.
 A separate activation workflow must be added only after the application's
@@ -34,7 +34,7 @@ def _require_https_source(name: str, url: str, label: str) -> tuple[str, str]:
     clean_url = str(url or "").strip()
     if not clean_name or not is_official_nse_source_url(clean_url):
         raise ValueError(f"{label} name and official NSE HTTPS URL are required")
-    return clean_name, parsed.geturl()
+    return clean_name, clean_url
 
 
 def _validate_basket_payload(basket: VerifiedBasketImport) -> tuple[tuple[VerifiedBasketComponent, ...], float]:
