@@ -352,3 +352,57 @@ def test_one_index_pressure_feed_error_does_not_abort_other_index_snapshot():
     assert "temporary NIFTY feed failure" in result["NIFTY"]["error"]
     assert result["BANKNIFTY"]["feed"]["status"] == "PARTIAL"
     assert result["BANKNIFTY"]["signals_allowed"] is False
+
+
+def test_dual_index_start_rolls_back_current_and_previous_feeds_on_partial_start_failure(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    rows = [
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY", "expiry": "12NOV2026"},
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY", "expiry": "26NOV2026"},
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "BANKNIFTY", "expiry": "26NOV2026"},
+    ]
+
+    class Master:
+        def resolve_index_instrument(self, symbol, exchange):
+            return {"token": "1", "symbol": symbol}
+
+    class TrackedFeed:
+        def __init__(self, underlying, fail=False):
+            self.underlying = underlying
+            self.fail = fail
+            self.stopped = False
+
+        def start(self, master, basket):
+            if self.fail:
+                raise RuntimeError("partial subscription failure")
+
+        def stop(self):
+            self.stopped = True
+
+    created = {}
+
+    def factory(underlying):
+        created[underlying] = TrackedFeed(underlying, fail=underlying == "BANKNIFTY")
+        return created[underlying]
+
+    monkeypatch.setattr(runtime_module, "download_iv_instruments", lambda master: rows)
+    runtime = IVSkewFlipRuntime(
+        instrument_master=Master(),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 7, 10, 0, tzinfo=IST),
+        equity_pressure_enabled=True,
+        equity_baskets={
+            "NIFTY": (WeightedEquity("AAA", 100.0),),
+            "BANKNIFTY": (WeightedEquity("BBB", 100.0),),
+        },
+        equity_feed_factory_by_underlying=factory,
+    )
+
+    with pytest.raises(RuntimeError, match="partial subscription failure"):
+        runtime.start()
+
+    assert created["NIFTY"].stopped is True
+    assert created["BANKNIFTY"].stopped is True
+    assert runtime._equity_feeds == {}
+    assert runtime.snapshot()["status"] == "STOPPED"
