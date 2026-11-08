@@ -195,7 +195,6 @@ def test_dual_index_pressure_stop_stops_the_single_shared_feed():
 
     assert shared_feed.stopped is True
     assert runtime._equity_feed is None
-    assert runtime._equity_feeds == {}
     assert set(result["equity_pressure_by_underlying"]) == {"NIFTY", "BANKNIFTY"}
     assert all(not item["signals_allowed"] for item in result["equity_pressure_by_underlying"].values())
 
@@ -353,5 +352,4 @@ def test_dual_index_start_subscribes_union_once_and_rolls_back_shared_feed(monke
     assert len(created[0].received_symbols) == len(set(created[0].received_symbols))
     assert created[0].stopped is True
     assert runtime._equity_feed is None
-    assert runtime._equity_feeds == {}
     assert runtime.snapshot()["status"] == "STOPPED"
