@@ -116,6 +116,21 @@ def test_token_mapping_must_be_complete_and_unique():
         validate_basket_token_mapping(basket, {"AAA": "101", "BBB": "101"})
 
 
+@pytest.mark.parametrize("invalid_token", [True, False, 0, -1, "0", "  ", "token-101", "1.5"])
+def test_token_mapping_rejects_non_numeric_or_non_positive_tokens(invalid_token):
+    basket_result = parse_official_weight_basket(CSV, **BASE)
+    with pytest.raises(ValueError, match="invalid NSE cash instrument token"):
+        validate_basket_token_mapping(basket_result, {"AAA": invalid_token, "BBB": "202"})
+
+
+def test_token_mapping_rejects_unexpected_extra_symbols():
+    basket_result = parse_official_weight_basket(CSV, **BASE)
+    with pytest.raises(ValueError, match="unexpected symbols"):
+        validate_basket_token_mapping(
+            basket_result, {"AAA": "101", "BBB": "202", "CCC": "303"}
+        )
+
+
 
 @pytest.mark.parametrize(
     "raw",
