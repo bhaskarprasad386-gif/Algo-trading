@@ -200,3 +200,14 @@ def test_option_mark_rejects_wide_book_instead_of_falling_back_to_ltp():
         ltp=100.0, bid=90.0, ask=110.0, token="wide-book",
     )
     assert quote.mark is None
+
+
+def test_confluence_suppresses_conflicting_signals_within_iv_surface_family():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BEARISH", -0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", "BULLISH", 6.0, 5.0, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
