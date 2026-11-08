@@ -45,16 +45,27 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const feed = chain.option_feed ?? {};
   const sampler = chain.sampler ?? {};
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
-  const calls = metrics.filter(x => x.option_type === "CE" && n(x.iv) !== null);
-  const puts = metrics.filter(x => x.option_type === "PE" && n(x.iv) !== null);
   const avg = (rows: Row[]) => rows.length ? rows.reduce((s, x) => s + Number(x.iv), 0) / rows.length : null;
-  const callIv = avg(calls), putIv = avg(puts);
-  const skew = callIv !== null && putIv !== null ? callIv - putIv : null;
   const spotPrice = n(spot.price);
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
-  const strikes = resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null);
-  const atm = spotPrice !== null && strikes.length ? strikes.reduce((best, x) => Math.abs(x - spotPrice) < Math.abs(best - spotPrice) ? x : best, strikes[0]) : null;
-  const atmPair = metrics.filter(x => x.strike === atm);
+  const strikes = (resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null)).sort((a,b)=>a-b);
+  const atmIndex = spotPrice !== null && strikes.length ? strikes.reduce((best, x, index) => Math.abs(x - spotPrice) < Math.abs(strikes[best] - spotPrice) ? index : best, 0) : -1;
+  const atm = atmIndex >= 0 ? strikes[atmIndex] : null;
+  const byContract = new Map(metrics.filter(x => n(x.iv) !== null).map(x => [`${n(x.strike)}:${String(x.option_type)}`, x]));
+  const matchedSkewPairs: number[] = [];
+  if (atmIndex >= 0) {
+    for (const offset of [0, 1, 2]) {
+      const call = byContract.get(`${strikes[atmIndex + offset]}:CE`);
+      const put = byContract.get(`${strikes[atmIndex - offset]}:PE`);
+      if (call && put) matchedSkewPairs.push(Number(call.iv) - Number(put.iv));
+    }
+  }
+  // Match the backend engine: ATM and up to two equidistant OTM CE/PE pairs.
+  // Do not average the whole call and put wings, which can bias the displayed skew.
+  const skew = matchedSkewPairs.length >= 2
+    ? matchedSkewPairs.reduce((sum, value) => sum + value, 0) / matchedSkewPairs.length
+    : null;
+  const atmPair = metrics.filter(x => x.strike === atm && n(x.iv) !== null);
   const atmIv = atmPair.length ? avg(atmPair) : null;
   const signals = chain.signals && typeof chain.signals === "object" ? chain.signals as Row : {};
   const strategies = Array.isArray(signals.strategies) ? signals.strategies as Row[] : [];
