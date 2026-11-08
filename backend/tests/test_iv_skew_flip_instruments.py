@@ -198,8 +198,7 @@ def test_total_master_failure_exposes_both_source_errors(monkeypatch, tmp_path):
 def test_snapshot_content_tampering_is_rejected(monkeypatch, tmp_path):
     rows = valid_rows()
     cache = tmp_path / "iv_snapshot.json"
-    loader._write_snapshot(rows)
-    # _write_snapshot uses the configured path, so point it at this file.
+    # Point the isolated writer at this temporary IV-owned cache file.
     monkeypatch.setattr(loader, "_cache_path", lambda: cache)
     loader._write_snapshot(rows)
     payload = json.loads(cache.read_text(encoding="utf-8"))
