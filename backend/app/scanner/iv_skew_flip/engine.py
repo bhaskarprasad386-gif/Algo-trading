@@ -317,8 +317,15 @@ def confluence(signals: Iterable[Signal], required: int = 2) -> Signal:
     directions_by_family: dict[str, set[str]] = {}
     for signal in active:
         strategy = str(signal.strategy or "").strip().upper()
-        family = "IV_SURFACE" if strategy in {"IV_SKEW", "IV_FLIP"} else strategy
-        if family:
+        # Only explicitly reviewed signal families may contribute to a
+        # directional decision. Unknown/future strategies must not silently
+        # become independent confirmations by virtue of a new name.
+        family = {
+            "IV_SKEW": "IV_SURFACE",
+            "IV_FLIP": "IV_SURFACE",
+            "GAMMA_BLAST": "OI_PREMIUM_FLOW",
+        }.get(strategy)
+        if family is not None:
             directions_by_family.setdefault(family, set()).add(signal.direction)
     # If correlated members of a family disagree (e.g. skew bullish but
     # flip bearish), suppress that entire family rather than selecting the
