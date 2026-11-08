@@ -168,6 +168,9 @@ def test_dual_index_pressure_deduplicates_shared_constituent_quotes():
     assert result["BANKNIFTY"]["feed"]["shared_unique_symbols"] == ["AAA", "BBB", "CCC"]
     assert result["NIFTY"]["feed"]["status"] == "LIVE"
     assert result["BANKNIFTY"]["feed"]["status"] == "LIVE"
+    # The shared AAA quote is reused, but its index-specific weights stay separate.
+    assert runtime._equity_pressures["NIFTY"]._weights["AAA"] == 60.0
+    assert runtime._equity_pressures["BANKNIFTY"]._weights["AAA"] == 30.0
     assert result["NIFTY"]["signals_allowed"] is False  # warm-up windows are not ready
     assert result["BANKNIFTY"]["signals_allowed"] is False
     assert runtime.snapshot()["equity_pressure"]["enabled"] is True
