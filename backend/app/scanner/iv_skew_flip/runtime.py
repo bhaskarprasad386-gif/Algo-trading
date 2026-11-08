@@ -13,6 +13,8 @@ from app.models.iv_signal_event import IVSignalEvent
 
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .early_move import IVEarlyMoveDetector
+from .basis import BasisHistory, calculate_basis, resolve_index_future_contracts
+from .future_feed import IVIndexFutureFeedAdapter
 from .equity_feed import IVWeightedEquityFeedAdapter, WeightedEquity
 from .equity_pressure import ComponentSample, ComponentWeight, EquityComponentPressure
 from .feed import IVSkewFlipFeedAdapter
@@ -52,11 +54,16 @@ class IVSkewFlipRuntime:
         equity_baskets: dict[str, tuple[WeightedEquity, ...]] | None = None,
         equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
         equity_feed_factory_by_underlying: Callable[[str], IVWeightedEquityFeedAdapter] | None = None,
+        future_feed: IVIndexFutureFeedAdapter | None = None,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
         self.instrument_master = instrument_master
         self.spot_feed = spot_feed or IVSpotFeedAdapter(clock_ns=clock_ns)
+        self.future_feed = future_feed or IVIndexFutureFeedAdapter(clock_ns=clock_ns)
+        self._future_contracts: tuple[Any, ...] = ()
+        self._basis_histories: dict[str, BasisHistory] = {}
+        self._basis_analysis: dict[str, dict[str, Any]] = {}
         self.option_feed_factory = option_feed_factory or (
             lambda symbol: IVSkewFlipFeedAdapter(consumer=f"iv-skew-flip-{symbol.lower()}", clock_ns=clock_ns)
         )
@@ -154,6 +161,13 @@ class IVSkewFlipRuntime:
         # master cannot leave the runtime half-started.
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
+        future_contracts = tuple(
+            contract
+            for symbol in ("NIFTY", "BANKNIFTY")
+            for contract in resolve_index_future_contracts(
+                instruments, underlying=symbol, today=self.clock_datetime().astimezone(IST).date(), limit=2
+            )
+        )
         if self.equity_pressure_enabled and self.equity_baskets:
             started_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
             current_feed: IVWeightedEquityFeedAdapter | None = None
@@ -188,6 +202,7 @@ class IVSkewFlipRuntime:
             self._equity_feed = equity_feed
         try:
             self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
+            self.future_feed.start(future_contracts)
         except Exception:
             if self._equity_feed is not None:
                 self._equity_feed.stop()
@@ -198,6 +213,8 @@ class IVSkewFlipRuntime:
             raise
         with self._lock:
             self._rows_by_stream = rows
+            self._future_contracts = future_contracts
+            self._basis_histories = {f"{item.underlying}:{item.expiry.isoformat()}": BasisHistory() for item in future_contracts}
             self._started = True
             self._stop.clear()
             self._thread = Thread(
@@ -515,6 +532,50 @@ class IVSkewFlipRuntime:
                     "baseline_status": "WARMING",
                 }
 
+    def _refresh_basis_analysis(self, now_ns: int) -> None:
+        """Publish paired live spot/future basis for current and next expiries."""
+        future_snapshot = self.future_feed.snapshot(now_ns=now_ns)
+        by_underlying: dict[str, list[dict[str, Any]]] = {"NIFTY": [], "BANKNIFTY": []}
+        quotes = future_snapshot.get("quotes", {})
+        for contract in self._future_contracts:
+            quote = quotes.get(contract.token, {})
+            spot = self.spot_feed.spot_snapshot(contract.underlying, now_ns=now_ns)
+            if spot is None or not quote.get("fresh"):
+                by_underlying[contract.underlying].append({
+                    "expiry": contract.expiry.isoformat(), "symbol": contract.symbol,
+                    "status": "WAITING_FOR_FRESH_SPOT_OR_FUTURE", "signals_allowed": False,
+                })
+                continue
+            try:
+                result = calculate_basis(
+                    spot=spot.price, future=quote.get("price"),
+                    spot_timestamp_ns=spot.timestamp_ns,
+                    future_timestamp_ns=quote.get("timestamp_ns"), now_ns=now_ns,
+                )
+            except (TypeError, ValueError) as exc:
+                by_underlying[contract.underlying].append({
+                    "expiry": contract.expiry.isoformat(), "symbol": contract.symbol,
+                    "status": "INVALID_QUOTE", "signals_allowed": False, "error": str(exc),
+                })
+                continue
+            result.update({"expiry": contract.expiry.isoformat(), "symbol": contract.symbol})
+            history = self._basis_histories.get(f"{contract.underlying}:{contract.expiry.isoformat()}")
+            if history is not None and result.get("fresh"):
+                history.add({**result, "timestamp_ns": max(spot.timestamp_ns, quote["timestamp_ns"])})
+                result["history"] = history.snapshot(now_ns)
+            by_underlying[contract.underlying].append(result)
+        self._basis_analysis = {
+            symbol: {
+                "status": "LIVE" if any(item.get("status") == "LIVE" for item in items) else
+                          "STALE" if items and any(item.get("status") == "STALE" for item in items) else
+                          "WAITING_FOR_TICKS",
+                "expiry_contracts": items,
+                "signals_allowed": False,
+                "note": "Context only; never independently authorizes an IV signal or order.",
+            }
+            for symbol, items in by_underlying.items()
+        }
+
     def _refresh_equity_pressure(self, now_ns: int) -> None:
         if self.equity_pressure_enabled and self.equity_baskets:
             snapshots: dict[str, dict[str, Any]] = {}
@@ -616,6 +677,7 @@ class IVSkewFlipRuntime:
                 continue
             self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
+        self._refresh_basis_analysis(now_ns)
         self._refresh_equity_pressure(now_ns)
         self._evaluate_early_move(now_ns)
         self._maybe_evaluate(now, now_ns)
@@ -657,6 +719,7 @@ class IVSkewFlipRuntime:
             equity_pressure_by_underlying = {
                 symbol: dict(value) for symbol, value in self._equity_pressure_by_underlying.items()
             }
+            basis_analysis = {symbol: dict(value) for symbol, value in self._basis_analysis.items()}
         return {
             "status": "STOPPING" if self._stopping else ("RUNNING" if started else "STOPPED"),
             "consumer": "iv-skew-flip",
@@ -672,6 +735,8 @@ class IVSkewFlipRuntime:
             },
             "equity_pressure_by_underlying": equity_pressure_by_underlying,
             "spot_feed": self.spot_feed.snapshot(),
+            "index_future_feed": self.future_feed.snapshot(),
+            "spot_future_basis": basis_analysis,
             "option_chains": {
                 stream_id: {
                     "symbol": config.symbol,
@@ -717,6 +782,7 @@ class IVSkewFlipRuntime:
         for feed in feeds:
             feed.stop()
         self.spot_feed.stop()
+        self.future_feed.stop()
         if self._equity_feed is not None:
             self._equity_feed.stop()
             self._equity_feed = None
@@ -731,6 +797,9 @@ class IVSkewFlipRuntime:
             self._option_feeds.clear()
             self._universe_tokens.clear()
             self._rows_by_stream.clear()
+            self._future_contracts = ()
+            self._basis_histories.clear()
+            self._basis_analysis.clear()
             self._signals.clear()
             self._early_move.clear()
             if self.equity_pressure_enabled and self.equity_basket:
