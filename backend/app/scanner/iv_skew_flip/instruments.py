@@ -41,17 +41,39 @@ def _canonical_rows_digest(rows: list[dict[str, Any]]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _positive_master_number(value: Any, *, integer: bool = False) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return (
+        math.isfinite(number)
+        and number > 0
+        and (not integer or number.is_integer())
+    )
+
+
 def _validate_rows(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list) or not payload:
         raise ValueError("Angel One instrument master is empty or invalid")
-    # Do not silently discard malformed entries: a truncated/corrupt master
-    # must not be promoted to a valid cache or used for token resolution.
-    if any(
-        not isinstance(row, dict)
-        or not all(str(row.get(key, "")).strip() for key in ("symbol", "exch_seg", "token"))
-        for row in payload
-    ):
-        raise ValueError("Angel One instrument master contains malformed or incomplete rows")
+
+    # Validate every record without coercing nulls (str(None) is truthy) or
+    # accepting booleans/NaN as identifiers. Angel One tokens are numeric.
+    for row in payload:
+        if not isinstance(row, dict):
+            raise ValueError("Angel One instrument master contains malformed or incomplete rows")
+        symbol = row.get("symbol")
+        exchange = row.get("exch_seg")
+        token = row.get("token")
+        if (
+            not isinstance(symbol, str) or not symbol.strip()
+            or not isinstance(exchange, str) or not exchange.strip()
+            or isinstance(token, bool) or token is None
+            or not str(token).strip().isdigit() or int(token) <= 0
+        ):
+            raise ValueError("Angel One instrument master contains malformed or incomplete rows")
 
     rows = payload
     missing = []
@@ -61,7 +83,9 @@ def _validate_rows(payload: Any) -> list[dict[str, Any]]:
             if str(row.get("exch_seg", "")).strip().upper() == "NFO"
             and str(row.get("instrumenttype", "")).strip().upper() == "OPTIDX"
             and str(row.get("name", "")).strip().upper() == underlying
-            and all(str(row.get(key, "")).strip() for key in ("expiry", "strike", "lotsize"))
+            and _positive_master_number(row.get("strike"))
+            and _positive_master_number(row.get("lotsize"), integer=True)
+            and _valid_option_expiry(row.get("expiry"))
         ]
         indices = [
             row for row in rows
@@ -83,6 +107,16 @@ def _validate_rows(payload: Any) -> list[dict[str, Any]]:
     # Ensure the exact payload can be hashed deterministically before use.
     _canonical_rows_digest(rows)
     return rows
+
+
+def _valid_option_expiry(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        datetime.strptime(value.strip().upper(), "%d%b%Y")
+        return True
+    except ValueError:
+        return False
 
 
 def _write_snapshot(rows: list[dict[str, Any]]) -> None:
