@@ -1,7 +1,7 @@
 """Import the latest official NSE Indices NIFTY and BANKNIFTY monthly baskets.
 
-Run from the backend virtualenv on the VPS:
-    python -m scripts.import_iv_official_baskets
+Run from the activated backend virtualenv on the VPS:
+    cd /opt/Algo-Trading/backend && python -m scripts.import_iv_official_baskets
 
 This is an explicit operator CLI. It never enables the IV runner or trading.
 Both indexes are fully validated and token-resolved before one DB transaction.
