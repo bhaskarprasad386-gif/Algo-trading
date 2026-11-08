@@ -113,7 +113,7 @@ def test_alternate_master_rejects_missing_nse_index_token(monkeypatch):
             return rows
 
     monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: Response())
-    with pytest.raises(RuntimeError, match="no recent validated snapshot"):
+    with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
         loader.download_iv_instruments(master)
 
 
@@ -128,7 +128,7 @@ def test_alternate_master_rejects_non_list_payload(monkeypatch):
             return {"instruments": valid_rows()}
 
     monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: Response())
-    with pytest.raises(RuntimeError, match="no recent validated snapshot"):
+    with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
         loader.download_iv_instruments(master)
 
 
@@ -173,7 +173,7 @@ def test_stale_or_incomplete_snapshot_is_never_used(monkeypatch, tmp_path):
     )
     master = FakeMaster(error=TimeoutError("primary timeout"))
 
-    with pytest.raises(RuntimeError, match="no recent validated snapshot"):
+    with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
         loader.download_iv_instruments(master)
 
 
@@ -191,7 +191,7 @@ def test_total_master_failure_exposes_both_source_errors(monkeypatch, tmp_path):
     message = str(exc.value)
     assert "primary Angel One source failed [TimeoutError: primary host timed out]" in message
     assert "alternate Angel One source failed [TimeoutError: alternate host timed out]" in message
-    assert "no recent validated snapshot" in message
+    assert "no recent integrity-checked IV snapshot" in message
 
 
 
