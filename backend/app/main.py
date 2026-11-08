@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import json
+import os
 from pydantic import BaseModel
 import asyncio
 import queue
@@ -57,6 +58,7 @@ from app.scanner.live_synthetic_trace_routes import router as live_synthetic_tra
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
+from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
 from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
@@ -1757,7 +1759,29 @@ def _start_iv_skew_flip_runtime():
             # A fully stopped runtime may remain registered after an interrupted
             # transition. Clear it before constructing the next isolated runtime.
             iv_skew_flip_runtime = None
-        runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
+        pressure_enabled = os.getenv("IV_EQUITY_PRESSURE_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+        if pressure_enabled:
+            with SessionLocal() as db:
+                basket_records = (
+                    db.query(IVConstituentBasketVersion)
+                    .filter(IVConstituentBasketVersion.underlying.in_(("NIFTY", "BANKNIFTY")))
+                    .order_by(
+                        IVConstituentBasketVersion.effective_date.desc(),
+                        IVConstituentBasketVersion.created_at.desc(),
+                        IVConstituentBasketVersion.id.desc(),
+                    )
+                    .all()
+                )
+            runtime_baskets = load_verified_runtime_baskets(
+                basket_records, as_of=datetime.now(timezone.utc).date()
+            )
+            runtime = IVSkewFlipRuntime(
+                instrument_master=instrument_master,
+                equity_pressure_enabled=True,
+                equity_baskets=runtime_baskets,
+            )
+        else:
+            runtime = IVSkewFlipRuntime(instrument_master=instrument_master)
         try:
             snapshot = runtime.start()
         except Exception:
