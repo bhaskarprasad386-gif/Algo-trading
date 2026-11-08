@@ -120,3 +120,47 @@ def test_top_n_rejects_invalid_values():
                 rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster(),
                 underlyings=("NIFTY",), top_n=invalid,
             )
+
+
+
+def test_top_ten_selection_applies_independently_to_nifty_and_banknifty():
+    nifty_symbols = [f"N{i:02d}" for i in range(12)]
+    bank_symbols = [f"B{i:02d}" for i in range(12)]
+    # Descending weights sum to 100; final two are intentionally smallest.
+    weights = [16, 14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 6]
+    # Keep the fixture valid and deterministic while ensuring top ten are obvious.
+    weights = [18, 14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 4]
+    tokens = {
+        symbol: str(1000 + index)
+        for index, symbol in enumerate(nifty_symbols + bank_symbols)
+    }
+
+    class Master:
+        def resolve_cash_instrument(self, symbol, exchange):
+            assert exchange == "NSE"
+            return {"token": tokens[symbol]}
+
+    records = [
+        record("NIFTY", [
+            {"symbol": symbol, "weight": weight}
+            for symbol, weight in zip(nifty_symbols, weights)
+        ], {symbol: tokens[symbol] for symbol in nifty_symbols}),
+        record("BANKNIFTY", [
+            {"symbol": symbol, "weight": weight}
+            for symbol, weight in zip(bank_symbols, weights)
+        ], {symbol: tokens[symbol] for symbol in bank_symbols}, record_id=2),
+    ]
+
+    baskets = load_verified_runtime_baskets(
+        records,
+        as_of=date(2026, 11, 8),
+        instrument_master=Master(),
+        underlyings=("NIFTY", "BANKNIFTY"),
+        top_n=10,
+    )
+
+    assert set(baskets) == {"NIFTY", "BANKNIFTY"}
+    assert len(baskets["NIFTY"]) == 10
+    assert len(baskets["BANKNIFTY"]) == 10
+    assert [item.symbol for item in baskets["NIFTY"]] == nifty_symbols[:10]
+    assert [item.symbol for item in baskets["BANKNIFTY"]] == bank_symbols[:10]
