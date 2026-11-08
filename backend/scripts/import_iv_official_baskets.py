@@ -20,6 +20,7 @@ import requests
 
 from app.core.database import SessionLocal
 from app.market_data.instruments import InstrumentMaster
+from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.official_weight_pdf import parse_official_weight_pdf_archive
 from app.scanner.iv_skew_flip.weight_store import persist_validated_basket_version
 
@@ -109,26 +110,26 @@ def _fetch_roster(session: requests.Session, url: str) -> tuple[tuple[str, ...],
 
 
 def _load_current_instrument_master(master: InstrumentMaster) -> list[dict]:
-    """Retry Angel One's documented master URL once with a longer timeout."""
+    """Load a validated Angel One master using the IV-isolated failover path.
+
+    The IV loader tries the shared primary download, Angel One's current
+    official alternate host, and then a recent validated read-only snapshot.
+    Its fallback is instance-local and does not mutate the process-wide cache
+    used by Box Spread or other market-data consumers.
+    """
     try:
-        rows = master.download()
-    except Exception as primary_error:
-        print(
-            "Angel One instrument-master request failed; retrying the same "
-            "documented official URL with an extended timeout: "
-            f"{type(primary_error).__name__}: {primary_error}"
-        )
-        try:
-            rows = master.download(force=True, timeout=(15, 120))
-        except Exception as retry_error:
-            raise RuntimeError(
-                "Angel One official instrument master failed on both attempts; "
-                "no basket was imported. "
-                f"First attempt: {primary_error}; retry: {retry_error}"
-            ) from retry_error
+        rows = download_iv_instruments(master)
+    except Exception as exc:
+        raise RuntimeError(
+            "Angel One instrument master unavailable from the primary and "
+            "official alternate sources, and no recent validated snapshot "
+            f"could be used; no basket was imported: {type(exc).__name__}: {exc}"
+        ) from exc
     if not isinstance(rows, list) or not rows:
-        raise RuntimeError("Angel One official instrument master is empty; no basket was imported")
-    print(f"Official Angel One instrument master loaded: rows={len(rows)}")
+        raise RuntimeError(
+            "Angel One official instrument master is empty; no basket was imported"
+        )
+    print(f"Validated Angel One instrument master loaded: rows={len(rows)}")
     return rows
 
 
