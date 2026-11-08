@@ -155,46 +155,40 @@ class IVSkewFlipRuntime:
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
         if self.equity_pressure_enabled and self.equity_baskets:
-            started_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
-            current_feed: IVWeightedEquityFeedAdapter | None = None
             try:
                 for underlying, basket in self.equity_baskets.items():
-                    current_feed = self.equity_feed_factory_by_underlying(underlying)
-                    current_feed.start(self.instrument_master, basket)
-                    started_feeds[underlying] = current_feed
-                    current_feed = None
-            except Exception:
-                # The failing adapter may have partially registered its
-                # consumer before raising; release it as well as prior feeds.
-                if current_feed is not None:
-                    try:
-                        current_feed.stop()
-                    except Exception:
-                        pass
-                for equity_feed in started_feeds.values():
-                    try:
-                        equity_feed.stop()
-                    except Exception:
-                        pass
+                    equity_feed = self.equity_feed_factory_by_underlying(underlying)
+                    # Retain ownership before start(): adapters may partially
+                    # register a shared-feed consumer and then raise.
+                    self._equity_feeds[underlying] = equity_feed
+                    equity_feed.start(self.instrument_master, basket)
+            except Exception as exc:
+                cleanup = self.stop()
+                if cleanup.get("status") != "STOPPED":
+                    raise RuntimeError(
+                        "IV equity-feed startup failed and cleanup is pending; retry stop before starting again"
+                    ) from exc
                 raise
-            self._equity_feeds = started_feeds
         elif self.equity_pressure_enabled:
             equity_feed = self.equity_feed_factory()
+            self._equity_feed = equity_feed
             try:
                 equity_feed.start(self.instrument_master, self.equity_basket)
-            except Exception:
-                equity_feed.stop()
+            except Exception as exc:
+                cleanup = self.stop()
+                if cleanup.get("status") != "STOPPED":
+                    raise RuntimeError(
+                        "IV equity-feed startup failed and cleanup is pending; retry stop before starting again"
+                    ) from exc
                 raise
-            self._equity_feed = equity_feed
         try:
             self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
-        except Exception:
-            if self._equity_feed is not None:
-                self._equity_feed.stop()
-                self._equity_feed = None
-            for equity_feed in tuple(self._equity_feeds.values()):
-                equity_feed.stop()
-            self._equity_feeds.clear()
+        except Exception as exc:
+            cleanup = self.stop()
+            if cleanup.get("status") != "STOPPED":
+                raise RuntimeError(
+                    "IV spot-feed startup failed and cleanup is pending; retry stop before starting again"
+                ) from exc
             raise
         with self._lock:
             self._rows_by_stream = rows
