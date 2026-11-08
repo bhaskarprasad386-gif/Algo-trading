@@ -353,3 +353,51 @@ def test_runtime_stop_attempts_every_resource_and_retries_failed_cleanup():
     assert runtime._samplers == {}
     assert runtime._option_feeds == {}
     assert runtime._equity_feed is None
+
+
+def test_runtime_start_retains_partially_registered_spot_feed_when_rollback_fails(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    rows = (
+        make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
+    )
+    monkeypatch.setattr(runtime_module, "download_iv_instruments", lambda master: rows)
+
+    class PartiallyFailingSpotFeed(FakeSpotFeed):
+        def __init__(self):
+            super().__init__()
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start(self, master, symbols):
+            self.start_calls += 1
+            raise RuntimeError("spot subscription partially registered")
+
+        def stop(self):
+            self.stop_calls += 1
+            if self.stop_calls == 1:
+                raise RuntimeError("temporary spot rollback failure")
+
+    spot = PartiallyFailingSpotFeed()
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=spot,
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+
+    try:
+        runtime.start()
+    except RuntimeError as exc:
+        assert "cleanup is pending" in str(exc)
+    else:
+        raise AssertionError("partially failed spot startup must be rejected")
+
+    assert spot.start_calls == 1
+    assert spot.stop_calls == 1
+    assert runtime.snapshot()["status"] == "STOPPING"
+
+    stopped = runtime.stop()
+    assert stopped["status"] == "STOPPED"
+    assert spot.stop_calls == 2
