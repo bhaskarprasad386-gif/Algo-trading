@@ -113,35 +113,31 @@ def test_rejects_missing_official_index_pdf(monkeypatch):
 
 
 
-def test_current_master_loader_retries_same_official_url_with_longer_timeout():
+def test_current_master_loader_uses_iv_isolated_official_failover(monkeypatch):
     from scripts import import_iv_official_baskets as importer
 
     rows = [{"symbol": "AAA", "exch_seg": "NSE", "token": "123"}]
+    master = object()
+    calls = []
 
-    class FakeMaster:
-        def __init__(self):
-            self.calls = []
+    def fake_download_iv_instruments(received_master):
+        calls.append(received_master)
+        return rows
 
-        def download(self, *, force=False, timeout=30):
-            self.calls.append((force, timeout))
-            if len(self.calls) == 1:
-                raise TimeoutError("primary request timeout")
-            return rows
-
-    master = FakeMaster()
+    monkeypatch.setattr(importer, "download_iv_instruments", fake_download_iv_instruments)
     assert importer._load_current_instrument_master(master) == rows
-    assert master.calls == [(False, 30), (True, (15, 120))]
+    assert calls == [master]
 
 
-def test_current_master_loader_fails_closed_after_retry_failure():
+def test_current_master_loader_fails_closed_when_all_official_sources_fail(monkeypatch):
     from scripts import import_iv_official_baskets as importer
 
-    class FakeMaster:
-        def download(self, *, force=False, timeout=30):
-            raise TimeoutError("Angel One unavailable")
+    def unavailable(_master):
+        raise RuntimeError("primary and alternate hosts timed out; no recent validated snapshot")
 
-    with pytest.raises(RuntimeError, match="failed on both attempts"):
-        importer._load_current_instrument_master(FakeMaster())
+    monkeypatch.setattr(importer, "download_iv_instruments", unavailable)
+    with pytest.raises(RuntimeError, match="no recent validated snapshot.*no basket was imported"):
+        importer._load_current_instrument_master(object())
 
 
 def test_fetch_roster_accepts_metadata_and_normalises_symbol_header(monkeypatch):
