@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import io
 import zipfile
 
@@ -153,3 +153,24 @@ def test_token_mapping_normalizes_symbol_keys_and_rejects_normalization_collisio
         validate_basket_token_mapping(
             basket_result, {"AAA": "101", " aaa ": "202", "BBB": "303"}
         )
+
+
+@pytest.mark.parametrize(
+    "overrides,error",
+    [
+        ({"as_of": datetime(2026, 11, 8, 12, 0)}, "as_of must be a calendar date"),
+        ({"effective_date": datetime(2026, 11, 1, 12, 0)}, "effective_date must be an ISO date"),
+        ({"expected_symbols": None}, "authoritative expected constituent roster"),
+        ({"source_name": 123}, "source name and HTTPS"),
+        ({"source_url": None}, "source name and HTTPS"),
+        ({"filename": ""}, "upload filename"),
+    ],
+)
+def test_parser_rejects_ambiguous_or_malformed_metadata(overrides, error):
+    with pytest.raises(ValueError, match=error):
+        parse_official_weight_basket(CSV, **{**BASE, **overrides})
+
+
+def test_parser_rejects_non_bytes_upload_content():
+    with pytest.raises(ValueError, match="upload content must be bytes"):
+        parse_official_weight_basket("symbol,weight", **BASE)
