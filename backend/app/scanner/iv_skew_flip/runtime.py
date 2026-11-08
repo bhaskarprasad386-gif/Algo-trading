@@ -81,8 +81,8 @@ class IVSkewFlipRuntime:
             str(symbol).strip().upper(): tuple(items)
             for symbol, items in (equity_baskets or {}).items()
         }
-        if self.equity_baskets and set(self.equity_baskets) != {"NIFTY", "BANKNIFTY"}:
-            raise ValueError("dual-index equity pressure requires both NIFTY and BANKNIFTY baskets")
+        if self.equity_baskets and set(self.equity_baskets) - {"NIFTY", "BANKNIFTY"}:
+            raise ValueError("equity pressure supports only NIFTY and BANKNIFTY baskets")
         if any(not items for items in self.equity_baskets.values()):
             raise ValueError("each index requires a non-empty verified weight basket")
         if self.equity_pressure_enabled and not self.equity_basket and not self.equity_baskets:
