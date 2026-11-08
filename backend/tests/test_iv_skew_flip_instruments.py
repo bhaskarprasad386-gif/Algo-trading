@@ -206,11 +206,15 @@ def test_stale_or_incomplete_snapshot_is_never_used(monkeypatch, tmp_path):
 
 def test_total_master_failure_exposes_both_source_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(loader, "_cache_path", lambda: tmp_path / "missing.json")
-    monkeypatch.setattr(
-        loader.requests, "get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("alternate host timed out")),
-    )
-    master = FakeMaster(error=TimeoutError("primary host timed out"))
+    def fail_both_hosts(url, **kwargs):
+        if url == loader.PRIMARY_MASTER_URL:
+            raise TimeoutError("primary host timed out")
+        if url == loader.ALTERNATE_MASTER_URL:
+            raise TimeoutError("alternate host timed out")
+        raise AssertionError(f"unexpected instrument-master URL: {url}")
+
+    monkeypatch.setattr(loader.requests, "get", fail_both_hosts)
+    master = FakeMaster()
 
     with pytest.raises(RuntimeError) as exc:
         loader.download_iv_instruments(master)
