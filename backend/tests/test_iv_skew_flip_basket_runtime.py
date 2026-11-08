@@ -53,7 +53,7 @@ def test_missing_one_index_fails_closed():
         record("NIFTY", [{"symbol": "AAA", "weight": 100.0}], {"AAA": "101"}),
     ]
 
-    with pytest.raises(RuntimeError, match="both NIFTY and BANKNIFTY"):
+    with pytest.raises(RuntimeError, match="verified NIFTY and BANKNIFTY baskets are required"):
         load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
 
 
