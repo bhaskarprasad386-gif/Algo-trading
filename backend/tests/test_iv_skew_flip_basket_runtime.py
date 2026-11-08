@@ -7,6 +7,12 @@ import pytest
 from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
 
 
+class FakeMaster:
+    def resolve_cash_instrument(self, symbol, exchange):
+        assert exchange == "NSE"
+        return {"token": {"AAA": "101", "BBB": "102", "CCC": "201", "DDD": "202"}.get(symbol, "")}
+
+
 def record(symbol, components, tokens, *, effective=date(2026, 11, 7), record_id=1):
     return SimpleNamespace(
         id=record_id,
@@ -35,7 +41,7 @@ def test_loads_both_current_verified_index_baskets():
                {"CCC": "201", "DDD": "202"}, record_id=2),
     ]
 
-    baskets = load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8))
+    baskets = load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
 
     assert set(baskets) == {"NIFTY", "BANKNIFTY"}
     assert [(item.symbol, item.weight) for item in baskets["NIFTY"]] == [("AAA", 60.0), ("BBB", 40.0)]
@@ -48,7 +54,7 @@ def test_missing_one_index_fails_closed():
     ]
 
     with pytest.raises(RuntimeError, match="both NIFTY and BANKNIFTY"):
-        load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8))
+        load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
 
 
 def test_stale_or_incomplete_registry_fails_closed():
@@ -59,7 +65,7 @@ def test_stale_or_incomplete_registry_fails_closed():
     ]
 
     with pytest.raises(RuntimeError, match="NIFTY"):
-        load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8))
+        load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
 
 
 def test_invalid_token_mapping_is_rejected_even_after_registry_lookup():
@@ -69,4 +75,15 @@ def test_invalid_token_mapping_is_rejected_even_after_registry_lookup():
     ]
 
     with pytest.raises(RuntimeError, match="NIFTY"):
-        load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8))
+        load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
+
+
+
+def test_current_instrument_master_token_mismatch_fails_closed():
+    rows = [
+        record("NIFTY", [{"symbol": "AAA", "weight": 100.0}], {"AAA": "999"}),
+        record("BANKNIFTY", [{"symbol": "BBB", "weight": 100.0}], {"BBB": "102"}),
+    ]
+
+    with pytest.raises(RuntimeError, match="stale for AAA"):
+        load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
