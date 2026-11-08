@@ -201,3 +201,61 @@ def test_dual_index_pressure_stop_stops_both_owned_feeds():
     assert runtime._equity_feeds == {}
     assert set(result["equity_pressure_by_underlying"]) == {"NIFTY", "BANKNIFTY"}
     assert all(not item["signals_allowed"] for item in result["equity_pressure_by_underlying"].values())
+
+
+
+def test_enabled_dual_index_early_move_waits_for_fresh_pressure_confirmation():
+    nifty = (WeightedEquity("AAA", 100.0),)
+    bank = (WeightedEquity("BBB", 100.0),)
+    runtime = make_runtime(
+        equity_pressure_enabled=True,
+        equity_baskets={"NIFTY": nifty, "BANKNIFTY": bank},
+    )
+    option_result = {
+        "state": "PRE_MOVE", "direction": "BULLISH", "signals_allowed": True,
+        "reason": "option pressure leads spot",
+    }
+
+    blocked = runtime._apply_equity_pressure_confirmation("NIFTY", option_result)
+    assert blocked["state"] == "WATCH"
+    assert blocked["signals_allowed"] is False
+    assert blocked["option_signal_state"] == "PRE_MOVE"
+
+    runtime._equity_pressure_by_underlying["NIFTY"] = {
+        "status": "LIVE", "direction": "BULLISH", "signals_allowed": True,
+    }
+    confirmed = runtime._apply_equity_pressure_confirmation("NIFTY", option_result)
+    assert confirmed["state"] == "PRE_MOVE"
+    assert confirmed["signals_allowed"] is True
+    assert confirmed["constituent_pressure_confirmed"] is True
+
+
+def test_enabled_dual_index_early_move_invalidates_opposing_pressure():
+    nifty = (WeightedEquity("AAA", 100.0),)
+    bank = (WeightedEquity("BBB", 100.0),)
+    runtime = make_runtime(
+        equity_pressure_enabled=True,
+        equity_baskets={"NIFTY": nifty, "BANKNIFTY": bank},
+    )
+    runtime._equity_pressure_by_underlying["BANKNIFTY"] = {
+        "status": "LIVE", "direction": "BEARISH", "signals_allowed": True,
+    }
+
+    result = runtime._apply_equity_pressure_confirmation("BANKNIFTY", {
+        "state": "CONFIRMED", "direction": "BULLISH", "signals_allowed": True,
+        "reason": "option pressure",
+    })
+
+    assert result["state"] == "INVALIDATED"
+    assert result["signals_allowed"] is False
+    assert "conflicts" in result["reason"]
+
+
+def test_disabled_dual_index_pressure_does_not_change_legacy_early_move():
+    runtime = make_runtime()
+    original = {
+        "state": "PRE_MOVE", "direction": "BULLISH", "signals_allowed": True,
+        "reason": "option pressure leads spot",
+    }
+
+    assert runtime._apply_equity_pressure_confirmation("NIFTY", original) == original
