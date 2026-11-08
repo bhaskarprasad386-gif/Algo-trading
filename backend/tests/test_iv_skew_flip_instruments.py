@@ -122,7 +122,10 @@ def test_alternate_official_master_is_validated_without_mutating_shared_cache(mo
     assert master._symbol_exchange_index is None
     assert FakeMaster._cached_instruments is shared_rows
     assert FakeMaster._cached_snapshot_date == "2000-01-01"
-    assert calls == [(loader.ALTERNATE_MASTER_URL, (5, 20))]
+    assert calls == [
+        (loader.PRIMARY_MASTER_URL, (5, 20)),
+        (loader.ALTERNATE_MASTER_URL, (5, 20)),
+    ]
 
 
 def test_alternate_master_rejects_missing_nse_index_token(monkeypatch):
