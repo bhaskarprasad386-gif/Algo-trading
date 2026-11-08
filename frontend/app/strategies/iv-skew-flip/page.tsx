@@ -45,16 +45,27 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const feed = chain.option_feed ?? {};
   const sampler = chain.sampler ?? {};
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
-  const calls = metrics.filter(x => x.option_type === "CE" && n(x.iv) !== null);
-  const puts = metrics.filter(x => x.option_type === "PE" && n(x.iv) !== null);
   const avg = (rows: Row[]) => rows.length ? rows.reduce((s, x) => s + Number(x.iv), 0) / rows.length : null;
-  const callIv = avg(calls), putIv = avg(puts);
-  const skew = callIv !== null && putIv !== null ? callIv - putIv : null;
   const spotPrice = n(spot.price);
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
-  const strikes = resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null);
-  const atm = spotPrice !== null && strikes.length ? strikes.reduce((best, x) => Math.abs(x - spotPrice) < Math.abs(best - spotPrice) ? x : best, strikes[0]) : null;
-  const atmPair = metrics.filter(x => x.strike === atm);
+  const strikes = (resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null)).sort((a,b)=>a-b);
+  const atmIndex = spotPrice !== null && strikes.length ? strikes.reduce((best, x, index) => Math.abs(x - spotPrice) < Math.abs(strikes[best] - spotPrice) ? index : best, 0) : -1;
+  const atm = atmIndex >= 0 ? strikes[atmIndex] : null;
+  const byContract = new Map(metrics.filter(x => n(x.iv) !== null).map(x => [`${n(x.strike)}:${String(x.option_type)}`, x]));
+  const matchedSkewPairs: number[] = [];
+  if (atmIndex >= 0) {
+    for (const offset of [0, 1, 2]) {
+      const call = byContract.get(`${strikes[atmIndex + offset]}:CE`);
+      const put = byContract.get(`${strikes[atmIndex - offset]}:PE`);
+      if (call && put) matchedSkewPairs.push(Number(call.iv) - Number(put.iv));
+    }
+  }
+  // Match the backend engine: ATM and up to two equidistant OTM CE/PE pairs.
+  // Do not average the whole call and put wings, which can bias the displayed skew.
+  const skew = matchedSkewPairs.length >= 2
+    ? matchedSkewPairs.reduce((sum, value) => sum + value, 0) / matchedSkewPairs.length
+    : null;
+  const atmPair = metrics.filter(x => x.strike === atm && n(x.iv) !== null);
   const atmIv = atmPair.length ? avg(atmPair) : null;
   const signals = chain.signals && typeof chain.signals === "object" ? chain.signals as Row : {};
   const strategies = Array.isArray(signals.strategies) ? signals.strategies as Row[] : [];
@@ -205,7 +216,7 @@ export default function IVSkewFlipPage() {
         </div>
       </>}
     </section>
-    <section className="rounded-2xl border theme-border theme-surface p-4"><h2 className="font-semibold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=><div key={key} className="rounded-xl border theme-border p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>)}</div></section>
+    <section className="rounded-2xl border theme-border theme-surface p-4"><h2 className="font-semibold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=>{const finalSignal=value.confluence&&typeof value.confluence==="object"?value.confluence as Row:{};return <div key={key} className="rounded-xl border theme-border p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b><div className="mt-2 rounded-lg border theme-border bg-blue-500/5 p-2"><div className="flex justify-between gap-2 text-xs"><span className="font-semibold">FINAL CONFLUENCE</span><b>{String(finalSignal.direction??"—")} • {String(finalSignal.status??"WAITING")}</b></div><p className="mt-1 text-[11px] theme-muted">{String(finalSignal.reason??"Waiting for independent confirmations")}</p><p className="mt-1 text-[10px] theme-muted">Signal gate: {value.signals_allowed===true?"ALLOWED":"BLOCKED"} • Data: {value.data_ready===true?"READY":"WAITING"}</p></div>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>})}</div></section>
     <p className="text-xs theme-muted">Live data appears only after fresh Angel One ticks arrive. Select ON or OFF and press Save to control the backend runner. Runner status is reported by the backend; no broker orders are placed.</p>
   </main>;
 }

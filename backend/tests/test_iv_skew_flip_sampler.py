@@ -379,3 +379,21 @@ def test_sampler_keeps_live_metrics_and_retries_history_after_storage_failure():
     assert second["history_samples_by_token"] == {"retry-ce": 1}
     assert len(attempts) == 2
     assert "database temporarily unavailable" in second["history_persistence_error"]
+
+
+def test_sampler_does_not_label_wide_book_as_a_valid_iv_input():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 90.0, 110.0, 10000, 10, "wide-book",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    metric = result["live_metrics"][0]
+    assert metric["iv"] is None
+    assert metric["iv_live"] is False
+    assert metric["iv_input"] is None

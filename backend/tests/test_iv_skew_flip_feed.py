@@ -8,18 +8,21 @@ from app.scanner.iv_skew_flip.universe import resolve_option_universe
 
 def _universe():
     rows = []
-    for strike in range(21800, 22101, 50):
-        for side in ("CE", "PE"):
-            rows.append({
-                "exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY",
-                "expiry": "12Nov2026", "symbol": f"NIFTY12NOV26{int(strike)}{side}",
-                "strike": str(strike * 100), "token": f"{strike}-{side}", "lotsize": "75",
-            })
+    # Both nearest weekly and monthly expiries are required to classify the
+    # nearest date safely; a single-expiry fixture is ambiguous.
+    for expiry_index, expiry in enumerate(("12Nov2026", "26Nov2026")):
+        expiry_code = "12NOV26" if expiry_index == 0 else "26NOV26"
+        for strike in range(21800, 22101, 50):
+            for side in ("CE", "PE"):
+                rows.append({
+                    "exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY",
+                    "expiry": expiry, "symbol": f"NIFTY{expiry_code}{int(strike)}{side}",
+                    "strike": str(strike * 100), "token": f"{expiry_index}-{strike}-{side}", "lotsize": "75",
+                })
     return resolve_option_universe(
         rows, underlying="NIFTY", expiry_type="WEEKLY",
         spot=21950, today=date(2026, 11, 6),
     )
-
 
 class FakeFeed:
     def __init__(self):

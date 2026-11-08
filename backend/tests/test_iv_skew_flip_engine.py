@@ -95,15 +95,27 @@ def test_iv_flip_without_prior_opposite_side_does_not_signal():
     assert signal.direction is None
 
 
-def test_confluence_requires_two_same_direction_signals():
+def test_confluence_does_not_double_count_correlated_iv_surface_signals():
     rows = [
         Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
         Signal("IV_FLIP", "BULLISH", 0.2, 0.15, "SIGNAL", "test"),
         Signal("GAMMA_BLAST", "BEARISH", 6.0, 5.0, "SIGNAL", "test"),
     ]
     result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_requires_independent_iv_and_gamma_families():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BULLISH", 0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", "BULLISH", 6.0, 5.0, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
     assert result.status == "SIGNAL"
     assert result.direction == "BULLISH"
+    assert result.value == 2.0
 
 
 def test_confluence_does_not_mix_opposite_directions():
@@ -180,3 +192,105 @@ def test_iv_skew_does_not_shift_atm_when_atm_quotes_are_stale():
     signal = evaluate_skew(stale_atm, 22000, now, now_ns, config)
     assert signal.status == "WAITING"
     assert "ATM CE and PE" in signal.reason
+
+
+def test_option_mark_rejects_wide_book_instead_of_falling_back_to_ltp():
+    quote = OptionQuote(
+        "NIFTY", "2026-11-12", 22000, "CE", 1,
+        ltp=100.0, bid=90.0, ask=110.0, token="wide-book",
+    )
+    assert quote.mark is None
+
+
+def test_confluence_suppresses_conflicting_signals_within_iv_surface_family():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BEARISH", -0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", "BULLISH", 6.0, 5.0, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_ignores_unreviewed_strategy_names():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("UNREVIEWED_ALPHA", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("UNREVIEWED_BETA", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_rejects_invalid_required_family_count():
+    import pytest
+
+    rows = [Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test")]
+    with pytest.raises(ValueError):
+        confluence(rows, required=True)
+    with pytest.raises(ValueError):
+        confluence(rows, required=0)
+
+
+@pytest.mark.parametrize("invalid_spot", [True, False, float("nan"), float("inf"), 0, -1])
+def test_iv_flip_rejects_invalid_spot(invalid_spot):
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_flip(quotes, invalid_spot, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "valid spot" in signal.reason
+
+
+def test_iv_flip_rejects_duplicate_fresh_atm_contracts():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    atm_call = next(q for q in quotes if q.strike == 22000 and q.option_type == "CE")
+    quotes.append(replace(atm_call, token="duplicate-atm-call"))
+    signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "duplicate fresh ATM" in signal.reason
+
+
+@pytest.mark.parametrize(
+    "bid,ask",
+    [(101.0, 100.0), (0.0, 100.0), (-1.0, 100.0), (float("nan"), 100.0)],
+)
+def test_option_mark_rejects_invalid_two_sided_book_without_ltp_fallback(bid, ask):
+    quote = OptionQuote(
+        "NIFTY", "2026-11-12", 22000, "CE", 1,
+        ltp=100.0, bid=bid, ask=ask, token="invalid-book",
+    )
+    assert quote.mark is None
+
+
+@pytest.mark.parametrize("invalid_spot", [True, False, float("nan"), float("inf"), 0, -1])
+def test_iv_skew_rejects_invalid_spot(invalid_spot):
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_skew(quotes, invalid_spot, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "valid spot" in signal.reason
+
+
+
+def test_iv_skew_waits_when_strike_ladder_is_not_equidistant():
+    quotes, now, now_ns, config = _synthetic_chain()
+    quotes = [
+        quote for quote in quotes
+        if not (quote.strike == 22050)
+    ]
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "non-uniform strike ladder" in signal.reason
+
+
+def test_iv_skew_rejects_duplicate_fresh_contract_instead_of_overwriting():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    atm_call = next(q for q in quotes if q.strike == 22000 and q.option_type == "CE")
+    quotes.append(replace(atm_call, token="duplicate-atm-call"))
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "duplicate fresh option contract" in signal.reason

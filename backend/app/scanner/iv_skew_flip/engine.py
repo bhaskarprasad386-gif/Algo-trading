@@ -31,8 +31,14 @@ class OptionQuote:
     @property
     def mark(self) -> float | None:
         if self.bid is not None and self.ask is not None:
-            if isfinite(self.bid) and isfinite(self.ask) and 0 < self.bid <= self.ask:
-                return (self.bid + self.ask) / 2.0
+            # When both sides are supplied, the book must itself be valid.
+            # Crossed, zero, non-finite or very wide books are rejected rather
+            # than hidden by falling back to an LTP from the same tick.
+            if not isfinite(self.bid) or not isfinite(self.ask) or not (0 < self.bid <= self.ask):
+                return None
+            midpoint = (self.bid + self.ask) / 2.0
+            spread_pct = (self.ask - self.bid) * 100.0 / midpoint
+            return midpoint if spread_pct <= 8.0 else None
         if self.ltp is not None and isfinite(self.ltp) and self.ltp > 0:
             return self.ltp
         return None
@@ -182,11 +188,18 @@ def evaluate_skew(
     chain = [q for q in quotes if q.underlying.upper() == config.symbol]
     if len({q.expiry for q in chain}) > 1:
         return Signal("IV_SKEW", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
-    if not chain or not isfinite(float(spot)) or spot <= 0:
+    if (
+        not chain or isinstance(spot, bool)
+        or not isinstance(spot, (int, float))
+        or not isfinite(float(spot)) or spot <= 0
+    ):
         return Signal("IV_SKEW", None, None, None, "WAITING", "fresh option chain or valid spot unavailable")
     strikes = sorted({q.strike for q in chain})
-    if not strikes:
+    if len(strikes) < 3:
         return Signal("IV_SKEW", None, None, None, "WAITING", "selected-expiry strike ladder unavailable")
+    strike_steps = [right - left for left, right in zip(strikes, strikes[1:])]
+    if any(step <= 0 for step in strike_steps) or any(abs(step - strike_steps[0]) > 1e-8 for step in strike_steps):
+        return Signal("IV_SKEW", None, None, None, "WAITING", "non-uniform strike ladder; equidistant IV skew pairs unavailable")
     atm_index = min(range(len(strikes)), key=lambda i: abs(strikes[i] - spot))
     fresh_rows = [q for q in chain if _fresh(q, now_ns, config.max_quote_age_seconds)]
     by_key: dict[tuple[float, str], OptionQuote] = {}
@@ -226,13 +239,19 @@ def evaluate_flip(
     chain = [q for q in quotes if q.underlying.upper() == config.symbol]
     if len({q.expiry for q in chain}) > 1:
         return Signal("IV_FLIP", None, None, None, "WAITING", "multiple expiries supplied; isolate the configured expiry first")
-    if not chain or spot <= 0:
-        return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes unavailable")
+    if not chain or isinstance(spot, bool) or not isinstance(spot, (int, float)) or not isfinite(float(spot)) or spot <= 0:
+        return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes or valid spot unavailable")
     # Select ATM from the complete resolved chain, then require both sides at
     # that exact strike to be fresh. Do not silently shift ATM when its ticks stale.
     atm = min({q.strike for q in chain}, key=lambda strike: abs(strike - spot))
     fresh_rows = [q for q in chain if _fresh(q, now_ns, config.max_quote_age_seconds)]
-    pair = {q.option_type.upper(): q for q in fresh_rows if q.strike == atm}
+    pair_rows = [q for q in fresh_rows if q.strike == atm]
+    pair: dict[str, OptionQuote] = {}
+    for quote in pair_rows:
+        side = quote.option_type.upper()
+        if side in pair:
+            return Signal("IV_FLIP", None, None, None, "WAITING", "duplicate fresh ATM option contract")
+        pair[side] = quote
     if "CE" not in pair or "PE" not in pair:
         return Signal("IV_FLIP", None, None, None, "WAITING", "fresh ATM option quotes unavailable: ATM CE and PE pair unavailable")
     years = _expiry_years(pair["CE"].expiry, now)
@@ -297,10 +316,50 @@ def evaluate_gamma_blast(
 
 
 def confluence(signals: Iterable[Signal], required: int = 2) -> Signal:
-    """Emit a directional alert only when >= required independent signals agree."""
-    active = [s for s in signals if s.status == "SIGNAL" and s.direction in {"BULLISH", "BEARISH"}]
-    counts = {direction: sum(s.direction == direction for s in active) for direction in ("BULLISH", "BEARISH")}
+    """Require agreement across independent signal families, not duplicate metrics.
+
+    IV_SKEW and IV_FLIP both derive from the same CE/PE implied-volatility
+    surface, so they count as one IV_SURFACE family. GAMMA_BLAST adds a separate
+    OI/premium-flow family. Repeated signals from one family cannot manufacture
+    confluence.
+    """
+    if isinstance(required, bool) or not isinstance(required, int) or required < 1:
+        raise ValueError("required independent signal families must be a positive integer")
+    active = [
+        signal for signal in signals
+        if signal.status == "SIGNAL" and signal.direction in {"BULLISH", "BEARISH"}
+    ]
+    directions_by_family: dict[str, set[str]] = {}
+    for signal in active:
+        strategy = str(signal.strategy or "").strip().upper()
+        # Only explicitly reviewed signal families may contribute to a
+        # directional decision. Unknown/future strategies must not silently
+        # become independent confirmations by virtue of a new name.
+        family = {
+            "IV_SKEW": "IV_SURFACE",
+            "IV_FLIP": "IV_SURFACE",
+            "GAMMA_BLAST": "OI_PREMIUM_FLOW",
+        }.get(strategy)
+        if family is not None:
+            directions_by_family.setdefault(family, set()).add(signal.direction)
+    # If correlated members of a family disagree (e.g. skew bullish but
+    # flip bearish), suppress that entire family rather than selecting the
+    # convenient member that happens to agree with another indicator.
+    families_by_direction: dict[str, set[str]] = {
+        "BULLISH": set(), "BEARISH": set(),
+    }
+    for family, directions in directions_by_family.items():
+        if len(directions) == 1:
+            direction = next(iter(directions))
+            families_by_direction[direction].add(family)
+    counts = {direction: len(families) for direction, families in families_by_direction.items()}
     winner = max(counts, key=counts.get)
     if counts[winner] >= required:
-        return Signal("CONFLUENCE", winner, float(counts[winner]), float(required), "SIGNAL", f"{counts[winner]} independent strategies agree")
-    return Signal("CONFLUENCE", None, float(max(counts.values())), float(required), "NEUTRAL", "insufficient same-direction confirmations")
+        return Signal(
+            "CONFLUENCE", winner, float(counts[winner]), float(required), "SIGNAL",
+            f"{counts[winner]} independent signal families agree",
+        )
+    return Signal(
+        "CONFLUENCE", None, float(max(counts.values())), float(required), "NEUTRAL",
+        "insufficient agreement across independent signal families",
+    )
