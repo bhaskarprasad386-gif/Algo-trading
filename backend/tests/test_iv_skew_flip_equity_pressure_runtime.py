@@ -315,3 +315,40 @@ def test_dual_index_pressure_rejects_partial_or_malformed_basket_configuration()
                 "BANKNIFTY": (),
             },
         )
+
+
+def test_one_index_pressure_feed_error_does_not_abort_other_index_snapshot():
+    baskets = {
+        "NIFTY": (WeightedEquity("AAA", 100.0),),
+        "BANKNIFTY": (WeightedEquity("BBB", 100.0),),
+    }
+
+    class BrokenFeed:
+        consumer = "iv-skew-flip-equities-nifty"
+
+        def snapshot(self, *, now_ns=None):
+            raise RuntimeError("temporary NIFTY feed failure")
+
+        def stop(self):
+            pass
+
+    bank_feed = FakeEquityFeed({
+        "status": "PARTIAL",
+        "consumer": "iv-skew-flip-equities-banknifty",
+        "signals_allowed": False,
+        "expected_symbols": ["BBB"],
+        "fresh_symbols": [],
+        "missing_symbols": ["BBB"],
+        "quotes": {},
+    })
+    runtime = make_runtime(equity_pressure_enabled=True, equity_baskets=baskets)
+    runtime._equity_feeds = {"NIFTY": BrokenFeed(), "BANKNIFTY": bank_feed}
+
+    runtime._refresh_equity_pressure(40_000_000_000)
+    result = runtime.snapshot()["equity_pressure_by_underlying"]
+
+    assert result["NIFTY"]["status"] == "ERROR"
+    assert result["NIFTY"]["signals_allowed"] is False
+    assert "temporary NIFTY feed failure" in result["NIFTY"]["error"]
+    assert result["BANKNIFTY"]["feed"]["status"] == "PARTIAL"
+    assert result["BANKNIFTY"]["signals_allowed"] is False
