@@ -89,7 +89,7 @@ def resolve_option_universe(
         or spot <= 0
     ):
         raise ValueError("a finite positive live spot price is required")
-    if strike_count < 3 or strike_count % 2 != 1:
+    if isinstance(strike_count, bool) or not isinstance(strike_count, int) or strike_count < 3 or strike_count % 2 != 1:
         raise ValueError("strike_count must be an odd integer of at least 3")
 
     option_exchange = "NFO"
@@ -157,9 +157,9 @@ def resolve_option_universe(
     if len(selected_strikes) != strike_count:
         raise LookupError("could not form a complete centered strike window")
     steps = [b - a for a, b in zip(selected_strikes, selected_strikes[1:])]
-    strike_step = min(steps) if steps and all(step > 0 for step in steps) else 0.0
-    if strike_step <= 0:
-        raise LookupError("invalid strike ladder")
+    strike_step = steps[0] if steps else 0.0
+    if strike_step <= 0 or any(abs(step - strike_step) > 1e-8 for step in steps):
+        raise LookupError("selected strike ladder is not uniformly spaced; refusing non-equidistant IV skew pairs")
 
     contracts = []
     seen: set[tuple[float, str]] = set()
