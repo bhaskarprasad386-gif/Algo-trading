@@ -79,8 +79,8 @@ def test_rejects_incomplete_or_duplicate_token_mapping_without_writing(db):
 
 
 def test_requires_verified_roster_provenance(db):
-    args = {**provenance(), "roster_source_url": "http://example.com/roster.csv"}
-    with pytest.raises(ValueError, match="HTTPS"):
+    args = {**provenance(), "roster_source_url": "https://example.com/roster.csv"}
+    with pytest.raises(ValueError, match="official NSE HTTPS"):
         persist_validated_basket_version(
             db, basket(), {"AAA": "101", "BBB": "202"}, **args
         )
@@ -161,5 +161,24 @@ def test_persistence_rejects_invalid_creator_identity(db, user_id):
             {"AAA": "101", "BBB": "202"},
             created_by_user_id=user_id,
             **provenance(),
+        )
+    assert db.scalars(select(IVConstituentBasketVersion)).all() == []
+
+
+def test_persistence_rejects_forged_non_official_basket_source(db):
+    valid = basket()
+    forged = VerifiedBasketImport(
+        underlying=valid.underlying,
+        effective_date=valid.effective_date,
+        source_name=valid.source_name,
+        source_url="https://niftyindices.com.attacker.example/weights.csv",
+        sha256=valid.sha256,
+        file_format=valid.file_format,
+        components=valid.components,
+        weight_sum=valid.weight_sum,
+    )
+    with pytest.raises(ValueError, match="official NSE HTTPS"):
+        persist_validated_basket_version(
+            db, forged, {"AAA": "101", "BBB": "202"}, **provenance()
         )
     assert db.scalars(select(IVConstituentBasketVersion)).all() == []

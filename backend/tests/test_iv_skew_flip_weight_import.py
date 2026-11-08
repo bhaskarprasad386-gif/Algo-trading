@@ -76,9 +76,19 @@ def test_rejects_stale_future_or_invalid_effective_date(effective_date, as_of, e
         parse_official_weight_basket(CSV, **args)
 
 
-def test_requires_https_source_provenance():
-    with pytest.raises(ValueError, match="HTTPS"):
-        parse_official_weight_basket(CSV, **{**BASE, "source_url": "http://example.com/file.csv"})
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://www.niftyindices.com/file.csv",
+        "https://example.com/file.csv",
+        "https://niftyindices.com.attacker.example/file.csv",
+        "https://niftyindices.com@attacker.example/file.csv",
+        "https://niftyindices.com:8443/file.csv",
+    ],
+)
+def test_rejects_non_official_or_ambiguous_source_provenance(url):
+    with pytest.raises(ValueError, match="official NSE HTTPS"):
+        parse_official_weight_basket(CSV, **{**BASE, "source_url": url})
 
 
 def test_zip_import_requires_exactly_one_csv_and_is_hash_of_original_upload():
