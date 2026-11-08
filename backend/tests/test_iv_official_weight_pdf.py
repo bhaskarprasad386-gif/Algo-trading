@@ -18,7 +18,7 @@ def _archive(name="NIFTY_50_Oct2026.pdf"):
 
 def _reader_with_text(monkeypatch, text):
     class FakePage:
-        def extract_text(self):
+        def extract_text(self, **_kwargs):
             return text
 
     class FakeReader:
