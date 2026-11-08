@@ -38,7 +38,7 @@ class InstrumentMaster:
                 return None
             return cls._cached_instruments
 
-    def download(self, *, force: bool = False) -> List[Dict[str, Any]]:
+    def download(self, *, force: bool = False, timeout: Any = 30) -> List[Dict[str, Any]]:
         """Download Angel One instrument master at most once per IST day unless forced.
 
         Daily refresh is intentional because expiry/roll-day contracts can change
@@ -53,7 +53,7 @@ class InstrumentMaster:
                 self._loaded = True
                 return self.instruments
             try:
-                response = requests.get(self.MASTER_URL, timeout=30)
+                response = requests.get(self.MASTER_URL, timeout=timeout)
                 response.raise_for_status()
                 data = response.json()
                 if not isinstance(data, list):
