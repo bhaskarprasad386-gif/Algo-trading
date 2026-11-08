@@ -10,7 +10,6 @@ import json
 import math
 import re
 from datetime import date, datetime, time, timezone
-from urllib.parse import urlparse
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
