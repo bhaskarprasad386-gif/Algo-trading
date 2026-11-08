@@ -14,7 +14,7 @@ from app.scanner.iv_skew_flip.weight_import import parse_official_weight_basket
 from app.scanner.iv_skew_flip.weight_store import persist_validated_basket_version
 
 
-CSV = b"symbol,weight\\nAAA,60\\nBBB,40\\n"
+CSV = b"symbol,weight\nAAA,60\nBBB,40\n"
 
 
 @pytest.fixture
