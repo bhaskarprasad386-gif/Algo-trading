@@ -419,6 +419,44 @@ class IVSkewFlipRuntime:
         finally:
             session.close()
 
+    def _apply_equity_pressure_confirmation(self, underlying: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Require same-direction, fresh constituent pressure when dual-index mode is enabled."""
+        if not self.equity_pressure_enabled or not self.equity_baskets:
+            return result
+        pressure = self._equity_pressure_by_underlying.get(str(underlying).upper())
+        if not isinstance(pressure, dict):
+            pressure = {}
+        output = dict(result)
+        output["constituent_pressure_status"] = pressure.get("status", "WAITING_FOR_FEED")
+        output["constituent_pressure_direction"] = pressure.get("direction")
+        output["constituent_pressure_signals_allowed"] = pressure.get("signals_allowed") is True
+        state = str(output.get("state") or "").upper()
+        direction = str(output.get("direction") or "").upper()
+        if state not in {"PRE_MOVE", "CONFIRMED"}:
+            return output
+        if pressure.get("signals_allowed") is not True:
+            output["option_signal_state"] = state
+            output["state"] = "WATCH"
+            output["signals_allowed"] = False
+            output["reason"] = (
+                "option early-move evidence is present; waiting for complete, fresh "
+                f"{underlying} constituent pressure confirmation"
+            )
+            return output
+        pressure_direction = str(pressure.get("direction") or "").upper()
+        if pressure_direction != direction:
+            output["option_signal_state"] = state
+            output["state"] = "INVALIDATED"
+            output["signals_allowed"] = False
+            output["reason"] = (
+                f"option direction {direction} conflicts with {underlying} "
+                f"constituent pressure {pressure_direction or 'WAITING'}"
+            )
+            return output
+        output["constituent_pressure_confirmed"] = True
+        output["reason"] = f"{output.get('reason', '')}; confirmed by {underlying} constituent pressure"
+        return output
+
     def _evaluate_early_move(self, now_ns: int) -> None:
         """Run the short-window alert path every refresh, independently of 60s signals."""
         for stream_id, config in CHAIN_CONFIGS:
@@ -441,6 +479,7 @@ class IVSkewFlipRuntime:
                     now_ns=now_ns,
                     spot_timestamp_ns=getattr(spot, "timestamp_ns", None),
                 )
+                result = self._apply_equity_pressure_confirmation(config.symbol, result)
                 previous = self._early_move.get(stream_id, {})
                 is_transition = (
                     result.get("state") != previous.get("state")
