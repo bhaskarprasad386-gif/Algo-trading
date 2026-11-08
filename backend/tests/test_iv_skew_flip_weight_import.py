@@ -142,3 +142,14 @@ def test_token_mapping_rejects_unexpected_extra_symbols():
 def test_rejects_short_or_extra_csv_row_fields(raw):
     with pytest.raises(ValueError, match="malformed CSV row"):
         parse_official_weight_basket(raw, **BASE)
+
+
+def test_token_mapping_normalizes_symbol_keys_and_rejects_normalization_collisions():
+    basket_result = parse_official_weight_basket(CSV, **BASE)
+    assert validate_basket_token_mapping(basket_result, {" aaa ": "101", "bbb": "202"}) == {
+        "AAA": "101", "BBB": "202"
+    }
+    with pytest.raises(ValueError, match="duplicate normalized symbol"):
+        validate_basket_token_mapping(
+            basket_result, {"AAA": "101", " aaa ": "202", "BBB": "303"}
+        )
