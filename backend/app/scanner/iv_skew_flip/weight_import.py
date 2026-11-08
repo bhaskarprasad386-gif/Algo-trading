@@ -13,7 +13,7 @@ import math
 import re
 import zipfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable, Mapping
 from urllib.parse import urlparse
 
@@ -101,24 +101,38 @@ def parse_official_weight_basket(
     index = str(underlying or "").strip().upper()
     if not re.fullmatch(r"[A-Z0-9_-]{2,24}", index):
         raise ValueError("underlying is invalid")
-    if not isinstance(as_of, date):
-        raise ValueError("as_of must be a date")
+    if not isinstance(as_of, date) or isinstance(as_of, datetime):
+        raise ValueError("as_of must be a calendar date")
+    if not isinstance(raw, bytes):
+        raise ValueError("upload content must be bytes")
+    if not isinstance(filename, str) or not filename.strip():
+        raise ValueError("upload filename is required")
     if isinstance(max_age_days, bool) or not isinstance(max_age_days, int) or max_age_days < 0:
         raise ValueError("max_age_days must be a non-negative integer")
     try:
-        effective = effective_date if isinstance(effective_date, date) else date.fromisoformat(str(effective_date))
+        if isinstance(effective_date, date) and not isinstance(effective_date, __import__("datetime").datetime):
+            effective = effective_date
+        elif isinstance(effective_date, str):
+            effective = date.fromisoformat(effective_date)
+        else:
+            raise ValueError("effective_date must be a calendar date or ISO date string")
     except (TypeError, ValueError) as exc:
         raise ValueError("effective_date must be an ISO date") from exc
     if effective > as_of:
         raise ValueError("future-dated constituent weights are not accepted")
     if (as_of - effective).days > max_age_days:
         raise ValueError("constituent weights are stale; import the latest official file")
-    source = str(source_name or "").strip()
-    parsed_url = urlparse(str(source_url or "").strip())
+    if not isinstance(source_name, str) or not isinstance(source_url, str):
+        raise ValueError("source name and HTTPS source URL are required")
+    source = source_name.strip()
+    parsed_url = urlparse(source_url.strip())
     if not source or parsed_url.scheme != "https" or not parsed_url.netloc:
         raise ValueError("source name and HTTPS source URL are required")
 
-    expected = _normalized_symbols(expected_symbols)
+    try:
+        expected = _normalized_symbols(expected_symbols)
+    except TypeError as exc:
+        raise ValueError("authoritative expected constituent roster is required") from exc
     csv_bytes, file_format = _extract_csv(raw, filename)
     try:
         text = csv_bytes.decode("utf-8-sig")
@@ -176,16 +190,25 @@ def validate_basket_token_mapping(
     symbol_to_token: Mapping[str, object],
 ) -> dict[str, str]:
     """Require a unique concrete instrument token for every imported symbol."""
+    if not isinstance(symbol_to_token, Mapping):
+        raise ValueError("NSE cash token mapping must be a mapping")
     expected_symbols = {component.symbol for component in basket.components}
-    supplied_symbols = {str(symbol).strip().upper() for symbol in symbol_to_token}
-    unexpected = sorted(supplied_symbols - expected_symbols)
+    normalized_mapping: dict[str, object] = {}
+    for raw_symbol, raw_token in symbol_to_token.items():
+        symbol = str(raw_symbol or "").strip().upper()
+        if not _SYMBOL_RE.fullmatch(symbol):
+            raise ValueError("invalid symbol in NSE cash token mapping")
+        if symbol in normalized_mapping:
+            raise ValueError(f"duplicate normalized symbol in NSE cash token mapping: {symbol}")
+        normalized_mapping[symbol] = raw_token
+    unexpected = sorted(set(normalized_mapping) - expected_symbols)
     if unexpected:
         raise ValueError(f"unexpected symbols in NSE cash token mapping: {unexpected}")
 
     mapped: dict[str, str] = {}
     seen_tokens: set[str] = set()
     for component in basket.components:
-        raw_token = symbol_to_token.get(component.symbol)
+        raw_token = normalized_mapping.get(component.symbol)
         if isinstance(raw_token, bool) or raw_token is None:
             raise ValueError(f"invalid NSE cash instrument token or missing NSE cash instrument token for {component.symbol}")
         token = str(raw_token).strip()

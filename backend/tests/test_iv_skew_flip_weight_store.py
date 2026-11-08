@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion
-from app.scanner.iv_skew_flip.weight_import import parse_official_weight_basket
+from app.scanner.iv_skew_flip.weight_import import VerifiedBasketComponent, VerifiedBasketImport, parse_official_weight_basket
 from app.scanner.iv_skew_flip.weight_store import persist_validated_basket_version
 
 
@@ -122,3 +122,44 @@ def test_persisted_basket_versions_reject_orm_update_and_delete(db):
         db.flush()
     db.rollback()
     assert len(db.scalars(select(IVConstituentBasketVersion)).all()) == 1
+
+
+@pytest.mark.parametrize(
+    "forged,match",
+    [
+        ({"components": (VerifiedBasketComponent("AAA", 60.0), VerifiedBasketComponent("BBB", 30.0)), "weight_sum": 90.0}, "weight sum must be 100"),
+        ({"components": (VerifiedBasketComponent("AAA", 60.0), VerifiedBasketComponent("BBB", 40.0)), "weight_sum": 99.0}, "does not match"),
+        ({"components": (VerifiedBasketComponent("AAA", True), VerifiedBasketComponent("BBB", 40.0)), "weight_sum": 100.0}, "finite and positive"),
+        ({"components": (VerifiedBasketComponent("AAA", 60.0), VerifiedBasketComponent("AAA", 40.0)), "weight_sum": 100.0}, "invalid or duplicate"),
+    ],
+)
+def test_persistence_revalidates_constructed_basket_payloads(db, forged, match):
+    valid = basket()
+    invalid = VerifiedBasketImport(
+        underlying=valid.underlying,
+        effective_date=valid.effective_date,
+        source_name=valid.source_name,
+        source_url=valid.source_url,
+        sha256=valid.sha256,
+        file_format=valid.file_format,
+        components=forged["components"],
+        weight_sum=forged["weight_sum"],
+    )
+    with pytest.raises(ValueError, match=match):
+        persist_validated_basket_version(
+            db, invalid, {"AAA": "101", "BBB": "202"}, **provenance()
+        )
+    assert db.scalars(select(IVConstituentBasketVersion)).all() == []
+
+
+@pytest.mark.parametrize("user_id", [True, 0, -1, "17"])
+def test_persistence_rejects_invalid_creator_identity(db, user_id):
+    with pytest.raises(ValueError, match="positive integer"):
+        persist_validated_basket_version(
+            db,
+            basket(),
+            {"AAA": "101", "BBB": "202"},
+            created_by_user_id=user_id,
+            **provenance(),
+        )
+    assert db.scalars(select(IVConstituentBasketVersion)).all() == []
