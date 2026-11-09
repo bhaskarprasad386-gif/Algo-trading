@@ -21,6 +21,7 @@ class IVSkewFlipFeedAdapter:
 
     CONSUMER = "iv-skew-flip"
     MAX_QUOTE_AGE_NS = 5_000_000_000
+    MAX_OI_AGE_NS = 300_000_000_000
 
     def __init__(
         self,
@@ -122,6 +123,18 @@ class IVSkewFlipFeedAdapter:
                 self._rejected_records["out_of_order_timestamp"] += 1
                 self._last_rejection_reason = "out_of_order_timestamp"
                 return
+            incoming_oi = getattr(record, "oi", None)
+            valid_incoming_oi = (
+                isinstance(incoming_oi, int) and not isinstance(incoming_oi, bool)
+                and incoming_oi >= 0
+            )
+            # Fast price/depth frames may omit OI. Keep the last actual OI
+            # observation and its own timestamp rather than erasing it.
+            oi_value = incoming_oi if valid_incoming_oi else (None if previous is None else previous.oi)
+            oi_timestamp_ns = (
+                timestamp_ns if valid_incoming_oi
+                else (None if previous is None else previous.oi_timestamp_ns)
+            )
             quote = OptionQuote(
                 underlying=universe.underlying,
                 expiry=universe.expiry,
@@ -131,7 +144,8 @@ class IVSkewFlipFeedAdapter:
                 ltp=self._number(getattr(record, "ltp", None)),
                 bid=self._number(getattr(record, "bid", None)),
                 ask=self._number(getattr(record, "ask", None)),
-                oi=getattr(record, "oi", None),
+                oi=oi_value,
+                oi_timestamp_ns=oi_timestamp_ns,
                 volume=getattr(record, "volume", None),
                 token=token,
                 bid_qty=self._number(getattr(record, "bid_qty", None)),
@@ -262,6 +276,21 @@ class IVSkewFlipFeedAdapter:
                 "ask_qty": quote.ask_qty,
                 "mark": quote.mark,
                 "oi": quote.oi,
+                "oi_timestamp_ns": quote.oi_timestamp_ns,
+                "oi_age_ms": (
+                    round((now_ns - quote.oi_timestamp_ns) / 1_000_000, 2)
+                    if quote.oi_timestamp_ns is not None and now_ns >= quote.oi_timestamp_ns
+                    else None
+                ),
+                "oi_fresh": (
+                    quote.oi is not None and quote.oi_timestamp_ns is not None
+                    and 0 <= now_ns - quote.oi_timestamp_ns <= self.MAX_OI_AGE_NS
+                ),
+                "oi_stale": (
+                    quote.oi is not None and quote.oi_timestamp_ns is not None
+                    and now_ns >= quote.oi_timestamp_ns
+                    and now_ns - quote.oi_timestamp_ns > self.MAX_OI_AGE_NS
+                ),
                 "volume": quote.volume,
                 "timestamp_ns": quote.timestamp_ns,
                 "age_ms": round(age_ns / 1_000_000, 2) if age_ns >= 0 else None,
