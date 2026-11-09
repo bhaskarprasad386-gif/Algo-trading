@@ -99,8 +99,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install minimal IV loader dependencies
-        run: python -m pip install --disable-pip-version-check requests loguru
+      - name: Install backend dependencies for production IV loader import
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
 
       - name: Download and validate official master with production IV loader
         working-directory: backend
