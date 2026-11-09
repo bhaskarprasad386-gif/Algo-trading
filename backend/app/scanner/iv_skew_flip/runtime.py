@@ -1,7 +1,7 @@
 """Opt-in runtime wiring for the isolated IV Skew / IV Flip market-data path."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time as datetime_time, timedelta
 import json
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
@@ -231,12 +231,20 @@ class IVSkewFlipRuntime:
     def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
         symbol = stream_id
         try:
+            local_now = now.astimezone(IST)
+            # Index options stop trading at 15:30 IST on expiry day. The
+            # instrument master still contains that date until its next
+            # refresh, so date-only selection would keep subscribing to an
+            # already-expired weekly chain after the session closes.
+            universe_date = local_now.date()
+            if local_now.time() >= datetime_time(15, 30):
+                universe_date += timedelta(days=1)
             universe = resolve_option_universe(
                 self._rows_by_stream[symbol],
                 underlying=config.symbol,
                 expiry_type=config.expiry_type,
                 spot=spot.price,
-                today=now.astimezone(IST).date(),
+                today=universe_date,
                 strike_count=7,
             )
             tokens = universe.tokens
