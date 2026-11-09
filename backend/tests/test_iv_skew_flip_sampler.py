@@ -466,3 +466,40 @@ def test_sampler_keeps_iv_live_when_oi_observation_is_five_minutes_old():
     assert metric["oi_age_ms"] == 301_000.0
     # OI staleness is independent: valid fresh option price/spot still yields IV.
     assert metric["iv_live"] is True
+
+
+def test_sampler_reports_volume_change_only_on_new_monotonic_source_ticks():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 250, "volume-change-ce",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+
+    next_ns = now_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", next_ns,
+        101.0, 100.5, 101.5, 10100, 275, "volume-change-ce",
+    ),)
+    result = sampler.sample_once(
+        now_ns=next_ns, now=now, spot=SpotSnapshot(21950, next_ns),
+    )
+    metric = result["live_metrics"][0]
+    assert metric["volume"] == 275
+    assert metric["volume_change_1s"] == 25
+    assert metric["volume_change_pct_1s"] == 10.0
+
+    # A cumulative-volume reset is not presented as a negative trade volume.
+    reset_ns = next_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", reset_ns,
+        101.0, 100.5, 101.5, 10100, 5, "volume-change-ce",
+    ),)
+    reset = sampler.sample_once(
+        now_ns=reset_ns, now=now, spot=SpotSnapshot(21950, reset_ns),
+    )
+    assert reset["live_metrics"][0]["volume_change_1s"] is None
+    assert reset["live_metrics"][0]["volume_change_pct_1s"] is None
