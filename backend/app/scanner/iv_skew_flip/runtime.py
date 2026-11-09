@@ -167,18 +167,8 @@ class IVSkewFlipRuntime:
         # master cannot leave the runtime half-started.
         for symbol in ("NIFTY",):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        future_contracts_list = []
-        future_resolution_errors = {}
-        for symbol in ():
-            try:
-                future_contracts_list.extend(resolve_index_future_contracts(
-                    instruments, underlying=symbol,
-                    today=self.clock_datetime().astimezone(IST).date(), limit=2,
-                ))
-            except LookupError as exc:
-                # Basis is additive context; missing FUTIDX rows must not block IV.
-                future_resolution_errors[symbol] = str(exc)
-        future_contracts = tuple(future_contracts_list)
+        # Index-future basis feed is intentionally disabled in NIFTY-Weekly-only mode.
+        future_contracts: tuple[Any, ...] = ()
         if self.equity_pressure_enabled and self.equity_baskets:
             # One physical quote consumer for the union of both top-10 baskets.
             # Shared constituents are resolved/subscribed once; each index still
