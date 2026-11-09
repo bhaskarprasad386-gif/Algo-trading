@@ -303,3 +303,103 @@ def test_runtime_stop_preserves_resources_while_refresh_worker_is_alive():
     assert runtime._started is False
     assert runtime._thread is None
     assert spot.stopped is True
+
+def test_runtime_stop_attempts_every_resource_and_retries_failed_cleanup():
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: now,
+    )
+    calls = {"sampler": 0, "option": 0, "spot": 0, "equity": 0}
+
+    class StopResource:
+        def __init__(self, key, fail_first=False):
+            self.key = key
+            self.fail_first = fail_first
+
+        def stop(self):
+            calls[self.key] += 1
+            if self.fail_first and calls[self.key] == 1:
+                raise RuntimeError("temporary shutdown failure")
+
+        def snapshot(self):
+            return {"status": "STOPPED"}
+
+    class StopSpotFeed(FakeSpotFeed):
+        def stop(self):
+            calls["spot"] += 1
+            if calls["spot"] == 1:
+                raise RuntimeError("temporary spot shutdown failure")
+
+    runtime._started = True
+    runtime._samplers = {"NIFTY_WEEKLY": StopResource("sampler")}
+    runtime._option_feeds = {"NIFTY_WEEKLY": StopResource("option")}
+    runtime.spot_feed = StopSpotFeed()
+    runtime._equity_feed = StopResource("equity", fail_first=True)
+
+    first = runtime.stop()
+    assert first["status"] == "STOPPING"
+    assert "spot_feed" in first["cleanup_errors"]
+    assert "equity_feed" in first["cleanup_errors"]
+    assert calls == {"sampler": 1, "option": 1, "spot": 1, "equity": 1}
+    # References remain available, and all independent resources were tried.
+    assert runtime._started is True
+    assert runtime._samplers
+    assert runtime._option_feeds
+
+    second = runtime.stop()
+    assert second["status"] == "STOPPED"
+    assert second["cleanup_errors"] is None
+    assert calls == {"sampler": 2, "option": 2, "spot": 2, "equity": 2}
+    assert runtime._samplers == {}
+    assert runtime._option_feeds == {}
+    assert runtime._equity_feed is None
+
+
+def test_runtime_start_retains_partially_registered_spot_feed_when_rollback_fails(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    rows = (
+        make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
+    )
+    monkeypatch.setattr(runtime_module, "download_iv_instruments", lambda master: rows)
+
+    class PartiallyFailingSpotFeed(FakeSpotFeed):
+        def __init__(self):
+            super().__init__()
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start(self, master, symbols):
+            self.start_calls += 1
+            raise RuntimeError("spot subscription partially registered")
+
+        def stop(self):
+            self.stop_calls += 1
+            if self.stop_calls == 1:
+                raise RuntimeError("temporary spot rollback failure")
+
+    spot = PartiallyFailingSpotFeed()
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=spot,
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+
+    try:
+        runtime.start()
+    except RuntimeError as exc:
+        assert "cleanup is pending" in str(exc)
+    else:
+        raise AssertionError("partially failed spot startup must be rejected")
+
+    assert spot.start_calls == 1
+    assert spot.stop_calls == 1
+    assert runtime.snapshot()["status"] == "STOPPING"
+
+    stopped = runtime.stop()
+    assert stopped["status"] == "STOPPED"
+    assert spot.stop_calls == 2
