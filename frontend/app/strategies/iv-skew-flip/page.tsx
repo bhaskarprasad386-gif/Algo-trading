@@ -188,6 +188,7 @@ export default function IVSkewFlipPage() {
   const [savedEnabled,setSavedEnabled]=useState(false);
   const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
+  const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -205,7 +206,7 @@ export default function IVSkewFlipPage() {
     let active=true;
     const poll=async()=>{
       try{
-        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY`,{cache:"no-store"});
+        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${requestedExpiry?`&expiry=${encodeURIComponent(requestedExpiry)}`:""}`,{cache:"no-store"});
         const body=await response.json();
         if(active&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }catch{/* keep the last successful durable history response */}
@@ -213,7 +214,7 @@ export default function IVSkewFlipPage() {
     void poll();
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base]);
+  },[base,requestedExpiry]);
   const refresh=useCallback(async()=>{
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
