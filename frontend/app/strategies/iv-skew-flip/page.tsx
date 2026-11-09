@@ -246,13 +246,15 @@ export default function IVSkewFlipPage() {
   const liveNifty=chains[selectedNifty]??{};
   const liveNiftySampler=liveNifty.sampler&&typeof liveNifty.sampler==="object"?liveNifty.sampler as Row:{};
   const liveNiftyMetrics=Array.isArray(liveNiftySampler.live_metrics)?liveNiftySampler.live_metrics as Row[]:[];
-  const savedMetrics=Array.isArray(durableHistory?.metrics)?durableHistory.metrics as Row[]:[];
+  const savedMetricsRaw=Array.isArray(durableHistory?.metrics)?durableHistory.metrics as Row[]:[];
+  const savedExpiry=String(durableHistory?.expiry??"");
+  const liveFeed=liveNifty.option_feed&&typeof liveNifty.option_feed==="object"?liveNifty.option_feed as Row:{};
+  const historyMatchesLiveExpiry=!liveFeed.expiry||String(liveFeed.expiry)===savedExpiry;
+  const savedMetrics=historyMatchesLiveExpiry?savedMetricsRaw:[];
   const metricsByToken=new Map<string,Row>();
   for(const item of savedMetrics)metricsByToken.set(String(item.token??""),item);
   for(const item of liveNiftyMetrics)metricsByToken.set(String(item.token??""),item);
   const mergedNiftyMetrics=[...metricsByToken.values()].filter(item=>String(item.token??""));
-  const savedExpiry=String(durableHistory?.expiry??"");
-  const liveFeed=liveNifty.option_feed&&typeof liveNifty.option_feed==="object"?liveNifty.option_feed as Row:{};
   const nifty={
     ...liveNifty,
     option_feed:{
