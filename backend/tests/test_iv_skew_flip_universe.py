@@ -22,7 +22,7 @@ def master_rows(symbol="NIFTY", expiries=("12Nov2026", "19Nov2026")):
 def test_nifty_weekly_resolves_nearest_expiry_and_eleven_strikes():
     result = resolve_option_universe(
         master_rows(), underlying="NIFTY", expiry_type="WEEKLY",
-        spot=22025, today=date(2026, 11, 6),
+        spot=22025, today=date(2026, 11, 6), strike_count=11,
     )
     assert result.expiry == "2026-11-12"
     assert len(result.strikes) == 11
