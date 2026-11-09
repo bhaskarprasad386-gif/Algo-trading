@@ -141,13 +141,14 @@ class IVSkewFlipRuntime:
             and str(item.get("name", "")).strip().upper() == symbol
         )
 
-    def start(self) -> dict[str, Any]:
+    def start(self, *, instruments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         with self._lock:
             if self._stopping:
                 raise RuntimeError("IV scanner runtime is still stopping; retry after shutdown completes")
             if self._started:
                 return self.snapshot()
-        instruments = download_iv_instruments(self.instrument_master)
+        if instruments is None:
+            instruments = download_iv_instruments(self.instrument_master)
         if not instruments:
             raise RuntimeError("Angel One instrument master is empty")
         rows = {
@@ -717,6 +718,15 @@ class IVSkewFlipRuntime:
         for stream_id, config in CHAIN_CONFIGS:
             spot = self.spot_feed.spot_snapshot(config.symbol)
             if spot is None:
+                # Make the refresh gate explicit in the per-chain API status.
+                # Without this, a missing/stale index spot silently skips option
+                # universe resolution and looks like a generic WAITING chain.
+                with self._lock:
+                    self._last_error[stream_id] = (
+                        f"WAITING_FOR_FRESH_SPOT: {config.symbol} spot snapshot "
+                        "is missing or older than the spot-feed freshness limit; "
+                        "option universe refresh is paused"
+                    )
                 continue
             self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
