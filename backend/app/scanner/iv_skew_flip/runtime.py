@@ -141,13 +141,14 @@ class IVSkewFlipRuntime:
             and str(item.get("name", "")).strip().upper() == symbol
         )
 
-    def start(self) -> dict[str, Any]:
+    def start(self, *, instruments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         with self._lock:
             if self._stopping:
                 raise RuntimeError("IV scanner runtime is still stopping; retry after shutdown completes")
             if self._started:
                 return self.snapshot()
-        instruments = download_iv_instruments(self.instrument_master)
+        if instruments is None:
+            instruments = download_iv_instruments(self.instrument_master)
         if not instruments:
             raise RuntimeError("Angel One instrument master is empty")
         rows = {
