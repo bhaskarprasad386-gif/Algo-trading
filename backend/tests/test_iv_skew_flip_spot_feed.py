@@ -387,3 +387,39 @@ def test_spot_feed_exposes_actual_common_manager_exchange_freshness_field_names(
     transport = adapter.snapshot()["transport"]
     assert transport["last_exchange_tick_received_age_seconds_by_exchange_type"] == {"1": 0.25}
     assert transport["last_raw_frame_age_seconds_by_exchange_group"] == {"1:0:1": 0.1}
+
+
+def test_spot_feed_reports_consumer_accepted_and_rejected_records():
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 20_000_000_000)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=19_000_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp": 19_000},
+    ))
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=19_500_000_000,
+        ltp=24126.0,
+        payload={},
+    ))
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=18_000_000_000,
+        ltp=24100.0,
+        payload={"exchange_timestamp": 18_000},
+    ))
+
+    validation = adapter.snapshot()["record_validation"]
+    assert validation["scope"] == "iv_spot_consumer"
+    assert validation["callbacks_received"] == 3
+    assert validation["accepted_records"] == 1
+    assert validation["rejected_records"] == 2
+    assert validation["rejected_by_reason"] == {
+        "missing_or_invalid_provider_timestamp": 1,
+        "out_of_order_source_timestamp": 1,
+    }
