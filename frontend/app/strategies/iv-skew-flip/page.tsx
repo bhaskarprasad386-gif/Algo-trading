@@ -72,7 +72,7 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const spotPrice = n(spot.price);
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
   const strikes = (resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null)).sort((a,b)=>a-b);
-  const atmIndex = spotPrice !== null && strikes.length ? strikes.reduce((best, x, index) => Math.abs(x - spotPrice) < Math.abs(strikes[best] - spotPrice) ? index : best, 0) : -1;
+  const atmIndex = spotPrice !== null && strikes.length ? strikes.reduce((best, x, index) => { const distance = Math.abs(x - spotPrice); const bestDistance = Math.abs(strikes[best] - spotPrice); return distance < bestDistance || (distance === bestDistance && x > strikes[best]) ? index : best; }, 0) : -1;
   const atm = atmIndex >= 0 ? strikes[atmIndex] : null;
   const byContract = new Map(metrics.filter(x => n(x.iv) !== null).map(x => [`${n(x.strike)}:${String(x.option_type)}`, x]));
   const matchedSkewPairs: number[] = [];
@@ -83,7 +83,7 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
       if (call && put) matchedSkewPairs.push(Number(call.iv) - Number(put.iv));
     }
   }
-  // Match the backend engine: ATM and up to two equidistant OTM CE/PE pairs.
+  // Match the backend engine: live-spot ATM (midpoint ties round upward) and up to two equidistant OTM CE/PE pairs.
   // Do not average the whole call and put wings, which can bias the displayed skew.
   const skew = matchedSkewPairs.length >= 2
     ? matchedSkewPairs.reduce((sum, value) => sum + value, 0) / matchedSkewPairs.length
