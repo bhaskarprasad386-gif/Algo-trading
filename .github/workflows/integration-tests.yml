@@ -87,3 +87,59 @@ jobs:
             app/market_data/tests/test_common_websocket.py \
             app/market_data/tests/test_websocket.py \
             app/market_data/tests/test_batch_pq.py
+
+  iv-independent-master-network:
+    name: IV Independent Angel One Master Network Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal IV loader dependencies
+        run: python -m pip install --disable-pip-version-check requests loguru
+
+      - name: Download and validate official master with production IV loader
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+          IV_INSTRUMENT_MASTER_CACHE_PATH: ${{ runner.temp }}/iv_instrument_master_cache.json
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from types import SimpleNamespace
+          from app.scanner.iv_skew_flip.instruments import download_iv_instruments, _read_recent_snapshot, _validate_rows
+
+          path = Path(os.environ["IV_INSTRUMENT_MASTER_CACHE_PATH"])
+          master = SimpleNamespace(instruments=[], _loaded=False, _symbol_exchange_index=None)
+          rows = download_iv_instruments(master)
+          assert rows and master._loaded
+          _validate_rows(rows)
+          cached = _read_recent_snapshot()
+          assert cached is not None, "production snapshot integrity/freshness validation failed"
+          verified_rows, fetched_at = cached
+          assert len(verified_rows) == len(rows)
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          print(json.dumps({
+              "status": "VALIDATED",
+              "rows": len(rows),
+              "nifty_option_rows": sum(1 for row in rows if str(row.get("exch_seg","")).upper()=="NFO" and str(row.get("instrumenttype","")).upper()=="OPTIDX" and str(row.get("name","")).upper()=="NIFTY"),
+              "banknifty_option_rows": sum(1 for row in rows if str(row.get("exch_seg","")).upper()=="NFO" and str(row.get("instrumenttype","")).upper()=="OPTIDX" and str(row.get("name","")).upper()=="BANKNIFTY"),
+              "fetched_at": fetched_at.isoformat(),
+              "schema_version": payload["schema_version"],
+              "sha256": payload["content_sha256"],
+          }, indent=2))
+          PY
+
+      - name: Upload validated IV-only snapshot for controlled transfer
+        uses: actions/upload-artifact@v4
+        with:
+          name: iv-instrument-master-validated
+          path: ${{ runner.temp }}/iv_instrument_master_cache.json
+          if-no-files-found: error
+          retention-days: 1
