@@ -124,6 +124,11 @@ class IVOneSecondSampler:
             or isinstance(result.timestamp_ns, bool)
             or not isinstance(result.timestamp_ns, int)
             or result.timestamp_ns <= 0
+            or (result.received_at_ns is not None and (
+                isinstance(result.received_at_ns, bool)
+                or not isinstance(result.received_at_ns, int)
+                or result.received_at_ns <= 0
+            ))
         ):
             return None
         return result
