@@ -1,13 +1,15 @@
 """IV-scanner-only resilient Angel One instrument-master loading.
 
-The primary Angel Broking host can time out independently of Angel One's API.
-The Box Spread durable snapshot is only read as a final fallback and is never
-modified by this module. No other scanner lifecycle or cache writer is used.
+The IV snapshot is independently stored and integrity-checked. This module
+never reads or writes the Box Spread cache or shared InstrumentMaster cache.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,32 +19,68 @@ import requests
 from app.core.logger import app_logger
 
 
+PRIMARY_MASTER_URL = (
+    "https://margincalculator.angelbroking.com/"
+    "OpenAPI_File/files/OpenAPIScripMaster.json"
+)
 ALTERNATE_MASTER_URL = (
     "https://margincalculator.angelone.in/"
     "OpenAPI_File/files/OpenAPIScripMaster.json"
 )
 MAX_CACHE_AGE_SECONDS = 36 * 60 * 60
+CACHE_SCHEMA_VERSION = 2
 
 
 def _cache_path() -> Path:
-    configured = os.environ.get("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", "").strip()
+    configured = os.environ.get("IV_INSTRUMENT_MASTER_CACHE_PATH", "").strip()
     if configured:
         return Path(configured).expanduser()
-    return Path(__file__).resolve().parents[3] / "data" / "box_spread_instrument_master_cache.json"
+    return Path(__file__).resolve().parents[3] / "data" / "iv_instrument_master_cache.json"
+
+
+def _canonical_rows_digest(rows: list[dict[str, Any]]) -> str:
+    encoded = json.dumps(
+        rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _positive_master_number(value: Any, *, integer: bool = False) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return (
+        math.isfinite(number)
+        and number > 0
+        and (not integer or number.is_integer())
+    )
 
 
 def _validate_rows(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list) or not payload:
         raise ValueError("Angel One instrument master is empty or invalid")
 
-    rows = [
-        row for row in payload
-        if isinstance(row, dict)
-        and all(str(row.get(key, "")).strip() for key in ("symbol", "exch_seg", "token"))
-    ]
-    if not rows:
-        raise ValueError("Angel One instrument master has no usable instrument rows")
+    # Validate every record without coercing nulls (str(None) is truthy) or
+    # accepting booleans/NaN as identifiers. Angel One tokens are numeric.
+    for row in payload:
+        if not isinstance(row, dict):
+            raise ValueError("Angel One instrument master contains malformed or incomplete rows")
+        symbol = row.get("symbol")
+        exchange = row.get("exch_seg")
+        token = row.get("token")
+        if (
+            not isinstance(symbol, str) or not symbol.strip()
+            or not isinstance(exchange, str) or not exchange.strip()
+            or isinstance(token, bool) or token is None
+            or not str(token).strip().isdigit() or int(token) <= 0
+        ):
+            raise ValueError("Angel One instrument master contains malformed or incomplete rows")
 
+    rows = payload
     missing = []
     for underlying in ("NIFTY", "BANKNIFTY"):
         options = [
@@ -50,7 +88,9 @@ def _validate_rows(payload: Any) -> list[dict[str, Any]]:
             if str(row.get("exch_seg", "")).strip().upper() == "NFO"
             and str(row.get("instrumenttype", "")).strip().upper() == "OPTIDX"
             and str(row.get("name", "")).strip().upper() == underlying
-            and all(str(row.get(key, "")).strip() for key in ("expiry", "strike", "lotsize"))
+            and _positive_master_number(row.get("strike"))
+            and _positive_master_number(row.get("lotsize"), integer=True)
+            and _valid_option_expiry(row.get("expiry"))
         ]
         indices = [
             row for row in rows
@@ -69,15 +109,58 @@ def _validate_rows(payload: Any) -> list[dict[str, Any]]:
         raise ValueError(
             f"Angel One instrument master is missing complete NFO options or a unique NSE index token for {missing}"
         )
+    # Ensure the exact payload can be hashed deterministically before use.
+    _canonical_rows_digest(rows)
     return rows
+
+
+def _valid_option_expiry(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        datetime.strptime(value.strip().upper(), "%d%b%Y")
+        return True
+    except ValueError:
+        return False
+
+
+def _write_snapshot(rows: list[dict[str, Any]]) -> None:
+    path = _cache_path()
+    temp_name = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=str(path.parent),
+            prefix=path.name + ".", suffix=".tmp", delete=False,
+        ) as handle:
+            temp_name = handle.name
+            json.dump({
+                "schema_version": CACHE_SCHEMA_VERSION,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "content_sha256": _canonical_rows_digest(rows),
+                "instruments": rows,
+            }, handle, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except (OSError, TypeError, ValueError) as exc:
+        app_logger.warning("IV scanner could not persist its isolated instrument snapshot: {}", exc)
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
 
 
 def _read_recent_snapshot() -> tuple[list[dict[str, Any]], datetime] | None:
     try:
         payload = json.loads(_cache_path().read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        if not isinstance(payload, dict) or payload.get("schema_version") != CACHE_SCHEMA_VERSION:
             return None
         rows = _validate_rows(payload.get("instruments"))
+        expected_digest = str(payload.get("content_sha256", "")).lower()
+        if len(expected_digest) != 64 or expected_digest != _canonical_rows_digest(rows):
+            return None
         fetched_at = payload.get("fetched_at")
         if not fetched_at:
             return None
@@ -93,12 +176,7 @@ def _read_recent_snapshot() -> tuple[list[dict[str, Any]], datetime] | None:
 
 
 def _install_snapshot(instrument_master: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Install fallback rows on this IV-owned instance only.
-
-    InstrumentMaster keeps a process-wide class cache shared by Box Spread and
-    other consumers. Updating that cache from the IV fallback would leak the
-    IV-specific fallback snapshot into those consumers.
-    """
+    """Install fallback rows on this IV-owned instance only."""
     instrument_master.instruments = rows
     instrument_master._loaded = True
     instrument_master._symbol_exchange_index = None
@@ -106,11 +184,17 @@ def _install_snapshot(instrument_master: Any, rows: list[dict[str, Any]]) -> lis
 
 
 def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
-    """Try primary host, official alternate host, then a recent validated snapshot."""
+    """Try primary host, official alternate host, then a recent integrity-checked IV snapshot."""
     primary_error: Exception | None = None
     try:
-        rows = _validate_rows(instrument_master.download())
-        return rows
+        # Do not call InstrumentMaster.download(): it reads/writes a
+        # process-wide cache shared with Box Spread and other consumers.
+        response = requests.get(PRIMARY_MASTER_URL, timeout=(5, 20))
+        response.raise_for_status()
+        rows = _validate_rows(response.json())
+        installed = _install_snapshot(instrument_master, rows)
+        _write_snapshot(installed)
+        return installed
     except Exception as exc:
         primary_error = exc
         app_logger.warning(
@@ -123,6 +207,7 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
         response.raise_for_status()
         rows = _validate_rows(response.json())
         installed = _install_snapshot(instrument_master, rows)
+        _write_snapshot(installed)
         app_logger.warning(
             "IV scanner loaded validated Angel One instrument master from alternate official host (rows={})",
             len(installed),
@@ -133,7 +218,7 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
         if cached is None:
             app_logger.error(
                 "IV instrument master unavailable: primary host failed ({}); "
-                "alternate host failed ({}); no recent validated snapshot exists",
+                "alternate host failed ({}); no recent integrity-checked IV snapshot exists",
                 primary_error or "unknown primary instrument-master error",
                 alternate_error,
             )
@@ -143,13 +228,13 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
                 "IV instrument master unavailable; "
                 f"primary Angel One source failed [{primary_detail}]; "
                 f"alternate Angel One source failed [{alternate_detail}]; "
-                "no recent validated snapshot (schema v1, max age 36h) is available"
+                "no recent integrity-checked IV snapshot (schema v2, max age 36h) is available"
             ) from alternate_error
 
         rows, fetched_at = cached
         installed = _install_snapshot(instrument_master, rows)
         app_logger.warning(
-            "IV scanner using read-only validated instrument snapshot (fetched_at={}, rows={})",
+            "IV scanner using read-only integrity-checked IV instrument snapshot (fetched_at={}, rows={})",
             fetched_at.isoformat(),
             len(installed),
         )
