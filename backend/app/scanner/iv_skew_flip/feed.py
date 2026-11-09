@@ -199,6 +199,29 @@ class IVSkewFlipFeedAdapter:
             last_tick = self._last_tick_ns
             rejected_records = dict(self._rejected_records)
             last_rejection_reason = self._last_rejection_reason
+            subscribed_token_count = len(self._tokens)
+        feed_diagnostics = None
+        feed_snapshot = getattr(self.feed, "snapshot", None)
+        if callable(feed_snapshot):
+            try:
+                raw = feed_snapshot()
+                if isinstance(raw, dict):
+                    diagnostic_keys = (
+                        "subscriptions", "active_instruments", "socket_groups",
+                        "required_socket_groups", "missing_socket_groups",
+                        "unconnected_required_groups", "consumers",
+                        "raw_frames_received", "last_raw_frame_age_seconds",
+                        "ticks_received", "ticks_by_exchange_type",
+                        "normalized_records_emitted", "normalized_records_delivered",
+                        "unmatched_frames", "exchange_mismatch_frames",
+                        "missing_exchange_type_frames", "ambiguous_token_frames",
+                        "delivery_errors", "normalized_delivery_errors",
+                        "last_delivery_error", "last_connect_failure",
+                        "socket_health_by_group",
+                    )
+                    feed_diagnostics = {key: raw[key] for key in diagnostic_keys if key in raw}
+            except Exception as exc:
+                feed_diagnostics = {"snapshot_error": f"{type(exc).__name__}: {exc}"}
         fresh = sum(
             1 for quote in quotes
             if 0 <= now_ns - quote.timestamp_ns <= self.MAX_QUOTE_AGE_NS
@@ -254,6 +277,8 @@ class IVSkewFlipFeedAdapter:
             "rejected_records": rejected_records,
             "rejected_record_count": sum(rejected_records.values()),
             "last_rejection_reason": last_rejection_reason,
+            "subscribed_token_count": subscribed_token_count,
+            "shared_feed_diagnostics": feed_diagnostics,
             "signals_allowed": bool(expected and fresh == expected),
             "quotes": live_quotes,
         }
