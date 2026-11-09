@@ -274,7 +274,7 @@ class IVOneSecondSampler:
                 bid=quote.bid if quote.bid is not None and isfinite(quote.bid) and quote.bid > 0 else None,
                 ask=quote.ask if quote.ask is not None and isfinite(quote.ask) and quote.ask > 0 else None,
                 volume=quote.volume if isinstance(quote.volume, int) and not isinstance(quote.volume, bool) and quote.volume >= 0 else None,
-                oi_timestamp_ns=quote.oi_timestamp_ns,
+                oi_timestamp_ns=(quote.oi_timestamp_ns or quote.timestamp_ns) if quote.oi is not None else None,
             )
             updates[quote.token] = sample
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
@@ -305,7 +305,11 @@ class IVOneSecondSampler:
                 # a misleading zero change.
                 if previous is not None and 500_000_000 <= elapsed_ns <= 1_500_000_000 and (sample.source_timestamp_ns > previous.source_timestamp_ns or sample.spot_timestamp_ns > previous.spot_timestamp_ns):
                     new_option_tick = sample.source_timestamp_ns > previous.source_timestamp_ns
-                    oi_change = sample.oi - previous.oi if new_option_tick and sample.oi is not None and previous.oi is not None else None
+                    new_oi_observation = (
+                        sample.oi_timestamp_ns is not None
+                        and sample.oi_timestamp_ns > (previous.oi_timestamp_ns or 0)
+                    )
+                    oi_change = sample.oi - previous.oi if new_oi_observation and sample.oi is not None and previous.oi is not None else None
                     ltp_change = sample.ltp - previous.ltp if new_option_tick and sample.ltp is not None and previous.ltp is not None else None
                     iv_change = sample.iv - previous.iv if sample.iv is not None and previous.iv is not None and sample.iv != previous.iv else None
                     changes[token] = {
