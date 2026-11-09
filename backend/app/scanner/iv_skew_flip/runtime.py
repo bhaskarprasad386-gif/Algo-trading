@@ -34,7 +34,7 @@ ALL_CHAIN_CONFIGS = (
     ("BANKNIFTY_MONTHLY", DEFAULT_CONFIGS[1]),
 )
 ACTIVE_CHAIN_CONFIGS = (ALL_CHAIN_CONFIGS[0],)
-CHAIN_CONFIGS = ACTIVE_CHAIN_CONFIGS
+CHAIN_CONFIGS = ALL_CHAIN_CONFIGS
 
 
 class IVSkewFlipRuntime:
@@ -132,7 +132,7 @@ class IVSkewFlipRuntime:
         self._previous_atm_iv_diff: dict[str, float] = {}
         self._previous_atm_strike: dict[str, float] = {}
         self._signals: dict[str, dict[str, Any]] = {}
-        self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
+        self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in ACTIVE_CHAIN_CONFIGS}
         self._early_move: dict[str, dict[str, Any]] = {}
         self._started = False
         self._stopping = False
