@@ -215,7 +215,12 @@ class IVOneSecondSampler:
         configured_expiry = self.configured_expiry
         with self._lock:
             if self._retained_iv_expiry != configured_expiry:
+                # Never carry an IV across expiry/universe rollover. Clear the
+                # live cycle too, so old contracts cannot be labelled LIVE.
                 self._last_valid_iv.clear()
+                self._latest.clear()
+                self._previous_cycle.clear()
+                self._one_second_changes = {}
                 self._retained_iv_expiry = configured_expiry
         if (spot_value is None
                 or sampled_at - spot_received_at < 0
