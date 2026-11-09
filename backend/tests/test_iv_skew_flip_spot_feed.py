@@ -346,3 +346,29 @@ def test_spot_feed_rejects_old_source_timestamp_despite_recent_receive():
     health = adapter.snapshot(now_ns=current["ns"])
     assert health["signals_allowed"] is False
     assert health["spot"]["NIFTY"]["fresh"] is False
+
+
+def test_spot_feed_exposes_shared_transport_routing_diagnostics():
+    feed = FakeFeed()
+    feed.snapshot = lambda: {
+        "raw_frames_received": 120,
+        "ticks_received": 14,
+        "unmatched_frames": 3,
+        "exchange_mismatch_frames": 2,
+        "normalized_records_delivered": 9,
+        "last_successful_delivery_age_seconds_by_group": {"1:0": 0.4},
+    }
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+
+    health = adapter.snapshot()
+    assert health["expected_instruments"]["NIFTY"] == {
+        "exchange": "NSE", "segment": "NSE", "token": "99926000",
+    }
+    assert health["transport"]["scope"] == "shared_manager_process_wide"
+    assert health["transport"]["raw_frames_received"] == 120
+    assert health["transport"]["ticks_received"] == 14
+    assert health["transport"]["unmatched_frames"] == 3
+    assert health["transport"]["exchange_mismatch_frames"] == 2
+    assert health["transport"]["normalized_records_delivered"] == 9
+    assert health["transport"]["last_successful_delivery_age_seconds_by_group"] == {"1:0": 0.4}
