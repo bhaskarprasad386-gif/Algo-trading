@@ -434,12 +434,14 @@ def test_box_underlying_health_never_promotes_a_feed_with_no_fresh_symbols():
 
 
 
-def test_box_spread_supports_all_six_indices_for_manual_selection():
+def test_box_spread_excludes_midcpnifty_but_keeps_other_index_manual_selection():
     from app.market_data.live_box_spread_runner import BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 
-    assert BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS == frozenset()
-    supported = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
-    assert supported - BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS == supported
+    assert BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS == frozenset({"MIDCPNIFTY"})
+    configured = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+    supported = configured - BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
+    assert supported == {"NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX"}
+    assert "MIDCPNIFTY" not in supported
 
 
 def test_box_depth_shadow_contracts_are_mapped_to_option_descriptors():
