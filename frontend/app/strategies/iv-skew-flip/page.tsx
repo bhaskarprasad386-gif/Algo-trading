@@ -39,6 +39,8 @@ type Runtime = {
   early_move?: Record<string, Row>;
   equity_pressure?: Row;
   equity_pressure_by_underlying?: Record<string, Row>;
+  index_future_feed?: Row;
+  spot_future_basis?: Record<string, Row>;
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
@@ -217,6 +219,42 @@ export default function IVSkewFlipPage() {
     </section>
     <section className="space-y-3 pt-2"><div className="flex items-center justify-between gap-2"><h2 className="text-xl font-bold theme-text">BANKNIFTY Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-sm font-semibold">Monthly</span></div><OptionChain title="BANKNIFTY Monthly" chain={bank}/><SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/></section>
     <section className="rounded-2xl border theme-border theme-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h2 className="font-semibold theme-text">Live Index Spot–Future Basis</h2><p className="mt-1 text-xs theme-muted">Future − Spot • nearest and next expiry • paired fresh broker timestamps required</p></div>
+        <span className="rounded-full border theme-border px-3 py-1 text-xs">Future feed: {String(runtime?.index_future_feed?.status ?? "WAITING")}</span>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {(["NIFTY","BANKNIFTY"] as const).map((symbol)=>{
+          const analysis=runtime?.spot_future_basis?.[symbol]??{};
+          const contracts=Array.isArray(analysis.expiry_contracts)?analysis.expiry_contracts as Row[]:[];
+          return <div key={symbol} className="rounded-xl border theme-border p-3">
+            <div className="flex items-center justify-between gap-2"><b className="text-sm theme-text">{symbol}</b><span className="rounded-full border theme-border px-2 py-1 text-xs">{String(analysis.status??"WAITING")}</span></div>
+            {contracts.length===0?<p className="mt-3 text-xs theme-muted">{String(analysis.error??"Waiting for future contracts and synchronized spot/future ticks.")}</p>:<div className="mt-3 space-y-2">
+              {contracts.map((item,index)=>{
+                const history=item.history&&typeof item.history==="object"?item.history as Row:{};
+                const windows=history.windows&&typeof history.windows==="object"?history.windows as Row:{};
+                const one=windows["1m"]&&typeof windows["1m"]==="object"?windows["1m"] as Row:{};
+                const five=windows["5m"]&&typeof windows["5m"]==="object"?windows["5m"] as Row:{};
+                const fifteen=windows["15m"]&&typeof windows["15m"]==="object"?windows["15m"] as Row:{};
+                return <div key={String(item.expiry)+"-"+index} className="rounded-lg border theme-border p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-xs">{index===0?"NEAR EXPIRY":"NEXT EXPIRY"} • {String(item.expiry??"—")}</b><span className="text-[11px] theme-muted">{String(item.status??"WAITING")}</span></div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <Metric label="Spot" value={fmt(item.spot)} />
+                    <Metric label="Future" value={fmt(item.future)} />
+                    <Metric label="Basis" value={delta(item.basis_points," pt",2)} sub={n(item.basis_pct)===null?"—":delta(item.basis_pct,"% ",4)+" of spot"} />
+                    <Metric label="Trend" value={String(history.trend??"WARMING")} sub="Basis direction, not market direction" />
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] theme-muted"><div>1m Δ <b className="theme-text">{delta(one.basis_change_points," pt",2)}</b></div><div>5m Δ <b className="theme-text">{delta(five.basis_change_points," pt",2)}</b></div><div>15m Δ <b className="theme-text">{delta(fifteen.basis_change_points," pt",2)}</b></div></div>
+                  <p className="mt-1 text-[10px] theme-muted">Spot age {age(item.spot_age_ms)} • Future age {age(item.future_age_ms)} • Pair skew {age(item.pair_skew_ms)} • {item.fresh===true?"Fresh paired quotes":"Not eligible for live context"}</p>
+                </div>;
+              })}
+            </div>}
+          </div>;
+        })}
+      </div>
+      <p className="mt-3 text-[11px] theme-muted">Basis is informational context only. It does not independently generate or authorize a signal or order. If either quote is stale or timestamp skew exceeds the limit, the pair is withheld.</p>
+    </section>
+    <section className="rounded-2xl border theme-border theme-surface p-4">
       <h2 className="font-semibold theme-text">Early Move Monitor</h2>
       <p className="mt-1 text-xs theme-muted">1-second refresh • rolling 10-second volume buckets • IV/premium/spot confluence. Alert-only; no orders.</p>
       <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -236,7 +274,7 @@ export default function IVSkewFlipPage() {
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="font-semibold theme-text">Weighted Constituents Pressure</h2><p className="mt-1 text-xs theme-muted">Research feed • 5s / 10s / 30s weighted returns • no order execution</p></div>
+        <div><h2 className="font-semibold theme-text">NIFTY + BANKNIFTY Top 10 Heavyweight Pressure</h2><p className="mt-1 text-xs theme-muted">Dono indices ke independently ranked highest-weight 10 constituents • 5s / 10s / 30s weighted returns • no order execution</p></div>
         <span className="rounded-full border theme-border px-3 py-1 text-xs font-semibold">{String(runtime?.equity_pressure?.status ?? "DISABLED")}</span>
       </div>
       {Object.keys(runtime?.equity_pressure_by_underlying ?? {}).length > 0 ? (
@@ -256,7 +294,7 @@ export default function IVSkewFlipPage() {
             </div>
           ))}
         </div>
-      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">DISABLED — both NIFTY and BANKNIFTY require separately verified official constituent baskets and an explicit runtime opt-in. No equity subscriptions or directional pressure are started by default.</p> : <>
+      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">{String(runtime?.equity_pressure?.reason ?? "NIFTY aur BANKNIFTY ke complete verified official weight baskets zaroori hain. Har index ke top 10 weights dynamically select honge; missing/stale basket par pressure safely unavailable rahega.")} No orders.</p> : <>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Metric label="Feed" value={String((runtime.equity_pressure.feed as Row | undefined)?.status ?? "WAITING")} />
           <Metric label="Fresh Components" value={`${fmt(runtime.equity_pressure.fresh_components,0)} / ${fmt(runtime.equity_pressure.expected_components,0)}`} />

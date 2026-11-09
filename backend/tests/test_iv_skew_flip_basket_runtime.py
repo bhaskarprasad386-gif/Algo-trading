@@ -53,7 +53,7 @@ def test_missing_one_index_fails_closed():
         record("NIFTY", [{"symbol": "AAA", "weight": 100.0}], {"AAA": "101"}),
     ]
 
-    with pytest.raises(RuntimeError, match="verified NIFTY and BANKNIFTY baskets are required"):
+    with pytest.raises(RuntimeError, match="verified index baskets are required"):
         load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
 
 
@@ -87,3 +87,78 @@ def test_current_instrument_master_token_mismatch_fails_closed():
 
     with pytest.raises(RuntimeError, match="stale for AAA"):
         load_verified_runtime_baskets(rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster())
+
+
+
+def test_nifty_pressure_can_select_dynamic_top_two_after_full_basket_verification():
+    components = [
+        {"symbol": "AAA", "weight": 10.0},
+        {"symbol": "BBB", "weight": 35.0},
+        {"symbol": "CCC", "weight": 25.0},
+        {"symbol": "DDD", "weight": 30.0},
+    ]
+    rows = [record("NIFTY", components, {
+        "AAA": "101", "BBB": "102", "CCC": "201", "DDD": "202",
+    })]
+
+    baskets = load_verified_runtime_baskets(
+        rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster(),
+        underlyings=("NIFTY",), top_n=2,
+    )
+
+    assert set(baskets) == {"NIFTY"}
+    assert [(item.symbol, item.weight) for item in baskets["NIFTY"]] == [
+        ("BBB", 35.0), ("DDD", 30.0),
+    ]
+
+
+def test_top_n_rejects_invalid_values():
+    rows = [record("NIFTY", [{"symbol": "AAA", "weight": 100.0}], {"AAA": "101"})]
+    for invalid in (0, -1, True, 1.5):
+        with pytest.raises(ValueError, match="top_n"):
+            load_verified_runtime_baskets(
+                rows, as_of=date(2026, 11, 8), instrument_master=FakeMaster(),
+                underlyings=("NIFTY",), top_n=invalid,
+            )
+
+
+
+def test_top_ten_selection_applies_independently_to_nifty_and_banknifty():
+    nifty_symbols = [f"N{i:02d}" for i in range(12)]
+    bank_symbols = [f"B{i:02d}" for i in range(12)]
+    # Weights sum to 100; the two smallest constituents fall outside top ten.
+    weights = [18, 14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 4]
+    tokens = {
+        symbol: str(1000 + index)
+        for index, symbol in enumerate(nifty_symbols + bank_symbols)
+    }
+
+    class Master:
+        def resolve_cash_instrument(self, symbol, exchange):
+            assert exchange == "NSE"
+            return {"token": tokens[symbol]}
+
+    records = [
+        record("NIFTY", [
+            {"symbol": symbol, "weight": weight}
+            for symbol, weight in zip(nifty_symbols, weights)
+        ], {symbol: tokens[symbol] for symbol in nifty_symbols}),
+        record("BANKNIFTY", [
+            {"symbol": symbol, "weight": weight}
+            for symbol, weight in zip(bank_symbols, weights)
+        ], {symbol: tokens[symbol] for symbol in bank_symbols}, record_id=2),
+    ]
+
+    baskets = load_verified_runtime_baskets(
+        records,
+        as_of=date(2026, 11, 8),
+        instrument_master=Master(),
+        underlyings=("NIFTY", "BANKNIFTY"),
+        top_n=10,
+    )
+
+    assert set(baskets) == {"NIFTY", "BANKNIFTY"}
+    assert len(baskets["NIFTY"]) == 10
+    assert len(baskets["BANKNIFTY"]) == 10
+    assert [item.symbol for item in baskets["NIFTY"]] == nifty_symbols[:10]
+    assert [item.symbol for item in baskets["BANKNIFTY"]] == bank_symbols[:10]

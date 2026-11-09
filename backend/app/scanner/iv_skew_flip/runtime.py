@@ -13,6 +13,8 @@ from app.models.iv_signal_event import IVSignalEvent
 
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .early_move import IVEarlyMoveDetector
+from .basis import BasisHistory, calculate_basis, resolve_index_future_contracts
+from .future_feed import IVIndexFutureFeedAdapter
 from .equity_feed import IVWeightedEquityFeedAdapter, WeightedEquity
 from .equity_pressure import ComponentSample, ComponentWeight, EquityComponentPressure
 from .feed import IVSkewFlipFeedAdapter
@@ -51,12 +53,17 @@ class IVSkewFlipRuntime:
         equity_basket: tuple[WeightedEquity, ...] | None = None,
         equity_baskets: dict[str, tuple[WeightedEquity, ...]] | None = None,
         equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
-        equity_feed_factory_by_underlying: Callable[[str], IVWeightedEquityFeedAdapter] | None = None,
+        equity_pressure_unavailable_reason: str | None = None,
+        future_feed: IVIndexFutureFeedAdapter | None = None,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
         self.instrument_master = instrument_master
         self.spot_feed = spot_feed or IVSpotFeedAdapter(clock_ns=clock_ns)
+        self.future_feed = future_feed or IVIndexFutureFeedAdapter(clock_ns=clock_ns)
+        self._future_contracts: tuple[Any, ...] = ()
+        self._basis_histories: dict[str, BasisHistory] = {}
+        self._basis_analysis: dict[str, dict[str, Any]] = {}
         self.option_feed_factory = option_feed_factory or (
             lambda symbol: IVSkewFlipFeedAdapter(consumer=f"iv-skew-flip-{symbol.lower()}", clock_ns=clock_ns)
         )
@@ -69,13 +76,17 @@ class IVSkewFlipRuntime:
         if not isinstance(equity_pressure_enabled, bool):
             raise ValueError("equity_pressure_enabled must be boolean")
         self.equity_pressure_enabled = equity_pressure_enabled
+        self.equity_pressure_unavailable_reason = (
+            str(equity_pressure_unavailable_reason).strip()
+            if equity_pressure_unavailable_reason else None
+        )
         self.equity_basket = tuple(equity_basket or ())
         self.equity_baskets = {
             str(symbol).strip().upper(): tuple(items)
             for symbol, items in (equity_baskets or {}).items()
         }
-        if self.equity_baskets and set(self.equity_baskets) != {"NIFTY", "BANKNIFTY"}:
-            raise ValueError("dual-index equity pressure requires both NIFTY and BANKNIFTY baskets")
+        if self.equity_baskets and set(self.equity_baskets) - {"NIFTY", "BANKNIFTY"}:
+            raise ValueError("equity pressure supports only NIFTY and BANKNIFTY baskets")
         if any(not items for items in self.equity_baskets.values()):
             raise ValueError("each index requires a non-empty verified weight basket")
         if self.equity_pressure_enabled and not self.equity_basket and not self.equity_baskets:
@@ -83,13 +94,7 @@ class IVSkewFlipRuntime:
         self.equity_feed_factory = equity_feed_factory or (
             lambda: IVWeightedEquityFeedAdapter(clock_ns=clock_ns)
         )
-        self.equity_feed_factory_by_underlying = equity_feed_factory_by_underlying or (
-            lambda symbol: IVWeightedEquityFeedAdapter(
-                clock_ns=clock_ns, consumer=f"iv-skew-flip-equities-{symbol.lower()}"
-            )
-        )
         self._equity_feed: IVWeightedEquityFeedAdapter | None = None
-        self._equity_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
         self._equity_pressures: dict[str, EquityComponentPressure] = {
             symbol: EquityComponentPressure(
                 tuple(ComponentWeight(item.symbol, item.weight) for item in items)
@@ -104,7 +109,9 @@ class IVSkewFlipRuntime:
             if self.equity_pressure_enabled and self.equity_basket else None
         )
         self._equity_pressure_last_snapshot: dict[str, Any] = {
-            "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
+            "status": "UNAVAILABLE" if self.equity_pressure_unavailable_reason else "DISABLED",
+            "reason": self.equity_pressure_unavailable_reason,
+            "signals_allowed": False, "direction": "WAITING",
             "timeframe_agreement": False, "windows": {},
         }
         self._lock = RLock()
@@ -154,30 +161,33 @@ class IVSkewFlipRuntime:
         # master cannot leave the runtime half-started.
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        if self.equity_pressure_enabled and self.equity_baskets:
-            started_feeds: dict[str, IVWeightedEquityFeedAdapter] = {}
-            current_feed: IVWeightedEquityFeedAdapter | None = None
+        future_contracts_list = []
+        future_resolution_errors = {}
+        for symbol in ("NIFTY", "BANKNIFTY"):
             try:
-                for underlying, basket in self.equity_baskets.items():
-                    current_feed = self.equity_feed_factory_by_underlying(underlying)
-                    current_feed.start(self.instrument_master, basket)
-                    started_feeds[underlying] = current_feed
-                    current_feed = None
+                future_contracts_list.extend(resolve_index_future_contracts(
+                    instruments, underlying=symbol,
+                    today=self.clock_datetime().astimezone(IST).date(), limit=2,
+                ))
+            except LookupError as exc:
+                # Basis is additive context; missing FUTIDX rows must not block IV.
+                future_resolution_errors[symbol] = str(exc)
+        future_contracts = tuple(future_contracts_list)
+        if self.equity_pressure_enabled and self.equity_baskets:
+            # One physical quote consumer for the union of both top-10 baskets.
+            # Shared constituents are resolved/subscribed once; each index still
+            # applies its own official weight in its independent pressure engine.
+            unique: dict[str, WeightedEquity] = {}
+            for basket in self.equity_baskets.values():
+                for item in basket:
+                    unique.setdefault(item.symbol.strip().upper(), item)
+            equity_feed = self.equity_feed_factory()
+            try:
+                equity_feed.start(self.instrument_master, tuple(unique.values()))
             except Exception:
-                # The failing adapter may have partially registered its
-                # consumer before raising; release it as well as prior feeds.
-                if current_feed is not None:
-                    try:
-                        current_feed.stop()
-                    except Exception:
-                        pass
-                for equity_feed in started_feeds.values():
-                    try:
-                        equity_feed.stop()
-                    except Exception:
-                        pass
+                equity_feed.stop()
                 raise
-            self._equity_feeds = started_feeds
+            self._equity_feed = equity_feed
         elif self.equity_pressure_enabled:
             equity_feed = self.equity_feed_factory()
             try:
@@ -188,16 +198,20 @@ class IVSkewFlipRuntime:
             self._equity_feed = equity_feed
         try:
             self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
+            if future_contracts:
+                self.future_feed.start(future_contracts)
         except Exception:
+            self.future_feed.stop()
+            self.spot_feed.stop()
             if self._equity_feed is not None:
                 self._equity_feed.stop()
                 self._equity_feed = None
-            for equity_feed in tuple(self._equity_feeds.values()):
-                equity_feed.stop()
-            self._equity_feeds.clear()
             raise
         with self._lock:
             self._rows_by_stream = rows
+            self._future_contracts = future_contracts
+            self._basis_histories = {f"{item.underlying}:{item.expiry.isoformat()}": BasisHistory() for item in future_contracts}
+            self._basis_analysis = {symbol: {"status": "UNAVAILABLE", "error": error, "signals_allowed": False} for symbol, error in future_resolution_errors.items()}
             self._started = True
             self._stop.clear()
             self._thread = Thread(
@@ -515,20 +529,91 @@ class IVSkewFlipRuntime:
                     "baseline_status": "WARMING",
                 }
 
+    def _refresh_basis_analysis(self, now_ns: int) -> None:
+        """Publish paired live spot/future basis for current and next expiries."""
+        future_snapshot = self.future_feed.snapshot(now_ns=now_ns)
+        by_underlying: dict[str, list[dict[str, Any]]] = {"NIFTY": [], "BANKNIFTY": []}
+        quotes = future_snapshot.get("quotes", {})
+        for contract in self._future_contracts:
+            quote = quotes.get(contract.token, {})
+            spot = self.spot_feed.spot_snapshot(contract.underlying, now_ns=now_ns)
+            if spot is None or not quote.get("fresh"):
+                by_underlying[contract.underlying].append({
+                    "expiry": contract.expiry.isoformat(), "symbol": contract.symbol,
+                    "status": "WAITING_FOR_FRESH_SPOT_OR_FUTURE", "signals_allowed": False,
+                })
+                continue
+            try:
+                result = calculate_basis(
+                    spot=spot.price, future=quote.get("price"),
+                    spot_timestamp_ns=spot.timestamp_ns,
+                    future_timestamp_ns=quote.get("timestamp_ns"), now_ns=now_ns,
+                )
+            except (TypeError, ValueError) as exc:
+                by_underlying[contract.underlying].append({
+                    "expiry": contract.expiry.isoformat(), "symbol": contract.symbol,
+                    "status": "INVALID_QUOTE", "signals_allowed": False, "error": str(exc),
+                })
+                continue
+            result.update({"expiry": contract.expiry.isoformat(), "symbol": contract.symbol})
+            history = self._basis_histories.get(f"{contract.underlying}:{contract.expiry.isoformat()}")
+            if history is not None and result.get("fresh"):
+                history.add({**result, "timestamp_ns": max(spot.timestamp_ns, quote["timestamp_ns"])})
+                result["history"] = history.snapshot(now_ns)
+            by_underlying[contract.underlying].append(result)
+        self._basis_analysis = {
+            symbol: {
+                "status": "LIVE" if any(item.get("status") == "LIVE" for item in items) else
+                          "STALE" if items and any(item.get("status") == "STALE" for item in items) else
+                          "WAITING_FOR_TICKS",
+                "expiry_contracts": items,
+                "signals_allowed": False,
+                "note": "Context only; never independently authorizes an IV signal or order.",
+            }
+            for symbol, items in by_underlying.items()
+        }
+
     def _refresh_equity_pressure(self, now_ns: int) -> None:
         if self.equity_pressure_enabled and self.equity_baskets:
+            # The shared feed has one quote per unique symbol. Fan those quotes
+            # into both independent weighted pressure calculators without
+            # fetching/subscribing a common constituent twice.
+            shared_feed = self._equity_feed
+            shared_error: Exception | None = None
+            try:
+                shared_snapshot = (
+                    shared_feed.snapshot(now_ns=now_ns) if shared_feed is not None
+                    else {"status": "STOPPED", "quotes": {}, "signals_allowed": False}
+                )
+            except Exception as exc:
+                shared_error = exc
+                shared_snapshot = {"status": "ERROR", "quotes": {}, "signals_allowed": False}
+            shared_quotes = shared_snapshot.get("quotes", {})
             snapshots: dict[str, dict[str, Any]] = {}
-            for underlying, feed in self._equity_feeds.items():
+            for underlying, basket in self.equity_baskets.items():
                 pressure = self._equity_pressures[underlying]
+                expected = sorted(item.symbol for item in basket)
+                quotes = {symbol: shared_quotes[symbol] for symbol in expected if symbol in shared_quotes}
+                fresh_symbols = sorted(quotes)
+                missing_symbols = sorted(set(expected) - set(fresh_symbols))
+                shared_status = shared_snapshot.get("status", "WAITING_FOR_TICKS")
+                feed_status = (
+                    "LIVE" if not missing_symbols else
+                    "PARTIAL" if fresh_symbols else
+                    "WAITING_FOR_TICKS" if shared_status == "PARTIAL" else
+                    shared_status
+                )
+                feed_allowed = bool(expected) and not missing_symbols
                 try:
-                    feed_snapshot = feed.snapshot(now_ns=now_ns)
-                    for symbol, quote in feed_snapshot.get("quotes", {}).items():
+                    if shared_error is not None:
+                        raise shared_error
+                    for symbol, quote in quotes.items():
                         pressure.update(ComponentSample(
                             symbol=symbol, timestamp_ns=quote["timestamp_ns"], ltp=quote["ltp"]
                         ))
                     pressure_snapshot = pressure.snapshot(now_ns=now_ns)
                     allowed = bool(
-                        feed_snapshot.get("signals_allowed")
+                        feed_allowed
                         and pressure_snapshot.get("signals_allowed")
                         and pressure_snapshot.get("direction") in {"BULLISH", "BEARISH"}
                         and pressure_snapshot.get("timeframe_agreement")
@@ -537,18 +622,17 @@ class IVSkewFlipRuntime:
                         **pressure_snapshot,
                         "enabled": True,
                         "feed": {
-                            "status": feed_snapshot.get("status"),
-                            "consumer": feed_snapshot.get("consumer"),
-                            "expected_symbols": feed_snapshot.get("expected_symbols", []),
-                            "fresh_symbols": feed_snapshot.get("fresh_symbols", []),
-                            "missing_symbols": feed_snapshot.get("missing_symbols", []),
-                            "signals_allowed": bool(feed_snapshot.get("signals_allowed")),
+                            "status": feed_status,
+                            "consumer": shared_snapshot.get("consumer"),
+                            "expected_symbols": expected,
+                            "fresh_symbols": fresh_symbols,
+                            "missing_symbols": missing_symbols,
+                            "signals_allowed": feed_allowed,
+                            "shared_unique_symbols": shared_snapshot.get("expected_symbols", []),
                         },
                         "signals_allowed": allowed,
                     }
                 except Exception as exc:
-                    # One broken constituent consumer must not interrupt the
-                    # independent option-IV scanner or the other index feed.
                     snapshots[underlying] = {
                         "status": "ERROR",
                         "enabled": True,
@@ -559,8 +643,11 @@ class IVSkewFlipRuntime:
                         "error": f"{type(exc).__name__}: {exc}",
                         "feed": {
                             "status": "ERROR",
-                            "consumer": getattr(feed, "consumer", None),
+                            "consumer": getattr(shared_feed, "consumer", None),
                             "signals_allowed": False,
+                            "expected_symbols": expected,
+                            "fresh_symbols": fresh_symbols,
+                            "missing_symbols": missing_symbols,
                         },
                     }
             with self._lock:
@@ -573,7 +660,9 @@ class IVSkewFlipRuntime:
         if not self.equity_pressure_enabled or self._equity_feed is None or self._equity_pressure is None:
             with self._lock:
                 self._equity_pressure_last_snapshot = {
-                    "status": "DISABLED", "signals_allowed": False, "direction": "WAITING",
+                    "status": "UNAVAILABLE" if self.equity_pressure_unavailable_reason else "DISABLED",
+                    "reason": self.equity_pressure_unavailable_reason,
+                    "signals_allowed": False, "direction": "WAITING",
                     "timeframe_agreement": False, "windows": {},
                 }
             return
@@ -616,6 +705,7 @@ class IVSkewFlipRuntime:
                 continue
             self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
+        self._refresh_basis_analysis(now_ns)
         self._refresh_equity_pressure(now_ns)
         self._evaluate_early_move(now_ns)
         self._maybe_evaluate(now, now_ns)
@@ -657,6 +747,7 @@ class IVSkewFlipRuntime:
             equity_pressure_by_underlying = {
                 symbol: dict(value) for symbol, value in self._equity_pressure_by_underlying.items()
             }
+            basis_analysis = {symbol: dict(value) for symbol, value in self._basis_analysis.items()}
         return {
             "status": "STOPPING" if self._stopping else ("RUNNING" if started else "STOPPED"),
             "consumer": "iv-skew-flip",
@@ -672,6 +763,8 @@ class IVSkewFlipRuntime:
             },
             "equity_pressure_by_underlying": equity_pressure_by_underlying,
             "spot_feed": self.spot_feed.snapshot(),
+            "index_future_feed": self.future_feed.snapshot(),
+            "spot_future_basis": basis_analysis,
             "option_chains": {
                 stream_id: {
                     "symbol": config.symbol,
@@ -717,12 +810,10 @@ class IVSkewFlipRuntime:
         for feed in feeds:
             feed.stop()
         self.spot_feed.stop()
+        self.future_feed.stop()
         if self._equity_feed is not None:
             self._equity_feed.stop()
             self._equity_feed = None
-        for equity_feed in tuple(self._equity_feeds.values()):
-            equity_feed.stop()
-        self._equity_feeds.clear()
         with self._lock:
             self._started = False
             self._stopping = False
@@ -731,6 +822,9 @@ class IVSkewFlipRuntime:
             self._option_feeds.clear()
             self._universe_tokens.clear()
             self._rows_by_stream.clear()
+            self._future_contracts = ()
+            self._basis_histories.clear()
+            self._basis_analysis.clear()
             self._signals.clear()
             self._early_move.clear()
             if self.equity_pressure_enabled and self.equity_basket:
