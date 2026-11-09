@@ -158,25 +158,67 @@ def _write_snapshot(rows: list[dict[str, Any]]) -> None:
 
 
 def _read_recent_snapshot() -> tuple[list[dict[str, Any]], datetime] | None:
+    """Return a verified recent snapshot, logging the exact rejection reason.
+
+    Keep rejection diagnostics local to this IV-owned cache; never fall back to
+    or inspect the shared Box Spread instrument cache.
+    """
+    path = _cache_path()
     try:
-        payload = json.loads(_cache_path().read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("schema_version") != CACHE_SCHEMA_VERSION:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            app_logger.warning("IV instrument snapshot rejected: reason=invalid_root_type type={}", type(payload).__name__)
             return None
-        rows = _validate_rows(payload.get("instruments"))
+        schema_version = payload.get("schema_version")
+        if schema_version != CACHE_SCHEMA_VERSION:
+            app_logger.warning(
+                "IV instrument snapshot rejected: reason=schema_version_mismatch expected={} actual={}",
+                CACHE_SCHEMA_VERSION, schema_version,
+            )
+            return None
+        try:
+            rows = _validate_rows(payload.get("instruments"))
+        except (TypeError, ValueError) as exc:
+            app_logger.warning(
+                "IV instrument snapshot rejected: reason=row_validation_failed error_type={} detail={}",
+                type(exc).__name__, exc,
+            )
+            return None
         expected_digest = str(payload.get("content_sha256", "")).lower()
-        if len(expected_digest) != 64 or expected_digest != _canonical_rows_digest(rows):
+        actual_digest = _canonical_rows_digest(rows)
+        if len(expected_digest) != 64 or expected_digest != actual_digest:
+            app_logger.warning(
+                "IV instrument snapshot rejected: reason=sha256_mismatch expected_length={} actual_sha256={}",
+                len(expected_digest), actual_digest,
+            )
             return None
         fetched_at = payload.get("fetched_at")
         if not fetched_at:
+            app_logger.warning("IV instrument snapshot rejected: reason=missing_fetched_at")
             return None
-        fetched = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+        try:
+            fetched = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            app_logger.warning(
+                "IV instrument snapshot rejected: reason=invalid_fetched_at error_type={} detail={}",
+                type(exc).__name__, exc,
+            )
+            return None
         if fetched.tzinfo is None:
             fetched = fetched.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - fetched.astimezone(timezone.utc)).total_seconds()
         if age < 0 or age > MAX_CACHE_AGE_SECONDS:
+            app_logger.warning(
+                "IV instrument snapshot rejected: reason=age_out_of_range age_seconds={:.1f} max_age_seconds={}",
+                age, MAX_CACHE_AGE_SECONDS,
+            )
             return None
         return rows, fetched
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        app_logger.warning(
+            "IV instrument snapshot could not be read: path={} reason={} detail={}",
+            path, type(exc).__name__, exc,
+        )
         return None
 
 
