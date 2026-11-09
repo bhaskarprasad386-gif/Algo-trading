@@ -67,7 +67,7 @@ class IVOneSecondSampler:
         config: ScannerConfig | None = None,
         interval_seconds: float = 1.0,
         max_quote_age_seconds: float = 5.0,
-        max_spot_age_seconds: float = 3.0,
+        max_spot_age_seconds: float = 5.0,
         history_seconds: int = 600,
         clock_ns: Callable[[], int] = time_ns,
         clock_datetime: Callable[[], datetime] | None = None,
