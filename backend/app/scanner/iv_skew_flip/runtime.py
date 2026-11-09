@@ -245,7 +245,7 @@ class IVSkewFlipRuntime:
                 expiry_type=config.expiry_type,
                 spot=spot.price,
                 today=universe_date,
-                strike_count=7,
+                strike_count=11 if config.symbol == "NIFTY" and config.expiry_type == "WEEKLY" else 7,
             )
             tokens = universe.tokens
             with self._lock:

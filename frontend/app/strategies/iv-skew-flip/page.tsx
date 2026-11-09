@@ -61,6 +61,20 @@ function DeltaCell({ value, pct, suffix = "" }: { value: unknown; pct?: unknown;
   const color = amount > 0 ? "text-emerald-600" : amount < 0 ? "text-rose-600" : "theme-muted";
   return <span className={color}><span>{delta(amount, suffix, suffix === " pt" ? 4 : 2)}</span>{n(pct) !== null && <span className="block text-[10px]">{delta(pct, "%", 2)}</span>}</span>;
 }
+function compactIndian(value: unknown) {
+  const amount = n(value);
+  if (amount === null) return "—";
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? "-" : "";
+  const raw = Math.round(abs).toLocaleString("en-IN");
+  const unit = abs >= 10_000_000 ? `${sign}${(abs / 10_000_000).toFixed(2)} Cr` : abs >= 100_000 ? `${sign}${(abs / 100_000).toFixed(2)} Lakh` : null;
+  return unit ? `${raw} (${unit})` : `${sign}${raw}`;
+}
+function StackedMetric({ value, change, pct, suffix = "", digits = 0, compact = false }: { value: unknown; change: unknown; pct?: unknown; suffix?: string; digits?: number; compact?: boolean }) {
+  const amount = n(change);
+  const changeColor = amount === null || amount === 0 ? "theme-muted" : amount > 0 ? "text-emerald-600" : "text-rose-600";
+  return <div className="font-medium">{compact ? compactIndian(value) : n(value) === null ? "—" : fmt(value, digits)}<div className={`mt-0.5 text-[10px] font-normal ${compact ? changeColor : ""}`}>{compact ? <>{amount === null ? "—" : `${amount > 0 ? "+" : ""}${compactIndian(amount)}`}{n(pct) !== null && <span className="block">{delta(pct, "%", 2)}</span>}</> : <DeltaCell value={change} pct={pct} suffix={suffix}/>}</div></div>;
+}
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return <div className="rounded-xl border theme-border theme-surface p-3 min-w-0"><div className="text-[11px] uppercase tracking-wide theme-muted">{label}</div><div className="mt-1 text-lg font-bold theme-text truncate">{value}</div>{sub && <div className="mt-1 text-[11px] theme-muted">{sub}</div>}</div>;
 }
@@ -102,39 +116,59 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
     <Metric label="Gamma Blast" value={status("GAMMA_BLAST")} sub={String(feed.status ?? "WAITING")} />
   </div>;
 }
-function OptionChain({ title, chain }: { title: string; chain: Chain }) {
+function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot: Row }) {
   const feed = chain.option_feed ?? {};
   const sampler = chain.sampler ?? {};
   const quotes = Array.isArray(feed.quotes) ? feed.quotes as Row[] : [];
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
   const byToken = new Map(metrics.map(x => [String(x.token ?? ""), x]));
-  const merged = quotes.map(q => ({ ...q, ...(byToken.get(String(q.token ?? "")) ?? {}) }));
+  const quoteTokens = new Set(quotes.map(q => String(q.token ?? "")).filter(Boolean));
+  // Keep sampler-only rows too: a quote can disappear from the fresh feed while
+  // its last valid IV is intentionally retained and must still render as LAST.
+  const merged = [
+    ...quotes.map(q => ({ ...q, ...(byToken.get(String(q.token ?? "")) ?? {}) })),
+    ...metrics.filter(x => !quoteTokens.has(String(x.token ?? ""))),
+  ];
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
-  const strikes = resolvedStrikes.length ? resolvedStrikes : [...new Set(merged.map(x => n(x.strike)).filter((x): x is number => x !== null))].sort((a,b)=>a-b);
+  const allStrikes = (resolvedStrikes.length ? resolvedStrikes : [...new Set(merged.map(x => n(x.strike)).filter((x): x is number => x !== null))]).sort((a,b)=>a-b);
+  const spotPrice = n(spot.price);
+  const feedAtm = n(feed.atm_strike);
+  const atmTarget = spotPrice ?? feedAtm;
+  const atmIndex = allStrikes.length ? atmTarget === null ? Math.floor(allStrikes.length / 2) : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget)?i:best,0) : -1;
+  const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-5),atmIndex+6);
   const byKey = new Map(merged.map(x => [`${x.strike}:${x.option_type}`, x]));
   const spotFeed = feed.status ?? "WAITING";
+  const cell=(v:unknown,d=2)=>n(v)===null?"—":fmt(v,d);
+  const quoteTitle=(x:Row,field:string)=>n(x[field])===null?"No broker quote received":`Broker ${field.toUpperCase()} • ${x.fresh===true?"LIVE":`last received ${age(x.age_ms)} ago; may be stale`}`;
   return <section className="overflow-hidden rounded-2xl border theme-border theme-surface">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b theme-border p-3 sm:p-4">
-      <div><h2 className="text-lg font-bold theme-text">{title} Option Chain</h2><p className="text-xs theme-muted mt-1">{String(feed.expiry_type ?? chain.expiry_type ?? "—")} • Expiry {String(feed.expiry ?? "—")} • ATM ±3 strikes</p></div>
+      <div><h2 className="text-lg font-bold theme-text">{title} Option Chain</h2><p className="text-xs theme-muted mt-1">{String(feed.expiry_type ?? chain.expiry_type ?? "—")} • Expiry {String(feed.expiry ?? "—")} • ATM {fmt(strikes[5] ?? (atmIndex>=0?allStrikes[atmIndex]:null),0)} • −5 to +5 strikes ({strikes.length}/11)</p></div>
       <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-lg border theme-border px-2 py-1">Feed: {String(spotFeed)}</span><span className="rounded-lg border theme-border px-2 py-1">Contracts: {fmt(feed.received_contracts,0)}/{fmt(feed.expected_contracts,0)}</span><span className="rounded-lg border theme-border px-2 py-1">IV: {fmt(sampler.iv_live_count,0)} • OI: {fmt(sampler.oi_live_count,0)}</span></div>
     </div>
     {chain.error && <div className="m-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-600">{chain.error}</div>}
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1350px] border-collapse border border theme-border text-center text-xs">
-        <thead><tr><th colSpan={8} className="border border theme-border bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="border border theme-border theme-surface-2 px-3 font-bold theme-text">Strike</th><th colSpan={8} className="border border theme-border bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
-          <tr className="theme-surface-2 theme-muted">{["OI","OI Δ 1s","IV %","IV Δ 1s","LTP","LTP Δ 1s","Bid","Ask","Bid","Ask","LTP","LTP Δ 1s","IV %","IV Δ 1s","OI Δ 1s","OI"].map((x,i)=><th key={i} className="border border theme-border px-2 py-2 font-semibold">{x}</th>)}</tr></thead>
-        <tbody>{strikes.length === 0 ? <tr><td colSpan={17} className="border border theme-border p-10 theme-muted">Waiting for fresh option quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
+      <table className="w-full min-w-[900px] border-collapse border theme-border text-center text-xs">
+        <thead><tr><th colSpan={4} className="border theme-border bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="border theme-border theme-surface-2 px-3 font-bold theme-text">Strike</th><th colSpan={4} className="border theme-border bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
+          <tr className="theme-surface-2 theme-muted">{["Volume","OI","IV %","LTP","LTP","IV %","OI","Volume"].map((x,i)=><th key={i} className="border theme-border px-2 py-2 font-semibold">{x}<span className="block text-[9px] font-normal opacity-70">{["Δ / %","Δ / %","Δ pt","Δ / %","Δ / %","Δ pt","Δ / %","Δ / %"][i]}</span></th>)}</tr></thead>
+        <tbody>{strikes.length === 0 ? <tr><td colSpan={9} className="border theme-border p-10 theme-muted">Waiting for strike universe and broker quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
-          const cell=(v:unknown,d=2)=>n(v)===null?"—":fmt(v,d);
-          return <tr key={strike} className="border-b border theme-border hover:theme-surface-2">
-            <td className="border border theme-border px-2 py-2">{cell(ce.oi,0)}</td><td className="border border theme-border px-2 py-2"><DeltaCell value={ce.oi_change_1s} pct={ce.oi_change_pct_1s}/></td><td className="border border theme-border px-2 py-2 font-semibold">{ce.iv_live?cell(ce.iv,2):"—"}</td><td className="border border theme-border px-2 py-2"><DeltaCell value={ce.iv_change_1s} suffix=" pt"/></td><td className="border border theme-border px-2 py-2" title={n(ce.ltp) !== null ? `Last broker-traded price • ${ce.fresh === true ? `live ${age(ce.age_ms)} ago` : `last received ${age(ce.age_ms)} ago; may be stale after market close`}` : "No broker LTP received yet"}>{cell(ce.ltp)}</td><td className="border border theme-border px-2 py-2"><DeltaCell value={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s}/></td><td className="border border theme-border px-2 py-2 text-emerald-600">{cell(ce.bid)}</td><td className="border border theme-border px-2 py-2 text-rose-600">{cell(ce.ask)}</td>
-            <td className={`border border theme-border px-3 py-2 font-bold ${strike===strikes[Math.floor(strikes.length/2)]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}</td>
-            <td className="border border theme-border px-2 py-2 text-emerald-600">{cell(pe.bid)}</td><td className="border border theme-border px-2 py-2 text-rose-600">{cell(pe.ask)}</td><td className="border border theme-border px-2 py-2" title={n(pe.ltp) !== null ? `Last broker-traded price • ${pe.fresh === true ? `live ${age(pe.age_ms)} ago` : `last received ${age(pe.age_ms)} ago; may be stale after market close`}` : "No broker LTP received yet"}>{cell(pe.ltp)}</td><td className="border border theme-border px-2 py-2"><DeltaCell value={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s}/></td><td className="border border theme-border px-2 py-2 font-semibold">{pe.iv_live?cell(pe.iv,2):"—"}</td><td className="border border theme-border px-2 py-2"><DeltaCell value={pe.iv_change_1s} suffix=" pt"/></td><td className="border border theme-border px-2 py-2"><DeltaCell value={pe.oi_change_1s} pct={pe.oi_change_pct_1s}/></td><td className="border border theme-border px-2 py-2">{cell(pe.oi,0)}</td>
+          const ivStatus=(x:Row)=>n(x.iv)===null?"IV not received":x.iv_live===true||x.iv_status==="LIVE"?"Latest IV from fresh spot and option data":"Last valid IV retained; fresh input unavailable";
+          const ivLabel=(x:Row)=>n(x.iv)===null?"—":x.iv_live===true||x.iv_status==="LIVE"?"LIVE":"LAST";
+          return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
+            <td className="border theme-border px-2 py-2"><StackedMetric value={ce.volume} change={ce.volume_change_1s} pct={ce.volume_change_pct_1s} compact/></td>
+            <td className="border theme-border px-2 py-2"><StackedMetric value={ce.oi} change={ce.oi_change_1s} pct={ce.oi_change_pct_1s} compact/></td>
+            <td className="border theme-border px-2 py-2 font-semibold" title={ivStatus(ce)}><StackedMetric value={ce.iv} change={ce.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(ce)}</span></td>
+            <td className="border theme-border px-2 py-2" title={quoteTitle(ce,"ltp")}><StackedMetric value={ce.ltp} change={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s} digits={2}/></td>
+            <td className={`border theme-border px-3 py-2 font-bold ${strike===allStrikes[atmIndex]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="block text-[9px]">ATM</span>}</td>
+            <td className="border theme-border px-2 py-2" title={quoteTitle(pe,"ltp")}><StackedMetric value={pe.ltp} change={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s} digits={2}/></td>
+            <td className="border theme-border px-2 py-2 font-semibold" title={ivStatus(pe)}><StackedMetric value={pe.iv} change={pe.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(pe)}</span></td>
+            <td className="border theme-border px-2 py-2"><StackedMetric value={pe.oi} change={pe.oi_change_1s} pct={pe.oi_change_pct_1s} compact/></td>
+            <td className="border theme-border px-2 py-2"><StackedMetric value={pe.volume} change={pe.volume_change_1s} pct={pe.volume_change_pct_1s} compact/></td>
           </tr>;
         })}</tbody>
       </table>
     </div>
-    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price (never the IV pricing mark). The last received LTP remains visible after market close or when the feed becomes stale, with its quote age in the tooltip; it is not represented as a live price. IV, OI and LTP Δ update only from valid fresh broker ticks; stale ticks do not create artificial changes. IV Δ is in percentage points. OI is broker tick open interest.</div>
+    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask columns are intentionally hidden. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; new fresh quotes update the IV and its percentage-point change. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
   </section>;
 }
 export default function IVSkewFlipPage() {
@@ -218,7 +252,7 @@ export default function IVSkewFlipPage() {
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
-      <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty}/>
+      <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3">

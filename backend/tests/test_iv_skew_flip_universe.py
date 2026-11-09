@@ -8,7 +8,7 @@ from app.scanner.iv_skew_flip.universe import resolve_option_universe
 def master_rows(symbol="NIFTY", expiries=("12Nov2026", "19Nov2026")):
     rows = []
     for expiry_index, expiry in enumerate(expiries):
-        for strike in range(21800, 22201, 50):
+        for strike in range(21700, 22301, 50):
             for side in ("CE", "PE"):
                 rows.append({
                     "exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": symbol,
@@ -19,18 +19,18 @@ def master_rows(symbol="NIFTY", expiries=("12Nov2026", "19Nov2026")):
     return rows
 
 
-def test_nifty_weekly_resolves_nearest_expiry_and_seven_strikes():
+def test_nifty_weekly_resolves_nearest_expiry_and_eleven_strikes():
     result = resolve_option_universe(
         master_rows(), underlying="NIFTY", expiry_type="WEEKLY",
-        spot=22025, today=date(2026, 11, 6),
+        spot=22025, today=date(2026, 11, 6), strike_count=11,
     )
     assert result.expiry == "2026-11-12"
-    assert len(result.strikes) == 7
+    assert len(result.strikes) == 11
     assert result.atm_strike == 22050  # midpoint 22025 rounds to the upper listed strike
-    assert result.strikes == (21900, 21950, 22000, 22050, 22100, 22150, 22200)
-    assert len(result.contracts) == 14
+    assert result.strikes == (21800, 21850, 21900, 21950, 22000, 22050, 22100, 22150, 22200, 22250, 22300)
+    assert len(result.contracts) == 22
     assert {c.option_type for c in result.contracts} == {"CE", "PE"}
-    assert len(set(result.tokens)) == 14
+    assert len(set(result.tokens)) == 22
     assert {c.symbol for c in result.contracts} == {row["symbol"] for row in master_rows() if row["expiry"] == "12Nov2026" and row["strike"] in {str(int(s * 100)) for s in result.strikes}}
 
 
