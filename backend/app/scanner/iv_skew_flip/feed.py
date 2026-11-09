@@ -208,16 +208,21 @@ class IVSkewFlipFeedAdapter:
                 if isinstance(raw, dict):
                     diagnostic_keys = (
                         "subscriptions", "active_instruments", "socket_groups",
-                        "required_socket_groups", "missing_socket_groups",
-                        "unconnected_required_groups", "consumers",
-                        "raw_frames_received", "last_raw_frame_age_seconds",
-                        "ticks_received", "ticks_by_exchange_type",
+                        "required_socket_groups", "required_socket_group_count",
+                        "missing_socket_groups", "unconnected_required_groups",
+                        "max_socket_sessions", "consumers",
+                        "raw_frames_received", "raw_callback_attempts",
+                        "raw_callback_successes", "last_raw_frame_age_seconds",
+                        "last_raw_frame_age_seconds_by_group", "ticks_received",
                         "normalized_records_emitted", "normalized_records_delivered",
                         "unmatched_frames", "exchange_mismatch_frames",
                         "missing_exchange_type_frames", "ambiguous_token_frames",
-                        "delivery_errors", "normalized_delivery_errors",
-                        "last_delivery_error", "last_connect_failure",
-                        "socket_health_by_group",
+                        "missing_token_frames", "invalid_frame_types",
+                        "invalid_exchange_type_frames", "missing_callback_routes",
+                        "missing_descriptor_records", "normalizer_errors",
+                        "last_normalizer_error", "delivery_errors",
+                        "normalized_delivery_errors", "last_delivery_error",
+                        "last_connect_failure", "socket_health_by_group",
                     )
                     feed_diagnostics = {key: raw[key] for key in diagnostic_keys if key in raw}
             except Exception as exc:
