@@ -212,6 +212,13 @@ class IVSpotFeedAdapter:
             expected_keys = dict(self._keys)
             latest = dict(self._latest)
             started = self._started
+            record_validation = {
+                "scope": "iv_spot_consumer",
+                "callbacks_received": self._record_callbacks_received,
+                "accepted_records": self._accepted_records,
+                "rejected_records": sum(self._rejected_records.values()),
+                "rejected_by_reason": dict(self._rejected_records),
+            }
         fresh = {
             symbol: value for symbol, value in latest.items()
             if 0 <= current - (value.received_at_ns or value.timestamp_ns) <= self.max_spot_age_ns
@@ -281,13 +288,7 @@ class IVSpotFeedAdapter:
                 for symbol, key in sorted(expected_keys.items())
             },
             "transport": transport,
-            "record_validation": {
-                "scope": "iv_spot_consumer",
-                "callbacks_received": self._record_callbacks_received,
-                "accepted_records": self._accepted_records,
-                "rejected_records": sum(self._rejected_records.values()),
-                "rejected_by_reason": dict(self._rejected_records),
-            },
+            "record_validation": record_validation,
             "fresh_symbols": sorted(fresh),
             "missing_symbols": missing,
             "spot": {
