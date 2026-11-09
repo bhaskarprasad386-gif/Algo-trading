@@ -25,9 +25,25 @@ jobs:
           printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # Retry host-key discovery and report failures instead of silently
+          # aborting before the remote probe and evidence upload.
+          keyscan_ok=0
+          for attempt in 1 2 3; do
+            if timeout 8 ssh-keyscan -T 5 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/vps-keyscan.err; then
+              keyscan_ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$keyscan_ok" -ne 1 ]; then
+            echo "VPS_SSH_KEYSCAN=FAILED"
+            echo "VPS_SSH_KEYSCAN_ERROR=$(tr '\n' ' ' < /tmp/vps-keyscan.err | cut -c1-500)"
+            exit 1
+          fi
+          echo "VPS_SSH_KEYSCAN=OK"
 
-          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' | tee /tmp/vps-health-probe.txt
+          set +e
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2> >(tee /tmp/vps-ssh-stderr.txt >&2) | tee /tmp/vps-health-probe.txt
           set -u
           echo "=== HOST ==="
           echo "HOST=$(hostname)"
@@ -69,6 +85,55 @@ jobs:
           if [ "$live_health_code" != "000" ]; then
             cat /tmp/live_health_body || true
             echo
+          fi
+
+          echo "=== IV SCANNER DURABLE DATA ==="
+          iv_status_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/iv_status_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/scanner/iv-skew-flip/status 2>/dev/null || true)
+          echo "IV_STATUS_HTTP=$iv_status_code"
+          if [ "$iv_status_code" != "000" ]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              payload = json.loads(Path("/tmp/iv_status_body").read_text())
+          except Exception as exc:
+              print(f"IV_STATUS_PARSE_ERROR={type(exc).__name__}")
+              payload = {}
+          runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+          print(f"IV_DESIRED_STATE={payload.get('desired_state', 'UNKNOWN')}")
+          print(f"IV_RUNNER_STATUS={payload.get('runner_status', 'UNKNOWN')}")
+          print(f"IV_ORDERS_ENABLED={payload.get('orders_enabled', 'UNKNOWN')}")
+          for stream, snapshot in (runtime.get("samplers") or {}).items():
+              if not isinstance(snapshot, dict):
+                  continue
+              print(f"IV_SAMPLER={stream} status={snapshot.get('status', 'UNKNOWN')} expiry={snapshot.get('expiry', 'UNKNOWN')} contracts={snapshot.get('contract_count', 'UNKNOWN')} history_persisted={snapshot.get('history_persisted_count', 'UNKNOWN')} history_persistence={snapshot.get('history_persistence', 'UNKNOWN')} reason={snapshot.get('reason', '')}")
+          PY
+          fi
+
+          iv_history_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/iv_history_body -w "%{http_code}" "http://127.0.0.1:8000/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY&limit=2000" 2>/dev/null || true)
+          echo "IV_HISTORY_HTTP=$iv_history_code"
+          if [ "$iv_history_code" != "000" ]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              payload = json.loads(Path("/tmp/iv_history_body").read_text())
+          except Exception as exc:
+              print(f"IV_HISTORY_PARSE_ERROR={type(exc).__name__}")
+              payload = {}
+          rows = payload.get("metrics") if isinstance(payload.get("metrics"), list) else []
+          iv_rows = [row for row in rows if row.get("iv") is not None]
+          oi_rows = [row for row in rows if row.get("oi") is not None]
+          volume_rows = [row for row in rows if row.get("volume") is not None]
+          latest = max((row.get("source_timestamp_ns") or 0 for row in rows), default=0)
+          print(f"IV_HISTORY_STATUS={payload.get('data_status', 'UNKNOWN')}")
+          print(f"IV_HISTORY_EXPIRY={payload.get('expiry', 'UNKNOWN')}")
+          print(f"IV_HISTORY_CONTRACTS={len(rows)}")
+          print(f"IV_HISTORY_WITH_IV={len(iv_rows)}")
+          print(f"IV_HISTORY_WITH_OI={len(oi_rows)}")
+          print(f"IV_HISTORY_WITH_VOLUME={len(volume_rows)}")
+          print(f"IV_HISTORY_LATEST_SOURCE_TIMESTAMP_NS={latest}")
+          PY
           fi
 
           echo "=== LIVE SCANNER SNAPSHOTS ==="
@@ -185,6 +250,13 @@ jobs:
           ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)\\b' || true
           exit "$acceptance_status"
           REMOTE
+          ssh_status=${PIPESTATUS[0]}
+          set -e
+          echo "VPS_SSH_EXIT_CODE=$ssh_status"
+          if [ "$ssh_status" -ne 0 ]; then
+            echo "VPS_SSH_ERROR=$(tr '\n' ' ' < /tmp/vps-ssh-stderr.txt 2>/dev/null | cut -c1-500)"
+            exit "$ssh_status"
+          fi
 
       - name: Upload VPS health evidence
         if: ${{ always() }}
