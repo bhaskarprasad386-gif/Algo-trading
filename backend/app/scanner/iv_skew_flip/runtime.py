@@ -247,39 +247,50 @@ class IVSkewFlipRuntime:
             tokens = universe.tokens
             with self._lock:
                 current_tokens = self._universe_tokens.get(symbol)
-            if current_tokens == tokens:
-                self._last_error.pop(symbol, None)
-                return
+                feed = self._option_feeds.get(symbol)
+                sampler = self._samplers.get(symbol)
 
-            feed = self._option_feeds.get(symbol)
-            if feed is None:
-                feed = self.option_feed_factory(symbol)
-            # Register ownership before start(): the adapter may partially
-            # register its shared-feed consumer and then raise. Runtime stop()
-            # must still be able to release that partial subscription.
+            # A successful subscription is committed independently from sampler
+            # startup. If sampler startup fails, the next refresh retries only
+            # the sampler; it must not clear/re-register an unchanged consumer.
+            if current_tokens != tokens or feed is None:
+                if feed is None:
+                    feed = self.option_feed_factory(symbol)
+                # Own the adapter before start(): start may partially register
+                # with the shared feed before raising.
+                with self._lock:
+                    self._option_feeds[symbol] = feed
+                feed.start(universe)
+                with self._lock:
+                    self._universe_tokens[symbol] = tokens
+                    self._previous_atm_iv_diff.pop(symbol, None)
+                    self._previous_atm_strike.pop(symbol, None)
+                sampler = None
+
+            if sampler is None:
+                sampler = IVOneSecondSampler(
+                    quote_source=feed,
+                    spot_provider=lambda name=config.symbol: self.spot_feed.spot_snapshot(name),
+                    config=config,
+                    interval_seconds=1.0,
+                    clock_ns=self.clock_ns,
+                    clock_datetime=self.clock_datetime,
+                    history_session_factory=SessionLocal,
+                )
+                old_sampler = self._samplers.get(symbol)
+                sampler.inherit_history(old_sampler, universe)
+                # Retain sampler ownership before start(), just like feeds.
+                with self._lock:
+                    self._samplers[symbol] = sampler
+                sampler.start()
+                if old_sampler is not None and old_sampler is not sampler:
+                    old_sampler.stop()
+            else:
+                # start() is idempotent and recovers a sampler whose worker
+                # failed to start without touching the already-live option feed.
+                sampler.start()
+
             with self._lock:
-                self._option_feeds[symbol] = feed
-            feed.start(universe)
-            sampler = IVOneSecondSampler(
-                quote_source=feed,
-                spot_provider=lambda name=config.symbol: self.spot_feed.spot_snapshot(name),
-                config=config,
-                interval_seconds=1.0,
-                clock_ns=self.clock_ns,
-                clock_datetime=self.clock_datetime,
-                history_session_factory=SessionLocal,
-            )
-            old_sampler = self._samplers.get(symbol)
-            sampler.inherit_history(old_sampler, universe)
-            if old_sampler is not None:
-                old_sampler.stop()
-            sampler.start()
-            with self._lock:
-                self._option_feeds[symbol] = feed
-                self._samplers[symbol] = sampler
-                self._universe_tokens[symbol] = tokens
-                self._previous_atm_iv_diff.pop(symbol, None)
-                self._previous_atm_strike.pop(symbol, None)
                 self._last_error.pop(symbol, None)
         except Exception as exc:
             with self._lock:
