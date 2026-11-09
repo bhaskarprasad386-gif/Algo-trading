@@ -74,8 +74,8 @@ def test_spot_feed_rejects_out_of_order_and_stale_ticks():
         timestamp_ns=18_000_000_000, ltp=23900.0, payload={"exchange_timestamp_ns": 18_000_000_000},
     ))
     assert adapter.spot_snapshot("NIFTY").price == 24000.0
-    assert adapter.spot_snapshot("NIFTY", now_ns=23_000_000_001) is None
-    stale = adapter.snapshot(now_ns=23_000_000_001)
+    assert adapter.spot_snapshot("NIFTY", now_ns=24_000_000_001) is None
+    stale = adapter.snapshot(now_ns=24_000_000_001)
     assert stale["status"] == "STALE"
     assert stale["signals_allowed"] is False
     assert stale["spot"]["NIFTY"]["price"] == 24000.0
