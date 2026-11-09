@@ -25,11 +25,16 @@ from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
 
-CHAIN_CONFIGS = (
+# IV scanner is intentionally running only NIFTY Weekly until explicitly enabled.
+# Keep the complete registry for stable API/UI reporting, but all runtime work
+# (subscriptions, sampling, signals and refresh) uses ACTIVE_CHAIN_CONFIGS only.
+ALL_CHAIN_CONFIGS = (
     ("NIFTY_WEEKLY", DEFAULT_CONFIGS[0]),
     ("NIFTY_MONTHLY", ScannerConfig("NIFTY", "MONTHLY", 0.8, -0.8)),
     ("BANKNIFTY_MONTHLY", DEFAULT_CONFIGS[1]),
 )
+ACTIVE_CHAIN_CONFIGS = (ALL_CHAIN_CONFIGS[0],)
+CHAIN_CONFIGS = ACTIVE_CHAIN_CONFIGS
 
 
 class IVSkewFlipRuntime:
@@ -160,11 +165,11 @@ class IVSkewFlipRuntime:
             raise LookupError(f"instrument master has no NFO option contracts for streams {missing}")
         # Resolve both NSE index tokens before subscribing, so a partial/invalid
         # master cannot leave the runtime half-started.
-        for symbol in ("NIFTY", "BANKNIFTY"):
+        for symbol in ("NIFTY",):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
         future_contracts_list = []
         future_resolution_errors = {}
-        for symbol in ("NIFTY", "BANKNIFTY"):
+        for symbol in ():
             try:
                 future_contracts_list.extend(resolve_index_future_contracts(
                     instruments, underlying=symbol,
@@ -208,7 +213,7 @@ class IVSkewFlipRuntime:
                     ) from exc
                 raise
         try:
-            self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
+            self.spot_feed.start(self.instrument_master, ("NIFTY",))
             if future_contracts:
                 self.future_feed.start(future_contracts)
         except Exception as exc:
@@ -801,28 +806,34 @@ class IVSkewFlipRuntime:
             "spot_feed": self.spot_feed.snapshot(),
             "index_future_feed": self.future_feed.snapshot(),
             "spot_future_basis": basis_analysis,
+            "enabled_streams": [stream_id for stream_id, _ in ACTIVE_CHAIN_CONFIGS],
             "option_chains": {
                 stream_id: {
                     "symbol": config.symbol,
                     "expiry_type": config.expiry_type,
-                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "WAITING_FOR_SPOT"},
-                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "WAITING"},
+                    "enabled": stream_id in {key for key, _ in ACTIVE_CHAIN_CONFIGS},
+                    "status": (
+                        "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS}
+                        else "WAITING_FOR_SPOT"
+                    ) if stream_id not in feeds else feeds[stream_id].snapshot().get("status", "WAITING"),
+                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING_FOR_SPOT"},
+                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING"},
                     "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
                     "error": errors.get(stream_id),
                     "signals": signals.get(stream_id),
                     "early_move": early_move.get(stream_id),
                 }
-                for stream_id, config in CHAIN_CONFIGS
+                for stream_id, config in ALL_CHAIN_CONFIGS
             },
             "indices": {
-                symbol: {
-                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "WAITING_FOR_SPOT"},
-                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "WAITING"},
-                    "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
-                    "error": errors.get(stream_id),
-                    "signals": signals.get(stream_id),
-                }
-                for symbol, stream_id in (("NIFTY", "NIFTY_WEEKLY"), ("BANKNIFTY", "BANKNIFTY_MONTHLY"))
+                "NIFTY": {
+                    "option_feed": feeds["NIFTY_WEEKLY"].snapshot() if "NIFTY_WEEKLY" in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": samplers["NIFTY_WEEKLY"].snapshot() if "NIFTY_WEEKLY" in samplers else {"status": "WAITING"},
+                    "universe_tokens": len(self._universe_tokens.get("NIFTY_WEEKLY", ())),
+                    "error": errors.get("NIFTY_WEEKLY"),
+                    "signals": signals.get("NIFTY_WEEKLY"),
+                },
+                "BANKNIFTY": {"status": "DISABLED_BY_SCOPE", "universe_tokens": 0, "signals_allowed": False},
             },
             "last_refresh_ns": last_refresh,
             "last_error": errors.get("RUNTIME"),
