@@ -178,8 +178,13 @@ class IVSpotFeedAdapter:
             snapshot = self._latest.get(str(symbol or "").strip().upper())
         if snapshot is None:
             return None
-        age = current - (snapshot.received_at_ns or snapshot.timestamp_ns)
-        if age < 0 or age > self.max_spot_age_ns:
+        receive_age = current - (snapshot.received_at_ns or snapshot.timestamp_ns)
+        source_age = current - snapshot.timestamp_ns
+        # A fresh transport frame cannot make an old market observation fresh.
+        # Equal exchange timestamps remain acceptable only inside the same
+        # strict source-age window (e.g. provider timestamp granularity).
+        if (receive_age < 0 or receive_age > self.max_spot_age_ns
+                or source_age < 0 or source_age > self.max_spot_age_ns):
             return None
         return snapshot
 
@@ -192,6 +197,7 @@ class IVSpotFeedAdapter:
         fresh = {
             symbol: value for symbol, value in latest.items()
             if 0 <= current - (value.received_at_ns or value.timestamp_ns) <= self.max_spot_age_ns
+            and 0 <= current - value.timestamp_ns <= self.max_spot_age_ns
         }
         missing = sorted(set(expected) - set(fresh))
         if not started:
