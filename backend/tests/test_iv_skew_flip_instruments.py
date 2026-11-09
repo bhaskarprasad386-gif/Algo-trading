@@ -277,3 +277,26 @@ def test_master_rejects_invalid_required_option_contract_fields(field, value):
     rows[0][field] = value
     with pytest.raises(ValueError, match="missing complete NFO options"):
         loader._validate_rows(rows)
+
+
+def test_non_numeric_tokens_in_unrelated_exchange_rows_do_not_block_iv_master():
+    rows = valid_rows() + [{
+        "symbol": "BARLEYJPR20NOV2026",
+        "exch_seg": "NCDEX",
+        "instrumenttype": "FUTCOM",
+        "name": "BARLEY",
+        "expiry": "20NOV2026",
+        "strike": "0",
+        "lotsize": "1",
+        "token": "BARLEYJPR20NOV2026",
+    }]
+    assert loader._validate_rows(rows) == rows
+
+
+@pytest.mark.parametrize("exchange", ["NSE", "NFO"])
+def test_non_numeric_tokens_in_iv_required_exchanges_are_rejected(exchange):
+    rows = valid_rows()
+    target = next(row for row in rows if row["exch_seg"] == exchange)
+    target["token"] = "NOT-A-NUMERIC-TOKEN"
+    with pytest.raises(ValueError, match="malformed or incomplete"):
+        loader._validate_rows(rows)
