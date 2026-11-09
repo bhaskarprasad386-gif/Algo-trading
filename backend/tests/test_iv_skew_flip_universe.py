@@ -26,6 +26,8 @@ def test_nifty_weekly_resolves_nearest_expiry_and_seven_strikes():
     )
     assert result.expiry == "2026-11-12"
     assert len(result.strikes) == 7
+    assert result.atm_strike == 22050  # midpoint 22025 rounds to the upper listed strike
+    assert result.strikes == (21900, 21950, 22000, 22050, 22100, 22150, 22200)
     assert len(result.contracts) == 14
     assert {c.option_type for c in result.contracts} == {"CE", "PE"}
     assert len(set(result.tokens)) == 14
@@ -171,4 +173,21 @@ def test_universe_rejects_invalid_strike_count(strike_count):
         resolve_option_universe(
             master_rows(), underlying="NIFTY", expiry_type="WEEKLY",
             spot=22000, today=date(2026, 11, 6), strike_count=strike_count,
+        )
+
+
+def test_weekly_strike_window_is_exactly_centered_on_live_spot_atm():
+    result = resolve_option_universe(
+        master_rows(), underlying="NIFTY", expiry_type="WEEKLY",
+        spot=22087, today=date(2026, 11, 6),
+    )
+    assert result.atm_strike == 22100
+    assert result.strikes == (21950, 22000, 22050, 22100, 22150, 22200, 22250)
+
+
+def test_weekly_universe_does_not_shift_atm_window_when_spot_is_near_ladder_edge():
+    with pytest.raises(LookupError, match="cannot form ATM"):
+        resolve_option_universe(
+            master_rows(), underlying="NIFTY", expiry_type="WEEKLY",
+            spot=21800, today=date(2026, 11, 6),
         )
