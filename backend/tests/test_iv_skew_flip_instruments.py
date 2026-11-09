@@ -238,6 +238,33 @@ def test_snapshot_content_tampering_is_rejected(monkeypatch, tmp_path):
     assert loader._read_recent_snapshot() is None
 
 
+
+def test_missing_snapshot_logs_specific_read_rejection(monkeypatch, tmp_path):
+    cache = tmp_path / "missing.json"
+    monkeypatch.setattr(loader, "_cache_path", lambda: cache)
+    messages = []
+    monkeypatch.setattr(
+        loader.app_logger, "warning",
+        lambda message, *args: messages.append(message.format(*args)),
+    )
+
+    assert loader._read_recent_snapshot() is None
+    assert any("reason=FileNotFoundError" in message for message in messages)
+
+
+def test_schema_mismatch_logs_expected_and_actual_version(monkeypatch, tmp_path):
+    cache = tmp_path / "wrong-schema.json"
+    cache.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    monkeypatch.setattr(loader, "_cache_path", lambda: cache)
+    messages = []
+    monkeypatch.setattr(
+        loader.app_logger, "warning",
+        lambda message, *args: messages.append(message.format(*args)),
+    )
+
+    assert loader._read_recent_snapshot() is None
+    assert any("reason=schema_version_mismatch" in message for message in messages)
+
 def test_malformed_master_row_is_not_silently_dropped():
     rows = valid_rows() + [{"symbol": "BROKEN", "exch_seg": "NSE"}]
     with pytest.raises(ValueError, match="malformed or incomplete"):

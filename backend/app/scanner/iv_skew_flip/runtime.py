@@ -253,6 +253,11 @@ class IVSkewFlipRuntime:
             feed = self._option_feeds.get(symbol)
             if feed is None:
                 feed = self.option_feed_factory(symbol)
+            # Register ownership before start(): the adapter may partially
+            # register its shared-feed consumer and then raise. Runtime stop()
+            # must still be able to release that partial subscription.
+            with self._lock:
+                self._option_feeds[symbol] = feed
             feed.start(universe)
             sampler = IVOneSecondSampler(
                 quote_source=feed,

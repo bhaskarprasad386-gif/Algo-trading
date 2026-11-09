@@ -1781,7 +1781,7 @@ def _start_iv_skew_flip_runtime():
             )
         except Exception as exc:
             equity_pressure_error = f"{type(exc).__name__}: {exc}"
-            app_logger.warning("IV top-10 constituent pressure unavailable: %s", equity_pressure_error)
+            app_logger.warning("IV top-10 constituent pressure unavailable: {}", equity_pressure_error)
         runtime = IVSkewFlipRuntime(
             instrument_master=instrument_master,
             equity_pressure_enabled=bool(equity_baskets),
