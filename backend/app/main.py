@@ -15,6 +15,8 @@ import uuid
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func
+
 from app.core.config import settings
 from app.core.logger import app_logger
 from app.core.diagnostics import runtime_diagnostics
@@ -24,6 +26,7 @@ from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.iv_scanner_control import IVScannerControl
+from app.models.iv_option_observation import IVOptionObservation
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion  # noqa: F401 - register isolated IV basket history table
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
@@ -1849,6 +1852,108 @@ def iv_skew_flip_status():
     return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
             "runner_status": runtime.get("status", "STOPPED") if runtime else "STOPPED",
             "runtime": runtime, "orders_enabled": False}
+
+
+@app.get("/api/v1/scanner/iv-skew-flip/history")
+def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = None, limit: int = 1000):
+    """Return the newest durable option observation per contract for display as LAST."""
+    symbol = str(underlying or "").strip().upper()
+    if symbol not in {"NIFTY", "BANKNIFTY"}:
+        raise HTTPException(status_code=422, detail="underlying must be NIFTY or BANKNIFTY")
+    limit = max(1, min(int(limit), 2000))
+    try:
+        with SessionLocal() as db:
+            selected_expiry = str(expiry or "").strip()
+            if not selected_expiry:
+                latest_expiry = (
+                    db.query(
+                        IVOptionObservation.expiry,
+                        func.max(IVOptionObservation.source_timestamp_ns).label("latest_tick"),
+                    )
+                    .filter(IVOptionObservation.underlying == symbol)
+                    .group_by(IVOptionObservation.expiry)
+                    .order_by(func.max(IVOptionObservation.source_timestamp_ns).desc())
+                    .first()
+                )
+                selected_expiry = latest_expiry[0] if latest_expiry else ""
+            if not selected_expiry:
+                return {"status": "ok", "underlying": symbol, "expiry": None, "count": 0, "metrics": []}
+            latest_per_token = (
+                db.query(
+                    IVOptionObservation.token.label("token"),
+                    func.max(IVOptionObservation.source_timestamp_ns).label("latest_tick"),
+                )
+                .filter(
+                    IVOptionObservation.underlying == symbol,
+                    IVOptionObservation.expiry == selected_expiry,
+                )
+                .group_by(IVOptionObservation.token)
+                .subquery()
+            )
+            rows = (
+                db.query(IVOptionObservation)
+                .join(
+                    latest_per_token,
+                    (IVOptionObservation.token == latest_per_token.c.token)
+                    & (IVOptionObservation.source_timestamp_ns == latest_per_token.c.latest_tick),
+                )
+                .filter(
+                    IVOptionObservation.underlying == symbol,
+                    IVOptionObservation.expiry == selected_expiry,
+                )
+                .order_by(IVOptionObservation.strike.asc(), IVOptionObservation.option_type.asc())
+                .limit(limit)
+                .all()
+            )
+    except Exception as exc:
+        app_logger.exception("IV option history read failed")
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "Durable IV option history is temporarily unavailable.", "reason": f"{type(exc).__name__}: {exc}"},
+        ) from exc
+    metrics = [
+        {
+            "token": row.token,
+            "underlying": row.underlying,
+            "expiry": row.expiry,
+            "strike": row.strike,
+            "option_type": row.option_type,
+            "oi": row.oi,
+            "volume": row.volume,
+            "oi_live": False,
+            "oi_timestamp_ns": row.source_timestamp_ns if row.oi is not None else None,
+            "oi_stale": row.oi is not None,
+            "iv": row.iv,
+            "iv_unit": "PERCENT",
+            "iv_live": False,
+            "iv_status": "LAST",
+            "iv_input": "BID_ASK_MIDPOINT" if row.bid is not None and row.ask is not None else ("LTP" if row.ltp is not None else None),
+            "mark": row.mark,
+            "ltp": row.ltp,
+            "source_timestamp_ns": row.source_timestamp_ns,
+            "spot_timestamp_ns": row.spot_timestamp_ns,
+            "spot_price": row.spot_price,
+            "sampled_at_ns": row.sampled_at_ns,
+            "volume_change_1s": None,
+            "volume_change_pct_1s": None,
+            "oi_change_1s": None,
+            "oi_change_pct_1s": None,
+            "iv_change_1s": None,
+            "ltp_change_1s": None,
+            "ltp_change_pct_1s": None,
+        }
+        for row in rows
+    ]
+    return {
+        "status": "ok",
+        "underlying": symbol,
+        "expiry": selected_expiry,
+        "expiry_type": "WEEKLY" if symbol == "NIFTY" else "MONTHLY",
+        "count": len(metrics),
+        "metrics": metrics,
+        "data_status": "LAST" if metrics else "EMPTY",
+        "source": "iv_option_observations",
+    }
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/config")
