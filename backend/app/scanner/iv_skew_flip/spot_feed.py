@@ -210,6 +210,41 @@ class IVSpotFeedAdapter:
             status = "STALE"
         else:
             status = "WAITING_FOR_TICKS"
+        # Keep transport/routing health separate from per-symbol market freshness.
+        # CommonStrategyMarketFeed is shared process-wide, so these counters are
+        # explicitly labelled as manager-wide rather than falsely attributed to
+        # this consumer alone.
+        transport: dict[str, Any] = {}
+        feed_snapshot = getattr(self.feed, "snapshot", None)
+        if callable(feed_snapshot):
+            try:
+                shared = feed_snapshot()
+                if isinstance(shared, dict):
+                    transport_fields = (
+                        "subscriptions", "active_instruments", "socket_groups",
+                        "required_socket_groups", "missing_socket_groups",
+                        "unconnected_required_groups", "socket_health_by_group",
+                        "raw_frames_received", "ticks_received", "ticks_by_exchange_type",
+                        "unmatched_frames", "exchange_mismatch_frames",
+                        "missing_exchange_type_frames", "ambiguous_token_frames",
+                        "normalized_records_emitted", "normalized_records_delivered",
+                        "normalizer_errors", "last_normalizer_error",
+                        "delivery_errors", "normalized_delivery_errors",
+                        "last_delivery_error", "last_raw_frame_age_seconds",
+                        "last_raw_frame_age_seconds_by_group",
+                        "last_successful_route_age_seconds_by_group",
+                        "last_successful_delivery_age_seconds_by_group",
+                        "last_exchange_tick_age_seconds_by_exchange_type",
+                    )
+                    transport = {
+                        "scope": "shared_manager_process_wide",
+                        **{key: shared[key] for key in transport_fields if key in shared},
+                    }
+            except Exception as exc:
+                transport = {
+                    "scope": "shared_manager_process_wide",
+                    "diagnostics_error": f"{type(exc).__name__}: {exc}",
+                }
         # Keep the last broker-traded spot visible after the freshness window
         # expires (including after market close). Signal eligibility continues
         # to depend exclusively on fresh_symbols / spot_snapshot().
@@ -217,6 +252,15 @@ class IVSpotFeedAdapter:
             "status": status,
             "consumer": self.CONSUMER,
             "expected_symbols": sorted(expected),
+            "expected_instruments": {
+                symbol: {
+                    "exchange": key.exchange,
+                    "segment": key.segment,
+                    "token": key.token,
+                }
+                for symbol, key in sorted(self._keys.items())
+            },
+            "transport": transport,
             "fresh_symbols": sorted(fresh),
             "missing_symbols": missing,
             "spot": {
