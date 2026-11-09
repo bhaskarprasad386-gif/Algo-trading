@@ -31,8 +31,10 @@ class FakeOptionFeed:
         self.symbol = symbol
         self.universe = None
         self.started = False
+        self.start_calls = 0
 
     def start(self, universe):
+        self.start_calls += 1
         self.universe = universe
         self.started = True
         return {"consumer": f"iv-skew-flip-{self.symbol.lower()}"}
@@ -459,6 +461,53 @@ def test_runtime_retains_option_feed_when_sampler_start_fails(monkeypatch):
     assert stopped["status"] == "STOPPED"
     assert feed.started is False
     assert feed.stop_calls >= 1
+
+
+def test_sampler_start_retry_does_not_resubscribe_unchanged_option_universe(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    rows = (
+        make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
+    )
+    created = {}
+    attempts = {"count": 0}
+
+    class RecoveringSampler(FakeSampler):
+        def start(self):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise RuntimeError("temporary sampler startup failure")
+            self.started = True
+
+    def factory(symbol):
+        created[symbol] = FakeOptionFeed(symbol)
+        return created[symbol]
+
+    monkeypatch.setattr(runtime_module, "IVOneSecondSampler", RecoveringSampler)
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=FakeSpotFeed(),
+        option_feed_factory=factory,
+        clock_ns=lambda: 10_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
+    }
+
+    runtime.refresh_once()
+    feed = created["NIFTY_WEEKLY"]
+    assert feed.start_calls == 1
+    assert "NIFTY_WEEKLY" in runtime._last_error
+
+    runtime.refresh_once()
+    assert feed.start_calls == 1
+    assert runtime._samplers["NIFTY_WEEKLY"].started is True
+    assert "NIFTY_WEEKLY" not in runtime._last_error
 
 
 def test_runtime_retains_option_feed_when_subscription_start_partially_fails():
