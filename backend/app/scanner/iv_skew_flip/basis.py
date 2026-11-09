@@ -208,5 +208,5 @@ class BasisHistory:
             },
             "windows": windows,
             "sample_count": len(items),
-            "signals_allowed": latest is not None and now_ns >= latest.timestamp_ns,
+            "signals_allowed": False,  # basis history is context only, never a signal authorization
         }
