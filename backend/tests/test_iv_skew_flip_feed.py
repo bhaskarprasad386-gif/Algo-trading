@@ -46,6 +46,10 @@ def test_feed_adapter_subscribes_exactly_fourteen_contracts_and_retains_symbols(
     result = adapter.start(_universe())
     assert result["status"] == "SUBSCRIBED"
     assert result["contract_count"] == 14
+    snapshot = adapter.snapshot(1_000_000_000)
+    assert snapshot["atm_strike"] == _universe().atm_strike
+    assert snapshot["strike_step"] == 50
+    assert snapshot["strikes"] == list(_universe().strikes)
     assert len(feed.descriptors) == 14
     assert {item.symbol for item in feed.descriptors} == {
         f"NIFTY12NOV26{int(strike)}{side}"
