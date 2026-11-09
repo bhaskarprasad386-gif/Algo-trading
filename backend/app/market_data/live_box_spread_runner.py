@@ -532,7 +532,7 @@ class LiveBoxSpreadRunner:
             strikes.setdefault(symbol.strip().upper(), ())
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
-        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings")
+        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings",refresh_instrument_master=False)
         self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
         self._feed_thread.start()
         try:
