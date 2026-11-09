@@ -254,6 +254,11 @@ class IVSkewFlipRuntime:
             if feed is None:
                 feed = self.option_feed_factory(symbol)
             feed.start(universe)
+            # Register ownership immediately after subscription succeeds. If
+            # sampler construction/start fails, stop() must still know about
+            # this consumer and be able to release its WebSocket subscription.
+            with self._lock:
+                self._option_feeds[symbol] = feed
             sampler = IVOneSecondSampler(
                 quote_source=feed,
                 spot_provider=lambda name=config.symbol: self.spot_feed.spot_snapshot(name),
