@@ -1791,7 +1791,11 @@ def _start_iv_skew_flip_runtime():
         try:
             snapshot = runtime.start()
         except Exception:
-            runtime.stop()
+            # Keep ownership if rollback could not release a partially
+            # registered shared-feed consumer; OFF can retry cleanup.
+            cleanup = runtime.stop()
+            if cleanup.get("status") != "STOPPED":
+                iv_skew_flip_runtime = runtime
             raise
         iv_skew_flip_runtime = runtime
         return snapshot

@@ -182,30 +182,40 @@ class IVSkewFlipRuntime:
                 for item in basket:
                     unique.setdefault(item.symbol.strip().upper(), item)
             equity_feed = self.equity_feed_factory()
+            # Keep ownership before start(): a shared-feed adapter can register
+            # its consumer and then raise while subscribing.
+            self._equity_feed = equity_feed
             try:
                 equity_feed.start(self.instrument_master, tuple(unique.values()))
-            except Exception:
-                equity_feed.stop()
+            except Exception as exc:
+                cleanup = self.stop()
+                if cleanup.get("status") != "STOPPED":
+                    raise RuntimeError(
+                        "IV equity-feed startup failed and cleanup is pending; retry stop before starting again"
+                    ) from exc
                 raise
-            self._equity_feed = equity_feed
         elif self.equity_pressure_enabled:
             equity_feed = self.equity_feed_factory()
+            self._equity_feed = equity_feed
             try:
                 equity_feed.start(self.instrument_master, self.equity_basket)
-            except Exception:
-                equity_feed.stop()
+            except Exception as exc:
+                cleanup = self.stop()
+                if cleanup.get("status") != "STOPPED":
+                    raise RuntimeError(
+                        "IV equity-feed startup failed and cleanup is pending; retry stop before starting again"
+                    ) from exc
                 raise
-            self._equity_feed = equity_feed
         try:
             self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
             if future_contracts:
                 self.future_feed.start(future_contracts)
-        except Exception:
-            self.future_feed.stop()
-            self.spot_feed.stop()
-            if self._equity_feed is not None:
-                self._equity_feed.stop()
-                self._equity_feed = None
+        except Exception as exc:
+            cleanup = self.stop()
+            if cleanup.get("status") != "STOPPED":
+                raise RuntimeError(
+                    "IV spot/future-feed startup failed and cleanup is pending; retry stop before starting again"
+                ) from exc
             raise
         with self._lock:
             self._rows_by_stream = rows
@@ -789,6 +799,8 @@ class IVSkewFlipRuntime:
                 for symbol, stream_id in (("NIFTY", "NIFTY_WEEKLY"), ("BANKNIFTY", "BANKNIFTY_MONTHLY"))
             },
             "last_refresh_ns": last_refresh,
+            "last_error": errors.get("RUNTIME"),
+            "cleanup_errors": errors.get("CLEANUP"),
         }
 
     def stop(self) -> dict[str, Any]:
@@ -802,24 +814,45 @@ class IVSkewFlipRuntime:
             with self._lock:
                 self._stopping = True
             return self.snapshot()
+
         with self._lock:
-            samplers = tuple(self._samplers.values())
-            feeds = tuple(self._option_feeds.values())
-        for sampler in samplers:
-            sampler.stop()
-        for feed in feeds:
-            feed.stop()
-        self.spot_feed.stop()
-        self.future_feed.stop()
-        if self._equity_feed is not None:
-            self._equity_feed.stop()
-            self._equity_feed = None
+            samplers = tuple(self._samplers.items())
+            feeds = tuple(self._option_feeds.items())
+            equity_feed = self._equity_feed
+
+        # Try every independently-owned consumer even when another stop fails.
+        # Retain all references until every cleanup call succeeds so OFF can retry.
+        cleanup_errors: dict[str, str] = {}
+
+        def stop_resource(name: str, resource: Any) -> None:
+            try:
+                resource.stop()
+            except Exception as exc:
+                cleanup_errors[name] = f"{type(exc).__name__}: {exc}"
+
+        for name, sampler in samplers:
+            stop_resource(f"sampler:{name}", sampler)
+        for name, feed in feeds:
+            stop_resource(f"option_feed:{name}", feed)
+        stop_resource("spot_feed", self.spot_feed)
+        stop_resource("future_feed", self.future_feed)
+        if equity_feed is not None:
+            stop_resource("equity_feed", equity_feed)
+
+        if cleanup_errors:
+            with self._lock:
+                self._stopping = True
+                self._last_error["CLEANUP"] = json.dumps(cleanup_errors, sort_keys=True)
+            return self.snapshot()
+
         with self._lock:
             self._started = False
             self._stopping = False
             self._thread = None
+            self._last_error.pop("CLEANUP", None)
             self._samplers.clear()
             self._option_feeds.clear()
+            self._equity_feed = None
             self._universe_tokens.clear()
             self._rows_by_stream.clear()
             self._future_contracts = ()
@@ -854,6 +887,7 @@ class IVSkewFlipRuntime:
             self._previous_atm_strike.clear()
             self._last_evaluation_ns = None
         return self.snapshot()
+
 
 
 __all__ = ["IVSkewFlipRuntime"]
