@@ -56,6 +56,7 @@ from app.scanner.live_synthetic_routes import router as live_synthetic_router, c
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
@@ -1758,6 +1759,11 @@ def _start_iv_skew_flip_runtime():
             # A fully stopped runtime may remain registered after an interrupted
             # transition. Clear it before constructing the next isolated runtime.
             iv_skew_flip_runtime = None
+        # Install the IV-owned instrument snapshot before validating basket tokens.
+        # Previously validation ran before runtime.start() downloaded that snapshot,
+        # so a valid basket could be marked unavailable against an empty/stale master.
+        # This downloader is isolated and never reads or mutates the Box Spread cache.
+        download_iv_instruments(instrument_master)
         # Runner ON is the user's explicit activation for IV market-data analysis.
         # Load both official index baskets, verify the complete rosters/token mappings,
         # then subscribe only to each index's dynamically ranked top 10 constituents.
