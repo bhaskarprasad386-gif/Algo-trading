@@ -324,3 +324,22 @@ def test_spot_freshness_uses_recent_receive_time_not_repeated_exchange_timestamp
     assert snapshot["status"] == "PARTIAL"
     assert snapshot["spot"]["NIFTY"]["age_ms"] == 0.0
     assert snapshot["spot"]["NIFTY"]["source_age_ms"] == 2000.0
+
+
+def test_spot_feed_rejects_old_source_timestamp_despite_recent_receive():
+    current = {"ns": 20_000_000_000}
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: current["ns"])
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key, instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_000_000_000, ltp=24125.5,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    # A repeated old market observation arriving now cannot refresh signal age.
+    quote = adapter.spot_snapshot("NIFTY", now_ns=current["ns"])
+    assert quote is None
+    health = adapter.snapshot(now_ns=current["ns"])
+    assert health["signals_allowed"] is False
+    assert health["spot"]["NIFTY"]["fresh"] is False
