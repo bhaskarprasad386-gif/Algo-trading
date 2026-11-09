@@ -182,30 +182,40 @@ class IVSkewFlipRuntime:
                 for item in basket:
                     unique.setdefault(item.symbol.strip().upper(), item)
             equity_feed = self.equity_feed_factory()
+            # Keep ownership before start(): a shared-feed adapter can register
+            # its consumer and then raise while subscribing.
+            self._equity_feed = equity_feed
             try:
                 equity_feed.start(self.instrument_master, tuple(unique.values()))
-            except Exception:
-                equity_feed.stop()
+            except Exception as exc:
+                cleanup = self.stop()
+                if cleanup.get("status") != "STOPPED":
+                    raise RuntimeError(
+                        "IV equity-feed startup failed and cleanup is pending; retry stop before starting again"
+                    ) from exc
                 raise
-            self._equity_feed = equity_feed
         elif self.equity_pressure_enabled:
             equity_feed = self.equity_feed_factory()
+            self._equity_feed = equity_feed
             try:
                 equity_feed.start(self.instrument_master, self.equity_basket)
-            except Exception:
-                equity_feed.stop()
+            except Exception as exc:
+                cleanup = self.stop()
+                if cleanup.get("status") != "STOPPED":
+                    raise RuntimeError(
+                        "IV equity-feed startup failed and cleanup is pending; retry stop before starting again"
+                    ) from exc
                 raise
-            self._equity_feed = equity_feed
         try:
             self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
             if future_contracts:
                 self.future_feed.start(future_contracts)
-        except Exception:
-            self.future_feed.stop()
-            self.spot_feed.stop()
-            if self._equity_feed is not None:
-                self._equity_feed.stop()
-                self._equity_feed = None
+        except Exception as exc:
+            cleanup = self.stop()
+            if cleanup.get("status") != "STOPPED":
+                raise RuntimeError(
+                    "IV spot/future-feed startup failed and cleanup is pending; retry stop before starting again"
+                ) from exc
             raise
         with self._lock:
             self._rows_by_stream = rows
