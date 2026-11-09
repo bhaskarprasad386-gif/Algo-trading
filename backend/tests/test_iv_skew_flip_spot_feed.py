@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app.market_data.contracts import InstrumentKey, InstrumentType
+from app.market_data.normalizer import AngelOneTickNormalizer
 from app.scanner.iv_skew_flip.spot_feed import IVSpotFeedAdapter
 
 
@@ -423,3 +424,33 @@ def test_spot_feed_reports_consumer_accepted_and_rejected_records():
         "missing_or_invalid_provider_timestamp": 1,
         "out_of_order_source_timestamp": 1,
     }
+
+
+def test_smartapi_normalizer_to_iv_spot_adapter_preserves_provider_timestamp():
+    feed = FakeFeed()
+    exchange_timestamp_ms = 1_800_000_000_000
+    received_at_ns = exchange_timestamp_ms * 1_000_000 + 500_000_000
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: received_at_ns)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+
+    # Model the provider's raw SmartAPI WebSocket tick: LTP is paise-scaled
+    # and exchange_timestamp is epoch milliseconds.
+    raw_tick = {
+        "token": "99926000",
+        "exchange_type": 1,
+        "exchange_timestamp": str(exchange_timestamp_ms),
+        "last_traded_price": 2_412_550,
+    }
+    record = AngelOneTickNormalizer().normalize(nifty, raw_tick)
+    feed.callback(record)
+
+    quote = adapter.spot_snapshot("NIFTY")
+    assert quote is not None
+    assert quote.timestamp_ns == exchange_timestamp_ms * 1_000_000
+    assert quote.received_at_ns == received_at_ns
+    health = adapter.snapshot()
+    assert health["spot"]["NIFTY"]["price"] == 24125.5
+    assert health["spot"]["NIFTY"]["source_age_ms"] == 500.0
+    assert health["record_validation"]["callbacks_received"] == 1
+    assert health["record_validation"]["accepted_records"] == 1
