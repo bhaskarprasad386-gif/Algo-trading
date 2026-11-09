@@ -310,6 +310,8 @@ class IVSkewFlipFeedAdapter:
             "expiry_type": None if universe is None else universe.expiry_type,
             "expiry": None if universe is None else universe.expiry,
             "strikes": [] if universe is None else list(universe.strikes),
+            "atm_strike": None if universe is None else universe.atm_strike,
+            "strike_step": None if universe is None else universe.strike_step,
             "expected_contracts": expected,
             "received_contracts": len(quotes),
             "fresh_contracts": fresh,
