@@ -206,6 +206,25 @@ def test_spot_feed_rejects_non_finite_index_prices(invalid_price):
 
 
 
+def test_spot_feed_default_freshness_accepts_source_age_within_five_seconds():
+    feed = FakeFeed()
+    now_ns = 15_000_000_000
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: now_ns)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_500_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp_ns": 10_500_000_000},
+    ))
+    assert adapter.spot_snapshot("NIFTY") is not None
+    health = adapter.snapshot(now_ns=now_ns)
+    assert health["spot"]["NIFTY"]["source_age_ms"] == 4500.0
+    assert health["spot"]["NIFTY"]["fresh"] is True
+
+
 def test_spot_feed_snapshot_exposes_live_price_source_age():
     feed = FakeFeed()
     adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_500_000_000)
