@@ -42,6 +42,7 @@ jobs:
           fi
           echo "VPS_SSH_KEYSCAN=OK"
 
+          set +e
           ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2> >(tee /tmp/vps-ssh-stderr.txt >&2) | tee /tmp/vps-health-probe.txt
           set -u
           echo "=== HOST ==="
@@ -250,6 +251,7 @@ jobs:
           exit "$acceptance_status"
           REMOTE
           ssh_status=${PIPESTATUS[0]}
+          set -e
           echo "VPS_SSH_EXIT_CODE=$ssh_status"
           if [ "$ssh_status" -ne 0 ]; then
             echo "VPS_SSH_ERROR=$(tr '\n' ' ' < /tmp/vps-ssh-stderr.txt 2>/dev/null | cut -c1-500)"
