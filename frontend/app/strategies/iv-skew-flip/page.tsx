@@ -154,7 +154,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
             <td className="border theme-border px-2 py-2" title={quoteTitle(ce,"bid")}>{cell(ce.bid)}</td>
             <td className="border theme-border px-2 py-2" title={quoteTitle(ce,"ask")}>{cell(ce.ask)}</td>
             <td className="border theme-border px-2 py-2" title={quoteTitle(ce,"ltp")}><StackedMetric value={ce.ltp} change={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s} digits={2}/></td>
-            <td className="border theme-border px-3 py-2 font-bold ${strike===allStrikes[atmIndex]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}">{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="block text-[9px]">ATM</span>}</td>
+            <td className={`border theme-border px-3 py-2 font-bold ${strike===allStrikes[atmIndex]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="block text-[9px]">ATM</span>}</td>
             <td className="border theme-border px-2 py-2" title={quoteTitle(pe,"ltp")}><StackedMetric value={pe.ltp} change={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s} digits={2}/></td>
             <td className="border theme-border px-2 py-2" title={quoteTitle(pe,"bid")}>{cell(pe.bid)}</td>
             <td className="border theme-border px-2 py-2" title={quoteTitle(pe,"ask")}>{cell(pe.ask)}</td>
