@@ -92,6 +92,8 @@ class IVOneSecondSampler:
         self._stop = Event()
         self._thread: Thread | None = None
         self._latest: dict[str, OptionMetricSample] = {}
+        self._last_valid_iv: dict[str, OptionMetricSample] = {}
+        self._retained_iv_expiry: str | None = None
         self._previous_cycle: dict[str, OptionMetricSample] = {}
         self._one_second_changes: dict[str, dict[str, float | int | None]] = {}
         self._history: dict[str, deque[OptionMetricSample]] = defaultdict(deque)
@@ -210,23 +212,31 @@ class IVOneSecondSampler:
         spot_value = self._spot(self.spot_provider() if spot is None else spot)
         spot_received_at = None if spot_value is None else (spot_value.received_at_ns or spot_value.timestamp_ns)
         spot_source_age = None if spot_value is None else sampled_at - spot_value.timestamp_ns
+        configured_expiry = self.configured_expiry
+        with self._lock:
+            if self._retained_iv_expiry != configured_expiry:
+                self._last_valid_iv.clear()
+                self._retained_iv_expiry = configured_expiry
         if (spot_value is None
                 or sampled_at - spot_received_at < 0
                 or sampled_at - spot_received_at > self.max_spot_age_ns
                 or spot_source_age < 0
                 or spot_source_age > self.max_spot_age_ns):
             with self._lock:
-                # A failed spot gate invalidates every previously calculated
-                # IV value: do not leave stale metrics exposed as LIVE.
                 self._latest.clear()
+                self._previous_cycle.clear()
+                self._one_second_changes = {}
                 self._last_error = "fresh spot snapshot unavailable"
                 self._last_sampled_at_ns = sampled_at
             return self.snapshot()
 
-        years = _expiry_years(self.configured_expiry, sampled_datetime) if self.configured_expiry else None
+        years = _expiry_years(configured_expiry, sampled_datetime) if configured_expiry else None
         if years is None:
             with self._lock:
                 self._latest.clear()
+                self._previous_cycle.clear()
+                self._one_second_changes = {}
+                self._last_valid_iv.clear()
                 self._last_error = "configured option expiry invalid or expired"
                 self._last_sampled_at_ns = sampled_at
             return self.snapshot()
@@ -335,6 +345,9 @@ class IVOneSecondSampler:
             self._one_second_changes = changes
             self._previous_cycle = updates.copy()
             self._latest = updates
+            for token, sample in updates.items():
+                if sample.iv is not None:
+                    self._last_valid_iv[token] = sample
             cutoff_ns = sampled_at - self.history_limit * 1_000_000_000
             for token, sample in pending_history:
                 history = self._history[token]
@@ -423,7 +436,17 @@ class IVOneSecondSampler:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            samples = tuple(self._latest.values())
+            live_samples = tuple(self._latest.values())
+            live_iv_tokens = {item.token for item in live_samples if item.iv is not None}
+            display_by_token = {item.token: item for item in live_samples}
+            for token, last_good in self._last_valid_iv.items():
+                current = display_by_token.get(token)
+                if current is None:
+                    display_by_token[token] = last_good
+                elif current.iv is None:
+                    from dataclasses import replace
+                    display_by_token[token] = replace(current, iv=last_good.iv, iv_input=last_good.iv_input)
+            samples = tuple(display_by_token.values())
             history_sizes = {token: len(rows) for token, rows in self._history.items()}
             sampled_at = self._last_sampled_at_ns
             error = self._last_error
@@ -456,7 +479,8 @@ class IVOneSecondSampler:
                 ),
                 "iv": item.iv,
                 "iv_unit": "PERCENT",
-                "iv_live": item.iv is not None,
+                "iv_live": item.token in live_iv_tokens,
+                "iv_status": "LIVE" if item.token in live_iv_tokens else "LAST",
                 "iv_input": item.iv_input,
                 "mark": item.mark,
                 "ltp": item.ltp,
@@ -476,9 +500,10 @@ class IVOneSecondSampler:
         return {
             "cadence_seconds": 1,
             "sampled_at_ns": sampled_at,
-            "sample_count": len(samples),
-            "oi_live_count": sum(item.oi is not None for item in samples),
-            "iv_live_count": sum(item.iv is not None for item in samples),
+            "sample_count": len(live_samples),
+            "display_metric_count": len(samples),
+            "oi_live_count": sum(item.oi is not None for item in live_samples),
+            "iv_live_count": len(live_iv_tokens),
             "oi_values": {item.token: item.oi for item in samples},
             "iv_values": {item.token: item.iv for item in samples},
             "live_metrics": live_metrics,
@@ -490,7 +515,7 @@ class IVOneSecondSampler:
             "five_minute_oi_reference_available": sum(
                 1 for item in samples if self.oi_reference(item.token) is not None
             ),
-            "status": "LIVE" if samples and error is None else "WAITING",
+            "status": "LIVE" if live_samples and error is None else "WAITING",
             "reason": error,
         }
 
