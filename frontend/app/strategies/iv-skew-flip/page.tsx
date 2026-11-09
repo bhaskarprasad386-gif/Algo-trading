@@ -71,7 +71,9 @@ function compactIndian(value: unknown) {
   return `${sign}${Math.round(abs).toLocaleString("en-IN")}`;
 }
 function StackedMetric({ value, change, pct, suffix = "", digits = 0, compact = false }: { value: unknown; change: unknown; pct?: unknown; suffix?: string; digits?: number; compact?: boolean }) {
-  return <div className="font-medium">{compact ? compactIndian(value) : n(value) === null ? "—" : fmt(value, digits)}<div className="mt-0.5 text-[10px] font-normal">{compact ? <DeltaCell value={change === null || change === undefined ? null : compactIndian(change)} pct={pct}/> : <DeltaCell value={change} pct={pct} suffix={suffix}/>}</div></div>;
+  const amount = n(change);
+  const changeColor = amount === null || amount === 0 ? "theme-muted" : amount > 0 ? "text-emerald-600" : "text-rose-600";
+  return <div className="font-medium">{compact ? compactIndian(value) : n(value) === null ? "—" : fmt(value, digits)}<div className={`mt-0.5 text-[10px] font-normal ${compact ? changeColor : ""}`}>{compact ? <>{amount === null ? "—" : `${amount > 0 ? "+" : ""}${compactIndian(amount)}`}{n(pct) !== null && <span className="block">{delta(pct, "%", 2)}</span>}</> : <DeltaCell value={change} pct={pct} suffix={suffix}/>}</div></div>;
 }
 function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return <div className="rounded-xl border theme-border theme-surface p-3 min-w-0"><div className="text-[11px] uppercase tracking-wide theme-muted">{label}</div><div className="mt-1 text-lg font-bold theme-text truncate">{value}</div>{sub && <div className="mt-1 text-[11px] theme-muted">{sub}</div>}</div>;
