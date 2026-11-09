@@ -85,6 +85,7 @@ def test_basis_history_ignores_stale_and_out_of_order_observations():
     assert result["trend"] == "WIDENING"
     assert result["windows"]["1m"]["basis_change_points"] == 10
     assert result["sample_count"] == 2
+    assert result["signals_allowed"] is False
 
 
 def test_runtime_publishes_spot_future_basis_as_context_only():
