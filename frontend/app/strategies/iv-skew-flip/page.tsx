@@ -226,8 +226,8 @@ export default function IVSkewFlipPage() {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric label="NIFTY Receive Age" value={age(niftySpot.age_ms)} sub="Local callback receive time"/>
         <Metric label="NIFTY Source Age" value={age(niftySpot.source_age_ms)} sub="Broker exchange timestamp"/>
-        <Metric label="NSE Exchange Tick Age" value={age(n(niftyExchangeAge)?.[0] as number * 1000)} sub="Shared manager telemetry"/>
-        <Metric label="NSE Raw Frame Age" value={age(n(niftyRawFrameAge)?.[0] as number * 1000)} sub="Shared manager telemetry"/>
+        <Metric label="NSE Exchange Tick Age" value={JSON.stringify(niftyExchangeAge??{})} sub="Age by exchange type, seconds"/>
+        <Metric label="NSE Raw Frame Age" value={JSON.stringify(niftyRawFrameAge??{})} sub="Age by exchange group, seconds"/>
         <Metric label="IV Callbacks" value={fmt(spotValidation.callbacks_received,0)}/>
         <Metric label="IV Accepted" value={fmt(spotValidation.accepted_records,0)}/>
         <Metric label="IV Rejected" value={fmt(spotValidation.rejected_records,0)} sub={Object.entries((spotValidation.rejected_by_reason&&typeof spotValidation.rejected_by_reason==="object"?spotValidation.rejected_by_reason:{}) as Row).map(([key,value])=>`${key}: ${String(value)}`).join(" • ") || "No rejections reported"}/>
