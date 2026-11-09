@@ -410,7 +410,12 @@ def test_runtime_retains_option_feed_when_sampler_start_fails(monkeypatch):
     import app.scanner.iv_skew_flip.runtime as runtime_module
 
     now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
-    rows = (\n        make_rows("NIFTY", "12NOV2026", 100, 10)\n        + make_rows("NIFTY", "26NOV2026", 100, 10)\n        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)\n    )\n    created = {}
+    rows = (
+        make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
+    )
+    created = {}
 
     class TrackedFeed(FakeOptionFeed):
         def __init__(self, symbol):
@@ -455,7 +460,12 @@ def test_runtime_retains_option_feed_when_sampler_start_fails(monkeypatch):
 
 def test_runtime_retains_option_feed_when_subscription_start_partially_fails():
     now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
-    rows = (\n        make_rows("NIFTY", "12NOV2026", 100, 10)\n        + make_rows("NIFTY", "26NOV2026", 100, 10)\n        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)\n    )\n    created = {}
+    rows = (
+        make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
+    )
+    created = {}
 
     class PartiallyFailingFeed(FakeOptionFeed):
         def __init__(self, symbol):
