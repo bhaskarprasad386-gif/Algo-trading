@@ -415,3 +415,27 @@ def test_sampler_rejects_old_source_spot_even_when_transport_frame_is_recent():
     assert result["sample_count"] == 0
     assert result["live_metrics"] == []
     assert result["status"] != "LIVE"
+
+
+
+def test_sampler_keeps_iv_live_when_oi_observation_is_five_minutes_old():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    premium = 100.0
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        premium, 99.5, 100.5, 10000, 10, "oi-age-ce",
+        oi_timestamp_ns=now_ns - 301_000_000_000,
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    metric = result["live_metrics"][0]
+    assert metric["oi"] == 10000
+    assert metric["oi_live"] is False
+    assert metric["oi_stale"] is True
+    assert metric["oi_age_ms"] == 301_000.0
+    # OI staleness is independent: valid fresh option price/spot still yields IV.
+    assert metric["iv_live"] is True
