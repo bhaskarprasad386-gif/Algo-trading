@@ -294,3 +294,33 @@ def test_spot_feed_persists_and_restores_last_known_price(monkeypatch):
     assert restored_snapshot["spot"]["NIFTY"]["fresh"] is False
     assert restored_snapshot["spot"]["NIFTY"]["quote_status"] == "LAST_KNOWN_STALE"
     assert restored_snapshot["signals_allowed"] is False
+
+
+def test_spot_freshness_uses_recent_receive_time_not_repeated_exchange_timestamp():
+    current = {"ns": 20_000_000_000}
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: current["ns"])
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+
+    # Broker repeats the same exchange timestamp on a subsequent valid frame.
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key, instrument_type=InstrumentType.INDEX,
+        timestamp_ns=19_000_000_000, ltp=24125.5,
+        payload={"exchange_timestamp_ns": 19_000_000_000},
+    ))
+    current["ns"] = 21_000_000_000
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key, instrument_type=InstrumentType.INDEX,
+        timestamp_ns=19_000_000_000, ltp=24125.5,
+        payload={"exchange_timestamp_ns": 19_000_000_000},
+    ))
+
+    quote = adapter.spot_snapshot("NIFTY", now_ns=21_000_000_000)
+    assert quote is not None
+    assert quote.timestamp_ns == 19_000_000_000
+    assert quote.received_at_ns == 21_000_000_000
+    snapshot = adapter.snapshot(now_ns=21_000_000_000)
+    assert snapshot["status"] == "PARTIAL"
+    assert snapshot["spot"]["NIFTY"]["age_ms"] == 0.0
+    assert snapshot["spot"]["NIFTY"]["source_age_ms"] == 2000.0
