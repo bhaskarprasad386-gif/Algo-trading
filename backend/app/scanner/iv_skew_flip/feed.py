@@ -130,10 +130,17 @@ class IVSkewFlipFeedAdapter:
             )
             # Fast price/depth frames may omit OI. Keep the last actual OI
             # observation and its own timestamp rather than erasing it.
-            oi_value = incoming_oi if valid_incoming_oi else (None if previous is None else previous.oi)
+            preserve_oi = universe.underlying.upper() == "NIFTY"
+            oi_value = (
+                incoming_oi if valid_incoming_oi
+                else (previous.oi if preserve_oi and previous is not None else None)
+            )
             oi_timestamp_ns = (
                 timestamp_ns if valid_incoming_oi
-                else (None if previous is None else previous.oi_timestamp_ns)
+                else (
+                    previous.oi_timestamp_ns
+                    if preserve_oi and previous is not None else None
+                )
             )
             quote = OptionQuote(
                 underlying=universe.underlying,
