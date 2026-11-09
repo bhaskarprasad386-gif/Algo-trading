@@ -275,4 +275,10 @@ def test_feed_adapter_exposes_reasons_for_rejected_records():
     assert snapshot["rejected_records"] == {"missing_token": 0, "invalid_timestamp": 0, "missing_provider_timestamp": 1, "unsubscribed_token": 1, "out_of_order_timestamp": 1}
     assert snapshot["rejected_record_count"] == 3
     assert snapshot["last_rejection_reason"] == "out_of_order_timestamp"
-    assert snapshot["received_contracts"] == 0
+    assert snapshot["received_contracts"] == 1
+
+    # A new expiry/universe starts a fresh diagnostic window.
+    adapter.start(_universe())
+    reset = adapter.snapshot(10_000_000_000)
+    assert reset["rejected_record_count"] == 0
+    assert reset["last_rejection_reason"] is None
