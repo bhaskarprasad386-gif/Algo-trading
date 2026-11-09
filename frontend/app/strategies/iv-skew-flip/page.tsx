@@ -180,6 +180,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
 export default function IVSkewFlipPage() {
   const [runtime,setRuntime]=useState<Runtime|null>(null);
   const [basketRegistry,setBasketRegistry]=useState<BasketRegistry|null>(null);
+  const [durableHistory,setDurableHistory]=useState<Row|null>(null);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
@@ -195,6 +196,19 @@ export default function IVSkewFlipPage() {
         const body=await response.json();
         if(active&&response.ok)setBasketRegistry(body as BasketRegistry);
       }catch{/* keep last known basket registry state */}
+    };
+    void poll();
+    const timer=window.setInterval(()=>{if(active)void poll();},10000);
+    return()=>{active=false;window.clearInterval(timer);};
+  },[base]);
+  useEffect(()=>{
+    let active=true;
+    const poll=async()=>{
+      try{
+        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY`,{cache:"no-store"});
+        const body=await response.json();
+        if(active&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+      }catch{/* keep the last successful durable history response */}
     };
     void poll();
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
@@ -229,7 +243,35 @@ export default function IVSkewFlipPage() {
     finally{setBusy(false);}
   }
   const chains=runtime?.option_chains??{};
-  const nifty=chains[selectedNifty]??{};
+  const liveNifty=chains[selectedNifty]??{};
+  const liveNiftySampler=liveNifty.sampler&&typeof liveNifty.sampler==="object"?liveNifty.sampler as Row:{};
+  const liveNiftyMetrics=Array.isArray(liveNiftySampler.live_metrics)?liveNiftySampler.live_metrics as Row[]:[];
+  const savedMetrics=Array.isArray(durableHistory?.metrics)?durableHistory.metrics as Row[]:[];
+  const metricsByToken=new Map<string,Row>();
+  for(const item of savedMetrics)metricsByToken.set(String(item.token??""),item);
+  for(const item of liveNiftyMetrics)metricsByToken.set(String(item.token??""),item);
+  const mergedNiftyMetrics=[...metricsByToken.values()].filter(item=>String(item.token??""));
+  const savedExpiry=String(durableHistory?.expiry??"");
+  const liveFeed=liveNifty.option_feed&&typeof liveNifty.option_feed==="object"?liveNifty.option_feed as Row:{};
+  const nifty={
+    ...liveNifty,
+    option_feed:{
+      ...liveFeed,
+      expiry:liveFeed.expiry??(liveNiftyMetrics.length?undefined:savedExpiry||undefined),
+      expiry_type:liveFeed.expiry_type??(liveNiftyMetrics.length?undefined:durableHistory?.expiry_type),
+      strikes:Array.isArray(liveFeed.strikes)&&liveFeed.strikes.length?liveFeed.strikes:[...new Set(savedMetrics.map(item=>n(item.strike)).filter((value):value is number=>value!==null))].sort((a,b)=>a-b),
+    },
+    sampler:{
+      ...liveNiftySampler,
+      live_metrics:mergedNiftyMetrics,
+      status:liveNiftySampler.status??(savedMetrics.length?"LAST":"WAITING"),
+      history_persistence:liveNiftySampler.history_persistence??(savedMetrics.length?"DATABASE":"UNKNOWN"),
+      history_persisted_count:liveNiftySampler.history_persisted_count??savedMetrics.length,
+      iv_live_count:liveNiftySampler.iv_live_count??0,
+      oi_live_count:liveNiftySampler.oi_live_count??0,
+      reason:liveNiftySampler.reason??(savedMetrics.length?"Showing latest durable broker observations; these are LAST values, not live ticks.":undefined),
+    },
+  } as Chain;
   const bank=chains.BANKNIFTY_MONTHLY??{};
   const spotFeed = runtime?.spot_feed && typeof runtime.spot_feed === "object" ? runtime.spot_feed as Row : {};
   const spot = spotFeed.spot && typeof spotFeed.spot === "object" ? spotFeed.spot as Row : {};
