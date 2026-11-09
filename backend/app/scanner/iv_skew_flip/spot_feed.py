@@ -54,7 +54,7 @@ class IVSpotFeedAdapter:
                 rows = db.query(IVSpotLastPrice).all()
             with self._lock:
                 self._latest.update({
-                    row.symbol: SpotSnapshot(float(row.price), int(row.timestamp_ns))
+                    row.symbol: SpotSnapshot(float(row.price), int(row.timestamp_ns), int(row.timestamp_ns))
                     for row in rows
                     if row.symbol in self.DEFAULT_SYMBOLS
                     and isfinite(float(row.price)) and float(row.price) > 0
@@ -138,6 +138,7 @@ class IVSpotFeedAdapter:
             return
         if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
             return
+        received_at_ns = self.clock_ns()
         with self._lock:
             # A broker token may already be registered by another shared-feed
             # consumer with generic/different instrument metadata. The exact
@@ -146,14 +147,18 @@ class IVSpotFeedAdapter:
             if symbol is None:
                 return
             previous = self._latest.get(symbol)
-            if previous is not None and timestamp_ns <= previous.timestamp_ns:
+            if previous is not None and timestamp_ns < previous.timestamp_ns:
                 return
-            snapshot = SpotSnapshot(float(price), timestamp_ns)
+            # Exchange timestamps describe the source observation; receive time
+            # describes whether the transport is delivering current frames.
+            # Keep both clocks separate: brokers may repeat an index timestamp
+            # across quote frames, which must refresh feed health without
+            # fabricating a new exchange observation.
+            snapshot = SpotSnapshot(float(price), timestamp_ns, received_at_ns)
             self._latest[symbol] = snapshot
         if not self._persist_last_price:
             return
         try:
-            received_at_ns = self.clock_ns()
             with SessionLocal() as db:
                 db.merge(IVSpotLastPrice(symbol=symbol, price=snapshot.price, timestamp_ns=snapshot.timestamp_ns))
                 db.merge(IVSpotObservation(
@@ -173,7 +178,7 @@ class IVSpotFeedAdapter:
             snapshot = self._latest.get(str(symbol or "").strip().upper())
         if snapshot is None:
             return None
-        age = current - snapshot.timestamp_ns
+        age = current - (snapshot.received_at_ns or snapshot.timestamp_ns)
         if age < 0 or age > self.max_spot_age_ns:
             return None
         return snapshot
@@ -186,7 +191,7 @@ class IVSpotFeedAdapter:
             started = self._started
         fresh = {
             symbol: value for symbol, value in latest.items()
-            if 0 <= current - value.timestamp_ns <= self.max_spot_age_ns
+            if 0 <= current - (value.received_at_ns or value.timestamp_ns) <= self.max_spot_age_ns
         }
         missing = sorted(set(expected) - set(fresh))
         if not started:
@@ -216,7 +221,9 @@ class IVSpotFeedAdapter:
                     "last_trade_time": datetime.fromtimestamp(
                         item.timestamp_ns / 1_000_000_000, tz=timezone.utc
                     ).astimezone(ZoneInfo("Asia/Kolkata")).isoformat(),
-                    "age_ms": round((current - item.timestamp_ns) / 1_000_000, 2),
+                    "age_ms": round((current - (item.received_at_ns or item.timestamp_ns)) / 1_000_000, 2),
+                    "source_age_ms": round((current - item.timestamp_ns) / 1_000_000, 2),
+                    "received_at_ns": item.received_at_ns or item.timestamp_ns,
                     "fresh": symbol in fresh,
                     "quote_status": "LIVE" if symbol in fresh else "LAST_KNOWN_STALE",
                 }
