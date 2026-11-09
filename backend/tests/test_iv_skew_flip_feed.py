@@ -260,3 +260,25 @@ def test_feed_adapter_uses_its_subscription_metadata_when_shared_record_is_gener
     assert quotes[0].strike == descriptor.strike
     assert quotes[0].option_type == descriptor.option_type
     assert quotes[0].token == descriptor.key.token
+
+
+def test_feed_adapter_exposes_reasons_for_rejected_records():
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    feed.callback(SimpleNamespace(instrument=descriptor.key, timestamp_ns=10_000_000_000, ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10, payload={}))
+    feed.callback(SimpleNamespace(instrument=InstrumentKey("NFO", "NFO", "not-subscribed"), timestamp_ns=10_000_000_000, ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10, payload={"exchange_timestamp_ns": 10_000_000_000}))
+    feed.callback(SimpleNamespace(instrument=descriptor.key, timestamp_ns=10_000_000_000, ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10, payload={"exchange_timestamp_ns": 10_000_000_000}))
+    feed.callback(SimpleNamespace(instrument=descriptor.key, timestamp_ns=9_000_000_000, ltp=100.0, bid=99.0, ask=101.0, oi=1000, volume=10, payload={"exchange_timestamp_ns": 9_000_000_000}))
+    snapshot = adapter.snapshot(10_000_000_000)
+    assert snapshot["rejected_records"] == {"missing_token": 0, "invalid_timestamp": 0, "missing_provider_timestamp": 1, "unsubscribed_token": 1, "out_of_order_timestamp": 1}
+    assert snapshot["rejected_record_count"] == 3
+    assert snapshot["last_rejection_reason"] == "out_of_order_timestamp"
+    assert snapshot["received_contracts"] == 1
+
+    # A new expiry/universe starts a fresh diagnostic window.
+    adapter.start(_universe())
+    reset = adapter.snapshot(10_000_000_000)
+    assert reset["rejected_record_count"] == 0
+    assert reset["last_rejection_reason"] is None

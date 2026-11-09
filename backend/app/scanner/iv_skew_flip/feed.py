@@ -40,6 +40,8 @@ class IVSkewFlipFeedAdapter:
         self._tokens: dict[str, tuple[float, str]] = {}
         self._last_tick_ns: int | None = None
         self._started = False
+        self._rejected_records = {"missing_token": 0, "invalid_timestamp": 0, "missing_provider_timestamp": 0, "unsubscribed_token": 0, "out_of_order_timestamp": 0}
+        self._last_rejection_reason: str | None = None
 
     @staticmethod
     def _descriptor(universe: ResolvedOptionUniverse, contract: Any) -> InstrumentDescriptor:
@@ -90,13 +92,17 @@ class IVSkewFlipFeedAdapter:
     def _on_record(self, record: Any) -> None:
         timestamp_ns = getattr(record, "timestamp_ns", None)
         token = str(getattr(getattr(record, "instrument", None), "token", "") or "").strip()
-        if (
-            not token
-            or not isinstance(timestamp_ns, int)
-            or isinstance(timestamp_ns, bool)
-            or timestamp_ns <= 0
-            or not self._has_provider_timestamp(record)
-        ):
+        rejection = None
+        if not token:
+            rejection = "missing_token"
+        elif not isinstance(timestamp_ns, int) or isinstance(timestamp_ns, bool) or timestamp_ns <= 0:
+            rejection = "invalid_timestamp"
+        elif not self._has_provider_timestamp(record):
+            rejection = "missing_provider_timestamp"
+        if rejection is not None:
+            with self._lock:
+                self._rejected_records[rejection] += 1
+                self._last_rejection_reason = rejection
             return
         with self._lock:
             universe = self._universe
@@ -107,10 +113,14 @@ class IVSkewFlipFeedAdapter:
             # map, never from the shared normalized descriptor.
             contract = self._tokens.get(token)
             if universe is None or contract is None:
+                self._rejected_records["unsubscribed_token"] += 1
+                self._last_rejection_reason = "unsubscribed_token"
                 return
             strike, option_type = contract
             previous = self._quotes.get((strike, option_type))
             if previous is not None and timestamp_ns <= previous.timestamp_ns:
+                self._rejected_records["out_of_order_timestamp"] += 1
+                self._last_rejection_reason = "out_of_order_timestamp"
                 return
             quote = OptionQuote(
                 underlying=universe.underlying,
@@ -148,6 +158,8 @@ class IVSkewFlipFeedAdapter:
                 for contract in universe.contracts
             }
             self._last_tick_ns = None
+            self._rejected_records = {"missing_token": 0, "invalid_timestamp": 0, "missing_provider_timestamp": 0, "unsubscribed_token": 0, "out_of_order_timestamp": 0}
+            self._last_rejection_reason = None
         keys = self.feed.start(descriptors, self._on_record)
         self._started = True
         return {
@@ -185,6 +197,8 @@ class IVSkewFlipFeedAdapter:
             universe = self._universe
             started = self._started
             last_tick = self._last_tick_ns
+            rejected_records = dict(self._rejected_records)
+            last_rejection_reason = self._last_rejection_reason
         fresh = sum(
             1 for quote in quotes
             if 0 <= now_ns - quote.timestamp_ns <= self.MAX_QUOTE_AGE_NS
@@ -237,6 +251,9 @@ class IVSkewFlipFeedAdapter:
             "fresh_contracts": fresh,
             "stale_contracts": stale,
             "last_tick_timestamp_ns": last_tick,
+            "rejected_records": rejected_records,
+            "rejected_record_count": sum(rejected_records.values()),
+            "last_rejection_reason": last_rejection_reason,
             "signals_allowed": bool(expected and fresh == expected),
             "quotes": live_quotes,
         }
