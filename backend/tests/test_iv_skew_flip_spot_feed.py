@@ -74,8 +74,8 @@ def test_spot_feed_rejects_out_of_order_and_stale_ticks():
         timestamp_ns=18_000_000_000, ltp=23900.0, payload={"exchange_timestamp_ns": 18_000_000_000},
     ))
     assert adapter.spot_snapshot("NIFTY").price == 24000.0
-    assert adapter.spot_snapshot("NIFTY", now_ns=23_000_000_001) is None
-    stale = adapter.snapshot(now_ns=23_000_000_001)
+    assert adapter.spot_snapshot("NIFTY", now_ns=24_000_000_001) is None
+    stale = adapter.snapshot(now_ns=24_000_000_001)
     assert stale["status"] == "STALE"
     assert stale["signals_allowed"] is False
     assert stale["spot"]["NIFTY"]["price"] == 24000.0
@@ -204,6 +204,25 @@ def test_spot_feed_rejects_non_finite_index_prices(invalid_price):
     ))
     assert adapter.spot_snapshot("NIFTY") is None
 
+
+
+def test_spot_feed_default_freshness_accepts_source_age_within_five_seconds():
+    feed = FakeFeed()
+    now_ns = 15_000_000_000
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: now_ns)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_500_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp_ns": 10_500_000_000},
+    ))
+    assert adapter.spot_snapshot("NIFTY") is not None
+    health = adapter.snapshot(now_ns=now_ns)
+    assert health["spot"]["NIFTY"]["source_age_ms"] == 4500.0
+    assert health["spot"]["NIFTY"]["fresh"] is True
 
 
 def test_spot_feed_snapshot_exposes_live_price_source_age():

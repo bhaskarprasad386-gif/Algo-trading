@@ -399,6 +399,30 @@ def test_sampler_does_not_label_wide_book_as_a_valid_iv_input():
     assert metric["iv_input"] is None
 
 
+def test_sampler_accepts_spot_source_age_within_five_seconds_but_not_receive_time_only():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "five-second-ce",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    within_limit = sampler.sample_once(
+        now_ns=now_ns, now=now,
+        spot=SpotSnapshot(21950.0, now_ns - 4_500_000_000, now_ns),
+    )
+    assert within_limit["sample_count"] == 1
+    assert within_limit["status"] == "LIVE"
+
+    beyond_limit = sampler.sample_once(
+        now_ns=now_ns + 5_100_000_000, now=now,
+        spot=SpotSnapshot(21950.0, now_ns, now_ns + 5_100_000_000),
+    )
+    assert beyond_limit["sample_count"] == 0
+    assert beyond_limit["status"] == "WAITING"
+
+
 def test_sampler_rejects_old_source_spot_even_when_transport_frame_is_recent():
     now_ns = 1_800_000_000_000_000_000
     now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -409,7 +433,7 @@ def test_sampler_rejects_old_source_spot_even_when_transport_frame_is_recent():
     ),)
     sampler = _sampler(source, lambda: now_ns)
     # A recent transport frame must not launder a source observation that is
-    # older than the strict 3s market-data freshness limit.
+    # older than the strict 5s market-data freshness limit.
     spot = SpotSnapshot(21950.0, now_ns - 10_000_000_000, now_ns)
     result = sampler.sample_once(now_ns=now_ns, now=now, spot=spot)
     assert result["sample_count"] == 0
