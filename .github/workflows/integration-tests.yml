@@ -110,6 +110,8 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
+          from pathlib import Path
           import requests
           from collections import Counter
           from app.scanner.iv_skew_flip.instruments import (
@@ -162,8 +164,12 @@ jobs:
               except Exception as exc:
                   print(f"{label}_fetch_failed={type(exc).__name__}: {exc}")
 
+          snapshot_path = Path(os.environ["IV_INSTRUMENT_MASTER_CACHE_PATH"])
+          if not snapshot_path.is_file() or snapshot_path.stat().st_size == 0:
+              raise SystemExit("No production-validated IV snapshot was generated; refusing to continue")
+
       - name: Upload validated IV-only snapshot for controlled transfer
-        if: ${{ hashFiles(format('{0}/iv_instrument_master_cache.json', runner.temp)) != '' }}
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: iv-instrument-master-validated
