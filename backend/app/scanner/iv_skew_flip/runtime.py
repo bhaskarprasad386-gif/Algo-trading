@@ -158,7 +158,7 @@ class IVSkewFlipRuntime:
             raise RuntimeError("Angel One instrument master is empty")
         rows = {
             stream_id: self._rows_for_symbol(instruments, config.symbol)
-            for stream_id, config in CHAIN_CONFIGS
+            for stream_id, config in ACTIVE_CHAIN_CONFIGS
         }
         if any(not values for values in rows.values()):
             missing = sorted(stream_id for stream_id, values in rows.items() if not values)
@@ -427,7 +427,7 @@ class IVSkewFlipRuntime:
         if previous is not None and now_ns - previous < int(self.evaluation_seconds * 1_000_000_000):
             return
         evaluated = False
-        for stream_id, config in CHAIN_CONFIGS:
+        for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             evaluated = self._evaluate_symbol(stream_id, config, now, now_ns) or evaluated
         if evaluated:
             with self._lock:
@@ -517,7 +517,7 @@ class IVSkewFlipRuntime:
 
     def _evaluate_early_move(self, now_ns: int) -> None:
         """Run the short-window alert path every refresh, independently of 60s signals."""
-        for stream_id, config in CHAIN_CONFIGS:
+        for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             feed = self._option_feeds.get(stream_id)
             sampler = self._samplers.get(stream_id)
             spot = self.spot_feed.spot_snapshot(config.symbol)
@@ -731,7 +731,7 @@ class IVSkewFlipRuntime:
         now = self.clock_datetime()
         if now.tzinfo is None:
             raise ValueError("runtime datetime must be timezone-aware")
-        for stream_id, config in CHAIN_CONFIGS:
+        for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             spot = self.spot_feed.spot_snapshot(config.symbol)
             if spot is None:
                 # Make the refresh gate explicit in the per-chain API status.
@@ -919,7 +919,7 @@ class IVSkewFlipRuntime:
                 "signals_allowed": False, "direction": "WAITING",
                 "timeframe_agreement": False, "windows": {},
             }
-            self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
+            self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in ACTIVE_CHAIN_CONFIGS}
             self._previous_atm_iv_diff.clear()
             self._previous_atm_strike.clear()
             self._last_evaluation_ns = None
