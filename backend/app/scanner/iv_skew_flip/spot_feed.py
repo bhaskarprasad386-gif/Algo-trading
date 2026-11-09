@@ -192,6 +192,7 @@ class IVSpotFeedAdapter:
         current = self.clock_ns() if now_ns is None else now_ns
         with self._lock:
             expected = tuple(self._keys)
+            expected_keys = dict(self._keys)
             latest = dict(self._latest)
             started = self._started
         fresh = {
@@ -258,7 +259,7 @@ class IVSpotFeedAdapter:
                     "segment": key.segment,
                     "token": key.token,
                 }
-                for symbol, key in sorted(self._keys.items())
+                for symbol, key in sorted(expected_keys.items())
             },
             "transport": transport,
             "fresh_symbols": sorted(fresh),
