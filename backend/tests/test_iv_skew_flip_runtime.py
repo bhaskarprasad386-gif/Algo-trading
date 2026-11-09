@@ -591,7 +591,7 @@ def test_runtime_rolls_weekly_expiry_forward_after_1530_ist(monkeypatch):
 
     result = runtime.refresh_once()
 
-    assert result["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 14
+    assert result["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 22
     assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
     assert all(
         contract.expiry == "2026-11-12"
