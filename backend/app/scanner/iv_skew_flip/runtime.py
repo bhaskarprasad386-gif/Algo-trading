@@ -25,11 +25,16 @@ from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
 
-CHAIN_CONFIGS = (
+# IV scanner is intentionally running only NIFTY Weekly until explicitly enabled.
+# Keep the complete registry for stable API/UI reporting, but all runtime work
+# (subscriptions, sampling, signals and refresh) uses ACTIVE_CHAIN_CONFIGS only.
+ALL_CHAIN_CONFIGS = (
     ("NIFTY_WEEKLY", DEFAULT_CONFIGS[0]),
     ("NIFTY_MONTHLY", ScannerConfig("NIFTY", "MONTHLY", 0.8, -0.8)),
     ("BANKNIFTY_MONTHLY", DEFAULT_CONFIGS[1]),
 )
+ACTIVE_CHAIN_CONFIGS = (ALL_CHAIN_CONFIGS[0],)
+CHAIN_CONFIGS = ALL_CHAIN_CONFIGS
 
 
 class IVSkewFlipRuntime:
@@ -127,7 +132,7 @@ class IVSkewFlipRuntime:
         self._previous_atm_iv_diff: dict[str, float] = {}
         self._previous_atm_strike: dict[str, float] = {}
         self._signals: dict[str, dict[str, Any]] = {}
-        self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
+        self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in ACTIVE_CHAIN_CONFIGS}
         self._early_move: dict[str, dict[str, Any]] = {}
         self._started = False
         self._stopping = False
@@ -153,27 +158,17 @@ class IVSkewFlipRuntime:
             raise RuntimeError("Angel One instrument master is empty")
         rows = {
             stream_id: self._rows_for_symbol(instruments, config.symbol)
-            for stream_id, config in CHAIN_CONFIGS
+            for stream_id, config in ACTIVE_CHAIN_CONFIGS
         }
         if any(not values for values in rows.values()):
             missing = sorted(stream_id for stream_id, values in rows.items() if not values)
             raise LookupError(f"instrument master has no NFO option contracts for streams {missing}")
-        # Resolve both NSE index tokens before subscribing, so a partial/invalid
-        # master cannot leave the runtime half-started.
-        for symbol in ("NIFTY", "BANKNIFTY"):
+        # Resolve the sole enabled NSE index token before subscribing, so an
+        # invalid master cannot leave the runtime half-started.
+        for symbol in ("NIFTY",):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        future_contracts_list = []
-        future_resolution_errors = {}
-        for symbol in ("NIFTY", "BANKNIFTY"):
-            try:
-                future_contracts_list.extend(resolve_index_future_contracts(
-                    instruments, underlying=symbol,
-                    today=self.clock_datetime().astimezone(IST).date(), limit=2,
-                ))
-            except LookupError as exc:
-                # Basis is additive context; missing FUTIDX rows must not block IV.
-                future_resolution_errors[symbol] = str(exc)
-        future_contracts = tuple(future_contracts_list)
+        # Index-future basis feed is intentionally disabled in NIFTY-Weekly-only mode.
+        future_contracts: tuple[Any, ...] = ()
         if self.equity_pressure_enabled and self.equity_baskets:
             # One physical quote consumer for the union of both top-10 baskets.
             # Shared constituents are resolved/subscribed once; each index still
@@ -208,7 +203,7 @@ class IVSkewFlipRuntime:
                     ) from exc
                 raise
         try:
-            self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
+            self.spot_feed.start(self.instrument_master, ("NIFTY",))
             if future_contracts:
                 self.future_feed.start(future_contracts)
         except Exception as exc:
@@ -222,7 +217,7 @@ class IVSkewFlipRuntime:
             self._rows_by_stream = rows
             self._future_contracts = future_contracts
             self._basis_histories = {f"{item.underlying}:{item.expiry.isoformat()}": BasisHistory() for item in future_contracts}
-            self._basis_analysis = {symbol: {"status": "UNAVAILABLE", "error": error, "signals_allowed": False} for symbol, error in future_resolution_errors.items()}
+            self._basis_analysis = {}
             self._started = True
             self._stop.clear()
             self._thread = Thread(
@@ -337,7 +332,12 @@ class IVSkewFlipRuntime:
             return True
 
         skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
-        atm_strike = min({quote.strike for quote in quotes}, key=lambda strike: abs(strike - spot.price))
+        # Match universe selection: derive ATM from the current live spot and
+        # break exact midpoint ties upward, never from a cached prior ATM.
+        atm_strike = min(
+            {quote.strike for quote in quotes},
+            key=lambda strike: (abs(strike - spot.price), -strike),
+        )
         previous_diff = self._previous_atm_iv_diff.get(symbol)
         if self._previous_atm_strike.get(symbol) != atm_strike:
             previous_diff = None
@@ -422,7 +422,7 @@ class IVSkewFlipRuntime:
         if previous is not None and now_ns - previous < int(self.evaluation_seconds * 1_000_000_000):
             return
         evaluated = False
-        for stream_id, config in CHAIN_CONFIGS:
+        for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             evaluated = self._evaluate_symbol(stream_id, config, now, now_ns) or evaluated
         if evaluated:
             with self._lock:
@@ -512,7 +512,7 @@ class IVSkewFlipRuntime:
 
     def _evaluate_early_move(self, now_ns: int) -> None:
         """Run the short-window alert path every refresh, independently of 60s signals."""
-        for stream_id, config in CHAIN_CONFIGS:
+        for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             feed = self._option_feeds.get(stream_id)
             sampler = self._samplers.get(stream_id)
             spot = self.spot_feed.spot_snapshot(config.symbol)
@@ -726,7 +726,7 @@ class IVSkewFlipRuntime:
         now = self.clock_datetime()
         if now.tzinfo is None:
             raise ValueError("runtime datetime must be timezone-aware")
-        for stream_id, config in CHAIN_CONFIGS:
+        for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             spot = self.spot_feed.spot_snapshot(config.symbol)
             if spot is None:
                 # Make the refresh gate explicit in the per-chain API status.
@@ -801,28 +801,34 @@ class IVSkewFlipRuntime:
             "spot_feed": self.spot_feed.snapshot(),
             "index_future_feed": self.future_feed.snapshot(),
             "spot_future_basis": basis_analysis,
+            "enabled_streams": [stream_id for stream_id, _ in ACTIVE_CHAIN_CONFIGS],
             "option_chains": {
                 stream_id: {
                     "symbol": config.symbol,
                     "expiry_type": config.expiry_type,
-                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "WAITING_FOR_SPOT"},
-                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "WAITING"},
+                    "enabled": stream_id in {key for key, _ in ACTIVE_CHAIN_CONFIGS},
+                    "status": (
+                        "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS}
+                        else "WAITING_FOR_SPOT"
+                    ) if stream_id not in feeds else feeds[stream_id].snapshot().get("status", "WAITING"),
+                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING_FOR_SPOT"},
+                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING"},
                     "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
                     "error": errors.get(stream_id),
                     "signals": signals.get(stream_id),
                     "early_move": early_move.get(stream_id),
                 }
-                for stream_id, config in CHAIN_CONFIGS
+                for stream_id, config in ALL_CHAIN_CONFIGS
             },
             "indices": {
-                symbol: {
-                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "WAITING_FOR_SPOT"},
-                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "WAITING"},
-                    "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
-                    "error": errors.get(stream_id),
-                    "signals": signals.get(stream_id),
-                }
-                for symbol, stream_id in (("NIFTY", "NIFTY_WEEKLY"), ("BANKNIFTY", "BANKNIFTY_MONTHLY"))
+                "NIFTY": {
+                    "option_feed": feeds["NIFTY_WEEKLY"].snapshot() if "NIFTY_WEEKLY" in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": samplers["NIFTY_WEEKLY"].snapshot() if "NIFTY_WEEKLY" in samplers else {"status": "WAITING"},
+                    "universe_tokens": len(self._universe_tokens.get("NIFTY_WEEKLY", ())),
+                    "error": errors.get("NIFTY_WEEKLY"),
+                    "signals": signals.get("NIFTY_WEEKLY"),
+                },
+                "BANKNIFTY": {"status": "DISABLED_BY_SCOPE", "universe_tokens": 0, "signals_allowed": False},
             },
             "last_refresh_ns": last_refresh,
             "last_error": errors.get("RUNTIME"),
@@ -908,7 +914,7 @@ class IVSkewFlipRuntime:
                 "signals_allowed": False, "direction": "WAITING",
                 "timeframe_agreement": False, "windows": {},
             }
-            self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in CHAIN_CONFIGS}
+            self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in ACTIVE_CHAIN_CONFIGS}
             self._previous_atm_iv_diff.clear()
             self._previous_atm_strike.clear()
             self._last_evaluation_ns = None

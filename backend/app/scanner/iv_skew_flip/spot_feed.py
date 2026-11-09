@@ -43,6 +43,11 @@ class IVSpotFeedAdapter:
         self._lock = RLock()
         self._keys: dict[str, Any] = {}
         self._latest: dict[str, SpotSnapshot] = {}
+        # Consumer-local validation telemetry distinguishes a callback that
+        # returned normally from a market-data record actually accepted here.
+        self._record_callbacks_received = 0
+        self._accepted_records = 0
+        self._rejected_records: dict[str, int] = {}
         self._started = False
         if self._persist_last_price:
             self._restore_last_prices()
@@ -54,7 +59,7 @@ class IVSpotFeedAdapter:
                 rows = db.query(IVSpotLastPrice).all()
             with self._lock:
                 self._latest.update({
-                    row.symbol: SpotSnapshot(float(row.price), int(row.timestamp_ns))
+                    row.symbol: SpotSnapshot(float(row.price), int(row.timestamp_ns), int(row.timestamp_ns))
                     for row in rows
                     if row.symbol in self.DEFAULT_SYMBOLS
                     and isfinite(float(row.price)) and float(row.price) > 0
@@ -128,32 +133,49 @@ class IVSpotFeedAdapter:
                 return True
         return False
 
+    def _reject_record(self, reason: str) -> None:
+        with self._lock:
+            self._rejected_records[reason] = self._rejected_records.get(reason, 0) + 1
+
     def _on_record(self, record: Any) -> None:
+        with self._lock:
+            self._record_callbacks_received += 1
         instrument = getattr(record, "instrument", None)
         timestamp_ns = getattr(record, "timestamp_ns", None)
         price = getattr(record, "ltp", None)
         if not self._has_source_timestamp(record):
+            self._reject_record("missing_or_invalid_provider_timestamp")
             return
         if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns <= 0:
+            self._reject_record("invalid_normalized_timestamp")
             return
         if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
+            self._reject_record("invalid_or_missing_price")
             return
+        received_at_ns = self.clock_ns()
         with self._lock:
             # A broker token may already be registered by another shared-feed
             # consumer with generic/different instrument metadata. The exact
             # NSE token subscribed by this adapter is authoritative for routing.
             symbol = next((name for name, key in self._keys.items() if key == instrument), None)
             if symbol is None:
+                self._reject_record("unmatched_instrument")
                 return
             previous = self._latest.get(symbol)
-            if previous is not None and timestamp_ns <= previous.timestamp_ns:
+            if previous is not None and timestamp_ns < previous.timestamp_ns:
+                self._reject_record("out_of_order_source_timestamp")
                 return
-            snapshot = SpotSnapshot(float(price), timestamp_ns)
+            # Exchange timestamps describe the source observation; receive time
+            # describes whether the transport is delivering current frames.
+            # Keep both clocks separate: brokers may repeat an index timestamp
+            # across quote frames, which must refresh feed health without
+            # fabricating a new exchange observation.
+            snapshot = SpotSnapshot(float(price), timestamp_ns, received_at_ns)
             self._latest[symbol] = snapshot
+            self._accepted_records += 1
         if not self._persist_last_price:
             return
         try:
-            received_at_ns = self.clock_ns()
             with SessionLocal() as db:
                 db.merge(IVSpotLastPrice(symbol=symbol, price=snapshot.price, timestamp_ns=snapshot.timestamp_ns))
                 db.merge(IVSpotObservation(
@@ -173,8 +195,13 @@ class IVSpotFeedAdapter:
             snapshot = self._latest.get(str(symbol or "").strip().upper())
         if snapshot is None:
             return None
-        age = current - snapshot.timestamp_ns
-        if age < 0 or age > self.max_spot_age_ns:
+        receive_age = current - (snapshot.received_at_ns or snapshot.timestamp_ns)
+        source_age = current - snapshot.timestamp_ns
+        # A fresh transport frame cannot make an old market observation fresh.
+        # Equal exchange timestamps remain acceptable only inside the same
+        # strict source-age window (e.g. provider timestamp granularity).
+        if (receive_age < 0 or receive_age > self.max_spot_age_ns
+                or source_age < 0 or source_age > self.max_spot_age_ns):
             return None
         return snapshot
 
@@ -182,11 +209,20 @@ class IVSpotFeedAdapter:
         current = self.clock_ns() if now_ns is None else now_ns
         with self._lock:
             expected = tuple(self._keys)
+            expected_keys = dict(self._keys)
             latest = dict(self._latest)
             started = self._started
+            record_validation = {
+                "scope": "iv_spot_consumer",
+                "callbacks_received": self._record_callbacks_received,
+                "accepted_records": self._accepted_records,
+                "rejected_records": sum(self._rejected_records.values()),
+                "rejected_by_reason": dict(self._rejected_records),
+            }
         fresh = {
             symbol: value for symbol, value in latest.items()
-            if 0 <= current - value.timestamp_ns <= self.max_spot_age_ns
+            if 0 <= current - (value.received_at_ns or value.timestamp_ns) <= self.max_spot_age_ns
+            and 0 <= current - value.timestamp_ns <= self.max_spot_age_ns
         }
         missing = sorted(set(expected) - set(fresh))
         if not started:
@@ -199,6 +235,43 @@ class IVSpotFeedAdapter:
             status = "STALE"
         else:
             status = "WAITING_FOR_TICKS"
+        # Keep transport/routing health separate from per-symbol market freshness.
+        # CommonStrategyMarketFeed is shared process-wide, so these counters are
+        # explicitly labelled as manager-wide rather than falsely attributed to
+        # this consumer alone.
+        transport: dict[str, Any] = {}
+        feed_snapshot = getattr(self.feed, "snapshot", None)
+        if callable(feed_snapshot):
+            try:
+                shared = feed_snapshot()
+                if isinstance(shared, dict):
+                    transport_fields = (
+                        "subscriptions", "active_instruments", "socket_groups",
+                        "required_socket_groups", "missing_socket_groups",
+                        "unconnected_required_groups", "socket_health_by_group",
+                        "raw_frames_received", "ticks_received", "ticks_by_exchange_type",
+                        "unmatched_frames", "exchange_mismatch_frames",
+                        "missing_exchange_type_frames", "ambiguous_token_frames",
+                        "normalized_records_emitted", "normalized_records_delivered",
+                        "normalizer_errors", "last_normalizer_error",
+                        "delivery_errors", "normalized_delivery_errors",
+                        "last_delivery_error", "last_raw_frame_age_seconds",
+                        "last_raw_frame_age_seconds_by_group",
+                        "last_successful_route_age_seconds_by_group",
+                        "last_successful_delivery_age_seconds_by_group",
+                        "last_exchange_tick_age_seconds_by_exchange_type",
+                        "last_exchange_tick_received_age_seconds_by_exchange_type",
+                        "last_raw_frame_age_seconds_by_exchange_group",
+                    )
+                    transport = {
+                        "scope": "shared_manager_process_wide",
+                        **{key: shared[key] for key in transport_fields if key in shared},
+                    }
+            except Exception as exc:
+                transport = {
+                    "scope": "shared_manager_process_wide",
+                    "diagnostics_error": f"{type(exc).__name__}: {exc}",
+                }
         # Keep the last broker-traded spot visible after the freshness window
         # expires (including after market close). Signal eligibility continues
         # to depend exclusively on fresh_symbols / spot_snapshot().
@@ -206,6 +279,16 @@ class IVSpotFeedAdapter:
             "status": status,
             "consumer": self.CONSUMER,
             "expected_symbols": sorted(expected),
+            "expected_instruments": {
+                symbol: {
+                    "exchange": key.exchange,
+                    "segment": key.segment,
+                    "token": key.token,
+                }
+                for symbol, key in sorted(expected_keys.items())
+            },
+            "transport": transport,
+            "record_validation": record_validation,
             "fresh_symbols": sorted(fresh),
             "missing_symbols": missing,
             "spot": {
@@ -216,7 +299,9 @@ class IVSpotFeedAdapter:
                     "last_trade_time": datetime.fromtimestamp(
                         item.timestamp_ns / 1_000_000_000, tz=timezone.utc
                     ).astimezone(ZoneInfo("Asia/Kolkata")).isoformat(),
-                    "age_ms": round((current - item.timestamp_ns) / 1_000_000, 2),
+                    "age_ms": round((current - (item.received_at_ns or item.timestamp_ns)) / 1_000_000, 2),
+                    "source_age_ms": round((current - item.timestamp_ns) / 1_000_000, 2),
+                    "received_at_ns": item.received_at_ns or item.timestamp_ns,
                     "fresh": symbol in fresh,
                     "quote_status": "LIVE" if symbol in fresh else "LAST_KNOWN_STALE",
                 }

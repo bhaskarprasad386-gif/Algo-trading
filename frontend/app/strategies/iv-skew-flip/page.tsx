@@ -72,7 +72,7 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const spotPrice = n(spot.price);
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
   const strikes = (resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null)).sort((a,b)=>a-b);
-  const atmIndex = spotPrice !== null && strikes.length ? strikes.reduce((best, x, index) => Math.abs(x - spotPrice) < Math.abs(strikes[best] - spotPrice) ? index : best, 0) : -1;
+  const atmIndex = spotPrice !== null && strikes.length ? strikes.reduce((best, x, index) => { const distance = Math.abs(x - spotPrice); const bestDistance = Math.abs(strikes[best] - spotPrice); return distance < bestDistance || (distance === bestDistance && x > strikes[best]) ? index : best; }, 0) : -1;
   const atm = atmIndex >= 0 ? strikes[atmIndex] : null;
   const byContract = new Map(metrics.filter(x => n(x.iv) !== null).map(x => [`${n(x.strike)}:${String(x.option_type)}`, x]));
   const matchedSkewPairs: number[] = [];
@@ -83,7 +83,7 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
       if (call && put) matchedSkewPairs.push(Number(call.iv) - Number(put.iv));
     }
   }
-  // Match the backend engine: ATM and up to two equidistant OTM CE/PE pairs.
+  // Match the backend engine: live-spot ATM (midpoint ties round upward) and up to two equidistant OTM CE/PE pairs.
   // Do not average the whole call and put wings, which can bias the displayed skew.
   const skew = matchedSkewPairs.length >= 2
     ? matchedSkewPairs.reduce((sum, value) => sum + value, 0) / matchedSkewPairs.length
@@ -140,7 +140,7 @@ function OptionChain({ title, chain }: { title: string; chain: Chain }) {
 export default function IVSkewFlipPage() {
   const [runtime,setRuntime]=useState<Runtime|null>(null);
   const [basketRegistry,setBasketRegistry]=useState<BasketRegistry|null>(null);
-  const [selectedNifty,setSelectedNifty]=useState<"NIFTY_WEEKLY"|"NIFTY_MONTHLY">("NIFTY_WEEKLY");
+  const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [selectedEnabled,setSelectedEnabled]=useState(false);
@@ -195,12 +195,16 @@ export default function IVSkewFlipPage() {
   const spot = spotFeed.spot && typeof spotFeed.spot === "object" ? spotFeed.spot as Row : {};
   const niftySpot=(spot.NIFTY&&typeof spot.NIFTY==="object"?spot.NIFTY:{}) as Row;
   const bankSpot=(spot.BANKNIFTY&&typeof spot.BANKNIFTY==="object"?spot.BANKNIFTY:{}) as Row;
+  const spotTransport=(spotFeed.transport&&typeof spotFeed.transport==="object"?spotFeed.transport:{}) as Row;
+  const spotValidation=(spotFeed.record_validation&&typeof spotFeed.record_validation==="object"?spotFeed.record_validation:{}) as Row;
+  const niftyExchangeAge=spotTransport.last_exchange_tick_received_age_seconds_by_exchange_type;
+  const niftyRawFrameAge=spotTransport.last_raw_frame_age_seconds_by_exchange_group;
   const running=runtime?.status==="RUNNING";
   const niftyExpiry=String((nifty.option_feed??{}).expiry_type??"");
   const bankExpiry=String((bank.option_feed??{}).expiry_type??"");
   return <main className="space-y-4 p-3 sm:p-5 theme-text">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly + Monthly • BANKNIFTY Monthly • Live OI and modeled IV</p></div>
+      <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • other chains temporarily disabled • Live OI and modeled IV</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
         <div className="inline-flex rounded-xl border theme-border p-1" aria-label="IV Scanner desired runner state">
@@ -213,11 +217,25 @@ export default function IVSkewFlipPage() {
     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border theme-border px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border theme-border px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Orders OFF</span></div>
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Option Chain</h2><div className="inline-flex rounded-xl border theme-border p-1"><button onClick={()=>setSelectedNifty("NIFTY_WEEKLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_WEEKLY"?"bg-blue-600 text-white":"theme-muted"}`}>Weekly</button><button onClick={()=>setSelectedNifty("NIFTY_MONTHLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_MONTHLY"?"bg-blue-600 text-white":"theme-muted"}`}>Monthly</button></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
-    <section className="space-y-3 pt-2"><div className="flex items-center justify-between gap-2"><h2 className="text-xl font-bold theme-text">BANKNIFTY Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-sm font-semibold">Monthly</span></div><OptionChain title="BANKNIFTY Monthly" chain={bank}/><SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/></section>
+    <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold theme-text">NIFTY Spot Feed Diagnostics</h3><span className="rounded-full border theme-border px-3 py-1 text-xs">{String(spotFeed.status??"WAITING")}</span></div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label="NIFTY Receive Age" value={age(niftySpot.age_ms)} sub="Local callback receive time"/>
+        <Metric label="NIFTY Source Age" value={age(niftySpot.source_age_ms)} sub="Broker exchange timestamp"/>
+        <Metric label="NSE Exchange Tick Age" value={JSON.stringify(niftyExchangeAge??{})} sub="Age by exchange type, seconds"/>
+        <Metric label="NSE Raw Frame Age" value={JSON.stringify(niftyRawFrameAge??{})} sub="Age by exchange group, seconds"/>
+        <Metric label="IV Callbacks" value={fmt(spotValidation.callbacks_received,0)}/>
+        <Metric label="IV Accepted" value={fmt(spotValidation.accepted_records,0)}/>
+        <Metric label="IV Rejected" value={fmt(spotValidation.rejected_records,0)} sub={Object.entries((spotValidation.rejected_by_reason&&typeof spotValidation.rejected_by_reason==="object"?spotValidation.rejected_by_reason:{}) as Row).map(([key,value])=>`${key}: ${String(value)}`).join(" • ") || "No rejections reported"}/>
+        <Metric label="Normalized Delivered" value={fmt(spotTransport.normalized_records_delivered,0)} sub="Shared manager process-wide"/>
+      </div>
+      <p className="text-[11px] theme-muted">Raw frame / exchange tick counters are shared-manager diagnostics, not NIFTY-only proof. IV Accepted confirms this consumer received a usable NIFTY spot record. Weekly and Monthly use the same NIFTY spot gate.</p>
+    </section>
+    <section className="rounded-2xl border theme-border p-3 text-sm theme-muted">NIFTY Monthly और BANKNIFTY chains फिलहाल बंद हैं। केवल NIFTY Weekly feed, sampler और signals सक्रिय हैं।</section>
     <section className="rounded-2xl border theme-border theme-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="font-semibold theme-text">Live Index Spot–Future Basis</h2><p className="mt-1 text-xs theme-muted">Future − Spot • nearest and next expiry • paired fresh broker timestamps required</p></div>

@@ -46,6 +46,10 @@ def test_feed_adapter_subscribes_exactly_fourteen_contracts_and_retains_symbols(
     result = adapter.start(_universe())
     assert result["status"] == "SUBSCRIBED"
     assert result["contract_count"] == 14
+    snapshot = adapter.snapshot(1_000_000_000)
+    assert snapshot["atm_strike"] == _universe().atm_strike
+    assert snapshot["strike_step"] == 50
+    assert snapshot["strikes"] == list(_universe().strikes)
     assert len(feed.descriptors) == 14
     assert {item.symbol for item in feed.descriptors} == {
         f"NIFTY12NOV26{int(strike)}{side}"
@@ -304,3 +308,36 @@ def test_feed_snapshot_includes_shared_socket_delivery_diagnostics():
     assert snapshot["shared_feed_diagnostics"]["subscriptions"] == 14
     assert snapshot["shared_feed_diagnostics"]["raw_frames_received"] == 0
     assert snapshot["signals_allowed"] is False
+
+
+
+def test_feed_preserves_last_oi_on_price_only_frames_and_expires_after_five_minutes():
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed)
+    adapter.start(_universe())
+    descriptor = feed.descriptors[0]
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key, option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike, timestamp_ns=10_000_000_000,
+        ltp=100.0, bid=99.0, ask=101.0, oi=12345, volume=10,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    # A newer LTP/depth-only frame must not erase the last broker OI observation.
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key, option_type=OptionType(descriptor.option_type),
+        strike=descriptor.strike, timestamp_ns=11_000_000_000,
+        ltp=101.0, bid=100.0, ask=102.0, oi=None, volume=11,
+        payload={"exchange_timestamp_ns": 11_000_000_000},
+    ))
+    fresh = adapter.snapshot(11_000_000_000)["quotes"][0]
+    assert fresh["oi"] == 12345
+    assert fresh["oi_timestamp_ns"] == 10_000_000_000
+    assert fresh["oi_fresh"] is True
+    assert fresh["oi_stale"] is False
+    assert fresh["oi_age_ms"] == 1000.0
+
+    five_minutes_plus = adapter.snapshot(310_000_000_001)["quotes"][0]
+    assert five_minutes_plus["fresh"] is False
+    assert five_minutes_plus["oi"] == 12345
+    assert five_minutes_plus["oi_fresh"] is False
+    assert five_minutes_plus["oi_stale"] is True

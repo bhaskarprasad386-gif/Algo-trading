@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app.market_data.contracts import InstrumentKey, InstrumentType
+from app.market_data.normalizer import AngelOneTickNormalizer
 from app.scanner.iv_skew_flip.spot_feed import IVSpotFeedAdapter
 
 
@@ -220,7 +221,10 @@ def test_spot_feed_snapshot_exposes_live_price_source_age():
 
     snapshot = adapter.snapshot(now_ns=10_500_000_000)
     assert snapshot["spot"]["NIFTY"]["price"] == 24125.5
-    assert snapshot["spot"]["NIFTY"]["age_ms"] == 500.0
+    # Receive age starts when the adapter handles the frame; source age keeps
+    # the provider timestamp visible independently.
+    assert snapshot["spot"]["NIFTY"]["age_ms"] == 0.0
+    assert snapshot["spot"]["NIFTY"]["source_age_ms"] == 500.0
     assert snapshot["spot"]["NIFTY"]["fresh"] is True
 
 
@@ -294,3 +298,159 @@ def test_spot_feed_persists_and_restores_last_known_price(monkeypatch):
     assert restored_snapshot["spot"]["NIFTY"]["fresh"] is False
     assert restored_snapshot["spot"]["NIFTY"]["quote_status"] == "LAST_KNOWN_STALE"
     assert restored_snapshot["signals_allowed"] is False
+
+
+def test_spot_freshness_uses_recent_receive_time_not_repeated_exchange_timestamp():
+    current = {"ns": 20_000_000_000}
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: current["ns"])
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+
+    # Broker repeats the same exchange timestamp on a subsequent valid frame.
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key, instrument_type=InstrumentType.INDEX,
+        timestamp_ns=19_000_000_000, ltp=24125.5,
+        payload={"exchange_timestamp_ns": 19_000_000_000},
+    ))
+    current["ns"] = 21_000_000_000
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key, instrument_type=InstrumentType.INDEX,
+        timestamp_ns=19_000_000_000, ltp=24125.5,
+        payload={"exchange_timestamp_ns": 19_000_000_000},
+    ))
+
+    quote = adapter.spot_snapshot("NIFTY", now_ns=21_000_000_000)
+    assert quote is not None
+    assert quote.timestamp_ns == 19_000_000_000
+    assert quote.received_at_ns == 21_000_000_000
+    snapshot = adapter.snapshot(now_ns=21_000_000_000)
+    assert snapshot["status"] == "PARTIAL"
+    assert snapshot["spot"]["NIFTY"]["age_ms"] == 0.0
+    assert snapshot["spot"]["NIFTY"]["source_age_ms"] == 2000.0
+
+
+def test_spot_feed_rejects_old_source_timestamp_despite_recent_receive():
+    current = {"ns": 20_000_000_000}
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: current["ns"])
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key, instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_000_000_000, ltp=24125.5,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    # A repeated old market observation arriving now cannot refresh signal age.
+    quote = adapter.spot_snapshot("NIFTY", now_ns=current["ns"])
+    assert quote is None
+    health = adapter.snapshot(now_ns=current["ns"])
+    assert health["signals_allowed"] is False
+    assert health["spot"]["NIFTY"]["fresh"] is False
+
+
+def test_spot_feed_exposes_shared_transport_routing_diagnostics():
+    feed = FakeFeed()
+    feed.snapshot = lambda: {
+        "raw_frames_received": 120,
+        "ticks_received": 14,
+        "unmatched_frames": 3,
+        "exchange_mismatch_frames": 2,
+        "normalized_records_delivered": 9,
+        "last_successful_delivery_age_seconds_by_group": {"1:0": 0.4},
+    }
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+
+    health = adapter.snapshot()
+    assert health["expected_instruments"]["NIFTY"] == {
+        "exchange": "NSE", "segment": "NSE", "token": "99926000",
+    }
+    assert health["transport"]["scope"] == "shared_manager_process_wide"
+    assert health["transport"]["raw_frames_received"] == 120
+    assert health["transport"]["ticks_received"] == 14
+    assert health["transport"]["unmatched_frames"] == 3
+    assert health["transport"]["exchange_mismatch_frames"] == 2
+    assert health["transport"]["normalized_records_delivered"] == 9
+    assert health["transport"]["last_successful_delivery_age_seconds_by_group"] == {"1:0": 0.4}
+
+
+
+def test_spot_feed_exposes_actual_common_manager_exchange_freshness_field_names():
+    feed = FakeFeed()
+    feed.snapshot = lambda: {
+        "last_exchange_tick_received_age_seconds_by_exchange_type": {"1": 0.25},
+        "last_raw_frame_age_seconds_by_exchange_group": {"1:0:1": 0.1},
+    }
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+
+    transport = adapter.snapshot()["transport"]
+    assert transport["last_exchange_tick_received_age_seconds_by_exchange_type"] == {"1": 0.25}
+    assert transport["last_raw_frame_age_seconds_by_exchange_group"] == {"1:0:1": 0.1}
+
+
+def test_spot_feed_reports_consumer_accepted_and_rejected_records():
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 20_000_000_000)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=19_000_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp": 19_000},
+    ))
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=19_500_000_000,
+        ltp=24126.0,
+        payload={},
+    ))
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=18_000_000_000,
+        ltp=24100.0,
+        payload={"exchange_timestamp": 18_000},
+    ))
+
+    validation = adapter.snapshot()["record_validation"]
+    assert validation["scope"] == "iv_spot_consumer"
+    assert validation["callbacks_received"] == 3
+    assert validation["accepted_records"] == 1
+    assert validation["rejected_records"] == 2
+    assert validation["rejected_by_reason"] == {
+        "missing_or_invalid_provider_timestamp": 1,
+        "out_of_order_source_timestamp": 1,
+    }
+
+
+def test_smartapi_normalizer_to_iv_spot_adapter_preserves_provider_timestamp():
+    feed = FakeFeed()
+    exchange_timestamp_ms = 1_800_000_000_000
+    received_at_ns = exchange_timestamp_ms * 1_000_000 + 500_000_000
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: received_at_ns)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+
+    # Model the provider's raw SmartAPI WebSocket tick: LTP is paise-scaled
+    # and exchange_timestamp is epoch milliseconds.
+    raw_tick = {
+        "token": "99926000",
+        "exchange_type": 1,
+        "exchange_timestamp": str(exchange_timestamp_ms),
+        "last_traded_price": 2_412_550,
+    }
+    record = AngelOneTickNormalizer().normalize(nifty, raw_tick)
+    feed.callback(record)
+
+    quote = adapter.spot_snapshot("NIFTY")
+    assert quote is not None
+    assert quote.timestamp_ns == exchange_timestamp_ms * 1_000_000
+    assert quote.received_at_ns == received_at_ns
+    health = adapter.snapshot()
+    assert health["spot"]["NIFTY"]["price"] == 24125.5
+    assert health["spot"]["NIFTY"]["source_age_ms"] == 500.0
+    assert health["record_validation"]["callbacks_received"] == 1
+    assert health["record_validation"]["accepted_records"] == 1

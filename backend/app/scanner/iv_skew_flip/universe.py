@@ -30,6 +30,7 @@ class ResolvedOptionUniverse:
     spot_exchange: str
     option_exchange: str
     strike_step: float
+    atm_strike: float
     strikes: tuple[float, ...]
     contracts: tuple[ResolvedOptionContract, ...]
 
@@ -150,16 +151,29 @@ def resolve_option_universe(
     if len(strikes) < strike_count:
         raise LookupError(f"only {len(strikes)} strikes available for {symbol}; {strike_count} required")
 
-    atm_index = min(range(len(strikes)), key=lambda idx: abs(strikes[idx] - float(spot)))
+    # Determine the actual listed strike interval first, then anchor the
+    # ATM selection to the live spot. On an exact midpoint, choose the upper
+    # strike consistently. Never slide the window at the edge: ATM must have
+    # the requested number of strikes on both sides.
+    ladder_steps = [b - a for a, b in zip(strikes, strikes[1:])]
+    strike_step = ladder_steps[0] if ladder_steps else 0.0
+    if strike_step <= 0 or any(abs(step - strike_step) > 1e-8 for step in ladder_steps):
+        raise LookupError("option strike ladder is not uniformly spaced; refusing non-equidistant IV skew pairs")
+    atm_index = min(
+        range(len(strikes)),
+        key=lambda idx: (abs(strikes[idx] - float(spot)), -strikes[idx]),
+    )
+    atm_strike = strikes[atm_index]
     half = strike_count // 2
-    start = max(0, min(atm_index - half, len(strikes) - strike_count))
-    selected_strikes = tuple(strikes[start:start + strike_count])
-    if len(selected_strikes) != strike_count:
-        raise LookupError("could not form a complete centered strike window")
-    steps = [b - a for a, b in zip(selected_strikes, selected_strikes[1:])]
-    strike_step = steps[0] if steps else 0.0
-    if strike_step <= 0 or any(abs(step - strike_step) > 1e-8 for step in steps):
-        raise LookupError("selected strike ladder is not uniformly spaced; refusing non-equidistant IV skew pairs")
+    start = atm_index - half
+    end = atm_index + half + 1
+    if start < 0 or end > len(strikes):
+        raise LookupError(
+            f"live-spot ATM {atm_strike} cannot form ATM +/- {half} strikes from available ladder"
+        )
+    selected_strikes = tuple(strikes[start:end])
+    if selected_strikes[half] != atm_strike:
+        raise LookupError("selected strike window is not centered on the live-spot ATM")
 
     contracts = []
     seen: set[tuple[float, str]] = set()
@@ -188,6 +202,6 @@ def resolve_option_universe(
     return ResolvedOptionUniverse(
         underlying=symbol, expiry_type=kind, expiry=selected_date.isoformat(),
         spot_exchange=spot_exchange, option_exchange=option_exchange,
-        strike_step=strike_step, strikes=selected_strikes,
+        strike_step=strike_step, atm_strike=atm_strike, strikes=selected_strikes,
         contracts=tuple(contracts),
     )
