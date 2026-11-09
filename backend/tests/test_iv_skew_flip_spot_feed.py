@@ -220,7 +220,10 @@ def test_spot_feed_snapshot_exposes_live_price_source_age():
 
     snapshot = adapter.snapshot(now_ns=10_500_000_000)
     assert snapshot["spot"]["NIFTY"]["price"] == 24125.5
-    assert snapshot["spot"]["NIFTY"]["age_ms"] == 500.0
+    # Receive age starts when the adapter handles the frame; source age keeps
+    # the provider timestamp visible independently.
+    assert snapshot["spot"]["NIFTY"]["age_ms"] == 0.0
+    assert snapshot["spot"]["NIFTY"]["source_age_ms"] == 500.0
     assert snapshot["spot"]["NIFTY"]["fresh"] is True
 
 
