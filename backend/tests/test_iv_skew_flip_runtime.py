@@ -126,25 +126,24 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     }
 
     first = runtime.refresh_once()
+    assert first["enabled_streams"] == ["NIFTY_WEEKLY"]
+    assert first["option_chains"]["NIFTY_WEEKLY"]["enabled"] is True
     assert first["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 14
-    assert first["option_chains"]["NIFTY_MONTHLY"]["universe_tokens"] == 14
-    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["universe_tokens"] == 14
+    assert first["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
+    assert first["option_chains"]["NIFTY_MONTHLY"]["option_feed"]["status"] == "DISABLED_BY_SCOPE"
+    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is False
+    assert first["indices"]["BANKNIFTY"]["status"] == "DISABLED_BY_SCOPE"
+    assert set(created) == {"NIFTY_WEEKLY"}
     assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
-    assert created["NIFTY_MONTHLY"].universe.expiry == "2026-11-26"
-    assert created["BANKNIFTY_MONTHLY"].universe.strikes[3] == 200.0
 
     weekly_universe = created["NIFTY_WEEKLY"].universe
-    monthly_universe = created["NIFTY_MONTHLY"].universe
     runtime.refresh_once()
     assert created["NIFTY_WEEKLY"].universe is weekly_universe
-    assert created["NIFTY_MONTHLY"].universe is monthly_universe
 
     previous_sampler = runtime._samplers["NIFTY_WEEKLY"]
     spot.prices["NIFTY"] = SpotSnapshot(140.0, 11_000_000_000)
     runtime.refresh_once()
     assert created["NIFTY_WEEKLY"].universe.strikes[3] == 140.0
-    assert created["NIFTY_MONTHLY"].universe.strikes[3] == 140.0
-    assert created["BANKNIFTY_MONTHLY"].universe.strikes[3] == 200.0
     assert runtime._samplers["NIFTY_WEEKLY"].inherited_from is previous_sampler
 
 
@@ -167,9 +166,10 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     }
     result = runtime.refresh_once()
     assert result["indices"]["NIFTY"]["universe_tokens"] == 0
-    assert result["indices"]["BANKNIFTY"]["universe_tokens"] == 0
-    for stream_id in ("NIFTY_WEEKLY", "NIFTY_MONTHLY", "BANKNIFTY_MONTHLY"):
-        assert "WAITING_FOR_FRESH_SPOT" in result["option_chains"][stream_id]["error"]
+    assert result["indices"]["BANKNIFTY"]["status"] == "DISABLED_BY_SCOPE"
+    assert "WAITING_FOR_FRESH_SPOT" in result["option_chains"]["NIFTY_WEEKLY"]["error"]
+    assert result["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
+    assert result["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is False
     assert all(not feed.started for feed in runtime._option_feeds.values())
 
 
