@@ -122,7 +122,13 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const quotes = Array.isArray(feed.quotes) ? feed.quotes as Row[] : [];
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
   const byToken = new Map(metrics.map(x => [String(x.token ?? ""), x]));
-  const merged = quotes.map(q => ({ ...q, ...(byToken.get(String(q.token ?? "")) ?? {}) }));
+  const quoteTokens = new Set(quotes.map(q => String(q.token ?? "")).filter(Boolean));
+  // Keep sampler-only rows too: a quote can disappear from the fresh feed while
+  // its last valid IV is intentionally retained and must still render as LAST.
+  const merged = [
+    ...quotes.map(q => ({ ...q, ...(byToken.get(String(q.token ?? "")) ?? {}) })),
+    ...metrics.filter(x => !quoteTokens.has(String(x.token ?? ""))),
+  ];
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
   const allStrikes = (resolvedStrikes.length ? resolvedStrikes : [...new Set(merged.map(x => n(x.strike)).filter((x): x is number => x !== null))]).sort((a,b)=>a-b);
   const spotPrice = n(spot.price);
