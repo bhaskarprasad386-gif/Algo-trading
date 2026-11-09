@@ -31,7 +31,7 @@ class IVSpotFeedAdapter:
         *,
         feed: Any | None = None,
         clock_ns: Callable[[], int] = time_ns,
-        max_spot_age_seconds: float = 3.0,
+        max_spot_age_seconds: float = 5.0,
         persist_last_price: bool | None = None,
     ) -> None:
         if max_spot_age_seconds <= 0:
