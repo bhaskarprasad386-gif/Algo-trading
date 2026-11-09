@@ -140,7 +140,7 @@ function OptionChain({ title, chain }: { title: string; chain: Chain }) {
 export default function IVSkewFlipPage() {
   const [runtime,setRuntime]=useState<Runtime|null>(null);
   const [basketRegistry,setBasketRegistry]=useState<BasketRegistry|null>(null);
-  const [selectedNifty,setSelectedNifty]=useState<"NIFTY_WEEKLY"|"NIFTY_MONTHLY">("NIFTY_WEEKLY");
+  const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [selectedEnabled,setSelectedEnabled]=useState(false);
@@ -204,7 +204,7 @@ export default function IVSkewFlipPage() {
   const bankExpiry=String((bank.option_feed??{}).expiry_type??"");
   return <main className="space-y-4 p-3 sm:p-5 theme-text">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly + Monthly • BANKNIFTY Monthly • Live OI and modeled IV</p></div>
+      <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • other chains temporarily disabled • Live OI and modeled IV</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
         <div className="inline-flex rounded-xl border theme-border p-1" aria-label="IV Scanner desired runner state">
@@ -217,7 +217,7 @@ export default function IVSkewFlipPage() {
     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border theme-border px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border theme-border px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Orders OFF</span></div>
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Option Chain</h2><div className="inline-flex rounded-xl border theme-border p-1"><button onClick={()=>setSelectedNifty("NIFTY_WEEKLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_WEEKLY"?"bg-blue-600 text-white":"theme-muted"}`}>Weekly</button><button onClick={()=>setSelectedNifty("NIFTY_MONTHLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_MONTHLY"?"bg-blue-600 text-white":"theme-muted"}`}>Monthly</button></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
@@ -235,7 +235,7 @@ export default function IVSkewFlipPage() {
       </div>
       <p className="text-[11px] theme-muted">Raw frame / exchange tick counters are shared-manager diagnostics, not NIFTY-only proof. IV Accepted confirms this consumer received a usable NIFTY spot record. Weekly and Monthly use the same NIFTY spot gate.</p>
     </section>
-    <section className="space-y-3 pt-2"><div className="flex items-center justify-between gap-2"><h2 className="text-xl font-bold theme-text">BANKNIFTY Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-sm font-semibold">Monthly</span></div><OptionChain title="BANKNIFTY Monthly" chain={bank}/><SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/></section>
+    <section className="rounded-2xl border theme-border p-3 text-sm theme-muted">NIFTY Monthly और BANKNIFTY chains फिलहाल बंद हैं। केवल NIFTY Weekly feed, sampler और signals सक्रिय हैं।</section>
     <section className="rounded-2xl border theme-border theme-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="font-semibold theme-text">Live Index Spot–Future Basis</h2><p className="mt-1 text-xs theme-muted">Future − Spot • nearest and next expiry • paired fresh broker timestamps required</p></div>
