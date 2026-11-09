@@ -201,10 +201,12 @@ def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
 
     runtime._maybe_evaluate(now, 10_000_000_000)
     runtime._maybe_evaluate(now, 69_000_000_000)
-    assert len(evaluated) == 3
+    assert len(evaluated) == 1
+    assert evaluated[0][0] == "NIFTY_WEEKLY"
 
     runtime._maybe_evaluate(now, 70_000_000_000)
-    assert len(evaluated) == 6
+    assert len(evaluated) == 2
+    assert all(stream_id == "NIFTY_WEEKLY" for stream_id, _ in evaluated)
 
 
 def test_runtime_clears_signal_state_when_spot_or_option_feed_is_unavailable():
