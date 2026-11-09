@@ -195,6 +195,10 @@ export default function IVSkewFlipPage() {
   const spot = spotFeed.spot && typeof spotFeed.spot === "object" ? spotFeed.spot as Row : {};
   const niftySpot=(spot.NIFTY&&typeof spot.NIFTY==="object"?spot.NIFTY:{}) as Row;
   const bankSpot=(spot.BANKNIFTY&&typeof spot.BANKNIFTY==="object"?spot.BANKNIFTY:{}) as Row;
+  const spotTransport=(spotFeed.transport&&typeof spotFeed.transport==="object"?spotFeed.transport:{}) as Row;
+  const spotValidation=(spotFeed.record_validation&&typeof spotFeed.record_validation==="object"?spotFeed.record_validation:{}) as Row;
+  const niftyExchangeAge=spotTransport.last_exchange_tick_received_age_seconds_by_exchange_type;
+  const niftyRawFrameAge=spotTransport.last_raw_frame_age_seconds_by_exchange_group;
   const running=runtime?.status==="RUNNING";
   const niftyExpiry=String((nifty.option_feed??{}).expiry_type??"");
   const bankExpiry=String((bank.option_feed??{}).expiry_type??"");
@@ -216,6 +220,20 @@ export default function IVSkewFlipPage() {
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Option Chain</h2><div className="inline-flex rounded-xl border theme-border p-1"><button onClick={()=>setSelectedNifty("NIFTY_WEEKLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_WEEKLY"?"bg-blue-600 text-white":"theme-muted"}`}>Weekly</button><button onClick={()=>setSelectedNifty("NIFTY_MONTHLY")} className={`rounded-lg px-4 py-2 text-sm font-semibold ${selectedNifty==="NIFTY_MONTHLY"?"bg-blue-600 text-white":"theme-muted"}`}>Monthly</button></div></div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
+    </section>
+    <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold theme-text">NIFTY Spot Feed Diagnostics</h3><span className="rounded-full border theme-border px-3 py-1 text-xs">{String(spotFeed.status??"WAITING")}</span></div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label="NIFTY Receive Age" value={age(niftySpot.age_ms)} sub="Local callback receive time"/>
+        <Metric label="NIFTY Source Age" value={age(niftySpot.source_age_ms)} sub="Broker exchange timestamp"/>
+        <Metric label="NSE Exchange Tick Age" value={age(n(niftyExchangeAge)?.[0] as number * 1000)} sub="Shared manager telemetry"/>
+        <Metric label="NSE Raw Frame Age" value={age(n(niftyRawFrameAge)?.[0] as number * 1000)} sub="Shared manager telemetry"/>
+        <Metric label="IV Callbacks" value={fmt(spotValidation.callbacks_received,0)}/>
+        <Metric label="IV Accepted" value={fmt(spotValidation.accepted_records,0)}/>
+        <Metric label="IV Rejected" value={fmt(spotValidation.rejected_records,0)} sub={Object.entries((spotValidation.rejected_by_reason&&typeof spotValidation.rejected_by_reason==="object"?spotValidation.rejected_by_reason:{}) as Row).map(([key,value])=>`${key}: ${String(value)}`).join(" • ") || "No rejections reported"}/>
+        <Metric label="Normalized Delivered" value={fmt(spotTransport.normalized_records_delivered,0)} sub="Shared manager process-wide"/>
+      </div>
+      <p className="text-[11px] theme-muted">Raw frame / exchange tick counters are shared-manager diagnostics, not NIFTY-only proof. IV Accepted confirms this consumer received a usable NIFTY spot record. Weekly and Monthly use the same NIFTY spot gate.</p>
     </section>
     <section className="space-y-3 pt-2"><div className="flex items-center justify-between gap-2"><h2 className="text-xl font-bold theme-text">BANKNIFTY Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-sm font-semibold">Monthly</span></div><OptionChain title="BANKNIFTY Monthly" chain={bank}/><SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/></section>
     <section className="rounded-2xl border theme-border theme-surface p-4">
