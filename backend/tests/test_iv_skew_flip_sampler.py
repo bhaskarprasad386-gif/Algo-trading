@@ -188,7 +188,7 @@ def test_sampler_rejects_invalid_option_source_timestamps(timestamp_ns):
     assert result["status"] == "WAITING"
 
 
-def test_sampler_clears_previously_live_metrics_when_spot_becomes_stale():
+def test_sampler_retains_last_iv_when_spot_becomes_stale_but_marks_it_not_live():
     now_ns = 1_800_000_000_000_000_000
     now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
     source = QuoteSource()
@@ -202,6 +202,7 @@ def test_sampler_clears_previously_live_metrics_when_spot_becomes_stale():
     )
     assert live["status"] == "LIVE"
     assert live["sample_count"] == 1
+    last_iv = live["iv_values"]["ce-token"]
     waiting = sampler.sample_once(
         now_ns=now_ns + 10_000_000_000,
         now=now,
@@ -209,10 +210,39 @@ def test_sampler_clears_previously_live_metrics_when_spot_becomes_stale():
     )
     assert waiting["status"] == "WAITING"
     assert waiting["sample_count"] == 0
-    assert waiting["live_metrics"] == []
-    assert waiting["oi_values"] == {}
-    assert waiting["iv_values"] == {}
+    assert waiting["iv_live_count"] == 0
+    assert waiting["display_metric_count"] == 1
+    assert waiting["live_metrics"][0]["iv"] == last_iv
+    assert waiting["live_metrics"][0]["iv_live"] is False
+    assert waiting["live_metrics"][0]["iv_status"] == "LAST"
+    assert waiting["oi_values"] == {"ce-token": 10000}
+    assert waiting["iv_values"] == {"ce-token": last_iv}
     assert waiting["reason"] == "fresh spot snapshot unavailable"
+
+
+def test_sampler_retains_last_iv_when_option_quote_disappears():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "vanished-ce",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    last_iv = first["iv_values"]["vanished-ce"]
+    source.quotes = ()
+    second = sampler.sample_once(
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    assert second["sample_count"] == 0
+    assert second["iv_live_count"] == 0
+    assert second["display_metric_count"] == 1
+    assert second["live_metrics"][0]["iv"] == last_iv
+    assert second["live_metrics"][0]["iv_status"] == "LAST"
 
 
 
