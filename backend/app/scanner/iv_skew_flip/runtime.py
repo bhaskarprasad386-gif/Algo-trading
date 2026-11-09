@@ -332,7 +332,12 @@ class IVSkewFlipRuntime:
             return True
 
         skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
-        atm_strike = min({quote.strike for quote in quotes}, key=lambda strike: abs(strike - spot.price))
+        # Match universe selection: derive ATM from the current live spot and
+        # break exact midpoint ties upward, never from a cached prior ATM.
+        atm_strike = min(
+            {quote.strike for quote in quotes},
+            key=lambda strike: (abs(strike - spot.price), -strike),
+        )
         previous_diff = self._previous_atm_iv_diff.get(symbol)
         if self._previous_atm_strike.get(symbol) != atm_strike:
             previous_diff = None
