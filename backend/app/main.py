@@ -1763,7 +1763,7 @@ def _start_iv_skew_flip_runtime():
         # Previously validation ran before runtime.start() downloaded that snapshot,
         # so a valid basket could be marked unavailable against an empty/stale master.
         # This downloader is isolated and never reads or mutates the Box Spread cache.
-        download_iv_instruments(instrument_master)
+        iv_instruments = download_iv_instruments(instrument_master)
         # Runner ON is the user's explicit activation for IV market-data analysis.
         # Load both official index baskets, verify the complete rosters/token mappings,
         # then subscribe only to each index's dynamically ranked top 10 constituents.
@@ -1795,7 +1795,7 @@ def _start_iv_skew_flip_runtime():
             equity_pressure_unavailable_reason=equity_pressure_error,
         )
         try:
-            snapshot = runtime.start()
+            snapshot = runtime.start(instruments=iv_instruments)
         except Exception:
             # Keep ownership if rollback could not release a partially
             # registered shared-feed consumer; OFF can retry cleanup.
