@@ -372,3 +372,18 @@ def test_spot_feed_exposes_shared_transport_routing_diagnostics():
     assert health["transport"]["exchange_mismatch_frames"] == 2
     assert health["transport"]["normalized_records_delivered"] == 9
     assert health["transport"]["last_successful_delivery_age_seconds_by_group"] == {"1:0": 0.4}
+
+
+
+def test_spot_feed_exposes_actual_common_manager_exchange_freshness_field_names():
+    feed = FakeFeed()
+    feed.snapshot = lambda: {
+        "last_exchange_tick_received_age_seconds_by_exchange_type": {"1": 0.25},
+        "last_raw_frame_age_seconds_by_exchange_group": {"1:0:1": 0.1},
+    }
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(FakeMaster())
+
+    transport = adapter.snapshot()["transport"]
+    assert transport["last_exchange_tick_received_age_seconds_by_exchange_type"] == {"1": 0.25}
+    assert transport["last_raw_frame_age_seconds_by_exchange_group"] == {"1:0:1": 0.1}
