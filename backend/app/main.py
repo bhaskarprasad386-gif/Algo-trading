@@ -783,7 +783,7 @@ async def _live_synthetic_loop() -> None:
     retry_delay = 5.0
     max_retry_delay = 60.0
     while True:
-        master = instrument_master
+        master = InstrumentMaster()
         runner = None
         try:
             master.download()
@@ -1031,7 +1031,7 @@ async def _live_box_spread_loop() -> None:
     retry_delay = 5.0
     max_retry_delay = 60.0
     while True:
-        master = InstrumentMaster()
+        master = instrument_master
         runner = None
         supervisor = None
         try:
