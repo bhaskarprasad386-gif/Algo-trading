@@ -23,6 +23,7 @@ class OptionQuote:
     bid: float | None = None
     ask: float | None = None
     oi: int | None = None
+    oi_timestamp_ns: int | None = None
     volume: int | None = None
     token: str | None = None
     bid_qty: float | None = None
