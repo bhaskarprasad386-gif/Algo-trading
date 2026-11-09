@@ -166,6 +166,9 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     result = runtime.refresh_once()
     assert result["indices"]["NIFTY"]["universe_tokens"] == 0
     assert result["indices"]["BANKNIFTY"]["universe_tokens"] == 0
+    for stream_id in ("NIFTY_WEEKLY", "NIFTY_MONTHLY", "BANKNIFTY_MONTHLY"):
+        assert "WAITING_FOR_FRESH_SPOT" in result["option_chains"][stream_id]["error"]
+    assert all(not feed.started for feed in runtime._option_feeds.values())
 
 
 def test_runtime_rejects_naive_clock():
