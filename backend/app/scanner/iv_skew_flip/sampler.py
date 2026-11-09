@@ -49,6 +49,7 @@ class OptionMetricSample:
     bid: float | None = None
     ask: float | None = None
     volume: int | None = None
+    oi_timestamp_ns: int | None = None
 
     @property
     def source_age_ms(self) -> float:
@@ -153,6 +154,7 @@ class IVOneSecondSampler:
                         source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
                         spot_price=row.spot_price,
                         oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
+                        oi_timestamp_ns=row.source_timestamp_ns if row.oi is not None else None,
                         iv_input='BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None else None,
                         bid=row.bid, ask=row.ask, volume=row.volume,
                     )
@@ -272,6 +274,7 @@ class IVOneSecondSampler:
                 bid=quote.bid if quote.bid is not None and isfinite(quote.bid) and quote.bid > 0 else None,
                 ask=quote.ask if quote.ask is not None and isfinite(quote.ask) and quote.ask > 0 else None,
                 volume=quote.volume if isinstance(quote.volume, int) and not isinstance(quote.volume, bool) and quote.volume >= 0 else None,
+                oi_timestamp_ns=quote.oi_timestamp_ns,
             )
             updates[quote.token] = sample
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
@@ -417,7 +420,21 @@ class IVOneSecondSampler:
                 "strike": item.strike,
                 "option_type": item.option_type,
                 "oi": item.oi,
-                "oi_live": item.oi is not None,
+                "oi_live": (
+                    item.oi is not None and item.oi_timestamp_ns is not None
+                    and 0 <= self.clock_ns() - item.oi_timestamp_ns <= 300_000_000_000
+                ),
+                "oi_timestamp_ns": item.oi_timestamp_ns,
+                "oi_age_ms": (
+                    round((self.clock_ns() - item.oi_timestamp_ns) / 1_000_000, 2)
+                    if item.oi_timestamp_ns is not None and self.clock_ns() >= item.oi_timestamp_ns
+                    else None
+                ),
+                "oi_stale": (
+                    item.oi is not None and item.oi_timestamp_ns is not None
+                    and self.clock_ns() >= item.oi_timestamp_ns
+                    and self.clock_ns() - item.oi_timestamp_ns > 300_000_000_000
+                ),
                 "iv": item.iv,
                 "iv_unit": "PERCENT",
                 "iv_live": item.iv is not None,
