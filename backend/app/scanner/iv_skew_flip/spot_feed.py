@@ -43,6 +43,11 @@ class IVSpotFeedAdapter:
         self._lock = RLock()
         self._keys: dict[str, Any] = {}
         self._latest: dict[str, SpotSnapshot] = {}
+        # Consumer-local validation telemetry distinguishes a callback that
+        # returned normally from a market-data record actually accepted here.
+        self._record_callbacks_received = 0
+        self._accepted_records = 0
+        self._rejected_records: dict[str, int] = {}
         self._started = False
         if self._persist_last_price:
             self._restore_last_prices()
@@ -128,15 +133,24 @@ class IVSpotFeedAdapter:
                 return True
         return False
 
+    def _reject_record(self, reason: str) -> None:
+        with self._lock:
+            self._rejected_records[reason] = self._rejected_records.get(reason, 0) + 1
+
     def _on_record(self, record: Any) -> None:
+        with self._lock:
+            self._record_callbacks_received += 1
         instrument = getattr(record, "instrument", None)
         timestamp_ns = getattr(record, "timestamp_ns", None)
         price = getattr(record, "ltp", None)
         if not self._has_source_timestamp(record):
+            self._reject_record("missing_or_invalid_provider_timestamp")
             return
         if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns <= 0:
+            self._reject_record("invalid_normalized_timestamp")
             return
         if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
+            self._reject_record("invalid_or_missing_price")
             return
         received_at_ns = self.clock_ns()
         with self._lock:
@@ -145,9 +159,11 @@ class IVSpotFeedAdapter:
             # NSE token subscribed by this adapter is authoritative for routing.
             symbol = next((name for name, key in self._keys.items() if key == instrument), None)
             if symbol is None:
+                self._reject_record("unmatched_instrument")
                 return
             previous = self._latest.get(symbol)
             if previous is not None and timestamp_ns < previous.timestamp_ns:
+                self._reject_record("out_of_order_source_timestamp")
                 return
             # Exchange timestamps describe the source observation; receive time
             # describes whether the transport is delivering current frames.
@@ -156,6 +172,7 @@ class IVSpotFeedAdapter:
             # fabricating a new exchange observation.
             snapshot = SpotSnapshot(float(price), timestamp_ns, received_at_ns)
             self._latest[symbol] = snapshot
+            self._accepted_records += 1
         if not self._persist_last_price:
             return
         try:
@@ -264,6 +281,13 @@ class IVSpotFeedAdapter:
                 for symbol, key in sorted(expected_keys.items())
             },
             "transport": transport,
+            "record_validation": {
+                "scope": "iv_spot_consumer",
+                "callbacks_received": self._record_callbacks_received,
+                "accepted_records": self._accepted_records,
+                "rejected_records": sum(self._rejected_records.values()),
+                "rejected_by_reason": dict(self._rejected_records),
+            },
             "fresh_symbols": sorted(fresh),
             "missing_symbols": missing,
             "spot": {
