@@ -286,3 +286,23 @@ def test_weekly_only_without_classified_weekly_expiry_stays_spot_only(monkeypatc
     assert len(targets) == 1
     assert targets[0].expiry is None
     assert targets[0].weekly_only is True
+
+
+def test_midcpnifty_is_excluded_from_box_spread_live_targets_only():
+    from types import SimpleNamespace
+
+    expiry = "31DEC2099"
+    instruments = [
+        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": symbol, "expiry": expiry}
+        for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")
+    ]
+
+    targets, _ = main._box_spread_targets_from_master(
+        SimpleNamespace(instruments=instruments),
+        ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"],
+    )
+
+    assert {target.underlying for target in targets} == {
+        "NIFTY", "BANKNIFTY", "FINNIFTY"
+    }
+    assert "MIDCPNIFTY" in main.OPTION_STRATEGY_INDEX_SYMBOLS

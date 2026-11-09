@@ -207,7 +207,10 @@ def _save_box_spread_index_selection(symbols, weekly_only_symbols=()):
 
 def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
     """Build exact selected-index option targets without touching other consumers."""
-    selected = _normalize_box_spread_index_symbols(symbols)
+    selected = tuple(
+        symbol for symbol in _normalize_box_spread_index_symbols(symbols)
+        if symbol not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
+    )
     weekly_only = set(weekly_only_symbols or ())
     if weekly_only - {"NIFTY", "SENSEX"} or weekly_only - set(selected):
         raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")

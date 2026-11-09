@@ -476,3 +476,24 @@ def test_underlying_feed_reports_health_independently_for_each_symbol():
     assert health["RELIANCE"]["state"] == "STALE"
     assert health["TCS"]["state"] == "WAITING_FOR_TICK"
     assert health["SBIN"]["state"] == "TOKEN_MISSING"
+
+
+def test_box_underlying_feed_uses_preloaded_validated_master_without_network():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "symbol": "NIFTY", "name": "NIFTY", "token": "99926000", "instrumenttype": "AMXIDX"},
+    ]
+    master._loaded = True
+
+    def unexpected_download(*args, **kwargs):
+        raise AssertionError("Box Spread must use its already validated startup master")
+
+    master.download = unexpected_download
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (25000.0, 25100.0)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY",), tracker=tracker, instrument_master=master,
+        index_symbols=frozenset({"NIFTY"}), consumer="box-underlyings",
+        refresh_instrument_master=False,
+    )
+
+    assert feed._tokens() == {"NIFTY": "99926000"}

@@ -48,6 +48,7 @@ class LiveSyntheticUnderlyingFeed:
         index_symbols: frozenset[str] = frozenset(),
         commodity_symbols: frozenset[str] = frozenset(),
         consumer: str = "synthetic-underlyings",
+        refresh_instrument_master: bool = True,
     ) -> None:
         if not symbols:
             raise ValueError("at least one underlying symbol is required")
@@ -64,6 +65,7 @@ class LiveSyntheticUnderlyingFeed:
             if str(k).strip() and str(v).strip()
         }
         self.consumer = str(consumer).strip()
+        self.refresh_instrument_master = bool(refresh_instrument_master)
         if not self.consumer:
             raise ValueError("consumer is required")
         self.commodity_symbols = frozenset(str(symbol).strip().upper() for symbol in commodity_symbols if str(symbol).strip())
@@ -118,7 +120,7 @@ class LiveSyntheticUnderlyingFeed:
         # An authoritative token supplied by the caller is already resolved;
         # downloading the entire instrument master adds no value and can turn
         # an offline token-resolution path into a network timeout.
-        if self._needs_instrument_master():
+        if self.refresh_instrument_master and self._needs_instrument_master():
             self.instrument_master.download()
         result = {}
         for symbol in self.symbols:
@@ -249,7 +251,7 @@ class LiveSyntheticUnderlyingFeed:
                         if active_tokens:
                             self._feed.stop()
                             active_tokens = {}
-                        app_logger.warning("Synthetic underlying feed found no resolvable live symbols; retrying")
+                        app_logger.warning("Underlying feed found no resolvable live symbols; retrying")
                         self.stop_event.wait(TOKEN_REFRESH_SECONDS)
                         continue
                     if current_token_set != active_tokens:
