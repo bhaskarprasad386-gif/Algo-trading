@@ -46,6 +46,12 @@ const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
 const delta = (v: unknown, suffix = "", digits = 2) => n(v) === null ? "—" : `${Number(v) > 0 ? "+" : ""}${fmt(v, digits)}${suffix}`;
 const age = (v: unknown) => n(v) === null ? "—" : n(v)! < 1000 ? `${Math.round(n(v)!)} ms` : `${(n(v)! / 1000).toFixed(1)} s`;
+const sampleTime = (value: unknown) => {
+  const ns = n(value);
+  if (ns === null || ns <= 0) return "Time unavailable";
+  const date = new Date(ns / 1_000_000);
+  return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: true });
+};
 const apiError = (body: Row, fallback: string) => {
   const detail = body.detail;
   if (typeof detail === "string") return detail;
@@ -142,7 +148,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const quoteTitle=(x:Row,field:string)=>n(x[field])===null?"No broker quote received":`Broker ${field.toUpperCase()} • ${x.fresh===true?"LIVE":`last received ${age(x.age_ms)} ago; may be stale`}`;
   return <section className="overflow-hidden rounded-2xl border theme-border theme-surface">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b theme-border p-3 sm:p-4">
-      <div><h2 className="text-lg font-bold theme-text">{title} Option Chain</h2><p className="text-xs theme-muted mt-1">{String(feed.expiry_type ?? chain.expiry_type ?? "—")} • Expiry {String(feed.expiry ?? "—")} • ATM {fmt(strikes[5] ?? (atmIndex>=0?allStrikes[atmIndex]:null),0)} • −5 to +5 strikes ({strikes.length}/11)</p></div>
+      <div><h2 className="text-lg font-bold theme-text">{title} Option Chain</h2><p className="text-xs theme-muted mt-1">{String(feed.expiry_type ?? chain.expiry_type ?? "—")} • Expiry {String(feed.expiry ?? "—")} • ATM {fmt(strikes[5] ?? (atmIndex>=0?allStrikes[atmIndex]:null),0)} • −5 to +5 strikes ({strikes.length}/11)</p><p className="mt-1 text-[11px] theme-muted">Sampler: {String(sampler.status ?? "WAITING")} • Last sample: {sampleTime(sampler.sampled_at_ns)} • Persisted history: {String(sampler.history_persistence ?? "UNKNOWN")} ({fmt(sampler.history_persisted_count,0)} rows)</p>{sampler.history_persistence_error && <p className="mt-1 text-[11px] text-amber-600">History save error: {String(sampler.history_persistence_error)}</p>}{sampler.reason && <p className="mt-1 text-[11px] text-amber-600">Sampler reason: {String(sampler.reason)}</p>}</div>
       <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-lg border theme-border px-2 py-1">Feed: {String(spotFeed)}</span><span className="rounded-lg border theme-border px-2 py-1">Contracts: {fmt(feed.received_contracts,0)}/{fmt(feed.expected_contracts,0)}</span><span className="rounded-lg border theme-border px-2 py-1">IV: {fmt(sampler.iv_live_count,0)} • OI: {fmt(sampler.oi_live_count,0)}</span></div>
     </div>
     {chain.error && <div className="m-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-600">{chain.error}</div>}
@@ -152,7 +158,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
           <tr className="theme-surface-2 theme-muted">{["Volume","OI","IV %","LTP","LTP","IV %","OI","Volume"].map((x,i)=><th key={i} className="border theme-border px-2 py-2 font-semibold">{x}<span className="block text-[9px] font-normal opacity-70">{["Δ / %","Δ / %","Δ pt","Δ / %","Δ / %","Δ pt","Δ / %","Δ / %"][i]}</span></th>)}</tr></thead>
         <tbody>{strikes.length === 0 ? <tr><td colSpan={9} className="border theme-border p-10 theme-muted">Waiting for strike universe and broker quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
-          const ivStatus=(x:Row)=>n(x.iv)===null?"IV not received":x.iv_live===true||x.iv_status==="LIVE"?"Latest IV from fresh spot and option data":"Last valid IV retained; fresh input unavailable";
+          const ivStatus=(x:Row)=>n(x.iv)===null?"IV not received":`${x.iv_live===true||x.iv_status==="LIVE"?"LIVE IV":"LAST valid IV"} • sample ${sampleTime(x.sampled_at_ns)} • option tick ${sampleTime(x.source_timestamp_ns)} • spot tick ${sampleTime(x.spot_timestamp_ns)}`;
           const ivLabel=(x:Row)=>n(x.iv)===null?"—":x.iv_live===true||x.iv_status==="LIVE"?"LIVE":"LAST";
           return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
             <td className="border theme-border px-2 py-2"><StackedMetric value={ce.volume} change={ce.volume_change_1s} pct={ce.volume_change_pct_1s} compact/></td>
