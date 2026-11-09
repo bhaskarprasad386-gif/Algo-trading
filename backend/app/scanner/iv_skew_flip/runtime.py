@@ -163,8 +163,8 @@ class IVSkewFlipRuntime:
         if any(not values for values in rows.values()):
             missing = sorted(stream_id for stream_id, values in rows.items() if not values)
             raise LookupError(f"instrument master has no NFO option contracts for streams {missing}")
-        # Resolve both NSE index tokens before subscribing, so a partial/invalid
-        # master cannot leave the runtime half-started.
+        # Resolve the sole enabled NSE index token before subscribing, so an
+        # invalid master cannot leave the runtime half-started.
         for symbol in ("NIFTY",):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
         # Index-future basis feed is intentionally disabled in NIFTY-Weekly-only mode.
@@ -217,7 +217,7 @@ class IVSkewFlipRuntime:
             self._rows_by_stream = rows
             self._future_contracts = future_contracts
             self._basis_histories = {f"{item.underlying}:{item.expiry.isoformat()}": BasisHistory() for item in future_contracts}
-            self._basis_analysis = {symbol: {"status": "UNAVAILABLE", "error": error, "signals_allowed": False} for symbol, error in future_resolution_errors.items()}
+            self._basis_analysis = {}
             self._started = True
             self._stop.clear()
             self._thread = Thread(
