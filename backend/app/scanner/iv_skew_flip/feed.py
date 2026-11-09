@@ -158,6 +158,8 @@ class IVSkewFlipFeedAdapter:
                 for contract in universe.contracts
             }
             self._last_tick_ns = None
+            self._rejected_records = {"missing_token": 0, "invalid_timestamp": 0, "missing_provider_timestamp": 0, "unsubscribed_token": 0, "out_of_order_timestamp": 0}
+            self._last_rejection_reason = None
         keys = self.feed.start(descriptors, self._on_record)
         self._started = True
         return {
