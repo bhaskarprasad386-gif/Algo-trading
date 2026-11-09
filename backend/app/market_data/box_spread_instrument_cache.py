@@ -59,7 +59,7 @@ def _read_cache():
         return None
 
 
-def _write_cache(rows):
+def _write_cache(rows, fetched_at=None):
     path = _cache_path()
     temp_name = None
     try:
@@ -71,7 +71,7 @@ def _write_cache(rows):
             temp_name = handle.name
             json.dump({
                 "schema_version": 1,
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "fetched_at": (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
                 "instruments": rows,
             }, handle, separators=(",", ":"))
             handle.flush()
@@ -124,7 +124,7 @@ def download_box_spread_instruments(master):
             age = (datetime.now(timezone.utc) - fetched.astimezone(timezone.utc)).total_seconds()
             rows = _validated_rows(getattr(master, "instruments", None))
             if rows is not None and 0 <= age <= MAX_CACHE_AGE_SECONDS:
-                _write_cache(rows)
+                _write_cache(rows, fetched_at=fetched)
                 app_logger.info("Box Spread reused validated in-process instrument snapshot (age_seconds={:.1f}, rows={})", age, len(rows))
                 return rows
         except (TypeError, ValueError, OverflowError) as exc:
