@@ -73,13 +73,13 @@ def test_one_second_sampler_records_new_oi_only_on_new_source_tick():
     premium = 100.0
     source.quotes = (OptionQuote(
         "NIFTY", "2026-11-12", 21950, "CE", now_ns,
-        premium, 99.5, 100.5, 10000, 10, "ce-token",
+        premium, 99.5, 100.5, 10000, 100, "ce-token",
     ),)
     sampler = _sampler(source, lambda: now_ns + 1_000_000_000)
     sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
     source.quotes = (OptionQuote(
         "NIFTY", "2026-11-12", 21950, "CE", now_ns + 1_000_000_000,
-        premium + 5, 104.5, 105.5, 9400, 12, "ce-token",
+        premium + 5, 104.5, 105.5, 9400, 150, "ce-token",
     ),)
     result = sampler.sample_once(
         now_ns=now_ns + 1_000_000_000, now=now,
@@ -93,6 +93,9 @@ def test_one_second_sampler_records_new_oi_only_on_new_source_tick():
     assert metric["oi_change_pct_1s"] == -6.0
     assert metric["ltp_change_1s"] == 5.0
     assert metric["ltp_change_pct_1s"] == 5.0
+    assert metric["volume"] == 150
+    assert metric["volume_change_1s"] == 50
+    assert metric["volume_change_pct_1s"] == 50.0
     assert metric["iv_change_1s"] is not None
 
 
