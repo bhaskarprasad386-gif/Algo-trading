@@ -27,6 +27,7 @@ IST = ZoneInfo("Asia/Kolkata")
 class SpotSnapshot:
     price: float
     timestamp_ns: int
+    received_at_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -200,7 +201,8 @@ class IVOneSecondSampler:
         if self.history_session_factory is not None and not self._history_loaded and self.configured_expiry:
             self._restore_history(sampled_at)
         spot_value = self._spot(self.spot_provider() if spot is None else spot)
-        if spot_value is None or sampled_at - spot_value.timestamp_ns < 0 or sampled_at - spot_value.timestamp_ns > self.max_spot_age_ns:
+        spot_received_at = None if spot_value is None else (spot_value.received_at_ns or spot_value.timestamp_ns)
+        if spot_value is None or sampled_at - spot_received_at < 0 or sampled_at - spot_received_at > self.max_spot_age_ns:
             with self._lock:
                 # A failed spot gate invalidates every previously calculated
                 # IV value: do not leave stale metrics exposed as LIVE.
