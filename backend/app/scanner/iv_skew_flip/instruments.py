@@ -75,8 +75,13 @@ def _validate_rows(payload: Any) -> list[dict[str, Any]]:
         if (
             not isinstance(symbol, str) or not symbol.strip()
             or not isinstance(exchange, str) or not exchange.strip()
-            or isinstance(token, bool) or token is None
-            or not str(token).strip().isdigit() or int(token) <= 0
+            or (
+                exchange.strip().upper() in {"NSE", "NFO"}
+                and (
+                    isinstance(token, bool) or token is None
+                    or not str(token).strip().isdigit() or int(token) <= 0
+                )
+            )
         ):
             raise ValueError("Angel One instrument master contains malformed or incomplete rows")
 

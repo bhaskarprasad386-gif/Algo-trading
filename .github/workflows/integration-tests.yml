@@ -87,3 +87,92 @@ jobs:
             app/market_data/tests/test_common_websocket.py \
             app/market_data/tests/test_websocket.py \
             app/market_data/tests/test_batch_pq.py
+
+  iv-independent-master-network:
+    name: IV Independent Angel One Master Network Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies for production IV loader import
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Download and validate official master with production IV loader
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+          IV_INSTRUMENT_MASTER_CACHE_PATH: ${{ runner.temp }}/iv_instrument_master_cache.json
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import requests
+          from collections import Counter
+          from app.scanner.iv_skew_flip.instruments import (
+              PRIMARY_MASTER_URL, ALTERNATE_MASTER_URL, _validate_rows,
+              _write_snapshot, _read_recent_snapshot,
+          )
+
+          for label, url in (("primary", PRIMARY_MASTER_URL), ("alternate", ALTERNATE_MASTER_URL)):
+              try:
+                  response = requests.get(url, timeout=(5, 30))
+                  response.raise_for_status()
+                  payload = response.json()
+                  print(f"{label}_http_status={response.status_code}")
+                  print(f"{label}_payload_type={type(payload).__name__}")
+                  if not isinstance(payload, list):
+                      print(f"{label}_payload_preview={str(payload)[:500]}")
+                      continue
+                  invalid = []
+                  for index, row in enumerate(payload):
+                      if not isinstance(row, dict):
+                          invalid.append({"index": index, "kind": type(row).__name__})
+                          continue
+                      symbol, exchange, token = row.get("symbol"), row.get("exch_seg"), row.get("token")
+                      reasons = []
+                      if not isinstance(symbol, str) or not symbol.strip(): reasons.append("symbol")
+                      if not isinstance(exchange, str) or not exchange.strip(): reasons.append("exch_seg")
+                      if isinstance(token, bool) or token is None or not str(token).strip().isdigit() or int(token) <= 0: reasons.append("token")
+                      if reasons:
+                          invalid.append({"index": index, "reasons": reasons, "keys": sorted(row.keys()), "symbol": str(symbol)[:80], "exchange": str(exchange)[:30], "token": str(token)[:30]})
+                  print(json.dumps({
+                      "source": label,
+                      "total_rows": len(payload),
+                      "invalid_global_rows": len(invalid),
+                      "invalid_reason_counts": dict(Counter(reason for item in invalid for reason in item.get("reasons", []))),
+                      "invalid_samples": invalid[:8],
+                      "sample_first_row": payload[0] if payload and isinstance(payload[0], dict) else str(payload[:1]),
+                  }, indent=2, default=str))
+                  try:
+                      validated_rows = _validate_rows(payload)
+                      print(f"{label}_production_validation=PASS")
+                      # Persist using the exact production schema, digest and atomic writer.
+                      _write_snapshot(validated_rows)
+                      cached = _read_recent_snapshot()
+                      if cached is None:
+                          raise RuntimeError("production snapshot could not be read back with schema/digest/freshness checks")
+                      print(f"{label}_snapshot_readback=PASS")
+                      print(f"{label}_snapshot_rows={len(cached[0])}")
+                  except Exception as exc:
+                      print(f"{label}_production_validation=FAIL: {type(exc).__name__}: {exc}")
+              except Exception as exc:
+                  print(f"{label}_fetch_failed={type(exc).__name__}: {exc}")
+
+          snapshot_path = Path(os.environ["IV_INSTRUMENT_MASTER_CACHE_PATH"])
+          if not snapshot_path.is_file() or snapshot_path.stat().st_size == 0:
+              raise SystemExit("No production-validated IV snapshot was generated; refusing to continue")
+
+      - name: Upload validated IV-only snapshot for controlled transfer
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iv-instrument-master-validated
+          path: ${{ runner.temp }}/iv_instrument_master_cache.json
+          if-no-files-found: error
+          retention-days: 1
