@@ -222,11 +222,16 @@ def _read_recent_snapshot() -> tuple[list[dict[str, Any]], datetime] | None:
         return None
 
 
-def _install_snapshot(instrument_master: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Install fallback rows on this IV-owned instance only."""
+def _install_snapshot(
+    instrument_master: Any,
+    rows: list[dict[str, Any]],
+    fetched_at: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Install rows on this instance and retain source age for safe same-process reuse."""
     instrument_master.instruments = rows
     instrument_master._loaded = True
     instrument_master._symbol_exchange_index = None
+    instrument_master._iv_snapshot_fetched_at = fetched_at or datetime.now(timezone.utc)
     return rows
 
 
@@ -279,7 +284,7 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
             ) from alternate_error
 
         rows, fetched_at = cached
-        installed = _install_snapshot(instrument_master, rows)
+        installed = _install_snapshot(instrument_master, rows, fetched_at=fetched_at)
         app_logger.warning(
             "IV scanner using read-only integrity-checked IV instrument snapshot (fetched_at={}, rows={})",
             fetched_at.isoformat(),

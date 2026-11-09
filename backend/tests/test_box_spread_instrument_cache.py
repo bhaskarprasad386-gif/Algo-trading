@@ -114,3 +114,28 @@ def test_box_spread_rejects_invalid_alternate_and_preserves_download_error(monke
     )
     with pytest.raises(RuntimeError, match="provider timeout"):
         download_box_spread_instruments(master)
+
+
+def test_box_spread_reuses_fresh_verified_in_process_iv_snapshot(monkeypatch, tmp_path):
+    path = tmp_path / "box-cache.json"
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
+    rows = _rows()
+    master = FakeMaster()
+    master.instruments = rows
+    master._loaded = True
+    master._iv_snapshot_fetched_at = datetime.now(timezone.utc)
+    master.download = lambda: (_ for _ in ()).throw(AssertionError("network download must not run"))
+    assert download_box_spread_instruments(master) == rows
+    assert json.loads(path.read_text())["instruments"] == rows
+
+
+def test_box_spread_ignores_stale_in_process_iv_snapshot(monkeypatch, tmp_path):
+    path = tmp_path / "box-cache.json"
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
+    master = FakeMaster(error=RuntimeError("provider timeout"))
+    master.instruments = _rows()
+    master._loaded = True
+    master._iv_snapshot_fetched_at = datetime.now(timezone.utc) - timedelta(hours=37)
+    _fail_alternate_host(monkeypatch)
+    with pytest.raises(RuntimeError, match="provider timeout"):
+        download_box_spread_instruments(master)

@@ -282,3 +282,25 @@ def test_feed_adapter_exposes_reasons_for_rejected_records():
     reset = adapter.snapshot(10_000_000_000)
     assert reset["rejected_record_count"] == 0
     assert reset["last_rejection_reason"] is None
+
+
+def test_feed_snapshot_includes_shared_socket_delivery_diagnostics():
+    feed = FakeFeed()
+    feed.snapshot = lambda: {
+        "subscriptions": 14,
+        "socket_groups": 1,
+        "connected_groups": ["3:0"],
+        "raw_frames_received": 0,
+        "ticks_received": 0,
+        "normalized_records_emitted": 0,
+        "normalized_records_delivered": 0,
+        "unmatched_frames": 0,
+        "unconnected_required_groups": [],
+    }
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 10_000_000_000)
+    adapter.start(_universe())
+    snapshot = adapter.snapshot(10_000_000_000)
+    assert snapshot["subscribed_token_count"] == 14
+    assert snapshot["shared_feed_diagnostics"]["subscriptions"] == 14
+    assert snapshot["shared_feed_diagnostics"]["raw_frames_received"] == 0
+    assert snapshot["signals_allowed"] is False
