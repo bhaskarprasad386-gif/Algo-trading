@@ -452,3 +452,49 @@ def test_runtime_retains_option_feed_when_sampler_start_fails(monkeypatch):
     assert stopped["status"] == "STOPPED"
     assert feed.started is False
     assert feed.stop_calls >= 1
+
+
+def test_runtime_retains_option_feed_when_subscription_start_partially_fails():
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    rows = make_rows("NIFTY", "12NOV2026", 100, 10)
+    created = {}
+
+    class PartiallyFailingFeed(FakeOptionFeed):
+        def __init__(self, symbol):
+            super().__init__(symbol)
+            self.stop_calls = 0
+
+        def start(self, universe):
+            self.universe = universe
+            # Simulate the common feed registering this consumer before an
+            # exception is raised by a later subscription operation.
+            raise RuntimeError("partial option subscription failure")
+
+        def stop(self):
+            self.stop_calls += 1
+            self.started = False
+
+    def factory(symbol):
+        created[symbol] = PartiallyFailingFeed(symbol)
+        return created[symbol]
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=FakeSpotFeed(),
+        option_feed_factory=factory,
+        clock_ns=lambda: 10_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
+    }
+
+    runtime.refresh_once()
+    feed = created["NIFTY_WEEKLY"]
+    assert runtime._option_feeds["NIFTY_WEEKLY"] is feed
+    assert "partial option subscription failure" in runtime._last_error["NIFTY_WEEKLY"]
+
+    stopped = runtime.stop()
+    assert stopped["status"] == "STOPPED"
+    assert feed.stop_calls >= 1
