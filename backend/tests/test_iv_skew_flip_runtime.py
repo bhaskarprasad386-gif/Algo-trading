@@ -560,3 +560,40 @@ def test_runtime_retains_option_feed_when_subscription_start_partially_fails():
     stopped = runtime.stop()
     assert stopped["status"] == "STOPPED"
     assert feed.stop_calls >= 1
+
+
+
+def test_runtime_rolls_weekly_expiry_forward_after_1530_ist(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "IVOneSecondSampler", FakeSampler)
+    now = datetime(2026, 11, 9, 15, 31, tzinfo=IST)
+    rows = (
+        make_rows("NIFTY", "09NOV2026", 100, 10)
+        + make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+    )
+    created = {}
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=FakeSpotFeed(),
+        option_feed_factory=lambda symbol: created.setdefault(
+            symbol, FakeOptionFeed(symbol)
+        ),
+        clock_ns=lambda: 20_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
+    }
+
+    result = runtime.refresh_once()
+
+    assert result["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 14
+    assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
+    assert all(
+        contract.expiry == "2026-11-12"
+        for contract in created["NIFTY_WEEKLY"].universe.contracts
+    )
