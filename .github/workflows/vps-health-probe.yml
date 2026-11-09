@@ -25,9 +25,24 @@ jobs:
           printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # Retry host-key discovery and report failures instead of silently
+          # aborting before the remote probe and evidence upload.
+          keyscan_ok=0
+          for attempt in 1 2 3; do
+            if timeout 8 ssh-keyscan -T 5 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/vps-keyscan.err; then
+              keyscan_ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$keyscan_ok" -ne 1 ]; then
+            echo "VPS_SSH_KEYSCAN=FAILED"
+            echo "VPS_SSH_KEYSCAN_ERROR=$(tr '\n' ' ' < /tmp/vps-keyscan.err | cut -c1-500)"
+            exit 1
+          fi
+          echo "VPS_SSH_KEYSCAN=OK"
 
-          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' | tee /tmp/vps-health-probe.txt
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2> >(tee /tmp/vps-ssh-stderr.txt >&2) | tee /tmp/vps-health-probe.txt
           set -u
           echo "=== HOST ==="
           echo "HOST=$(hostname)"
@@ -234,6 +249,12 @@ jobs:
           ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)\\b' || true
           exit "$acceptance_status"
           REMOTE
+          ssh_status=${PIPESTATUS[0]}
+          echo "VPS_SSH_EXIT_CODE=$ssh_status"
+          if [ "$ssh_status" -ne 0 ]; then
+            echo "VPS_SSH_ERROR=$(tr '\n' ' ' < /tmp/vps-ssh-stderr.txt 2>/dev/null | cut -c1-500)"
+            exit "$ssh_status"
+          fi
 
       - name: Upload VPS health evidence
         if: ${{ always() }}
