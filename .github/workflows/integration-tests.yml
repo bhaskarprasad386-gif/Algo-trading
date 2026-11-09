@@ -114,6 +114,7 @@ jobs:
           from collections import Counter
           from app.scanner.iv_skew_flip.instruments import (
               PRIMARY_MASTER_URL, ALTERNATE_MASTER_URL, _validate_rows,
+              _write_snapshot, _read_recent_snapshot,
           )
 
           for label, url in (("primary", PRIMARY_MASTER_URL), ("alternate", ALTERNATE_MASTER_URL)):
@@ -147,8 +148,15 @@ jobs:
                       "sample_first_row": payload[0] if payload and isinstance(payload[0], dict) else str(payload[:1]),
                   }, indent=2, default=str))
                   try:
-                      _validate_rows(payload)
+                      validated_rows = _validate_rows(payload)
                       print(f"{label}_production_validation=PASS")
+                      # Persist using the exact production schema, digest and atomic writer.
+                      _write_snapshot(validated_rows)
+                      cached = _read_recent_snapshot()
+                      if cached is None:
+                          raise RuntimeError("production snapshot could not be read back with schema/digest/freshness checks")
+                      print(f"{label}_snapshot_readback=PASS")
+                      print(f"{label}_snapshot_rows={len(cached[0])}")
                   except Exception as exc:
                       print(f"{label}_production_validation=FAIL: {type(exc).__name__}: {exc}")
               except Exception as exc:
