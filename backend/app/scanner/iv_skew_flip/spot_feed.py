@@ -236,6 +236,8 @@ class IVSpotFeedAdapter:
                         "last_successful_route_age_seconds_by_group",
                         "last_successful_delivery_age_seconds_by_group",
                         "last_exchange_tick_age_seconds_by_exchange_type",
+                        "last_exchange_tick_received_age_seconds_by_exchange_type",
+                        "last_raw_frame_age_seconds_by_exchange_group",
                     )
                     transport = {
                         "scope": "shared_manager_process_wide",
