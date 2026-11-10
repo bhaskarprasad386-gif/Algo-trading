@@ -202,7 +202,7 @@ function NiftyWeeklyOiVolumeMock({ chain, spot }: { chain: Chain; spot: Row }) {
   const atmTarget = spotPrice ?? n(feed.atm_strike);
   const atmIndex = available.length ? atmTarget === null ? Math.floor(available.length / 2) : available.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(available[best]-atmTarget)?i:best,0) : -1;
   const strikes = atmIndex < 0 ? [] : available.slice(Math.max(0,atmIndex-5),atmIndex+6);
-  const rows: OiVolumeMockRow[] = strikes.map((strike,index)=>({strike,...OI_VOLUME_MOCK[Math.max(0,Math.min(OI_VOLUME_MOCK.length-1,index + Math.max(0,5-(atmIndex-Math.max(0,atmIndex-5)))))]}));
+  const rows: OiVolumeMockRow[] = strikes.map((strike,index)=>({strike,...OI_VOLUME_MOCK[index]}));
   const maxOi = Math.max(1,...rows.flatMap(row=>[row.peOi,row.ceOi]));
   const maxVolume = Math.max(1,...rows.flatMap(row=>[row.peVolume,row.ceVolume]));
   const side = (kind:"PE"|"CE") => rows.map(row => {
