@@ -356,12 +356,13 @@ export default function IVSkewFlipPage() {
     void poll();
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,requestedExpiry]);
+  },[base,requestedExpiry,activeWeeklyExpiry]);
+  const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
       try{
-        const expiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
+        const expiry=activeWeeklyExpiry;
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=600&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
