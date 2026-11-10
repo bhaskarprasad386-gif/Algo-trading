@@ -26,6 +26,16 @@ from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
 
+
+def _universe_selection_date(now: datetime):
+    """Roll the selected option universe after the 15:30 IST expiry close."""
+    local_now = now.astimezone(IST)
+    selected_date = local_now.date()
+    if local_now.time() >= datetime_time(15, 30):
+        selected_date += timedelta(days=1)
+    return selected_date
+
+
 # IV scanner is intentionally running only NIFTY Weekly until explicitly enabled.
 # Keep the complete registry for stable API/UI reporting, but all runtime work
 # (subscriptions, sampling, signals and refresh) uses ACTIVE_CHAIN_CONFIGS only.
@@ -261,14 +271,10 @@ class IVSkewFlipRuntime:
     def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
         symbol = stream_id
         try:
-            local_now = now.astimezone(IST)
-            # Index options stop trading at 15:30 IST on expiry day. The
-            # instrument master still contains that date until its next
-            # refresh, so date-only selection would keep subscribing to an
-            # already-expired weekly chain after the session closes.
-            universe_date = local_now.date()
-            if local_now.time() >= datetime_time(15, 30):
-                universe_date += timedelta(days=1)
+            # Index options stop trading at 15:30 IST on expiry day. Move
+            # the selection date forward at that boundary so the next refresh
+            # selects the next listed weekly expiry and keeps it on the next day.
+            universe_date = _universe_selection_date(now)
             universe = resolve_option_universe(
                 self._rows_by_stream[symbol],
                 underlying=config.symbol,
