@@ -36,7 +36,6 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
-from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
