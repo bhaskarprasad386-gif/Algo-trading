@@ -159,6 +159,7 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     rows = make_rows("NIFTY", "12NOV2026", 100, 10) + make_rows("BANKNIFTY", "26NOV2026", 200, 100)
     spot = FakeSpotFeed()
     spot.prices = {}
+    spot.last_prices = {}
     runtime = IVSkewFlipRuntime(
         instrument_master=FakeMaster(rows), spot_feed=spot,
         option_feed_factory=lambda symbol: FakeOptionFeed(symbol),
