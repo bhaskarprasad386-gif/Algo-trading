@@ -247,6 +247,10 @@ class IVSpotFeedAdapter:
                 "duplicate_source_timestamps": self._duplicate_source_timestamps,
                 "last_source_timestamp_fields": dict(self._last_source_timestamp_fields),
                 "last_normalized_timestamp_ns": self._last_normalized_timestamp_ns,
+                "last_source_timestamp_age_seconds": (
+                    max(0.0, (current - self._last_normalized_timestamp_ns) / 1_000_000_000)
+                    if self._last_normalized_timestamp_ns is not None else None
+                ),
             }
         fresh = {
             symbol: value for symbol, value in latest.items()
@@ -265,9 +269,9 @@ class IVSpotFeedAdapter:
         else:
             status = "WAITING_FOR_TICKS"
         # Keep transport/routing health separate from per-symbol market freshness.
-        # CommonStrategyMarketFeed is shared process-wide, so these counters are
-        # explicitly labelled as manager-wide rather than falsely attributed to
-        # this consumer alone.
+        # The runtime passes its dedicated manager snapshot so both status views
+        # describe the same manager generation and cannot disagree due to a
+        # socket retirement between two independent snapshot calls.
         transport: dict[str, Any] = {}
         feed_snapshot = getattr(self.feed, "snapshot", None)
         if isinstance(transport_snapshot, dict):
@@ -284,28 +288,28 @@ class IVSpotFeedAdapter:
                 }
         if isinstance(shared, dict):
             try:
-                    transport_fields = (
-                        "subscriptions", "active_instruments", "socket_groups",
-                        "required_socket_groups", "missing_socket_groups",
-                        "unconnected_required_groups", "socket_health_by_group",
-                        "raw_frames_received", "ticks_received", "ticks_by_exchange_type",
-                        "unmatched_frames", "exchange_mismatch_frames",
-                        "missing_exchange_type_frames", "ambiguous_token_frames",
-                        "normalized_records_emitted", "normalized_records_delivered",
-                        "normalizer_errors", "last_normalizer_error",
-                        "delivery_errors", "normalized_delivery_errors",
-                        "last_delivery_error", "last_raw_frame_age_seconds",
-                        "last_raw_frame_age_seconds_by_group",
-                        "last_successful_route_age_seconds_by_group",
-                        "last_successful_delivery_age_seconds_by_group",
-                        "last_exchange_tick_age_seconds_by_exchange_type",
-                        "last_exchange_tick_received_age_seconds_by_exchange_type",
-                        "last_raw_frame_age_seconds_by_exchange_group",
-                    )
-                    transport = {
-                        "scope": "manager_instance",
-                        **{key: shared[key] for key in transport_fields if key in shared},
-                    }
+                transport_fields = (
+                    "subscriptions", "active_instruments", "socket_groups",
+                    "required_socket_groups", "missing_socket_groups",
+                    "unconnected_required_groups", "socket_health_by_group",
+                    "raw_frames_received", "ticks_received", "ticks_by_exchange_type",
+                    "unmatched_frames", "exchange_mismatch_frames",
+                    "missing_exchange_type_frames", "ambiguous_token_frames",
+                    "normalized_records_emitted", "normalized_records_delivered",
+                    "normalizer_errors", "last_normalizer_error",
+                    "delivery_errors", "normalized_delivery_errors",
+                    "last_delivery_error", "last_raw_frame_age_seconds",
+                    "last_raw_frame_age_seconds_by_group",
+                    "last_successful_route_age_seconds_by_group",
+                    "last_successful_delivery_age_seconds_by_group",
+                    "last_exchange_tick_age_seconds_by_exchange_type",
+                    "last_exchange_tick_received_age_seconds_by_exchange_type",
+                    "last_raw_frame_age_seconds_by_exchange_group",
+                )
+                transport = {
+                    "scope": "manager_instance",
+                    **{key: shared[key] for key in transport_fields if key in shared},
+                }
             except Exception as exc:
                 transport = {
                     "scope": "manager_instance",
