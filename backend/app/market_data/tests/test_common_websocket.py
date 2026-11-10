@@ -1689,9 +1689,12 @@ def test_recovery_does_not_recycle_connected_socket_when_primary_frames_arrive_w
         # proving that transport recovery must not churn the live socket.
         manager._last_raw_frame_at_by_group[group] = now
         manager._last_raw_frame_at_by_exchange_type[(group, 1)] = now
+        stale_timestamp_ns = time.time_ns() - 60_000_000_000
         manager._latest_tick_timestamp_ns_by_group_exchange[(group, 1)] = (
-            time.time_ns() - 60_000_000_000
+            stale_timestamp_ns
         )
+        # The public exchange-age diagnostic is aggregated across groups.
+        manager._latest_tick_timestamp_ns_by_exchange_type[1] = stale_timestamp_ns
         manager._socket_created_at[group] -= 60.0
 
         recovered = manager.recover_disconnected(
