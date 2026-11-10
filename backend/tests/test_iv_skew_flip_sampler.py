@@ -494,6 +494,10 @@ def test_sampler_keeps_iv_live_when_oi_observation_is_five_minutes_old():
     assert metric["oi_live"] is False
     assert metric["oi_stale"] is True
     assert metric["oi_age_ms"] == 301_000.0
+    assert metric["oi_status"] == "LAST"
+    assert result["oi_live_count"] == 0
+    assert result["oi_stale_count"] == 1
+    assert result["oi_missing_count"] == 0
     # OI staleness is independent: valid fresh option price/spot still yields IV.
     assert metric["iv_live"] is True
 
