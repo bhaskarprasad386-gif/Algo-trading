@@ -440,9 +440,21 @@ class IVOneSecondSampler:
         return max(candidates, key=lambda item: item.source_timestamp_ns) if candidates else None
 
     def snapshot(self) -> dict[str, Any]:
+        snapshot_now_ns = self.clock_ns()
         with self._lock:
             live_samples = tuple(self._latest.values())
             live_iv_tokens = {item.token for item in live_samples if item.iv is not None}
+            live_oi_tokens = {
+                item.token for item in live_samples
+                if item.oi is not None and item.oi_timestamp_ns is not None
+                and 0 <= snapshot_now_ns - item.oi_timestamp_ns <= 300_000_000_000
+            }
+            stale_oi_tokens = {
+                item.token for item in live_samples
+                if item.oi is not None and item.oi_timestamp_ns is not None
+                and snapshot_now_ns >= item.oi_timestamp_ns
+                and snapshot_now_ns - item.oi_timestamp_ns > 300_000_000_000
+            }
             display_by_token = {item.token: item for item in live_samples}
             for token, last_good in self._last_valid_iv.items():
                 current = display_by_token.get(token)
@@ -469,7 +481,12 @@ class IVOneSecondSampler:
                 "volume_change_pct_1s": changes.get(item.token, {}).get("volume_change_pct"),
                 "oi_live": (
                     item.oi is not None and item.oi_timestamp_ns is not None
-                    and 0 <= self.clock_ns() - item.oi_timestamp_ns <= 300_000_000_000
+                    and 0 <= snapshot_now_ns - item.oi_timestamp_ns <= 300_000_000_000
+                ),
+                "oi_status": (
+                    "LIVE" if item.token in live_oi_tokens
+                    else "LAST" if item.oi is not None
+                    else "MISSING"
                 ),
                 "oi_timestamp_ns": item.oi_timestamp_ns,
                 "oi_age_ms": (
@@ -479,8 +496,8 @@ class IVOneSecondSampler:
                 ),
                 "oi_stale": (
                     item.oi is not None and item.oi_timestamp_ns is not None
-                    and self.clock_ns() >= item.oi_timestamp_ns
-                    and self.clock_ns() - item.oi_timestamp_ns > 300_000_000_000
+                    and snapshot_now_ns >= item.oi_timestamp_ns
+                    and snapshot_now_ns - item.oi_timestamp_ns > 300_000_000_000
                 ),
                 "iv": item.iv,
                 "iv_unit": "PERCENT",
@@ -507,7 +524,9 @@ class IVOneSecondSampler:
             "sampled_at_ns": sampled_at,
             "sample_count": len(live_samples),
             "display_metric_count": len(samples),
-            "oi_live_count": sum(item.oi is not None for item in live_samples),
+            "oi_live_count": len(live_oi_tokens),
+            "oi_stale_count": len(stale_oi_tokens),
+            "oi_missing_count": sum(item.oi is None or item.oi_timestamp_ns is None for item in live_samples),
             "iv_live_count": len(live_iv_tokens),
             "oi_values": {item.token: item.oi for item in samples},
             "iv_values": {item.token: item.iv for item in samples},
