@@ -494,7 +494,7 @@ def test_spot_feed_exposes_last_known_spot_for_universe_without_marking_it_fresh
 
 
 def test_repeated_old_source_timestamp_never_refreshes_market_freshness():
-    now = [20_000_000_000]
+    now = [200_000_000_000]
     feed = FakeFeed()
     adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: now[0])
     adapter.start(FakeMaster())
