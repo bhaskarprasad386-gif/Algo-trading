@@ -48,6 +48,9 @@ class IVSpotFeedAdapter:
         self._record_callbacks_received = 0
         self._accepted_records = 0
         self._rejected_records: dict[str, int] = {}
+        self._duplicate_source_timestamps = 0
+        self._last_source_timestamp_fields: dict[str, Any] = {}
+        self._last_normalized_timestamp_ns: int | None = None
         self._started = False
         if self._persist_last_price:
             self._restore_last_prices()
@@ -152,6 +155,15 @@ class IVSpotFeedAdapter:
         if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
             self._reject_record("invalid_or_missing_price")
             return
+        payload = getattr(record, "payload", None)
+        source_fields = {
+            name: payload.get(name)
+            for name in (
+                "exchange_timestamp_ns", "timestamp_ns", "exchange_timestamp",
+                "exchange_timestamp_ms", "timestamp", "feed_time",
+            )
+            if isinstance(payload, dict) and payload.get(name) is not None
+        }
         received_at_ns = self.clock_ns()
         with self._lock:
             # A broker token may already be registered by another shared-feed
@@ -165,6 +177,10 @@ class IVSpotFeedAdapter:
             if previous is not None and timestamp_ns < previous.timestamp_ns:
                 self._reject_record("out_of_order_source_timestamp")
                 return
+            if previous is not None and timestamp_ns == previous.timestamp_ns:
+                self._duplicate_source_timestamps += 1
+            self._last_source_timestamp_fields = source_fields
+            self._last_normalized_timestamp_ns = timestamp_ns
             # Exchange timestamps describe the source observation; receive time
             # describes whether the transport is delivering current frames.
             # Keep both clocks separate: brokers may repeat an index timestamp
@@ -210,7 +226,12 @@ class IVSpotFeedAdapter:
             return None
         return snapshot
 
-    def snapshot(self, *, now_ns: int | None = None) -> dict[str, Any]:
+    def snapshot(
+        self,
+        *,
+        now_ns: int | None = None,
+        transport_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         current = self.clock_ns() if now_ns is None else now_ns
         with self._lock:
             expected = tuple(self._keys)
@@ -223,6 +244,13 @@ class IVSpotFeedAdapter:
                 "accepted_records": self._accepted_records,
                 "rejected_records": sum(self._rejected_records.values()),
                 "rejected_by_reason": dict(self._rejected_records),
+                "duplicate_source_timestamps": self._duplicate_source_timestamps,
+                "last_source_timestamp_fields": dict(self._last_source_timestamp_fields),
+                "last_normalized_timestamp_ns": self._last_normalized_timestamp_ns,
+                "last_source_timestamp_age_seconds": (
+                    max(0.0, (current - self._last_normalized_timestamp_ns) / 1_000_000_000)
+                    if self._last_normalized_timestamp_ns is not None else None
+                ),
             }
         fresh = {
             symbol: value for symbol, value in latest.items()
@@ -241,40 +269,50 @@ class IVSpotFeedAdapter:
         else:
             status = "WAITING_FOR_TICKS"
         # Keep transport/routing health separate from per-symbol market freshness.
-        # CommonStrategyMarketFeed is shared process-wide, so these counters are
-        # explicitly labelled as manager-wide rather than falsely attributed to
-        # this consumer alone.
+        # The runtime passes its dedicated manager snapshot so both status views
+        # describe the same manager generation and cannot disagree due to a
+        # socket retirement between two independent snapshot calls.
         transport: dict[str, Any] = {}
         feed_snapshot = getattr(self.feed, "snapshot", None)
-        if callable(feed_snapshot):
+        if isinstance(transport_snapshot, dict):
+            shared = transport_snapshot
+        else:
+            shared = None
+        if shared is None and callable(feed_snapshot):
             try:
                 shared = feed_snapshot()
-                if isinstance(shared, dict):
-                    transport_fields = (
-                        "subscriptions", "active_instruments", "socket_groups",
-                        "required_socket_groups", "missing_socket_groups",
-                        "unconnected_required_groups", "socket_health_by_group",
-                        "raw_frames_received", "ticks_received", "ticks_by_exchange_type",
-                        "unmatched_frames", "exchange_mismatch_frames",
-                        "missing_exchange_type_frames", "ambiguous_token_frames",
-                        "normalized_records_emitted", "normalized_records_delivered",
-                        "normalizer_errors", "last_normalizer_error",
-                        "delivery_errors", "normalized_delivery_errors",
-                        "last_delivery_error", "last_raw_frame_age_seconds",
-                        "last_raw_frame_age_seconds_by_group",
-                        "last_successful_route_age_seconds_by_group",
-                        "last_successful_delivery_age_seconds_by_group",
-                        "last_exchange_tick_age_seconds_by_exchange_type",
-                        "last_exchange_tick_received_age_seconds_by_exchange_type",
-                        "last_raw_frame_age_seconds_by_exchange_group",
-                    )
-                    transport = {
-                        "scope": "shared_manager_process_wide",
-                        **{key: shared[key] for key in transport_fields if key in shared},
-                    }
             except Exception as exc:
                 transport = {
-                    "scope": "shared_manager_process_wide",
+                    "scope": "manager_instance",
+                    "diagnostics_error": f"{type(exc).__name__}: {exc}",
+                }
+        if isinstance(shared, dict):
+            try:
+                transport_fields = (
+                    "subscriptions", "active_instruments", "socket_groups",
+                    "required_socket_groups", "missing_socket_groups",
+                    "unconnected_required_groups", "socket_health_by_group",
+                    "raw_frames_received", "ticks_received", "ticks_by_exchange_type",
+                    "unmatched_frames", "exchange_mismatch_frames",
+                    "missing_exchange_type_frames", "ambiguous_token_frames",
+                    "normalized_records_emitted", "normalized_records_delivered",
+                    "normalizer_errors", "last_normalizer_error",
+                    "delivery_errors", "normalized_delivery_errors",
+                    "last_delivery_error", "last_raw_frame_age_seconds",
+                    "last_raw_frame_age_seconds_by_group",
+                    "last_successful_route_age_seconds_by_group",
+                    "last_successful_delivery_age_seconds_by_group",
+                    "last_exchange_tick_age_seconds_by_exchange_type",
+                    "last_exchange_tick_received_age_seconds_by_exchange_type",
+                    "last_raw_frame_age_seconds_by_exchange_group",
+                )
+                transport = {
+                    "scope": "manager_instance",
+                    **{key: shared[key] for key in transport_fields if key in shared},
+                }
+            except Exception as exc:
+                transport = {
+                    "scope": "manager_instance",
                     "diagnostics_error": f"{type(exc).__name__}: {exc}",
                 }
         # Keep the last broker-traded spot visible after the freshness window

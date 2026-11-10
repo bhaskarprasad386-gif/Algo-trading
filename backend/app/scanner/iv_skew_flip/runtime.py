@@ -822,6 +822,14 @@ class IVSkewFlipRuntime:
                 next_run = monotonic()
 
     def snapshot(self) -> dict[str, Any]:
+        # Capture one manager view and reuse it in the spot diagnostics. Calling
+        # snapshot twice could otherwise report a transient socket retirement
+        # between the top-level connection block and the nested spot block.
+        manager_snapshot = (
+            self.feed_manager.snapshot()
+            if self.feed_manager is not None
+            else None
+        )
         with self._lock:
             started = self._started
             feeds = dict(self._option_feeds)
@@ -841,7 +849,7 @@ class IVSkewFlipRuntime:
             "consumer": "iv-skew-flip",
             "orders_enabled": False,
             "market_data_connection": (
-                {"isolation": "DEDICATED", "manager": self.feed_manager.snapshot(),
+                {"isolation": "DEDICATED", "manager": manager_snapshot,
                  "socket_mode": 3, "socket_limit": 1}
                 if self.feed_manager is not None
                 else {"isolation": "SHARED_COMPATIBILITY_MODE"}
@@ -856,7 +864,11 @@ class IVSkewFlipRuntime:
                 "enabled": self.equity_pressure_enabled,
             },
             "equity_pressure_by_underlying": equity_pressure_by_underlying,
-            "spot_feed": self.spot_feed.snapshot(),
+            "spot_feed": (
+                self.spot_feed.snapshot(transport_snapshot=manager_snapshot)
+                if isinstance(self.spot_feed, IVSpotFeedAdapter)
+                else self.spot_feed.snapshot()
+            ),
             "index_future_feed": self.future_feed.snapshot(),
             "spot_future_basis": basis_analysis,
             "enabled_streams": [stream_id for stream_id, _ in ACTIVE_CHAIN_CONFIGS],
