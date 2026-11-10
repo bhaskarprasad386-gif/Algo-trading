@@ -178,51 +178,65 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   </section>;
 }
 
-type OiVolumeMockRow = { strike: number; peOi: number; peVolume: number; ceOi: number; ceVolume: number };
-const OI_VOLUME_MOCK: Omit<OiVolumeMockRow, "strike">[] = [
-  { peOi: 18.4, peVolume: 7.2, ceOi: 4.8, ceVolume: 2.1 },
-  { peOi: 23.1, peVolume: 9.8, ceOi: 6.7, ceVolume: 3.4 },
-  { peOi: 28.7, peVolume: 12.4, ceOi: 8.1, ceVolume: 3.7 },
-  { peOi: 36.9, peVolume: 16.5, ceOi: 12.6, ceVolume: 6.1 },
-  { peOi: 42.6, peVolume: 19.3, ceOi: 16.8, ceVolume: 7.4 },
-  { peOi: 49.8, peVolume: 23.7, ceOi: 23.6, ceVolume: 10.8 },
-  { peOi: 37.5, peVolume: 17.2, ceOi: 31.9, ceVolume: 14.6 },
-  { peOi: 26.8, peVolume: 11.9, ceOi: 38.4, ceVolume: 17.9 },
-  { peOi: 17.2, peVolume: 7.8, ceOi: 46.7, ceVolume: 21.5 },
-  { peOi: 11.6, peVolume: 5.1, ceOi: 38.2, ceVolume: 17.3 },
-  { peOi: 7.4, peVolume: 3.2, ceOi: 29.6, ceVolume: 13.1 },
-];
-function NiftyWeeklyOiVolumeMock({ chain, spot }: { chain: Chain; spot: Row }) {
+type OiVolumeRow = { strike: number; pe?: Row; ce?: Row };
+function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) {
   const feed = chain.option_feed ?? {};
   const sampler = chain.sampler ?? {};
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
+  const expiry = String(feed.expiry ?? "");
+  const eligible = metrics.filter(item =>
+    String(item.underlying ?? "").toUpperCase() === "NIFTY"
+    && String(item.option_type ?? "").toUpperCase() in { CE: 1, PE: 1 }
+    && (!expiry || String(item.expiry ?? "") === expiry)
+    && n(item.strike) !== null
+  );
   const listed = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
-  const available = (listed.length ? listed : [...new Set(metrics.map(x => n(x.strike)).filter((x): x is number => x !== null))]).sort((a,b)=>a-b);
+  const allStrikes = (listed.length ? listed : [...new Set(eligible.map(x => n(x.strike)).filter((x): x is number => x !== null))]).sort((a,b)=>a-b);
   const spotPrice = n(spot.price);
   const atmTarget = spotPrice ?? n(feed.atm_strike);
-  const atmIndex = available.length ? atmTarget === null ? Math.floor(available.length / 2) : available.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(available[best]-atmTarget)?i:best,0) : -1;
-  const strikes = atmIndex < 0 ? [] : available.slice(Math.max(0,atmIndex-5),atmIndex+6);
-  const rows: OiVolumeMockRow[] = strikes.map((strike,index)=>({strike,...OI_VOLUME_MOCK[index]}));
-  const maxOi = Math.max(1,...rows.flatMap(row=>[row.peOi,row.ceOi]));
-  const maxVolume = Math.max(1,...rows.flatMap(row=>[row.peVolume,row.ceVolume]));
+  const atmIndex = allStrikes.length ? atmTarget === null ? -1 : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget) || (Math.abs(x-atmTarget)===Math.abs(allStrikes[best]-atmTarget)&&x>allStrikes[best])?i:best,0) : -1;
+  const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-5),atmIndex+6);
+  const byKey = new Map(eligible.map(item=>[`${item.strike}:${String(item.option_type).toUpperCase()}`,item]));
+  const rows: OiVolumeRow[] = strikes.map(strike=>({strike,pe:byKey.get(`${strike}:PE`),ce:byKey.get(`${strike}:CE`)}));
+  const oiValues = eligible.map(item=>n(item.oi)).filter((v):v is number=>v!==null);
+  const volumeValues = eligible.map(item=>n(item.volume)).filter((v):v is number=>v!==null);
+  const maxOi = Math.max(1,...oiValues);
+  const maxVolume = Math.max(1,...volumeValues);
+  const value = (item:Row|undefined,key:string) => item ? n(item[key]) : null;
   const side = (kind:"PE"|"CE") => rows.map(row => {
-    const oi = kind === "PE" ? row.peOi : row.ceOi;
-    const volume = kind === "PE" ? row.peVolume : row.ceVolume;
-    const tone = kind === "PE" ? "bg-pink-500" : "bg-emerald-500";
-    const volumeTone = kind === "PE" ? "bg-pink-300" : "bg-emerald-300";
-    return <div key={row.strike} className="grid grid-cols-[52px_minmax(0,1fr)] items-center gap-2 border-b theme-border py-1.5">
-      <span className="text-[10px] font-semibold tabular-nums theme-muted">{fmt(oi,1)}L<br/><span className="font-normal">{fmt(volume,1)}L</span></span>
+    const item = kind==="PE" ? row.pe : row.ce;
+    const oi = value(item,"oi");
+    const volume = value(item,"volume");
+    const oiStatus = oi===null ? "MISSING" : String(item?.oi_status ?? (item?.oi_live===true?"LIVE":"LAST"));
+    const volumeFresh = n(item?.source_age_ms)!==null && n(item?.source_age_ms)! <= 5000;
+    const volumeStatus = volume===null ? "MISSING" : volumeFresh ? "LIVE" : "LAST";
+    const tone = kind==="PE" ? "bg-pink-500" : "bg-emerald-500";
+    const volumeTone = kind==="PE" ? "bg-pink-300" : "bg-emerald-300";
+    return <div key={row.strike} className="grid grid-cols-[42px_minmax(0,1fr)] items-center gap-2 border-b theme-border py-1.5">
+      <div className="text-[10px] font-semibold tabular-nums leading-4"><span className={oiStatus==="LIVE"?"theme-text":oiStatus==="LAST"?"text-amber-600":"theme-muted"}>{oi===null?"—":compactIndian(oi)}</span><br/><span className={volumeStatus==="LIVE"?"theme-text":volumeStatus==="LAST"?"text-amber-600":"theme-muted"}>{volume===null?"—":compactIndian(volume)}</span></div>
       <div className="space-y-1">
-        <div className="h-3 overflow-hidden rounded-sm theme-surface-2"><div className={`h-full rounded-sm ${tone}`} style={{width:`${oi/maxOi*100}%`}}/></div>
-        <div className="h-2.5 overflow-hidden rounded-sm theme-surface-2"><div className={`h-full rounded-sm ${volumeTone}`} style={{width:`${volume/maxVolume*100}%`}}/></div>
+        <div className="h-3 overflow-hidden rounded-sm theme-surface-2" title={`OI ${oiStatus} • ${item?.oi_timestamp_ns?sampleTime(item.oi_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${tone}`} style={{width:oi===null?"0%":`${oi/maxOi*100}%`}}/></div>
+        <div className="h-2.5 overflow-hidden rounded-sm theme-surface-2" title={`Volume ${volumeStatus} • option tick ${item?.source_timestamp_ns?sampleTime(item.source_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${volumeTone}`} style={{width:volume===null?"0%":`${volume/maxVolume*100}%`}}/></div>
       </div>
     </div>;
   });
+  const oiLive = eligible.filter(item=>item.oi!==null&&item.oi!==undefined&&item.oi_live===true).length;
+  const oiLast = eligible.filter(item=>item.oi!==null&&item.oi!==undefined&&item.oi_status==="LAST").length;
+  const volumeLive = eligible.filter(item=>n(item.volume)!==null&&n(item.source_age_ms)!==null&&Number(item.source_age_ms)<=5000).length;
+  const oiTotal = (kind:"PE"|"CE") => eligible.filter(item=>String(item.option_type).toUpperCase()===kind).reduce((sum,item)=>sum+(n(item.oi)??0),0);
+  const volumeTotal = (kind:"PE"|"CE") => eligible.filter(item=>String(item.option_type).toUpperCase()===kind).reduce((sum,item)=>sum+(n(item.volume)??0),0);
   return <section className="space-y-3 rounded-2xl border theme-border theme-surface p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div><div className="flex items-center gap-2"><h2 className="text-lg font-bold theme-text">NIFTY Weekly OI &amp; Volume Profile</h2><span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-700">MOCK PREVIEW</span></div><p className="mt-1 text-xs theme-muted">ATM-centred strike ladder • PE left • CE right • OI bar above Volume bar</p></div>
-      <span className="rounded-full border theme-border px-3 py-1 text-[10px] theme-muted">Sample data only • Not live</span>
+      <div><h2 className="text-lg font-bold theme-text">NIFTY Weekly OI &amp; Volume Profile</h2><p className="mt-1 text-xs theme-muted">ATM-centred strikes • paired OI and Volume bars • actual sampler data</p></div>
+      <span className="rounded-full border theme-border px-3 py-1 text-[10px] theme-muted">{String(sampler.status??"WAITING")} • 1s sampler</span>
     </div>
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <Metric label="PE Total OI" value={compactIndian(oiTotal("PE"))}/>
+      <Metric label="CE Total OI" value={compactIndian(oiTotal("CE"))}/>
+      <Metric label="PE Total Volume" value={compactIndian(volumeTotal("PE"))}/>
+      <Metric label="CE Total Volume" value={compactIndian(volumeTotal("CE"))}/>
+    </div>
+    <div className="flex flex-wrap gap-2 text-[10px] theme-muted"><span className="rounded border theme-border px-2 py-1">OI LIVE {oiLive}</span><span className="rounded border theme-border px-2 py-1">OI LAST {oiLast}</span><span className="rounded border theme-border px-2 py-1">Volume fresh {volumeLive}/{eligible.length}</span><span className="rounded border theme-border px-2 py-1">Expiry {expiry||"WAITING"}</span></div>
     <div className="grid grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] gap-2">
       <div className="min-w-0 rounded-xl border theme-border p-2">
         <div className="mb-2 flex items-center justify-between"><b className="text-xs text-rose-600">PE • PUT</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
@@ -230,7 +244,7 @@ function NiftyWeeklyOiVolumeMock({ chain, spot }: { chain: Chain; spot: Row }) {
       </div>
       <div className="rounded-xl border theme-border p-2">
         <div className="mb-2 text-center text-xs font-bold theme-text">Strike</div>
-        {strikes.map(strike=><div key={strike} className={`flex min-h-[42px] items-center justify-center border-b theme-border text-[10px] font-semibold tabular-nums ${strike===available[atmIndex]?"rounded bg-amber-400/20 text-amber-700":"theme-text"}`}>{fmt(strike,0)}{strike===available[atmIndex]&&<span className="ml-1 text-[8px]">ATM</span>}</div>)}
+        {strikes.map(strike=><div key={strike} className={`flex min-h-[42px] items-center justify-center border-b theme-border text-[10px] font-semibold tabular-nums ${strike===allStrikes[atmIndex]?"rounded bg-amber-400/20 text-amber-700":"theme-text"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="ml-1 text-[8px]">ATM</span>}</div>)}
       </div>
       <div className="min-w-0 rounded-xl border theme-border p-2">
         <div className="mb-2 flex items-center justify-between"><b className="text-xs text-emerald-600">CE • CALL</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
@@ -238,7 +252,7 @@ function NiftyWeeklyOiVolumeMock({ chain, spot }: { chain: Chain; spot: Row }) {
       </div>
     </div>
     <div className="flex flex-wrap gap-4 text-[10px] theme-muted"><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-500"/> PE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-300"/> PE Volume</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-500"/> CE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-300"/> CE Volume</span></div>
-    <p className="text-[11px] theme-muted">{atmIndex<0?"Waiting for the NIFTY Weekly strike universe; chart will appear when strikes are available.":`ATM ${fmt(available[atmIndex],0)} • Showing ${strikes.length} strikes from the live strike universe. Sample bar heights only; not live OI/Volume.`}</p>
+    <p className="text-[11px] theme-muted">{atmIndex<0?"Waiting for a fresh NIFTY spot and strike universe. No sample values are substituted.":`ATM ${fmt(allStrikes[atmIndex],0)} • ${strikes.length} strikes • OI freshness uses broker OI timestamp (5 min limit); Volume freshness uses option tick age (5 sec limit). Hover bars for source timestamps.`}</p>
   </section>;
 }
 
@@ -369,7 +383,7 @@ export default function IVSkewFlipPage() {
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
-      <NiftyWeeklyOiVolumeMock chain={nifty} spot={niftySpot}/>
+      <NiftyWeeklyOiVolumeChart chain={nifty} spot={niftySpot}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3">
