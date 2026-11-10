@@ -335,7 +335,8 @@ export default function IVSkewFlipPage() {
   const [chartHistory,setChartHistory]=useState<Row|null>(null);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
-  const [snapshotBusy,setSnapshotBusy]=useState(false);\n  const [snapshotNotice,setSnapshotNotice]=useState("");
+  const [snapshotBusy,setSnapshotBusy]=useState(false);
+  const [snapshotNotice,setSnapshotNotice]=useState("");
   const [error,setError]=useState("");
   const [selectedEnabled,setSelectedEnabled]=useState(false);
   const [savedEnabled,setSavedEnabled]=useState(false);
