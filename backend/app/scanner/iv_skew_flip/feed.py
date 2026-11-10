@@ -166,8 +166,17 @@ class IVSkewFlipFeedAdapter:
         if not isinstance(universe, ResolvedOptionUniverse):
             raise TypeError("universe must be a ResolvedOptionUniverse")
         descriptors = tuple(self._descriptor(universe, item) for item in universe.contracts)
-        if len(descriptors) != 14:
-            raise ValueError("IV scanner requires exactly 14 contracts (7 strikes x CE/PE)")
+        expected_contracts = len(universe.strikes) * 2
+        if (
+            len(universe.strikes) < 3
+            or len(universe.strikes) % 2 != 1
+            or len(descriptors) != expected_contracts
+        ):
+            raise ValueError(
+                "IV scanner requires a complete odd strike window with CE/PE "
+                f"pairs; expected {expected_contracts} contracts for "
+                f"{len(universe.strikes)} strikes, received {len(descriptors)}"
+            )
         # Clear only this consumer's old tokens; other scanner consumers retain
         # shared subscriptions and the common socket remains owned by the manager.
         self.feed.stop()
