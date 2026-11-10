@@ -166,6 +166,7 @@ class IVSkewFlipRuntime:
         self._option_feeds: dict[str, IVSkewFlipFeedAdapter] = {}
         self._samplers: dict[str, IVOneSecondSampler] = {}
         self._universe_tokens: dict[str, tuple[str, ...]] = {}
+        self._expiry_diagnostics: dict[str, dict[str, Any]] = {}
         self._last_refresh_ns: int | None = None
         self._last_error: dict[str, str] = {}
         self._last_evaluation_ns: int | None = None
@@ -268,6 +269,22 @@ class IVSkewFlipRuntime:
             self._thread.start()
         return self.snapshot()
 
+    @staticmethod
+    def _future_expiry_candidates(rows: tuple[dict[str, Any], ...], today: Any) -> list[str]:
+        candidates: set[str] = set()
+        for row in rows:
+            raw = str(row.get("expiry", "")).strip()
+            parsed = None
+            for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+                try:
+                    parsed = datetime.strptime(raw.upper(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if parsed is not None and parsed >= today:
+                candidates.add(parsed.isoformat())
+        return sorted(candidates)
+
     def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
         symbol = stream_id
         try:
@@ -285,6 +302,13 @@ class IVSkewFlipRuntime:
             )
             tokens = universe.tokens
             with self._lock:
+                self._expiry_diagnostics[symbol] = {
+                    "selection_date": universe_date.isoformat(),
+                    "available_expiries": self._future_expiry_candidates(
+                        self._rows_by_stream[symbol], universe_date,
+                    ),
+                    "selected_expiry": universe.expiry,
+                }
                 current_tokens = self._universe_tokens.get(symbol)
                 feed = self._option_feeds.get(symbol)
                 sampler = self._samplers.get(symbol)
@@ -890,6 +914,7 @@ class IVSkewFlipRuntime:
                     "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING_FOR_SPOT"},
                     "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING"},
                     "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
+                    "expiry_selection": dict(self._expiry_diagnostics.get(stream_id, {})),
                     "error": errors.get(stream_id),
                     "signals": signals.get(stream_id),
                     "early_move": early_move.get(stream_id),
