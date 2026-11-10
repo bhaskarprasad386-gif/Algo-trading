@@ -356,7 +356,7 @@ export default function IVSkewFlipPage() {
     void poll();
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,requestedExpiry,activeWeeklyExpiry]);
+  },[base,requestedExpiry]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
@@ -372,7 +372,7 @@ export default function IVSkewFlipPage() {
     void poll();
     const timer=window.setInterval(()=>{if(active)void poll();},5000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,requestedExpiry]);
+  },[base,requestedExpiry,activeWeeklyExpiry]);
   const refresh=useCallback(async()=>{
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
