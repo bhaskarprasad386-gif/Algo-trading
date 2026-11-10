@@ -491,3 +491,34 @@ def test_spot_feed_exposes_last_known_spot_for_universe_without_marking_it_fresh
     assert last.price == 24125.5
     assert last.timestamp_ns == 10_000_000_000
     assert adapter.snapshot()["signals_allowed"] is False
+
+
+def test_repeated_old_source_timestamp_never_refreshes_market_freshness():
+    now = [20_000_000_000]
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: now[0])
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    old_source_ns = now[0] - 100_000_000_000
+    record = SimpleNamespace(
+        instrument=nifty.key,
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=old_source_ns,
+        ltp=25044.65,
+        payload={"exchange_timestamp_ns": old_source_ns},
+    )
+
+    feed.callback(record)
+    now[0] += 1_000_000_000
+    feed.callback(record)
+    snapshot = adapter.snapshot(now_ns=now[0])
+
+    assert snapshot["record_validation"]["callbacks_received"] == 2
+    assert snapshot["record_validation"]["accepted_records"] == 2
+    assert snapshot["record_validation"]["duplicate_source_timestamps"] == 1
+    assert snapshot["spot"]["NIFTY"]["age_ms"] == 0.0
+    assert snapshot["spot"]["NIFTY"]["source_age_ms"] == 101000.0
+    assert snapshot["spot"]["NIFTY"]["fresh"] is False
+    assert snapshot["spot"]["NIFTY"]["quote_status"] == "LAST_KNOWN_STALE"
+    assert snapshot["signals_allowed"] is False
+    assert adapter.spot_snapshot("NIFTY", now_ns=now[0]) is None
