@@ -1672,6 +1672,43 @@ def test_local_timestamp_fallback_does_not_count_as_exchange_source_freshness():
         manager.close()
 
 
+
+def test_recovery_does_not_recycle_connected_socket_when_primary_frames_arrive_with_stale_quotes():
+    registry = InstrumentRegistry()
+    item = descriptor("101", "NSE", "EQ")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        group = SocketGroup(1, 0)
+        original = manager._sockets[group]
+        now = time.monotonic()
+        # The broker is delivering frames for this exchange, but their exchange
+        # timestamps are stale. Keep the quote stale for strategy freshness while
+        # proving that transport recovery must not churn the live socket.
+        manager._last_raw_frame_at_by_group[group] = now
+        manager._last_raw_frame_at_by_exchange_type[(group, 1)] = now
+        manager._latest_tick_timestamp_ns_by_group_exchange[(group, 1)] = (
+            time.time_ns() - 60_000_000_000
+        )
+        manager._socket_created_at[group] -= 60.0
+
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=30.0
+        )
+
+        assert recovered == 0
+        assert manager._sockets[group] is original
+        assert original.closed is False
+        assert len(FakeSocket.instances) == 1
+        # Data freshness diagnostics remain stale; this change affects recovery only.
+        ages = manager.snapshot()["last_exchange_tick_age_seconds_by_exchange_type"]
+        assert ages["1"] >= 59
+    finally:
+        manager.close()
+
+
 def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
     registry = InstrumentRegistry()
     items = [
