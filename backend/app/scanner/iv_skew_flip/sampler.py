@@ -141,13 +141,16 @@ class IVOneSecondSampler:
             return 0
         session = self.history_session_factory()
         try:
-            cutoff = now_ns - self.history_limit * 1_000_000_000
+            # Restore the latest real broker observation for every contract in
+            # this exact expiry, irrespective of how long the market has been
+            # closed. The rolling in-memory OI window remains bounded separately.
             rows = (session.query(IVOptionObservation).filter(
                 IVOptionObservation.underlying == self.config.symbol,
                 IVOptionObservation.expiry == self.configured_expiry,
-                IVOptionObservation.source_timestamp_ns >= cutoff,
                 IVOptionObservation.source_timestamp_ns <= now_ns,
             ).order_by(IVOptionObservation.source_timestamp_ns.asc()).all())
+            latest_by_token: dict[str, OptionMetricSample] = {}
+            cutoff = now_ns - self.history_limit * 1_000_000_000
             with self._lock:
                 for row in rows:
                     sample = OptionMetricSample(
@@ -157,13 +160,27 @@ class IVOneSecondSampler:
                         spot_price=row.spot_price,
                         oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
                         oi_timestamp_ns=row.source_timestamp_ns if row.oi is not None else None,
-                        iv_input='BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None else None,
+                        iv_input=(
+                            'BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None
+                            else 'LTP' if row.ltp is not None else None
+                        ),
                         bid=row.bid, ask=row.ask, volume=row.volume,
                     )
-                    history = self._history[row.token]
-                    if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
-                        history.append(sample)
-                    self._last_source_timestamp[row.token] = max(self._last_source_timestamp.get(row.token, 0), row.source_timestamp_ns)
+                    latest_by_token[row.token] = sample
+                    if row.source_timestamp_ns >= cutoff:
+                        history = self._history[row.token]
+                        if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
+                            history.append(sample)
+                    self._last_source_timestamp[row.token] = max(
+                        self._last_source_timestamp.get(row.token, 0), row.source_timestamp_ns
+                    )
+                # Durable LAST values are display-only. They never enter the
+                # live quote feed or authorize sampling/signals.
+                self._latest = latest_by_token.copy()
+                self._last_valid_iv = {
+                    token: sample for token, sample in latest_by_token.items()
+                    if sample.iv is not None
+                }
                 self._history_loaded = True
             return len(rows)
         finally:
