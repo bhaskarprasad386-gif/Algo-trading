@@ -12,7 +12,7 @@ import threading
 import math
 import time as time_module
 import uuid
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
@@ -1873,32 +1873,52 @@ def iv_skew_flip_option_timeseries(
         with SessionLocal() as db:
             selected_expiry = str(expiry or "").strip()
             if not selected_expiry:
-                latest_expiry = (
-                    db.query(
-                        IVOptionObservation.expiry,
-                        func.max(IVOptionObservation.source_timestamp_ns).label("latest_tick"),
-                    )
+                # Never infer the active weekly expiry from whichever expired
+                # contract happened to receive the last tick. Prefer the nearest
+                # non-expired expiry represented in durable IV observations.
+                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                expiry_dates = (
+                    db.query(IVOptionObservation.expiry)
                     .filter(IVOptionObservation.underlying == symbol)
-                    .group_by(IVOptionObservation.expiry)
-                    .order_by(func.max(IVOptionObservation.source_timestamp_ns).desc())
-                    .first()
+                    .distinct()
+                    .all()
                 )
-                selected_expiry = latest_expiry[0] if latest_expiry else ""
+                future_expiries = []
+                for (raw_expiry,) in expiry_dates:
+                    try:
+                        parsed_expiry = date.fromisoformat(str(raw_expiry))
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed_expiry >= today_ist:
+                        future_expiries.append((parsed_expiry, str(raw_expiry)))
+                selected_expiry = min(future_expiries)[1] if future_expiries else ""
             if not selected_expiry:
                 return {"status": "ok", "underlying": symbol, "expiry": None,
                         "window_seconds": window_seconds, "count": 0, "observations": []}
+            base_query = db.query(IVOptionObservation).filter(
+                IVOptionObservation.underlying == symbol,
+                IVOptionObservation.expiry == selected_expiry,
+                IVOptionObservation.source_timestamp_ns <= now_ns,
+            )
             rows = (
-                db.query(IVOptionObservation)
-                .filter(
-                    IVOptionObservation.underlying == symbol,
-                    IVOptionObservation.expiry == selected_expiry,
-                    IVOptionObservation.source_timestamp_ns >= cutoff_ns,
-                    IVOptionObservation.source_timestamp_ns <= now_ns,
-                )
+                base_query.filter(IVOptionObservation.source_timestamp_ns >= cutoff_ns)
                 .order_by(IVOptionObservation.source_timestamp_ns.desc())
                 .limit(limit)
                 .all()
             )
+            data_status = "LIVE" if rows and now_ns - rows[0].source_timestamp_ns <= 5_000_000_000 else "LAST"
+            # After the live window expires (e.g. after market close), retain
+            # real persisted observations from the same expiry for the chart.
+            # A bounded one-session fallback avoids unbounded history reads.
+            if not rows:
+                history_cutoff_ns = now_ns - 24 * 60 * 60 * 1_000_000_000
+                rows = (
+                    base_query.filter(IVOptionObservation.source_timestamp_ns >= history_cutoff_ns)
+                    .order_by(IVOptionObservation.source_timestamp_ns.desc())
+                    .limit(limit)
+                    .all()
+                )
+                data_status = "LAST"
     except Exception as exc:
         app_logger.exception("IV option time-series read failed")
         raise HTTPException(
@@ -1926,7 +1946,8 @@ def iv_skew_flip_option_timeseries(
         "window_seconds": window_seconds,
         "count": len(observations),
         "observations": observations,
-        "data_status": "LIVE" if observations and now_ns - max(x["timestamp_ns"] for x in observations) <= 5_000_000_000 else "LAST",
+        "data_status": data_status if observations else "EMPTY",
+        "fallback": bool(observations and data_status == "LAST"),
         "source": "iv_option_observations",
     }
 
@@ -1942,17 +1963,25 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
         with SessionLocal() as db:
             selected_expiry = str(expiry or "").strip()
             if not selected_expiry:
-                latest_expiry = (
-                    db.query(
-                        IVOptionObservation.expiry,
-                        func.max(IVOptionObservation.source_timestamp_ns).label("latest_tick"),
-                    )
+                # Never infer the active weekly expiry from whichever expired
+                # contract happened to receive the last tick. Prefer the nearest
+                # non-expired expiry represented in durable IV observations.
+                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                expiry_dates = (
+                    db.query(IVOptionObservation.expiry)
                     .filter(IVOptionObservation.underlying == symbol)
-                    .group_by(IVOptionObservation.expiry)
-                    .order_by(func.max(IVOptionObservation.source_timestamp_ns).desc())
-                    .first()
+                    .distinct()
+                    .all()
                 )
-                selected_expiry = latest_expiry[0] if latest_expiry else ""
+                future_expiries = []
+                for (raw_expiry,) in expiry_dates:
+                    try:
+                        parsed_expiry = date.fromisoformat(str(raw_expiry))
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed_expiry >= today_ist:
+                        future_expiries.append((parsed_expiry, str(raw_expiry)))
+                selected_expiry = min(future_expiries)[1] if future_expiries else ""
             if not selected_expiry:
                 return {"status": "ok", "underlying": symbol, "expiry": None, "count": 0, "metrics": []}
             latest_per_token = (
