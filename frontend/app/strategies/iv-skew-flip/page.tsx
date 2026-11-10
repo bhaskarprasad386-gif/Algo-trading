@@ -263,13 +263,21 @@ function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null;
   const plotW=width-left-right, plotH=height-top-bottom;
   const allValid=observations.filter(x=>n(x.timestamp_ns)!==null&&n(x.timestamp_ns)!>0);
   const feed=chain.option_feed??{};
-  const listed=Array.isArray(feed.strikes)?feed.strikes.map(n).filter((v):v is number=>v!==null).sort((a,b)=>a-b):[];
+  const feedStrikes=Array.isArray(feed.strikes)?feed.strikes.map(n).filter((v):v is number=>v!==null):[];
+  const persistedStrikes=[...new Set(allValid.map(item=>n(item.strike)).filter((v):v is number=>v!==null))];
+  // The live option feed can be stopped or temporarily incomplete after market
+  // close. Keep the chart useful from durable broker observations in that case,
+  // and union both sources so missing live strikes do not hide saved history.
+  const listed=[...new Set([...feedStrikes,...persistedStrikes])].sort((a,b)=>a-b);
   const spotPrice=n(spot.price)??n(feed.atm_strike);
-  const atmIndex=listed.length&&spotPrice!==null?listed.reduce((best,value,index)=>Math.abs(value-spotPrice)<Math.abs(listed[best]-spotPrice)||(Math.abs(value-spotPrice)===Math.abs(listed[best]-spotPrice)&&value>listed[best])?index:best,0):-1;
+  const atmIndex=listed.length?(spotPrice!==null?listed.reduce((best,value,index)=>Math.abs(value-spotPrice)<Math.abs(listed[best]-spotPrice)||(Math.abs(value-spotPrice)===Math.abs(listed[best]-spotPrice)&&value>listed[best])?index:best,0):Math.floor(listed.length/2)):-1;
   const selectedStrikes=atmIndex<0?[]:listed.slice(Math.max(0,atmIndex-5),atmIndex+6);
   const selectedSet=new Set(selectedStrikes);
-  const expiry=String(feed.expiry??history?.expiry??"");
-  const valid=allValid.filter(item=>(!expiry||String((history as Row|null)?.expiry??"")===expiry)&&selectedSet.has(Number(item.strike)));
+  const feedExpiry=String(feed.expiry??"").trim();
+  const historyExpiry=String(history?.expiry??"").trim();
+  const expiry=feedExpiry||historyExpiry;
+  const expiryMismatch=Boolean(feedExpiry&&historyExpiry&&feedExpiry!==historyExpiry);
+  const valid=allValid.filter(item=>!expiryMismatch&&selectedSet.has(Number(item.strike)));
   const spotByTime=new Map<number,number>();
   for(const item of allValid)if(n(item.spot_timestamp_ns)!==null&&n(item.spot_price)!==null)spotByTime.set(Number(item.spot_timestamp_ns),Number(item.spot_price));
   const spotPoints=[...spotByTime.entries()].sort((a,b)=>a[0]-b[0]).map(([t,v])=>({t,v}));
@@ -299,11 +307,13 @@ function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null;
   const ordered=[...groups.entries()].sort((a,b)=>a[1].strike-b[1].strike||a[1].kind.localeCompare(b[1].kind));
   const latest=valid.length?Math.max(...valid.map(x=>Number(x.timestamp_ns))):0;
   const live=latest>0&&Date.now()*1_000_000-latest<=5_000_000_000&&history?.data_status==="LIVE";
+  const latestAgeSeconds=latest>0?Math.max(0,Date.now()*1_000_000-latest)/1_000_000_000:null;
   const palette=["#0f766e","#2563eb","#9333ea","#c2410c","#0891b2","#be123c","#4d7c0f","#7c3aed"];
   const colorFor=(strike:number,kind:string)=>{const idx=strikes.indexOf(strike);return palette[(idx*2+(kind==="PE"?1:0))%palette.length]};
   return <section className="space-y-3 rounded-2xl border theme-border theme-surface p-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold theme-text">NIFTY Weekly • Spot + IV Time Series</h2><p className="mt-1 text-xs theme-muted">Current ATM ±5 strikes • auto-recentres on spot/ATM changes • dual Y-axis</p></div><span className={`rounded-full border px-3 py-1 text-[10px] ${live?"border-emerald-500/40 text-emerald-700":"theme-border theme-muted"}`}>{live?"LIVE • tick ≤ 5s":valid.length?"LAST • persisted broker data":"NO SAVED DATA"} • {valid.length} observations</span></div>
-    {valid.length===0?<div className="rounded-xl border theme-border p-8 text-center text-sm theme-muted">No persisted observations are available for expiry {expiry||"selected weekly"}. The chart will populate from real broker IV/spot ticks when this expiry is first sampled; no synthetic values are shown.</div>:<>
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold theme-text">NIFTY Weekly • Spot + IV Time Series</h2><p className="mt-1 text-xs theme-muted">ATM ±5 strikes • live strikes + durable-history fallback • dual Y-axis</p></div><span className={`rounded-full border px-3 py-1 text-[10px] ${live?"border-emerald-500/40 text-emerald-700":"theme-border theme-muted"}`}>{live?"LIVE • tick ≤ 5s":valid.length?"LAST • persisted broker data":"NO SAVED DATA"} • {valid.length} observations</span></div>
+    <p className="text-[11px] theme-muted">Expiry {expiry||"—"} • Saved rows {allValid.length} • Displayed strikes {selectedStrikes.length}/11 • Latest observation {latest?sampleTime(latest):"—"} • Age {latestAgeSeconds===null?"—":latestAgeSeconds<60?`${latestAgeSeconds.toFixed(1)}s`:latestAgeSeconds<3600?`${(latestAgeSeconds/60).toFixed(1)}m`:`${(latestAgeSeconds/3600).toFixed(1)}h`} • {String(history?.data_status??"UNKNOWN")}{expiryMismatch?" • EXPIRY MISMATCH — chart suppressed":""}</p>
+    {valid.length===0?<div className="rounded-xl border theme-border p-8 text-center text-sm theme-muted">{expiryMismatch? `Feed expiry ${feedExpiry} does not match saved-history expiry ${historyExpiry}; cross-expiry plotting is blocked.` : allValid.length? "Saved observations exist, but none match the selected strike window." : `No persisted observations are available for expiry ${expiry||"selected weekly"}. The chart will populate from real broker IV/spot ticks when this expiry is first sampled; no synthetic values are shown.`}</div>:<>
       <div className="overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="NIFTY spot price and all strike CE and PE implied volatility time series" className="w-full min-w-[760px]">
         {[0,0.25,0.5,0.75,1].map((fraction,i)=>{const yy=top+plotH*fraction;const sv=spotMax-(spotMax-spotMin)*fraction;const iv=ivMax-(ivMax-ivMin)*fraction;return <g key={i}><line x1={left} x2={width-right} y1={yy} y2={yy} stroke="currentColor" opacity=".13" strokeDasharray="3 4"/><text x={left-8} y={yy+4} textAnchor="end" fontSize="10" fill="currentColor">{sv.toFixed(1)}</text><text x={width-right+8} y={yy+4} textAnchor="start" fontSize="10" fill="currentColor">{iv.toFixed(1)}%</text></g>})}
         <line x1={left} x2={left} y1={top} y2={top+plotH} stroke="currentColor" opacity=".45"/><line x1={width-right} x2={width-right} y1={top} y2={top+plotH} stroke="currentColor" opacity=".45"/><line x1={left} x2={width-right} y1={top+plotH} y2={top+plotH} stroke="currentColor" opacity=".45"/>
