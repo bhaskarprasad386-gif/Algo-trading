@@ -674,3 +674,7 @@ def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode
     equity_feed = runtime.equity_feed_factory()
     assert equity_feed.feed.manager is manager
     assert equity_feed.feed.mode == 3
+
+    stopped = runtime.stop()
+    assert stopped["status"] == "STOPPED"
+    assert manager.closed is True
