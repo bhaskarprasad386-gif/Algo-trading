@@ -37,6 +37,7 @@ class IVOptionObservation(Base):
     spot_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     sampled_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     iv: Mapped[float | None] = mapped_column(Float, nullable=True)
+    iv_source: Mapped[str] = mapped_column(String(24), nullable=False, default="LOCAL_MODEL", server_default="LOCAL_MODEL")
     oi: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     bid: Mapped[float | None] = mapped_column(Float, nullable=True)
     ask: Mapped[float | None] = mapped_column(Float, nullable=True)
