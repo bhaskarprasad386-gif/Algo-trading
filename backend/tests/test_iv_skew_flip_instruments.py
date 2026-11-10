@@ -128,7 +128,9 @@ def test_alternate_official_master_is_validated_without_mutating_shared_cache(mo
     ]
 
 
-def test_alternate_master_rejects_missing_nse_index_token(monkeypatch):
+def test_alternate_master_rejects_missing_nse_index_token(monkeypatch, tmp_path):
+    monkeypatch.setattr(loader, "_cache_path", lambda: tmp_path / "missing-iv-snapshot.json")
+    monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: None)
     master = FakeMaster(error=TimeoutError("primary host timeout"))
     rows = [row for row in valid_rows() if row["name"] != "BANKNIFTY" or row["exch_seg"] != "NSE"]
 
@@ -144,7 +146,9 @@ def test_alternate_master_rejects_missing_nse_index_token(monkeypatch):
         loader.download_iv_instruments(master)
 
 
-def test_alternate_master_rejects_non_list_payload(monkeypatch):
+def test_alternate_master_rejects_non_list_payload(monkeypatch, tmp_path):
+    monkeypatch.setattr(loader, "_cache_path", lambda: tmp_path / "missing-iv-snapshot.json")
+    monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: None)
     master = FakeMaster(error=TimeoutError("primary host timeout"))
 
     class Response:
