@@ -1919,13 +1919,13 @@ def iv_skew_flip_option_timeseries(
                 .all()
             )
             data_status = "LIVE" if rows and now_ns - rows[0].source_timestamp_ns <= 5_000_000_000 else "LAST"
-            # After the live window expires (e.g. after market close), retain
-            # real persisted observations from the same expiry for the chart.
-            # A bounded one-session fallback avoids unbounded history reads.
+            # After the live window expires (including overnight and across
+            # non-trading days), retain the newest durable observations for this
+            # exact expiry. The query remains bounded by limit and never mixes
+            # another expiry or manufactures samples.
             if not rows:
-                history_cutoff_ns = now_ns - 24 * 60 * 60 * 1_000_000_000
                 rows = (
-                    base_query.filter(IVOptionObservation.source_timestamp_ns >= history_cutoff_ns)
+                    base_query
                     .order_by(IVOptionObservation.source_timestamp_ns.desc())
                     .limit(limit)
                     .all()
