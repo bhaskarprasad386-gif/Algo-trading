@@ -1866,6 +1866,32 @@ def iv_skew_flip_status():
             "runtime": runtime, "orders_enabled": False}
 
 
+def _iv_runtime_selected_expiry(symbol: str) -> str | None:
+    """Return the active IV chain expiry, normalized to the DB ISO date.
+
+    Durable history must follow the live scanner's selected universe; choosing
+    the nearest expiry that happens to have saved rows can silently show a
+    different weekly/monthly contract.
+    """
+    stream_id = "NIFTY_WEEKLY" if symbol == "NIFTY" else "BANKNIFTY_MONTHLY"
+    with _iv_skew_flip_runtime_lock:
+        runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
+    if not runtime or runtime.get("status") != "RUNNING":
+        return None
+    chain = (runtime.get("option_chains") or {}).get(stream_id) or {}
+    raw_expiry = (chain.get("expiry_selection") or {}).get("selected_expiry")
+    if not raw_expiry:
+        return None
+    value = str(raw_expiry).strip()
+    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+        try:
+            return datetime.strptime(value.upper(), fmt).date().isoformat()
+        except ValueError:
+            continue
+    app_logger.warning("IV runtime selected an unparseable expiry for {}: {}", symbol, value)
+    return None
+
+
 @app.get("/api/v1/scanner/iv-skew-flip/timeseries")
 def iv_skew_flip_option_timeseries(
     underlying: str = "NIFTY",
@@ -1885,9 +1911,11 @@ def iv_skew_flip_option_timeseries(
         with SessionLocal() as db:
             selected_expiry = str(expiry or "").strip()
             if not selected_expiry:
-                # Never infer the active weekly expiry from whichever expired
-                # contract happened to receive the last tick. Prefer the nearest
-                # non-expired expiry represented in durable IV observations.
+                # Prefer the active runtime's exact weekly/monthly universe.
+                # Only use the historical nearest-expiry fallback when the
+                # scanner is stopped and therefore has no active selection.
+                selected_expiry = _iv_runtime_selected_expiry(symbol) or ""
+            if not selected_expiry:
                 today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
                 expiry_dates = (
                     db.query(IVOptionObservation.expiry)
@@ -1975,9 +2003,11 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
         with SessionLocal() as db:
             selected_expiry = str(expiry or "").strip()
             if not selected_expiry:
-                # Never infer the active weekly expiry from whichever expired
-                # contract happened to receive the last tick. Prefer the nearest
-                # non-expired expiry represented in durable IV observations.
+                # Prefer the active runtime's exact weekly/monthly universe.
+                # Only use the historical nearest-expiry fallback when the
+                # scanner is stopped and therefore has no active selection.
+                selected_expiry = _iv_runtime_selected_expiry(symbol) or ""
+            if not selected_expiry:
                 today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
                 expiry_dates = (
                     db.query(IVOptionObservation.expiry)
