@@ -1371,6 +1371,14 @@ class CommonWebSocketManager:
                     matching = ()
                 else:
                     matching = token_routes
+                    # Even when Angel omits exchange_type, a token that resolves
+                    # to exactly one registered exchange is sufficient to track
+                    # transport activity for that exchange. Do not infer anything
+                    # for ambiguous tokens: their frames cannot prove either
+                    # exchange subscription is alive.
+                    if len(exchanges) == 1:
+                        exchange_type = next(iter(exchanges))
+                        self._last_raw_frame_at_by_exchange_type[(group, exchange_type)] = frame_at
             if not matching:
                 self._unmatched_frames += 1
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]

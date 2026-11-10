@@ -991,13 +991,26 @@ def test_missing_exchange_type_still_routes_unique_token():
     manager.register_callback("cash", lambda message: seen.append(message["token"]))
     try:
         manager.subscribe("cash", [item.key])
-        manager._on_data(SocketGroup(1, 0), {"token": "778", "ltp": 100})
+        group = SocketGroup(1, 0)
+        manager._on_data(group, {"token": "778", "ltp": 100})
         snapshot = manager.snapshot()
         assert seen == ["778"]
         assert snapshot["missing_exchange_type_frames"] == 1
         assert snapshot["ambiguous_token_frames"] == 0
         assert snapshot["ticks_received"] == 1
         assert snapshot["ticks_by_exchange_type"] == {"1": 1}
+        # A uniquely mapped token still proves that its exchange transport is
+        # active, even when the provider omitted exchange_type in the frame.
+        assert manager._last_raw_frame_at_by_exchange_type[(group, 1)] > 0
+        original = manager._sockets[group]
+        with manager._lock:
+            manager._socket_created_at[group] -= 60.0
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=30.0
+        )
+        assert recovered == 0
+        assert manager._sockets[group] is original
+        assert original.closed is False
     finally:
         manager.close()
 
