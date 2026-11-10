@@ -334,7 +334,8 @@ export default function IVSkewFlipPage() {
   const [durableHistory,setDurableHistory]=useState<Row|null>(null);
   const [chartHistory,setChartHistory]=useState<Row|null>(null);
   const selectedNifty="NIFTY_WEEKLY" as const;
-  const [busy,setBusy]=useState(false);\n  const [snapshotBusy,setSnapshotBusy]=useState(false);\n  const [snapshotNotice,setSnapshotNotice]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [snapshotBusy,setSnapshotBusy]=useState(false);\n  const [snapshotNotice,setSnapshotNotice]=useState("");
   const [error,setError]=useState("");
   const [selectedEnabled,setSelectedEnabled]=useState(false);
   const [savedEnabled,setSavedEnabled]=useState(false);
@@ -473,7 +474,8 @@ export default function IVSkewFlipPage() {
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • other chains temporarily disabled • Live OI and modeled IV</p></div>
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>\n        <button onClick={()=>void fetchBrokerSnapshot()} disabled={!running||snapshotBusy} className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm font-semibold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch Broker IV + Chain"}</button>
+        <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
+        <button onClick={()=>void fetchBrokerSnapshot()} disabled={!running||snapshotBusy} className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm font-semibold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch Broker IV + Chain"}</button>
         <div className="inline-flex rounded-xl border theme-border p-1" aria-label="IV Scanner desired runner state">
           <button type="button" onClick={()=>{setSelectedEnabled(true);setSettingDirty(true);}} disabled={busy} aria-pressed={selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedEnabled?"bg-emerald-600 text-white":"theme-muted"}`}>ON</button>
           <button type="button" onClick={()=>{setSelectedEnabled(false);setSettingDirty(true);}} disabled={busy} aria-pressed={!selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${!selectedEnabled?"bg-rose-600 text-white":"theme-muted"}`}>OFF</button>
@@ -482,7 +484,8 @@ export default function IVSkewFlipPage() {
       </div>
     </header>
     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border theme-border px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border theme-border px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Orders OFF</span></div>
-    {snapshotNotice&&<div role="status" className="rounded-xl border theme-border p-3 text-sm theme-muted">{snapshotNotice} • broker snapshot saved as LAST data</div>}\n    {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
+    {snapshotNotice&&<div role="status" className="rounded-xl border theme-border p-3 text-sm theme-muted">{snapshotNotice} • broker snapshot saved as LAST data</div>}
+    {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <div className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">Expiry selection date: {String(nifty.expiry_selection?.selection_date??"—")} • Selected: {String(nifty.expiry_selection?.selected_expiry??(liveFeed.expiry??"—"))} • Master candidates: {Array.isArray(nifty.expiry_selection?.available_expiries)?(nifty.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"}</div>
