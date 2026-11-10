@@ -216,14 +216,14 @@ function NiftyWeeklyOiVolumeMock() {
     <div className="grid gap-3 xl:grid-cols-2">
       <div className="space-y-2 rounded-xl border theme-border p-3">
         <div className="flex items-center justify-between"><b className="text-sm text-rose-600">PE • PUT SIDE</b><span className="text-[10px] theme-muted">Left panel</span></div>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3">
           <MiniStrikeBars title="PE Open Interest" rows={OI_VOLUME_MOCK} field="peOi" tone="put" unit="Lakh contracts"/>
           <MiniStrikeBars title="PE Traded Volume" rows={OI_VOLUME_MOCK} field="peVolume" tone="put" unit="Lakh contracts"/>
         </div>
       </div>
       <div className="space-y-2 rounded-xl border theme-border p-3">
         <div className="flex items-center justify-between"><b className="text-sm text-emerald-600">CE • CALL SIDE</b><span className="text-[10px] theme-muted">Right panel</span></div>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3">
           <MiniStrikeBars title="CE Open Interest" rows={OI_VOLUME_MOCK} field="ceOi" tone="call" unit="Lakh contracts"/>
           <MiniStrikeBars title="CE Traded Volume" rows={OI_VOLUME_MOCK} field="ceVolume" tone="call" unit="Lakh contracts"/>
         </div>
