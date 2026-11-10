@@ -1733,9 +1733,10 @@ def live_cash_future_health_route():
 
 
 def _get_iv_scanner_enabled() -> bool:
+    """Default IV Scanner ON on first install; preserve an explicitly saved OFF."""
     with SessionLocal() as db:
         setting = db.get(IVScannerControl, 1)
-        return bool(setting.enabled) if setting is not None else False
+        return bool(setting.enabled) if setting is not None else True
 
 
 def _save_iv_scanner_enabled(enabled: bool) -> bool:
