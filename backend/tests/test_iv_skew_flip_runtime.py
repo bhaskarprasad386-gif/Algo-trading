@@ -632,7 +632,10 @@ def test_runtime_uses_stale_spot_only_for_universe_then_recovers_on_fresh_tick(m
     closed = runtime.refresh_once()
     assert closed["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 22
     assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-17"
+    assert "USING_LAST_SPOT_FOR_UNIVERSE_ONLY" in closed["option_chains"]["NIFTY_WEEKLY"]["error"]
     assert runtime._samplers["NIFTY_WEEKLY"].snapshot()["status"] == "WAITING"
+    assert closed["signals"]["NIFTY_WEEKLY"]["signals_allowed"] is False
+    assert closed["early_move"]["NIFTY_WEEKLY"]["signals_allowed"] is False
 
     # A new market tick becomes fresh; the same refresh loop resumes live sampling.
     spot.prices["NIFTY"] = SpotSnapshot(120.0, 20_000_000_000)
