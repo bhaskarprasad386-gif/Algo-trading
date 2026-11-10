@@ -12,5 +12,5 @@ class IVScannerControl(Base):
     __tablename__ = "iv_scanner_control"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
