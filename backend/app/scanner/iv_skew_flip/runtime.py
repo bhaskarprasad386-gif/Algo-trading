@@ -21,6 +21,7 @@ from .feed import IVSkewFlipFeedAdapter
 from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
+from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -60,17 +61,33 @@ class IVSkewFlipRuntime:
         equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
         equity_pressure_unavailable_reason: str | None = None,
         future_feed: IVIndexFutureFeedAdapter | None = None,
+        feed_manager: Any | None = None,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
         self.instrument_master = instrument_master
-        self.spot_feed = spot_feed or IVSpotFeedAdapter(clock_ns=clock_ns)
+        self.feed_manager = feed_manager
+        # Production injects a dedicated manager. All IV consumers use mode 3
+        # on that one manager so spot, equity and option quotes share exactly
+        # one IV-owned broker socket without joining the strategy shared feed.
+        self.spot_feed = spot_feed or IVSpotFeedAdapter(
+            feed=CommonStrategyMarketFeed(
+                "iv-skew-flip-spot", manager=feed_manager, mode=3,
+            ) if feed_manager is not None else None,
+            clock_ns=clock_ns,
+        )
         self.future_feed = future_feed or IVIndexFutureFeedAdapter(clock_ns=clock_ns)
         self._future_contracts: tuple[Any, ...] = ()
         self._basis_histories: dict[str, BasisHistory] = {}
         self._basis_analysis: dict[str, dict[str, Any]] = {}
         self.option_feed_factory = option_feed_factory or (
-            lambda symbol: IVSkewFlipFeedAdapter(consumer=f"iv-skew-flip-{symbol.lower()}", clock_ns=clock_ns)
+            lambda symbol: IVSkewFlipFeedAdapter(
+                feed=CommonStrategyMarketFeed(
+                    f"iv-skew-flip-{symbol.lower()}", manager=feed_manager, mode=3,
+                ) if feed_manager is not None else None,
+                consumer=f"iv-skew-flip-{symbol.lower()}",
+                clock_ns=clock_ns,
+            )
         )
         self.clock_ns = clock_ns
         self.clock_datetime = clock_datetime or (lambda: datetime.now(IST))
@@ -97,7 +114,12 @@ class IVSkewFlipRuntime:
         if self.equity_pressure_enabled and not self.equity_basket and not self.equity_baskets:
             raise ValueError("equity pressure requires an injected verified weight basket")
         self.equity_feed_factory = equity_feed_factory or (
-            lambda: IVWeightedEquityFeedAdapter(clock_ns=clock_ns)
+            lambda: IVWeightedEquityFeedAdapter(
+                feed=CommonStrategyMarketFeed(
+                    "iv-skew-flip-equities", manager=feed_manager, mode=3,
+                ) if feed_manager is not None else None,
+                clock_ns=clock_ns,
+            )
         )
         self._equity_feed: IVWeightedEquityFeedAdapter | None = None
         self._equity_pressures: dict[str, EquityComponentPressure] = {
@@ -810,6 +832,12 @@ class IVSkewFlipRuntime:
             "status": "STOPPING" if self._stopping else ("RUNNING" if started else "STOPPED"),
             "consumer": "iv-skew-flip",
             "orders_enabled": False,
+            "market_data_connection": (
+                {"isolation": "DEDICATED", "manager": self.feed_manager.snapshot(),
+                 "socket_mode": 3, "socket_limit": 1}
+                if self.feed_manager is not None
+                else {"isolation": "SHARED_COMPATIBILITY_MODE"}
+            ),
             "refresh_seconds": self.refresh_seconds,
             "signal_evaluation_seconds": self.evaluation_seconds,
             "last_evaluation_ns": last_evaluation,
@@ -892,6 +920,12 @@ class IVSkewFlipRuntime:
         stop_resource("future_feed", self.future_feed)
         if equity_feed is not None:
             stop_resource("equity_feed", equity_feed)
+
+        if not cleanup_errors and self.feed_manager is not None:
+            try:
+                self.feed_manager.close()
+            except Exception as exc:
+                cleanup_errors["dedicated_feed_manager"] = f"{type(exc).__name__}: {exc}"
 
         if cleanup_errors:
             with self._lock:
