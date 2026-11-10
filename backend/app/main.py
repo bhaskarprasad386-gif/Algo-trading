@@ -1945,6 +1945,7 @@ def iv_skew_flip_option_timeseries(
             base_query = db.query(IVOptionObservation).filter(
                 IVOptionObservation.underlying == symbol,
                 IVOptionObservation.expiry == selected_expiry,
+                IVOptionObservation.iv_source == "ANGEL_ONE",
                 IVOptionObservation.source_timestamp_ns <= now_ns,
             )
             rows = (
@@ -2018,7 +2019,7 @@ def _iv_snapshot_saved_today(day):
     with SessionLocal() as db:
         return db.query(IVOptionObservation.id).filter(
             IVOptionObservation.underlying == "NIFTY",
-            IVOptionObservation.expiry != "",
+            IVOptionObservation.iv_source == "ANGEL_ONE",
             IVOptionObservation.sampled_at_ns >= int(start),
             IVOptionObservation.sampled_at_ns <= int(end),
         ).first() is not None
@@ -2099,6 +2100,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
                 .filter(
                     IVOptionObservation.underlying == symbol,
                     IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.iv_source == "ANGEL_ONE",
                 )
                 .group_by(IVOptionObservation.token)
                 .subquery()
@@ -2113,6 +2115,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
                 .filter(
                     IVOptionObservation.underlying == symbol,
                     IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.iv_source == "ANGEL_ONE",
                 )
                 .order_by(IVOptionObservation.strike.asc(), IVOptionObservation.option_type.asc())
                 .limit(limit)
@@ -2137,6 +2140,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
             "oi_timestamp_ns": row.source_timestamp_ns if row.oi is not None else None,
             "oi_stale": row.oi is not None,
             "iv": row.iv,
+            "iv_source": row.iv_source,
             "iv_unit": "PERCENT",
             "iv_live": False,
             "iv_status": "LAST",
