@@ -1854,6 +1854,82 @@ def iv_skew_flip_status():
             "runtime": runtime, "orders_enabled": False}
 
 
+@app.get("/api/v1/scanner/iv-skew-flip/timeseries")
+def iv_skew_flip_option_timeseries(
+    underlying: str = "NIFTY",
+    expiry: str | None = None,
+    window_seconds: int = 600,
+    limit: int = 20000,
+):
+    """Return source-timestamped IV and paired spot observations for live charts."""
+    symbol = str(underlying or "").strip().upper()
+    if symbol not in {"NIFTY", "BANKNIFTY"}:
+        raise HTTPException(status_code=422, detail="underlying must be NIFTY or BANKNIFTY")
+    window_seconds = max(60, min(int(window_seconds), 1800))
+    limit = max(100, min(int(limit), 30000))
+    now_ns = time_module.time_ns()
+    cutoff_ns = now_ns - window_seconds * 1_000_000_000
+    try:
+        with SessionLocal() as db:
+            selected_expiry = str(expiry or "").strip()
+            if not selected_expiry:
+                latest_expiry = (
+                    db.query(
+                        IVOptionObservation.expiry,
+                        func.max(IVOptionObservation.source_timestamp_ns).label("latest_tick"),
+                    )
+                    .filter(IVOptionObservation.underlying == symbol)
+                    .group_by(IVOptionObservation.expiry)
+                    .order_by(func.max(IVOptionObservation.source_timestamp_ns).desc())
+                    .first()
+                )
+                selected_expiry = latest_expiry[0] if latest_expiry else ""
+            if not selected_expiry:
+                return {"status": "ok", "underlying": symbol, "expiry": None,
+                        "window_seconds": window_seconds, "count": 0, "observations": []}
+            rows = (
+                db.query(IVOptionObservation)
+                .filter(
+                    IVOptionObservation.underlying == symbol,
+                    IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.source_timestamp_ns >= cutoff_ns,
+                    IVOptionObservation.source_timestamp_ns <= now_ns,
+                )
+                .order_by(IVOptionObservation.source_timestamp_ns.asc())
+                .limit(limit)
+                .all()
+            )
+    except Exception as exc:
+        app_logger.exception("IV option time-series read failed")
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "IV option time-series is temporarily unavailable.",
+                    "reason": f"{type(exc).__name__}: {exc}"},
+        ) from exc
+    observations = [
+        {
+            "token": row.token,
+            "strike": row.strike,
+            "option_type": row.option_type,
+            "timestamp_ns": row.source_timestamp_ns,
+            "spot_timestamp_ns": row.spot_timestamp_ns,
+            "spot_price": row.spot_price,
+            "iv": row.iv,
+        }
+        for row in rows
+    ]
+    return {
+        "status": "ok",
+        "underlying": symbol,
+        "expiry": selected_expiry,
+        "window_seconds": window_seconds,
+        "count": len(observations),
+        "observations": observations,
+        "data_status": "LIVE" if observations and now_ns - max(x["timestamp_ns"] for x in observations) <= 5_000_000_000 else "LAST",
+        "source": "iv_option_observations",
+    }
+
+
 @app.get("/api/v1/scanner/iv-skew-flip/history")
 def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = None, limit: int = 1000):
     """Return the newest durable option observation per contract for display as LAST."""
