@@ -5,7 +5,7 @@ import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
 type Row = Record<string, unknown>;
-type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; error?: string | null; signals?: Row };
+type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; expiry_selection?: Row; error?: string | null; signals?: Row };
 type BasketEntry = {
   status?: string;
   signals_allowed?: boolean;
@@ -461,6 +461,7 @@ export default function IVSkewFlipPage() {
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
+      <div className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">Expiry selection date: {String(nifty.expiry_selection?.selection_date??"—")} • Selected: {String(nifty.expiry_selection?.selected_expiry??(liveFeed.expiry??"—"))} • Master candidates: {Array.isArray(nifty.expiry_selection?.available_expiries)?(nifty.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"}</div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
       <NiftyWeeklyOiVolumeChart chain={nifty} spot={niftySpot}/>
       <NiftyWeeklySpotIvChart history={chartHistory} spot={niftySpot} chain={nifty}/>
