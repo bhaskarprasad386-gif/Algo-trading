@@ -87,6 +87,7 @@ def test_snapshot_persists_broker_iv_without_calculating_it():
         rows = db.query(IVOptionObservation).order_by(IVOptionObservation.option_type).all()
         ce, pe = rows
         assert ce.iv == 14.25  # Exactly the Angel One response; no local IV solver.
+        assert ce.iv_source == "ANGEL_ONE"
         assert ce.ltp == 125.5
         assert ce.oi == 123456
         assert ce.volume == 1100
