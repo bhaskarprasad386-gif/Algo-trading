@@ -143,6 +143,7 @@ def capture_angelone_option_snapshot(
                 spot_price=spot_price,
                 sampled_at_ns=captured_ns,
                 iv=iv,
+                iv_source="ANGEL_ONE",
                 oi=oi,
                 bid=bid,
                 ask=ask,
