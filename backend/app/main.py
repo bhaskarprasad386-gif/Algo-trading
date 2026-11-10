@@ -2017,12 +2017,16 @@ def _iv_snapshot_saved_today(day):
     start = datetime.combine(day, time.min, tzinfo=IST).timestamp() * 1_000_000_000
     end = datetime.combine(day, time.max, tzinfo=IST).timestamp() * 1_000_000_000
     with SessionLocal() as db:
-        return db.query(IVOptionObservation.id).filter(
+        received_iv_contracts = db.query(
+            func.count(func.distinct(IVOptionObservation.token))
+        ).filter(
             IVOptionObservation.underlying == "NIFTY",
             IVOptionObservation.iv_source == "ANGEL_ONE",
+            IVOptionObservation.iv.isnot(None),
             IVOptionObservation.sampled_at_ns >= int(start),
             IVOptionObservation.sampled_at_ns <= int(end),
-        ).first() is not None
+        ).scalar() or 0
+        return received_iv_contracts >= 22
 
 
 async def _iv_option_snapshot_daily_loop():
@@ -2169,7 +2173,9 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
         "count": len(metrics),
         "metrics": metrics,
         "data_status": "LAST" if metrics else "EMPTY",
-        "source": "iv_option_observations",
+        "snapshot_at_ns": max((row.sampled_at_ns for row in rows), default=None),
+        "source": "ANGEL_ONE",
+
     }
 
 
