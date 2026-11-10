@@ -92,6 +92,7 @@ class IVOneSecondSampler:
         self._stop = Event()
         self._thread: Thread | None = None
         self._latest: dict[str, OptionMetricSample] = {}
+        self._last_display: dict[str, OptionMetricSample] = {}
         self._last_valid_iv: dict[str, OptionMetricSample] = {}
         self._retained_iv_expiry: str | None = None
         self._previous_cycle: dict[str, OptionMetricSample] = {}
@@ -141,13 +142,16 @@ class IVOneSecondSampler:
             return 0
         session = self.history_session_factory()
         try:
-            cutoff = now_ns - self.history_limit * 1_000_000_000
+            # Restore the latest real broker observation for every contract in
+            # this exact expiry, irrespective of how long the market has been
+            # closed. The rolling in-memory OI window remains bounded separately.
             rows = (session.query(IVOptionObservation).filter(
                 IVOptionObservation.underlying == self.config.symbol,
                 IVOptionObservation.expiry == self.configured_expiry,
-                IVOptionObservation.source_timestamp_ns >= cutoff,
                 IVOptionObservation.source_timestamp_ns <= now_ns,
             ).order_by(IVOptionObservation.source_timestamp_ns.asc()).all())
+            latest_by_token: dict[str, OptionMetricSample] = {}
+            cutoff = now_ns - self.history_limit * 1_000_000_000
             with self._lock:
                 for row in rows:
                     sample = OptionMetricSample(
@@ -157,13 +161,30 @@ class IVOneSecondSampler:
                         spot_price=row.spot_price,
                         oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
                         oi_timestamp_ns=row.source_timestamp_ns if row.oi is not None else None,
-                        iv_input='BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None else None,
+                        iv_input=(
+                            'BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None
+                            else 'LTP' if row.ltp is not None else None
+                        ),
                         bid=row.bid, ask=row.ask, volume=row.volume,
                     )
-                    history = self._history[row.token]
-                    if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
-                        history.append(sample)
-                    self._last_source_timestamp[row.token] = max(self._last_source_timestamp.get(row.token, 0), row.source_timestamp_ns)
+                    latest_by_token[row.token] = sample
+                    if row.source_timestamp_ns >= cutoff:
+                        history = self._history[row.token]
+                        if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
+                            history.append(sample)
+                    self._last_source_timestamp[row.token] = max(
+                        self._last_source_timestamp.get(row.token, 0), row.source_timestamp_ns
+                    )
+                # Durable LAST values are display-only. They never enter the
+                # live quote feed or authorize sampling/signals.
+                self._last_display = latest_by_token.copy()
+                self._last_valid_iv = {
+                    token: sample for token, sample in latest_by_token.items()
+                    if sample.iv is not None
+                }
+                # Mark the restored expiry so the first stale-spot cycle does
+                # not mistake these valid rows for a rollover and clear them.
+                self._retained_iv_expiry = self.configured_expiry
                 self._history_loaded = True
             return len(rows)
         finally:
@@ -219,6 +240,7 @@ class IVOneSecondSampler:
                 # live cycle too, so old contracts cannot be labelled LIVE.
                 self._last_valid_iv.clear()
                 self._latest.clear()
+                self._last_display.clear()
                 self._previous_cycle.clear()
                 self._one_second_changes = {}
                 self._retained_iv_expiry = configured_expiry
@@ -228,6 +250,9 @@ class IVOneSecondSampler:
                 or spot_source_age < 0
                 or spot_source_age > self.max_spot_age_ns):
             with self._lock:
+                # Keep expiry-scoped durable/last-known rows visible while the
+                # market is closed or spot is stale. They remain LAST only:
+                # no new sampling, IV recalculation, or signal evaluation.
                 self._latest.clear()
                 self._previous_cycle.clear()
                 self._one_second_changes = {}
@@ -350,6 +375,7 @@ class IVOneSecondSampler:
             self._one_second_changes = changes
             self._previous_cycle = updates.copy()
             self._latest = updates
+            self._last_display.update(updates)
             for token, sample in updates.items():
                 if sample.iv is not None:
                     self._last_valid_iv[token] = sample
@@ -455,7 +481,8 @@ class IVOneSecondSampler:
                 and snapshot_now_ns >= item.oi_timestamp_ns
                 and snapshot_now_ns - item.oi_timestamp_ns > 300_000_000_000
             }
-            display_by_token = {item.token: item for item in live_samples}
+            display_by_token = dict(self._last_display)
+            display_by_token.update({item.token: item for item in live_samples})
             for token, last_good in self._last_valid_iv.items():
                 current = display_by_token.get(token)
                 if current is None:
