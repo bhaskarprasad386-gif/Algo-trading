@@ -1895,7 +1895,7 @@ def iv_skew_flip_option_timeseries(
                     IVOptionObservation.source_timestamp_ns >= cutoff_ns,
                     IVOptionObservation.source_timestamp_ns <= now_ns,
                 )
-                .order_by(IVOptionObservation.source_timestamp_ns.asc())
+                .order_by(IVOptionObservation.source_timestamp_ns.desc())
                 .limit(limit)
                 .all()
             )
@@ -1906,6 +1906,7 @@ def iv_skew_flip_option_timeseries(
             detail={"message": "IV option time-series is temporarily unavailable.",
                     "reason": f"{type(exc).__name__}: {exc}"},
         ) from exc
+    rows.reverse()  # keep the newest bounded window in chronological order
     observations = [
         {
             "token": row.token,
