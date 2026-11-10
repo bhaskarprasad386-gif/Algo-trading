@@ -643,3 +643,38 @@ def test_runtime_uses_stale_spot_only_for_universe_then_recovers_on_fresh_tick(m
     assert live["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 22
     assert runtime._samplers["NIFTY_WEEKLY"].snapshot()["status"] == "LIVE"
     assert created["NIFTY_WEEKLY"].universe.atm_strike == 120.0
+
+
+
+def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode_three_socket():
+    from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
+
+    class Manager:
+        def snapshot(self):
+            return {"subscriptions": 0, "socket_groups": 0}
+
+        def close(self):
+            self.closed = True
+
+    manager = Manager()
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        feed_manager=manager,
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+
+    assert isinstance(runtime.spot_feed.feed, CommonStrategyMarketFeed)
+    assert runtime.spot_feed.feed.manager is manager
+    assert runtime.spot_feed.feed.mode == 3
+
+    option_feed = runtime.option_feed_factory("NIFTY_WEEKLY")
+    assert option_feed.feed.manager is manager
+    assert option_feed.feed.mode == 3
+
+    equity_feed = runtime.equity_feed_factory()
+    assert equity_feed.feed.manager is manager
+    assert equity_feed.feed.mode == 3
+
+    stopped = runtime.stop()
+    assert stopped["status"] == "STOPPED"
+    assert manager.closed is True
