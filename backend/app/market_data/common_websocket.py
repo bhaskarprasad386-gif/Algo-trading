@@ -1186,43 +1186,29 @@ class CommonWebSocketManager:
                     timeout = self._silent_feed_timeout_seconds if silent_age_seconds is None else silent_age_seconds
                     if timeout < 0:
                         continue
-                    # Socket activity from a different exchange is not proof that
-                    # this shard's NSE/NFO subscriptions are delivering fresh data.
-                    # Recover a shard if any primary exchange represented on it has
-                    # no fresh source timestamp, even when another exchange is busy.
+                    # A connected socket that is still receiving frames must not be
+                    # recycled merely because the broker is replaying an old quote.
+                    # Exchange timestamps remain the authoritative data-freshness
+                    # signal for consumers (and are exposed in diagnostics), but
+                    # transport recovery is triggered by per-exchange frame silence.
+                    # This separates "socket is alive" from "market data is fresh"
+                    # and prevents stale-replay reconnect loops during market hours.
                     group_exchange_types = {
                         exchange_type for exchange_type, _ in self._socket_tokens.get(group, set())
                     }
                     primary_exchange_types = group_exchange_types.intersection({1, 2})
-                    now_ns = time.time_ns()
-                    # Give every replacement generation a full silence window
-                    # to prove itself. A broker replaying an old snapshot must not
-                    # cause a reconnect loop every supervisor interval.
-                    primary_exchange_stale = age >= float(timeout) and any(
-                        (
-                            (group, exchange_type) not in self._latest_tick_timestamp_ns_by_group_exchange
-                            and now - self._last_raw_frame_at_by_exchange_type.get(
-                                (group, exchange_type), 0.0
-                            ) >= float(timeout)
-                        )
-                        or (
-                            (group, exchange_type) in self._latest_tick_timestamp_ns_by_group_exchange
-                            and (
-                                now_ns - self._latest_tick_timestamp_ns_by_group_exchange[(group, exchange_type)]
-                                > int(float(timeout) * 1_000_000_000)
-                                or self._latest_tick_timestamp_ns_by_group_exchange[(group, exchange_type)]
-                                > now_ns + 5_000_000_000
-                            )
-                        )
+                    primary_exchange_silent = age >= float(timeout) and any(
+                        now - self._last_raw_frame_at_by_exchange_type.get(
+                            (group, exchange_type), 0.0
+                        ) >= float(timeout)
                         for exchange_type in primary_exchange_types
                     )
                     last_transport_activity_at = self._last_raw_frame_at_by_group.get(group, created_at)
                     transport_silent = now - last_transport_activity_at >= float(timeout)
-                    # Preserve the general transport silence detector for groups
-                    # without NSE/NFO subscriptions; for primary exchange groups,
-                    # exchange-specific freshness is authoritative.
+                    # For NSE/NFO groups, require silence on a primary exchange;
+                    # frames from another exchange cannot mask a dead subscription.
                     if primary_exchange_types:
-                        if not primary_exchange_stale:
+                        if not primary_exchange_silent:
                             continue
                     elif not transport_silent:
                         continue
