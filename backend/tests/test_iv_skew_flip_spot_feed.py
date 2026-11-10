@@ -445,6 +445,41 @@ def test_spot_feed_reports_consumer_accepted_and_rejected_records():
     }
 
 
+
+def test_spot_feed_does_not_accept_repeated_source_timestamp_as_new_tick():
+    feed = FakeFeed()
+    now = {"value": 20_000_000_000}
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: now["value"])
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    first = SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=19_000_000_000,
+        ltp=24125.5,
+        payload={"exchange_timestamp": 19_000},
+    )
+    feed.callback(first)
+    accepted = adapter.last_spot_snapshot("NIFTY")
+    assert accepted is not None
+
+    now["value"] += 10_000_000_000
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key,
+        timestamp_ns=19_000_000_000,
+        ltp=24199.0,
+        payload={"exchange_timestamp": 19_000},
+    ))
+
+    current = adapter.last_spot_snapshot("NIFTY")
+    health = adapter.snapshot()
+    assert current == accepted
+    assert current.price == 24125.5
+    assert current.received_at_ns == 20_000_000_000
+    assert health["record_validation"]["callbacks_received"] == 2
+    assert health["record_validation"]["accepted_records"] == 1
+    assert health["record_validation"]["duplicate_source_timestamps"] == 1
+
+
 def test_smartapi_normalizer_to_iv_spot_adapter_preserves_provider_timestamp():
     feed = FakeFeed()
     exchange_timestamp_ms = 1_800_000_000_000
