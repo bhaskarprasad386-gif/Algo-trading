@@ -6,13 +6,13 @@ from app.scanner.iv_skew_flip.feed import IVSkewFlipFeedAdapter
 from app.scanner.iv_skew_flip.universe import resolve_option_universe
 
 
-def _universe():
+def _universe(strike_count=7):
     rows = []
     # Both nearest weekly and monthly expiries are required to classify the
     # nearest date safely; a single-expiry fixture is ambiguous.
     for expiry_index, expiry in enumerate(("12Nov2026", "26Nov2026")):
         expiry_code = "12NOV26" if expiry_index == 0 else "26NOV26"
-        for strike in range(21800, 22101, 50):
+        for strike in range(21700, 22301, 50):
             for side in ("CE", "PE"):
                 rows.append({
                     "exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "NIFTY",
@@ -21,7 +21,7 @@ def _universe():
                 })
     return resolve_option_universe(
         rows, underlying="NIFTY", expiry_type="WEEKLY",
-        spot=21950, today=date(2026, 11, 6),
+        spot=21950, today=date(2026, 11, 6), strike_count=strike_count,
     )
 
 class FakeFeed:
@@ -341,3 +341,22 @@ def test_feed_preserves_last_oi_on_price_only_frames_and_expires_after_five_minu
     assert five_minutes_plus["oi"] == 12345
     assert five_minutes_plus["oi_fresh"] is False
     assert five_minutes_plus["oi_stale"] is True
+
+    
+def test_feed_adapter_accepts_nifty_weekly_eleven_strikes_and_twenty_two_contracts():
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed, clock_ns=lambda: 1_000_000_000)
+    universe = _universe(strike_count=11)
+
+    result = adapter.start(universe)
+
+    assert result["status"] == "SUBSCRIBED"
+    assert result["strike_count"] == 11
+    assert result["contract_count"] == 22
+    assert len(feed.descriptors) == 22
+    assert len({item.key.token for item in feed.descriptors}) == 22
+    assert {
+        (item.strike, item.option_type) for item in universe.contracts
+    } == {
+        (strike, side) for strike in universe.strikes for side in ("CE", "PE")
+    }
