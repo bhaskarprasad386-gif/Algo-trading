@@ -211,6 +211,11 @@ class IVSkewFlipFeedAdapter:
             self._tokens.clear()
             self._last_tick_ns = None
 
+    def resolved_universe(self) -> ResolvedOptionUniverse | None:
+        """Return this consumer's exact currently subscribed option universe."""
+        with self._lock:
+            return self._universe
+
     def latest_quotes(self) -> tuple[OptionQuote, ...]:
         with self._lock:
             return tuple(sorted(self._quotes.values(), key=lambda q: (q.strike, q.option_type)))
