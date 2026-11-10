@@ -736,6 +736,7 @@ class IVSkewFlipRuntime:
             raise ValueError("runtime datetime must be timezone-aware")
         for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             spot = self.spot_feed.spot_snapshot(config.symbol)
+            using_last_spot = False
             if spot is None:
                 # A stale last-known spot may anchor the next expiry's ATM
                 # strike ladder and subscriptions while the exchange is closed.
@@ -750,12 +751,17 @@ class IVSkewFlipRuntime:
                             "spot snapshot; option universe refresh is paused"
                         )
                     continue
+                using_last_spot = True
+            self._refresh_stream(stream_id, config, spot, now)
+            # _refresh_stream clears transient errors after a successful
+            # subscription. Re-apply this explicit health state afterwards so
+            # a stale quote cannot make the chain appear fully live.
+            if using_last_spot:
                 with self._lock:
                     self._last_error[stream_id] = (
                         f"USING_LAST_SPOT_FOR_UNIVERSE_ONLY: {config.symbol} "
                         "market is closed or spot is stale; live sampling/signals remain blocked"
                     )
-            self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
         self._refresh_basis_analysis(now_ns)
         self._refresh_equity_pressure(now_ns)
