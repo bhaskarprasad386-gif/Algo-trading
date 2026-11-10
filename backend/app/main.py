@@ -337,6 +337,8 @@ async def lifespan(app: FastAPI):
             app_logger.exception("Persisted IV Scanner ON could not be restored; runner remains STOPPED")
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
+    if _iv_option_snapshot_task is None:
+        _iv_option_snapshot_task = asyncio.create_task(_iv_option_snapshot_daily_loop())
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     if _collector_enabled() and _history_collector_task is None:
@@ -374,6 +376,7 @@ async def lifespan(app: FastAPI):
                 _live_synthetic_task,
                 _live_box_spread_task,
                 _weekly_swing_refresh_task,
+                _iv_option_snapshot_task,
                 paper_rule_task,
             )
             if task is not None
