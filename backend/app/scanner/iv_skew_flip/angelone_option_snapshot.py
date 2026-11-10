@@ -99,6 +99,9 @@ def capture_angelone_option_snapshot(
         # unavailable; missing quote fields remain null and are never fabricated.
         quote_error = f"{type(exc).__name__}: {exc}"
 
+    if not greek_rows and not quote_rows:
+        raise RuntimeError("Angel One returned no option Greeks and no FULL quote rows; no empty snapshot was saved")
+
     quote_by_token: dict[str, dict[str, Any]] = {}
     for row in quote_rows:
         token = str(row.get("symbolToken", row.get("symboltoken", ""))).strip()
