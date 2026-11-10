@@ -92,6 +92,7 @@ class IVOneSecondSampler:
         self._stop = Event()
         self._thread: Thread | None = None
         self._latest: dict[str, OptionMetricSample] = {}
+        self._last_display: dict[str, OptionMetricSample] = {}
         self._last_valid_iv: dict[str, OptionMetricSample] = {}
         self._retained_iv_expiry: str | None = None
         self._previous_cycle: dict[str, OptionMetricSample] = {}
@@ -176,7 +177,7 @@ class IVOneSecondSampler:
                     )
                 # Durable LAST values are display-only. They never enter the
                 # live quote feed or authorize sampling/signals.
-                self._latest = latest_by_token.copy()
+                self._last_display = latest_by_token.copy()
                 self._last_valid_iv = {
                     token: sample for token, sample in latest_by_token.items()
                     if sample.iv is not None
@@ -239,6 +240,7 @@ class IVOneSecondSampler:
                 # live cycle too, so old contracts cannot be labelled LIVE.
                 self._last_valid_iv.clear()
                 self._latest.clear()
+                self._last_display.clear()
                 self._previous_cycle.clear()
                 self._one_second_changes = {}
                 self._retained_iv_expiry = configured_expiry
@@ -251,6 +253,7 @@ class IVOneSecondSampler:
                 # Keep expiry-scoped durable/last-known rows visible while the
                 # market is closed or spot is stale. They remain LAST only:
                 # no new sampling, IV recalculation, or signal evaluation.
+                self._latest.clear()
                 self._previous_cycle.clear()
                 self._one_second_changes = {}
                 self._last_error = "fresh spot snapshot unavailable"
@@ -372,6 +375,7 @@ class IVOneSecondSampler:
             self._one_second_changes = changes
             self._previous_cycle = updates.copy()
             self._latest = updates
+            self._last_display.update(updates)
             for token, sample in updates.items():
                 if sample.iv is not None:
                     self._last_valid_iv[token] = sample
@@ -477,7 +481,8 @@ class IVOneSecondSampler:
                 and snapshot_now_ns >= item.oi_timestamp_ns
                 and snapshot_now_ns - item.oi_timestamp_ns > 300_000_000_000
             }
-            display_by_token = {item.token: item for item in live_samples}
+            display_by_token = dict(self._last_display)
+            display_by_token.update({item.token: item for item in live_samples})
             for token, last_good in self._last_valid_iv.items():
                 current = display_by_token.get(token)
                 if current is None:
