@@ -1825,3 +1825,37 @@ def test_socket_capacity_rejection_does_not_commit_new_shard_assignments():
         assert manager.snapshot()["socket_groups"] == 1
     finally:
         manager.close()
+
+
+def test_snapshot_exposes_per_instrument_subscription_roster_and_raw_frames():
+    registry = InstrumentRegistry()
+    spot = descriptor("99926000", "NSE", "NSE")
+    registry.register(spot)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("iv-skew-flip-spot", [spot.key], mode=3)
+        manager._on_data(SocketGroup(3, 0), {
+            "token": "99926000", "exchange_type": 1, "ltp": 25000,
+        })
+        snapshot = manager.snapshot()
+        roster = snapshot["subscription_roster"]
+        assert roster == [{
+            "consumer": ["iv-skew-flip-spot"],
+            "mode": 3,
+            "exchange": "NSE",
+            "segment": "NSE",
+            "exchange_type": 1,
+            "token": "99926000",
+            "symbol": "S99926000",
+            "instrument_type": "equity",
+            "underlying": None,
+            "expiry": None,
+            "strike": None,
+            "option_type": None,
+            "socket_group": "3:0",
+            "raw_frames": 1,
+        }]
+        assert snapshot["raw_frames_by_instrument"] == {"3:1:99926000": 1}
+    finally:
+        manager.close()
