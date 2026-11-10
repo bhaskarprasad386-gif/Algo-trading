@@ -2034,6 +2034,10 @@ async def _iv_option_snapshot_daily_loop():
     while True:
         now = datetime.now(IST)
         if time(15, 28) <= now.time() <= time(15, 30, 20):
+            runtime = iv_skew_flip_runtime
+            if runtime is None or runtime.snapshot().get("status") != "RUNNING":
+                await asyncio.sleep(15)
+                continue
             try:
                 already_saved = await asyncio.to_thread(_iv_snapshot_saved_today, now.date())
                 if not already_saved:
