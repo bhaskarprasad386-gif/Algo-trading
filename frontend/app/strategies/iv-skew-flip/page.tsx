@@ -179,57 +179,66 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
 }
 
 type OiVolumeMockRow = { strike: number; peOi: number; peVolume: number; ceOi: number; ceVolume: number };
-const OI_VOLUME_MOCK: OiVolumeMockRow[] = [
-  { strike: 25300, peOi: 18.4, peVolume: 7.2, ceOi: 4.8, ceVolume: 2.1 },
-  { strike: 25350, peOi: 22.1, peVolume: 9.8, ceOi: 6.2, ceVolume: 2.8 },
-  { strike: 25400, peOi: 28.7, peVolume: 12.4, ceOi: 8.1, ceVolume: 3.7 },
-  { strike: 25450, peOi: 34.2, peVolume: 15.1, ceOi: 11.4, ceVolume: 5.2 },
-  { strike: 25500, peOi: 42.6, peVolume: 19.3, ceOi: 16.8, ceVolume: 7.4 },
-  { strike: 25550, peOi: 49.8, peVolume: 23.7, ceOi: 23.6, ceVolume: 10.8 },
-  { strike: 25600, peOi: 37.5, peVolume: 17.2, ceOi: 31.9, ceVolume: 14.6 },
-  { strike: 25650, peOi: 25.3, peVolume: 11.6, ceOi: 39.4, ceVolume: 18.2 },
-  { strike: 25700, peOi: 17.2, peVolume: 7.8, ceOi: 46.7, ceVolume: 21.5 },
-  { strike: 25750, peOi: 11.6, peVolume: 5.1, ceOi: 38.2, ceVolume: 17.3 },
-  { strike: 25800, peOi: 7.4, peVolume: 3.2, ceOi: 29.6, ceVolume: 13.1 },
+const OI_VOLUME_MOCK: Omit<OiVolumeMockRow, "strike">[] = [
+  { peOi: 18.4, peVolume: 7.2, ceOi: 4.8, ceVolume: 2.1 },
+  { peOi: 23.1, peVolume: 9.8, ceOi: 6.7, ceVolume: 3.4 },
+  { peOi: 28.7, peVolume: 12.4, ceOi: 8.1, ceVolume: 3.7 },
+  { peOi: 36.9, peVolume: 16.5, ceOi: 12.6, ceVolume: 6.1 },
+  { peOi: 42.6, peVolume: 19.3, ceOi: 16.8, ceVolume: 7.4 },
+  { peOi: 49.8, peVolume: 23.7, ceOi: 23.6, ceVolume: 10.8 },
+  { peOi: 37.5, peVolume: 17.2, ceOi: 31.9, ceVolume: 14.6 },
+  { peOi: 26.8, peVolume: 11.9, ceOi: 38.4, ceVolume: 17.9 },
+  { peOi: 17.2, peVolume: 7.8, ceOi: 46.7, ceVolume: 21.5 },
+  { peOi: 11.6, peVolume: 5.1, ceOi: 38.2, ceVolume: 17.3 },
+  { peOi: 7.4, peVolume: 3.2, ceOi: 29.6, ceVolume: 13.1 },
 ];
-function MiniStrikeBars({ title, rows, field, tone, unit }: { title: string; rows: OiVolumeMockRow[]; field: "peOi" | "peVolume" | "ceOi" | "ceVolume"; tone: "put" | "call"; unit: string }) {
-  const max = Math.max(...rows.map(row => row[field]));
-  return <div className="min-w-0 rounded-xl border theme-border p-3">
-    <div className="mb-3 flex items-center justify-between gap-2"><h4 className="text-sm font-bold theme-text">{title}</h4><span className="text-[10px] theme-muted">{unit}</span></div>
-    <div className="space-y-2">
-      {rows.map(row => <div key={row.strike} className="grid grid-cols-[46px_minmax(0,1fr)_42px] items-center gap-2 text-[10px]">
-        <span className="theme-muted tabular-nums">{row.strike}</span>
-        <div className="h-4 overflow-hidden rounded-sm theme-surface-2">
-          <div className={`h-full rounded-sm ${tone === "put" ? "bg-rose-500/75" : "bg-emerald-500/75"}`} style={{ width: `${Math.max(3, row[field] / max * 100)}%` }} />
-        </div>
-        <span className="text-right font-semibold theme-text tabular-nums">{row[field].toFixed(1)}</span>
-      </div>)}
-    </div>
-  </div>;
-}
-function NiftyWeeklyOiVolumeMock() {
+function NiftyWeeklyOiVolumeMock({ chain, spot }: { chain: Chain; spot: Row }) {
+  const feed = chain.option_feed ?? {};
+  const sampler = chain.sampler ?? {};
+  const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
+  const listed = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
+  const available = (listed.length ? listed : [...new Set(metrics.map(x => n(x.strike)).filter((x): x is number => x !== null))]).sort((a,b)=>a-b);
+  const spotPrice = n(spot.price);
+  const atmTarget = spotPrice ?? n(feed.atm_strike);
+  const atmIndex = available.length ? atmTarget === null ? Math.floor(available.length / 2) : available.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(available[best]-atmTarget)?i:best,0) : -1;
+  const strikes = atmIndex < 0 ? [] : available.slice(Math.max(0,atmIndex-5),atmIndex+6);
+  const rows: OiVolumeMockRow[] = strikes.map((strike,index)=>({strike,...OI_VOLUME_MOCK[Math.max(0,Math.min(OI_VOLUME_MOCK.length-1,index + Math.max(0,5-(atmIndex-Math.max(0,atmIndex-5)))))]}));
+  const maxOi = Math.max(1,...rows.flatMap(row=>[row.peOi,row.ceOi]));
+  const maxVolume = Math.max(1,...rows.flatMap(row=>[row.peVolume,row.ceVolume]));
+  const side = (kind:"PE"|"CE") => rows.map(row => {
+    const oi = kind === "PE" ? row.peOi : row.ceOi;
+    const volume = kind === "PE" ? row.peVolume : row.ceVolume;
+    const tone = kind === "PE" ? "bg-pink-500" : "bg-emerald-500";
+    const volumeTone = kind === "PE" ? "bg-pink-300" : "bg-emerald-300";
+    return <div key={row.strike} className="grid grid-cols-[52px_minmax(0,1fr)] items-center gap-2 border-b theme-border py-1.5">
+      <span className="text-[10px] font-semibold tabular-nums theme-muted">{fmt(oi,1)}L<br/><span className="font-normal">{fmt(volume,1)}L</span></span>
+      <div className="space-y-1">
+        <div className="h-3 overflow-hidden rounded-sm theme-surface-2"><div className={`h-full rounded-sm ${tone}`} style={{width:`${oi/maxOi*100}%`}}/></div>
+        <div className="h-2.5 overflow-hidden rounded-sm theme-surface-2"><div className={`h-full rounded-sm ${volumeTone}`} style={{width:`${volume/maxVolume*100}%`}}/></div>
+      </div>
+    </div>;
+  });
   return <section className="space-y-3 rounded-2xl border theme-border theme-surface p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div><div className="flex items-center gap-2"><h2 className="text-lg font-bold theme-text">NIFTY Weekly OI &amp; Volume Profile</h2><span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-700">MOCK PREVIEW</span></div><p className="mt-1 text-xs theme-muted">Opstra-style strike-wise comparison • PE on left • CE on right • common strike ladder</p></div>
+      <div><div className="flex items-center gap-2"><h2 className="text-lg font-bold theme-text">NIFTY Weekly OI &amp; Volume Profile</h2><span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-700">MOCK PREVIEW</span></div><p className="mt-1 text-xs theme-muted">ATM-centred strike ladder • PE left • CE right • OI bar above Volume bar</p></div>
       <span className="rounded-full border theme-border px-3 py-1 text-[10px] theme-muted">Sample data only • Not live</span>
     </div>
-    <div className="grid gap-3 xl:grid-cols-2">
-      <div className="space-y-2 rounded-xl border theme-border p-3">
-        <div className="flex items-center justify-between"><b className="text-sm text-rose-600">PE • PUT SIDE</b><span className="text-[10px] theme-muted">Left panel</span></div>
-        <div className="grid grid-cols-2 gap-2 sm:gap-3">
-          <MiniStrikeBars title="PE Open Interest" rows={OI_VOLUME_MOCK} field="peOi" tone="put" unit="Lakh contracts"/>
-          <MiniStrikeBars title="PE Traded Volume" rows={OI_VOLUME_MOCK} field="peVolume" tone="put" unit="Lakh contracts"/>
-        </div>
+    <div className="grid grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] gap-2">
+      <div className="min-w-0 rounded-xl border theme-border p-2">
+        <div className="mb-2 flex items-center justify-between"><b className="text-xs text-rose-600">PE • PUT</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
+        {side("PE")}
       </div>
-      <div className="space-y-2 rounded-xl border theme-border p-3">
-        <div className="flex items-center justify-between"><b className="text-sm text-emerald-600">CE • CALL SIDE</b><span className="text-[10px] theme-muted">Right panel</span></div>
-        <div className="grid grid-cols-2 gap-2 sm:gap-3">
-          <MiniStrikeBars title="CE Open Interest" rows={OI_VOLUME_MOCK} field="ceOi" tone="call" unit="Lakh contracts"/>
-          <MiniStrikeBars title="CE Traded Volume" rows={OI_VOLUME_MOCK} field="ceVolume" tone="call" unit="Lakh contracts"/>
-        </div>
+      <div className="rounded-xl border theme-border p-2">
+        <div className="mb-2 text-center text-xs font-bold theme-text">Strike</div>
+        {strikes.map(strike=><div key={strike} className={`flex min-h-[42px] items-center justify-center border-b theme-border text-[10px] font-semibold tabular-nums ${strike===available[atmIndex]?"rounded bg-amber-400/20 text-amber-700":"theme-text"}`}>{fmt(strike,0)}{strike===available[atmIndex]&&<span className="ml-1 text-[8px]">ATM</span>}</div>)}
+      </div>
+      <div className="min-w-0 rounded-xl border theme-border p-2">
+        <div className="mb-2 flex items-center justify-between"><b className="text-xs text-emerald-600">CE • CALL</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
+        {side("CE")}
       </div>
     </div>
-    <p className="text-[11px] theme-muted">Design mock only. Final live version will use the selected NIFTY Weekly expiry and the same strike ladder for all four panels. OI and volume bars will refresh from timestamp-validated Angel One data; stale or missing values will be marked instead of being presented as live.</p>
+    <div className="flex flex-wrap gap-4 text-[10px] theme-muted"><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-500"/> PE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-300"/> PE Volume</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-500"/> CE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-300"/> CE Volume</span></div>
+    <p className="text-[11px] theme-muted">{atmIndex<0?"Waiting for the NIFTY Weekly strike universe; chart will appear when strikes are available.":`ATM ${fmt(available[atmIndex],0)} • Showing ${strikes.length} strikes from the live strike universe. Sample bar heights only; not live OI/Volume.`}</p>
   </section>;
 }
 
@@ -360,7 +369,7 @@ export default function IVSkewFlipPage() {
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
-      <NiftyWeeklyOiVolumeMock/>
+      <NiftyWeeklyOiVolumeMock chain={nifty} spot={niftySpot}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3">
