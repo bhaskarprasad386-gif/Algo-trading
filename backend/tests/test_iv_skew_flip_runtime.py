@@ -667,6 +667,10 @@ def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode
     assert runtime.spot_feed.feed.manager is manager
     assert runtime.spot_feed.feed.mode == 3
 
+    assert isinstance(runtime.future_feed.feed, CommonStrategyMarketFeed)
+    assert runtime.future_feed.feed.manager is manager
+    assert runtime.future_feed.feed.mode == 3
+
     option_feed = runtime.option_feed_factory("NIFTY_WEEKLY")
     assert option_feed.feed.manager is manager
     assert option_feed.feed.mode == 3

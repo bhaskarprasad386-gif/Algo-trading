@@ -79,7 +79,12 @@ class IVSkewFlipRuntime:
             # injected dedicated feed adapter.
             persist_last_price=True if feed_manager is not None else None,
         )
-        self.future_feed = future_feed or IVIndexFutureFeedAdapter(clock_ns=clock_ns)
+        self.future_feed = future_feed or IVIndexFutureFeedAdapter(
+            feed=CommonStrategyMarketFeed(
+                "iv-skew-flip-index-futures", manager=feed_manager, mode=3,
+            ) if feed_manager is not None else None,
+            clock_ns=clock_ns,
+        )
         self._future_contracts: tuple[Any, ...] = ()
         self._basis_histories: dict[str, BasisHistory] = {}
         self._basis_analysis: dict[str, dict[str, Any]] = {}
