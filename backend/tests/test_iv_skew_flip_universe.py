@@ -202,3 +202,16 @@ def test_nifty_weekly_selects_november_17_after_november_9_expiry():
     assert result.expiry == "2026-11-17"
     assert len(result.contracts) == 22
     assert {contract.option_type for contract in result.contracts} == {"CE", "PE"}
+
+
+
+def test_nifty_weekly_prefers_november_17_over_november_23_and_monthly_expiry():
+    rows = master_rows(expiries=("17Nov2026", "23Nov2026", "26Nov2026", "01Dec2026"))
+    result = resolve_option_universe(
+        rows, underlying="NIFTY", expiry_type="WEEKLY",
+        spot=22000, today=date(2026, 11, 10), strike_count=11,
+    )
+
+    assert result.expiry == "2026-11-17"
+    assert len(result.strikes) == 11
+    assert len(result.contracts) == 22

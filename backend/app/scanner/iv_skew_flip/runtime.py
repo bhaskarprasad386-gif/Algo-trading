@@ -26,6 +26,16 @@ from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
 
+
+def _universe_selection_date(now: datetime):
+    """Roll the selected option universe after the 15:30 IST expiry close."""
+    local_now = now.astimezone(IST)
+    selected_date = local_now.date()
+    if local_now.time() >= datetime_time(15, 30):
+        selected_date += timedelta(days=1)
+    return selected_date
+
+
 # IV scanner is intentionally running only NIFTY Weekly until explicitly enabled.
 # Keep the complete registry for stable API/UI reporting, but all runtime work
 # (subscriptions, sampling, signals and refresh) uses ACTIVE_CHAIN_CONFIGS only.
@@ -156,6 +166,7 @@ class IVSkewFlipRuntime:
         self._option_feeds: dict[str, IVSkewFlipFeedAdapter] = {}
         self._samplers: dict[str, IVOneSecondSampler] = {}
         self._universe_tokens: dict[str, tuple[str, ...]] = {}
+        self._expiry_diagnostics: dict[str, dict[str, Any]] = {}
         self._last_refresh_ns: int | None = None
         self._last_error: dict[str, str] = {}
         self._last_evaluation_ns: int | None = None
@@ -258,17 +269,29 @@ class IVSkewFlipRuntime:
             self._thread.start()
         return self.snapshot()
 
+    @staticmethod
+    def _future_expiry_candidates(rows: tuple[dict[str, Any], ...], today: Any) -> list[str]:
+        candidates: set[str] = set()
+        for row in rows:
+            raw = str(row.get("expiry", "")).strip()
+            parsed = None
+            for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+                try:
+                    parsed = datetime.strptime(raw.upper(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if parsed is not None and parsed >= today:
+                candidates.add(parsed.isoformat())
+        return sorted(candidates)
+
     def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
         symbol = stream_id
         try:
-            local_now = now.astimezone(IST)
-            # Index options stop trading at 15:30 IST on expiry day. The
-            # instrument master still contains that date until its next
-            # refresh, so date-only selection would keep subscribing to an
-            # already-expired weekly chain after the session closes.
-            universe_date = local_now.date()
-            if local_now.time() >= datetime_time(15, 30):
-                universe_date += timedelta(days=1)
+            # Index options stop trading at 15:30 IST on expiry day. Move
+            # the selection date forward at that boundary so the next refresh
+            # selects the next listed weekly expiry and keeps it on the next day.
+            universe_date = _universe_selection_date(now)
             universe = resolve_option_universe(
                 self._rows_by_stream[symbol],
                 underlying=config.symbol,
@@ -279,6 +302,13 @@ class IVSkewFlipRuntime:
             )
             tokens = universe.tokens
             with self._lock:
+                self._expiry_diagnostics[symbol] = {
+                    "selection_date": universe_date.isoformat(),
+                    "available_expiries": self._future_expiry_candidates(
+                        self._rows_by_stream[symbol], universe_date,
+                    ),
+                    "selected_expiry": universe.expiry,
+                }
                 current_tokens = self._universe_tokens.get(symbol)
                 feed = self._option_feeds.get(symbol)
                 sampler = self._samplers.get(symbol)
@@ -884,6 +914,7 @@ class IVSkewFlipRuntime:
                     "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING_FOR_SPOT"},
                     "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING"},
                     "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
+                    "expiry_selection": dict(self._expiry_diagnostics.get(stream_id, {})),
                     "error": errors.get(stream_id),
                     "signals": signals.get(stream_id),
                     "early_move": early_move.get(stream_id),

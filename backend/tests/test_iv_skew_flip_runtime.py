@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.scanner.iv_skew_flip.runtime import CHAIN_CONFIGS
-from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime, _universe_selection_date
 from app.scanner.iv_skew_flip.sampler import SpotSnapshot
 
 
@@ -682,3 +682,14 @@ def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode
     stopped = runtime.stop()
     assert stopped["status"] == "STOPPED"
     assert manager.closed is True
+
+
+
+def test_weekly_expiry_selection_rolls_after_1530_ist_and_stays_rolled_next_day():
+    before_close = datetime(2026, 11, 17, 15, 29, 59, tzinfo=IST)
+    at_close = datetime(2026, 11, 17, 15, 30, 0, tzinfo=IST)
+    next_day = datetime(2026, 11, 18, 9, 15, tzinfo=IST)
+
+    assert _universe_selection_date(before_close).isoformat() == "2026-11-17"
+    assert _universe_selection_date(at_close).isoformat() == "2026-11-18"
+    assert _universe_selection_date(next_day).isoformat() == "2026-11-18"
