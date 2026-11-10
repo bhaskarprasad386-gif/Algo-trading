@@ -864,7 +864,7 @@ class IVSkewFlipRuntime:
                 "enabled": self.equity_pressure_enabled,
             },
             "equity_pressure_by_underlying": equity_pressure_by_underlying,
-            "spot_feed": self.spot_feed.snapshot(transport_snapshot=manager_snapshot),
+            "spot_feed": (\n                self.spot_feed.snapshot(transport_snapshot=manager_snapshot)\n                if isinstance(self.spot_feed, IVSpotFeedAdapter)\n                else self.spot_feed.snapshot()\n            ),
             "index_future_feed": self.future_feed.snapshot(),
             "spot_future_basis": basis_analysis,
             "enabled_streams": [stream_id for stream_id, _ in ACTIVE_CHAIN_CONFIGS],
