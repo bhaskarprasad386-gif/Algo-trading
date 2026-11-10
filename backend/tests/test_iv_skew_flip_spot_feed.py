@@ -473,3 +473,21 @@ def test_smartapi_normalizer_to_iv_spot_adapter_preserves_provider_timestamp():
     assert health["spot"]["NIFTY"]["source_age_ms"] == 500.0
     assert health["record_validation"]["callbacks_received"] == 1
     assert health["record_validation"]["accepted_records"] == 1
+
+    
+def test_spot_feed_exposes_last_known_spot_for_universe_without_marking_it_fresh():
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(feed=feed, clock_ns=lambda: 20_000_000_000)
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    feed.callback(SimpleNamespace(
+        instrument=nifty.key, instrument_type=InstrumentType.INDEX,
+        timestamp_ns=10_000_000_000, ltp=24125.5,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    assert adapter.spot_snapshot("NIFTY") is None
+    last = adapter.last_spot_snapshot("NIFTY")
+    assert last is not None
+    assert last.price == 24125.5
+    assert last.timestamp_ns == 10_000_000_000
+    assert adapter.snapshot()["signals_allowed"] is False

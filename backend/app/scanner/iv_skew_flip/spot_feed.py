@@ -189,6 +189,11 @@ class IVSpotFeedAdapter:
             # Keep the in-memory live quote even if durable storage is unavailable.
             return
 
+    def last_spot_snapshot(self, symbol: str) -> SpotSnapshot | None:
+        """Return the last broker observation even when stale; never use it for signals."""
+        with self._lock:
+            return self._latest.get(str(symbol or "").strip().upper())
+
     def spot_snapshot(self, symbol: str, *, now_ns: int | None = None) -> SpotSnapshot | None:
         current = self.clock_ns() if now_ns is None else now_ns
         with self._lock:

@@ -736,18 +736,32 @@ class IVSkewFlipRuntime:
             raise ValueError("runtime datetime must be timezone-aware")
         for stream_id, config in ACTIVE_CHAIN_CONFIGS:
             spot = self.spot_feed.spot_snapshot(config.symbol)
+            using_last_spot = False
             if spot is None:
-                # Make the refresh gate explicit in the per-chain API status.
-                # Without this, a missing/stale index spot silently skips option
-                # universe resolution and looks like a generic WAITING chain.
+                # A stale last-known spot may anchor the next expiry's ATM
+                # strike ladder and subscriptions while the exchange is closed.
+                # The sampler and signal engine still call spot_snapshot(), so
+                # stale data can never qualify as a live signal.
+                last_spot = getattr(self.spot_feed, "last_spot_snapshot", None)
+                spot = last_spot(config.symbol) if callable(last_spot) else None
+                if spot is None:
+                    with self._lock:
+                        self._last_error[stream_id] = (
+                            f"WAITING_FOR_SPOT: {config.symbol} has no last-known "
+                            "spot snapshot; option universe refresh is paused"
+                        )
+                    continue
+                using_last_spot = True
+            self._refresh_stream(stream_id, config, spot, now)
+            # _refresh_stream clears transient errors after a successful
+            # subscription. Re-apply this explicit health state afterwards so
+            # a stale quote cannot make the chain appear fully live.
+            if using_last_spot:
                 with self._lock:
                     self._last_error[stream_id] = (
-                        f"WAITING_FOR_FRESH_SPOT: {config.symbol} spot snapshot "
-                        "is missing or older than the spot-feed freshness limit; "
-                        "option universe refresh is paused"
+                        f"USING_LAST_SPOT_FOR_UNIVERSE_ONLY: {config.symbol} "
+                        "market is closed or spot is stale; live sampling/signals remain blocked"
                     )
-                continue
-            self._refresh_stream(stream_id, config, spot, now)
         now_ns = self.clock_ns()
         self._refresh_basis_analysis(now_ns)
         self._refresh_equity_pressure(now_ns)
