@@ -15,9 +15,13 @@ class FakeSpotFeed:
             "NIFTY": SpotSnapshot(100.0, 10_000_000_000),
             "BANKNIFTY": SpotSnapshot(200.0, 10_000_000_000),
         }
+        self.last_prices = dict(self.prices)
 
     def spot_snapshot(self, symbol):
         return self.prices.get(symbol)
+
+    def last_spot_snapshot(self, symbol):
+        return self.last_prices.get(symbol)
 
     def snapshot(self):
         return {"status": "LIVE", "spot": {k: v.price for k, v in self.prices.items()}}
@@ -167,7 +171,7 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     result = runtime.refresh_once()
     assert result["indices"]["NIFTY"]["universe_tokens"] == 0
     assert result["indices"]["BANKNIFTY"]["status"] == "DISABLED_BY_SCOPE"
-    assert "WAITING_FOR_FRESH_SPOT" in result["option_chains"]["NIFTY_WEEKLY"]["error"]
+    assert "WAITING_FOR_SPOT" in result["option_chains"]["NIFTY_WEEKLY"]["error"]
     assert result["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
     assert result["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is False
     assert all(not feed.started for feed in runtime._option_feeds.values())
@@ -597,3 +601,41 @@ def test_runtime_rolls_weekly_expiry_forward_after_1530_ist(monkeypatch):
         contract.expiry == "2026-11-12"
         for contract in created["NIFTY_WEEKLY"].universe.contracts
     )
+
+
+
+def test_runtime_uses_stale_spot_only_for_universe_then_recovers_on_fresh_tick(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "IVOneSecondSampler", FakeSampler)
+    now = datetime(2026, 11, 10, 8, 30, tzinfo=IST)
+    rows = (
+        make_rows("NIFTY", "17NOV2026", 100, 10)
+        + make_rows("NIFTY", "24NOV2026", 100, 10)
+    )
+    spot = FakeSpotFeed()
+    spot.prices = {}  # exchange closed: no fresh spot, but a persisted last price exists
+    created = {}
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=spot,
+        option_feed_factory=lambda symbol: created.setdefault(symbol, FakeOptionFeed(symbol)),
+        clock_ns=lambda: 20_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
+    }
+
+    closed = runtime.refresh_once()
+    assert closed["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 22
+    assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-17"
+    assert runtime._samplers["NIFTY_WEEKLY"].snapshot()["status"] == "WAITING"
+
+    # A new market tick becomes fresh; the same refresh loop resumes live sampling.
+    spot.prices["NIFTY"] = SpotSnapshot(120.0, 20_000_000_000)
+    live = runtime.refresh_once()
+    assert live["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 22
+    assert runtime._samplers["NIFTY_WEEKLY"].snapshot()["status"] == "LIVE"
+    assert created["NIFTY_WEEKLY"].universe.atm_strike == 120.0
