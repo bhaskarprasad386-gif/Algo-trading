@@ -2014,7 +2014,8 @@ def _capture_iv_broker_option_snapshot():
 
 
 def _iv_snapshot_saved_today(day):
-    start = datetime.combine(day, time.min, tzinfo=IST).timestamp() * 1_000_000_000
+    # An earlier manual fetch must not suppress the scheduled near-close snapshot.
+    start = datetime.combine(day, time(15, 27), tzinfo=IST).timestamp() * 1_000_000_000
     end = datetime.combine(day, time.max, tzinfo=IST).timestamp() * 1_000_000_000
     with SessionLocal() as db:
         received_iv_contracts = db.query(
