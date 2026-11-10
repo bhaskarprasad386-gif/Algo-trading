@@ -181,6 +181,9 @@ class IVOneSecondSampler:
                     token: sample for token, sample in latest_by_token.items()
                     if sample.iv is not None
                 }
+                # Mark the restored expiry so the first stale-spot cycle does
+                # not mistake these valid rows for a rollover and clear them.
+                self._retained_iv_expiry = self.configured_expiry
                 self._history_loaded = True
             return len(rows)
         finally:
