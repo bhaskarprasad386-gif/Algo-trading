@@ -1,4 +1,5 @@
 from datetime import date
+import time
 
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data import common_strategy_feed
@@ -79,6 +80,12 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
 
     calendar_feed.start([calendar_desc], lambda _r: None)
     box_feed.start([box_desc], lambda _r: None)
+
+    # Socket connect runs on a bounded worker thread; wait for the fake SDK
+    # callback rather than racing the worker scheduler in this test.
+    deadline = time.monotonic() + 2.0
+    while FakeSocket.instances and not FakeSocket.instances[0].connect_calls and time.monotonic() < deadline:
+        time.sleep(0.005)
 
     assert len(FakeSocket.instances) == 1
     socket = FakeSocket.instances[0]
