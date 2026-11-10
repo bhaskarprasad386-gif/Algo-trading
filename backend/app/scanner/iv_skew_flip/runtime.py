@@ -75,6 +75,9 @@ class IVSkewFlipRuntime:
                 "iv-skew-flip-spot", manager=feed_manager, mode=3,
             ) if feed_manager is not None else None,
             clock_ns=clock_ns,
+            # Preserve the durable last-known spot display when using an
+            # injected dedicated feed adapter.
+            persist_last_price=True if feed_manager is not None else None,
         )
         self.future_feed = future_feed or IVIndexFutureFeedAdapter(clock_ns=clock_ns)
         self._future_contracts: tuple[Any, ...] = ()
