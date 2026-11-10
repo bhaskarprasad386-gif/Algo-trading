@@ -173,6 +173,9 @@ class CommonWebSocketManager:
         # separates "broker sent no frames" from "frames arrived but could not
         # be mapped to a registered instrument".
         self._raw_frames_received = 0
+        # Token-level telemetry is read-only: it does not alter routing,
+        # subscription cadence, or socket recovery behavior.
+        self._raw_frames_by_instrument: dict[str, int] = defaultdict(int)
         self._invalid_frame_types = 0
         self._missing_token_frames = 0
         self._invalid_exchange_type_frames = 0
@@ -1340,6 +1343,10 @@ class CommonWebSocketManager:
 
             if exchange_type is not None:
                 self._last_raw_frame_at_by_exchange_type[(group, exchange_type)] = time.monotonic()
+            if exchange_type is not None:
+                self._raw_frames_by_instrument[f"{group.mode}:{exchange_type}:{token}"] += 1
+            else:
+                self._raw_frames_by_instrument[f"{group.mode}:unknown:{token}"] += 1
             routes = self._route_index.get(group, {})
             if exchange_type is not None:
                 matching = tuple(routes.get((exchange_type, token), ()))
@@ -1705,8 +1712,34 @@ class CommonWebSocketManager:
                     )
                     if key in health
                 }
+            subscription_roster = []
+            for sub in self.registry.subscriptions():
+                descriptor = self.registry.get(sub.key)
+                exchange_type = self._resolve_exchange_type(sub.key)
+                pair = (exchange_type, sub.key.token.strip())
+                shard_index = required_assignments.get(sub.mode, {}).get(pair)
+                subscription_roster.append({
+                    "consumer": sorted(sub.consumers),
+                    "mode": sub.mode,
+                    "exchange": sub.key.exchange,
+                    "segment": sub.key.segment,
+                    "exchange_type": exchange_type,
+                    "token": sub.key.token,
+                    "symbol": descriptor.symbol if descriptor else None,
+                    "instrument_type": descriptor.instrument_type if descriptor else None,
+                    "underlying": descriptor.underlying if descriptor else None,
+                    "expiry": descriptor.expiry if descriptor else None,
+                    "strike": descriptor.strike if descriptor else None,
+                    "option_type": descriptor.option_type if descriptor else None,
+                    "socket_group": f"{sub.mode}:{shard_index}" if shard_index is not None else None,
+                    "raw_frames": self._raw_frames_by_instrument.get(
+                        f"{sub.mode}:{exchange_type}:{sub.key.token.strip()}", 0
+                    ),
+                })
             return {
                 "subscriptions": len(self.registry.subscriptions()),
+                "subscription_roster": subscription_roster,
+                "raw_frames_by_instrument": dict(sorted(self._raw_frames_by_instrument.items())),
                 "active_instruments": len(self.registry.active_keys()),
                 "socket_groups": len(sockets),
                 "required_socket_groups": sorted(
