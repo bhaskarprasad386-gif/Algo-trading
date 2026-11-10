@@ -385,7 +385,7 @@ def test_spot_feed_exposes_shared_transport_routing_diagnostics():
     assert health["expected_instruments"]["NIFTY"] == {
         "exchange": "NSE", "segment": "NSE", "token": "99926000",
     }
-    assert health["transport"]["scope"] == "shared_manager_process_wide"
+    assert health["transport"]["scope"] == "manager_instance"
     assert health["transport"]["raw_frames_received"] == 120
     assert health["transport"]["ticks_received"] == 14
     assert health["transport"]["unmatched_frames"] == 3
