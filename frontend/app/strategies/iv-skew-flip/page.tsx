@@ -257,13 +257,21 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
 }
 
 type IvChartObservation = { token?: string; strike?: number; option_type?: string; timestamp_ns?: number; spot_timestamp_ns?: number; spot_price?: number | null; iv?: number | null };
-function NiftyWeeklySpotIvChart({ history, spot }: { history: Row | null; spot: Row }) {
+function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null; spot: Row; chain: Chain }) {
   const observations=Array.isArray(history?.observations)?history!.observations as IvChartObservation[]:[];
   const width=1100, height=340, left=62, right=64, top=18, bottom=34;
   const plotW=width-left-right, plotH=height-top-bottom;
-  const valid=observations.filter(x=>n(x.timestamp_ns)!==null&&n(x.timestamp_ns)!>0);
+  const allValid=observations.filter(x=>n(x.timestamp_ns)!==null&&n(x.timestamp_ns)!>0);
+  const feed=chain.option_feed??{};
+  const listed=Array.isArray(feed.strikes)?feed.strikes.map(n).filter((v):v is number=>v!==null).sort((a,b)=>a-b):[];
+  const spotPrice=n(spot.price)??n(feed.atm_strike);
+  const atmIndex=listed.length&&spotPrice!==null?listed.reduce((best,value,index)=>Math.abs(value-spotPrice)<Math.abs(listed[best]-spotPrice)||(Math.abs(value-spotPrice)===Math.abs(listed[best]-spotPrice)&&value>listed[best])?index:best,0):-1;
+  const selectedStrikes=atmIndex<0?[]:listed.slice(Math.max(0,atmIndex-5),atmIndex+6);
+  const selectedSet=new Set(selectedStrikes);
+  const expiry=String(feed.expiry??history?.expiry??"");
+  const valid=allValid.filter(item=>(!expiry||String((history as Row|null)?.expiry??"")===expiry)&&selectedSet.has(Number(item.strike)));
   const spotByTime=new Map<number,number>();
-  for(const item of valid)if(n(item.spot_timestamp_ns)!==null&&n(item.spot_price)!==null)spotByTime.set(Number(item.spot_timestamp_ns),Number(item.spot_price));
+  for(const item of allValid)if(n(item.spot_timestamp_ns)!==null&&n(item.spot_price)!==null)spotByTime.set(Number(item.spot_timestamp_ns),Number(item.spot_price));
   const spotPoints=[...spotByTime.entries()].sort((a,b)=>a[0]-b[0]).map(([t,v])=>({t,v}));
   const groups=new Map<string,{strike:number;kind:string;points:{t:number;v:number}[]}>();
   for(const item of valid){
@@ -286,16 +294,15 @@ function NiftyWeeklySpotIvChart({ history, spot }: { history: Row | null; spot: 
   const yIv=(v:number)=>top+(ivMax-v)/Math.max(0.0001,ivMax-ivMin)*plotH;
   const decimate=(points:{t:number;v:number}[])=>{const step=Math.max(1,Math.ceil(points.length/220));return points.filter((_,i)=>i%step===0||i===points.length-1)};
   const path=(points:{t:number;v:number}[],scale:(v:number)=>number)=>decimate(points).map(p=>`${x(p.t).toFixed(1)},${scale(p.v).toFixed(1)}`).join(" ");
-  const spotPrice=n(spot.price);
-  const strikes=[...new Set([...groups.values()].map(s=>s.strike))].sort((a,b)=>a-b);
-  const atm=strikes.length&&spotPrice!==null?strikes.reduce((best,value)=>Math.abs(value-spotPrice)<Math.abs(best-spotPrice)||(Math.abs(value-spotPrice)===Math.abs(best-spotPrice)&&value>best)?value:best,strikes[0]):null;
+  const strikes=selectedStrikes;
+  const atm=atmIndex>=0?listed[atmIndex]:null;
   const ordered=[...groups.entries()].sort((a,b)=>a[1].strike-b[1].strike||a[1].kind.localeCompare(b[1].kind));
   const latest=valid.length?Math.max(...valid.map(x=>Number(x.timestamp_ns))):0;
   const live=latest>0&&Date.now()*1_000_000-latest<=5_000_000_000;
   const palette=["#0f766e","#2563eb","#9333ea","#c2410c","#0891b2","#be123c","#4d7c0f","#7c3aed"];
   const colorFor=(strike:number,kind:string)=>{const idx=strikes.indexOf(strike);return palette[(idx*2+(kind==="PE"?1:0))%palette.length]};
   return <section className="space-y-3 rounded-2xl border theme-border theme-surface p-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold theme-text">NIFTY Weekly • Live Spot + IV Time Series</h2><p className="mt-1 text-xs theme-muted">All available CE/PE strikes • 10-minute rolling window • dual Y-axis</p></div><span className={`rounded-full border px-3 py-1 text-[10px] ${live?"border-emerald-500/40 text-emerald-700":"theme-border theme-muted"}`}>{live?"LATEST TICK ≤ 5s":"WAITING / LAST DATA"} • {valid.length} observations</span></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold theme-text">NIFTY Weekly • Live Spot + IV Time Series</h2><p className="mt-1 text-xs theme-muted">Current ATM ±5 strikes • auto-recentres on spot/ATM changes • dual Y-axis</p></div><span className={`rounded-full border px-3 py-1 text-[10px] ${live?"border-emerald-500/40 text-emerald-700":"theme-border theme-muted"}`}>{live?"LATEST TICK ≤ 5s":"WAITING / LAST DATA"} • {valid.length} observations</span></div>
     {valid.length===0?<div className="rounded-xl border theme-border p-8 text-center text-sm theme-muted">Waiting for persisted broker ticks. The chart will draw only after real IV and spot observations arrive.</div>:<>
       <div className="overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="NIFTY spot price and all strike CE and PE implied volatility time series" className="w-full min-w-[760px]">
         {[0,0.25,0.5,0.75,1].map((fraction,i)=>{const yy=top+plotH*fraction;const sv=spotMax-(spotMax-spotMin)*fraction;const iv=ivMax-(ivMax-ivMin)*fraction;return <g key={i}><line x1={left} x2={width-right} y1={yy} y2={yy} stroke="currentColor" opacity=".13" strokeDasharray="3 4"/><text x={left-8} y={yy+4} textAnchor="end" fontSize="10" fill="currentColor">{sv.toFixed(1)}</text><text x={width-right+8} y={yy+4} textAnchor="start" fontSize="10" fill="currentColor">{iv.toFixed(1)}%</text></g>})}
@@ -304,9 +311,9 @@ function NiftyWeeklySpotIvChart({ history, spot }: { history: Row | null; spot: 
         {ordered.map(([key,series])=><polyline key={key} points={path(series.points,yIv)} fill="none" stroke={colorFor(series.strike,series.kind)} strokeWidth={series.kind==="CE"&&series.strike===atm?2.8:1.35} opacity={series.kind==="CE"&&series.strike===atm?1:0.72} strokeLinejoin="round" strokeLinecap="round"/>)}
         <text x={left} y={height-8} fontSize="10" fill="currentColor">{new Date(minT/1e6).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}</text><text x={width-right} y={height-8} textAnchor="end" fontSize="10" fill="currentColor">{new Date(maxT/1e6).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}</text>
       </svg></div>
-      <div className="flex flex-wrap gap-x-4 gap-y-2 text-[10px] theme-muted"><span><i className="mr-1 inline-block h-[3px] w-5 align-middle bg-gray-900"/>Spot (left axis)</span><span><i className="mr-1 inline-block h-[3px] w-5 align-middle bg-blue-600"/>IV % (right axis)</span><span>ATM CE {atm===null?"—":fmt(atm,0)} (thicker line)</span><span>Expiry {String(history?.expiry??"—")}</span></div>
+      <div className="flex flex-wrap gap-x-4 gap-y-2 text-[10px] theme-muted"><span><i className="mr-1 inline-block h-[3px] w-5 align-middle bg-gray-900"/>Spot (left axis)</span><span><i className="mr-1 inline-block h-[3px] w-5 align-middle bg-blue-600"/>IV % (right axis)</span><span>ATM CE {atm===null?"—":fmt(atm,0)} • selected {selectedStrikes.length} strikes</span><span>Expiry {String(history?.expiry??"—")}</span></div>
       <div className="flex flex-wrap gap-2">{ordered.map(([key,series])=><span key={key} className="rounded border theme-border px-2 py-1 text-[10px]" style={{borderLeftWidth:3,borderLeftColor:colorFor(series.strike,series.kind)}}>{series.strike} {series.kind} • {series.points.length}</span>)}</div>
-      <p className="text-[11px] theme-muted">Spot scale is on the left; IV percentage scale is on the right. Each strike/type has its own colour. Missing IV observations create gaps, not zero values. ATM CE is emphasized using the current spot-derived ATM strike. The chart refreshes from durable broker observations every 5 seconds.</p>
+      <p className="text-[11px] theme-muted">Spot scale is on the left; IV percentage scale is on the right. Each strike/type has its own colour. Missing IV observations create gaps, not zero values. ATM CE is emphasized using the current spot-derived ATM strike. The chart refreshes from durable broker observations every 5 seconds. When ATM moves, the strike window recentres automatically to the current ATM ±5; newly selected strikes use their own historical observations from the rolling window.</p>
     </>}
   </section>;
 }
@@ -455,7 +462,7 @@ export default function IVSkewFlipPage() {
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
       <NiftyWeeklyOiVolumeChart chain={nifty} spot={niftySpot}/>
-      <NiftyWeeklySpotIvChart history={chartHistory} spot={niftySpot}/>
+      <NiftyWeeklySpotIvChart history={chartHistory} spot={niftySpot} chain={nifty}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3">
