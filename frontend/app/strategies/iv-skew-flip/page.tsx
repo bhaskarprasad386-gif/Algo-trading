@@ -149,7 +149,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   return <section className="overflow-hidden rounded-2xl border theme-border theme-surface">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b theme-border p-3 sm:p-4">
       <div><h2 className="text-lg font-bold theme-text">{title} Option Chain</h2><p className="text-xs theme-muted mt-1">{String(feed.expiry_type ?? chain.expiry_type ?? "—")} • Expiry {String(feed.expiry ?? "—")} • ATM {fmt(strikes[5] ?? (atmIndex>=0?allStrikes[atmIndex]:null),0)} • −5 to +5 strikes ({strikes.length}/11)</p><p className="mt-1 text-[11px] theme-muted">Sampler: {String(sampler.status ?? "WAITING")} • Last sample: {sampleTime(sampler.sampled_at_ns)} • Persisted history: {String(sampler.history_persistence ?? "UNKNOWN")} ({fmt(sampler.history_persisted_count,0)} rows)</p>{Boolean(sampler.history_persistence_error) && <p className="mt-1 text-[11px] text-amber-600">History save error: {String(sampler.history_persistence_error)}</p>}{Boolean(sampler.reason) && <p className="mt-1 text-[11px] text-amber-600">Sampler reason: {String(sampler.reason)}</p>}</div>
-      <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-lg border theme-border px-2 py-1">Feed: {String(spotFeed)}</span><span className="rounded-lg border theme-border px-2 py-1">Contracts: {fmt(feed.received_contracts,0)}/{fmt(feed.expected_contracts,0)}</span><span className="rounded-lg border theme-border px-2 py-1">IV LIVE: {fmt(sampler.iv_live_count,0)} • OI LIVE: {fmt(sampler.oi_live_count,0)} • OI LAST: {fmt(sampler.oi_stale_count,0)}</span></div>
+      <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-lg border theme-border px-2 py-1">Feed: {String(spotFeed)}</span><span className="rounded-lg border theme-border px-2 py-1">Contracts: {fmt(feed.received_contracts,0)}/{fmt(feed.expected_contracts,0)}</span><span className="rounded-lg border theme-border px-2 py-1">Angel One IV: {fmt(metrics.filter(x=>x.iv_source==="ANGEL_ONE"&&n(x.iv)!==null).length,0)} • OI LIVE: {fmt(sampler.oi_live_count,0)} • OI LAST: {fmt(sampler.oi_stale_count,0)}</span></div>
     </div>
     {chain.error && <div className="m-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-600">{chain.error}</div>}
     <div className="overflow-x-auto">
@@ -158,7 +158,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
           <tr className="theme-surface-2 theme-muted">{["Volume","OI","IV %","LTP","LTP","IV %","OI","Volume"].map((x,i)=><th key={i} className="border theme-border px-2 py-2 font-semibold">{x}<span className="block text-[9px] font-normal opacity-70">{["Δ / %","Δ / %","Δ pt","Δ / %","Δ / %","Δ pt","Δ / %","Δ / %"][i]}</span></th>)}</tr></thead>
         <tbody>{strikes.length === 0 ? <tr><td colSpan={9} className="border theme-border p-10 theme-muted">Waiting for strike universe and broker quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
-          const ivStatus=(x:Row)=>n(x.iv)===null?"IV not received":`${x.iv_live===true||x.iv_status==="LIVE"?"LIVE IV":"LAST valid IV"} • sample ${sampleTime(x.sampled_at_ns)} • option tick ${sampleTime(x.source_timestamp_ns)} • spot tick ${sampleTime(x.spot_timestamp_ns)}`;
+          const ivStatus=(x:Row)=>n(x.iv)===null?"Angel One IV not received":`Angel One broker IV • ${x.iv_status==="LIVE"?"LIVE":"LAST"} • fetched ${sampleTime(x.sampled_at_ns)}`;
           const ivLabel=(x:Row)=>n(x.iv)===null?"—":x.iv_live===true||x.iv_status==="LIVE"?"LIVE":"LAST";
           return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
             <td className="border theme-border px-2 py-2"><StackedMetric value={ce.volume} change={ce.volume_change_1s} pct={ce.volume_change_pct_1s} compact/></td>
@@ -335,6 +335,8 @@ export default function IVSkewFlipPage() {
   const [chartHistory,setChartHistory]=useState<Row|null>(null);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
+  const [snapshotBusy,setSnapshotBusy]=useState(false);
+  const [snapshotNotice,setSnapshotNotice]=useState("");
   const [error,setError]=useState("");
   const [selectedEnabled,setSelectedEnabled]=useState(false);
   const [savedEnabled,setSavedEnabled]=useState(false);
@@ -411,6 +413,20 @@ export default function IVSkewFlipPage() {
     }catch(e){setError(e instanceof Error?e.message:"IV Scanner setting save failed");}
     finally{setBusy(false);}
   }
+  async function fetchBrokerSnapshot(){
+    setSnapshotBusy(true);setSnapshotNotice("");setError("");
+    try{
+      const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/snapshot`,{method:"POST",cache:"no-store"});
+      const body=await response.json();
+      if(!response.ok)throw new Error(apiError(body,"Angel One broker snapshot failed"));
+      setSnapshotNotice(`Angel One saved ${fmt(body.saved_contracts,0)}/${fmt(body.expected_contracts,0)} contracts • IV received ${fmt(body.iv_received_contracts,0)} • ${String(body.expiry??"")}`);
+      const expiry=String(body.expiry??requestedExpiry);
+      const history=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${expiry?`&expiry=${encodeURIComponent(expiry)}`:""}`,{cache:"no-store"});
+      const saved=await history.json();
+      if(history.ok&&saved.status==="ok")setDurableHistory(saved as Row);
+    }catch(e){setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
+    finally{setSnapshotBusy(false);}
+  }
   const chains=runtime?.option_chains??{};
   const liveNifty=chains[selectedNifty]??{};
   const liveNiftySampler=liveNifty.sampler&&typeof liveNifty.sampler==="object"?liveNifty.sampler as Row:{};
@@ -421,9 +437,26 @@ export default function IVSkewFlipPage() {
   const historyMatchesLiveExpiry=!liveFeed.expiry||String(liveFeed.expiry)===savedExpiry;
   const savedMetrics=historyMatchesLiveExpiry?savedMetricsRaw:[];
   const metricsByToken=new Map<string,Row>();
-  for(const item of savedMetrics)metricsByToken.set(String(item.token??""),item);
   for(const item of liveNiftyMetrics)metricsByToken.set(String(item.token??""),item);
-  const mergedNiftyMetrics=[...metricsByToken.values()].filter(item=>String(item.token??""));
+  for(const item of savedMetrics){
+    const token=String(item.token??"");
+    const live=metricsByToken.get(token);
+    metricsByToken.set(token,{
+      ...(live??{}),...item,
+      ltp:live?.ltp??item.ltp,
+      oi:live?.oi??item.oi,
+      volume:live?.volume??item.volume,
+      bid:live?.bid??item.bid,
+      ask:live?.ask??item.ask,
+      iv:item.iv,
+      iv_source:item.iv_source,
+      iv_live:false,
+      iv_status:"LAST",
+    });
+  }
+  const mergedNiftyMetrics=[...metricsByToken.values()].filter(item=>String(item.token??"")).map(item=>
+    item.iv_source==="ANGEL_ONE"?item:{...item,iv:null,iv_live:false,iv_status:"BROKER_IV_WAITING"}
+  );
   const nifty={
     ...liveNifty,
     option_feed:{
@@ -457,9 +490,10 @@ export default function IVSkewFlipPage() {
   const bankExpiry=String((bank.option_feed??{}).expiry_type??"");
   return <main className="space-y-4 p-3 sm:p-5 theme-text">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • other chains temporarily disabled • Live OI and modeled IV</p></div>
+      <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • Angel One broker IV + FULL quote data • other chains temporarily disabled</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
+        <button onClick={()=>void fetchBrokerSnapshot()} disabled={!running||snapshotBusy} className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm font-semibold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch Broker IV + Chain"}</button>
         <div className="inline-flex rounded-xl border theme-border p-1" aria-label="IV Scanner desired runner state">
           <button type="button" onClick={()=>{setSelectedEnabled(true);setSettingDirty(true);}} disabled={busy} aria-pressed={selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedEnabled?"bg-emerald-600 text-white":"theme-muted"}`}>ON</button>
           <button type="button" onClick={()=>{setSelectedEnabled(false);setSettingDirty(true);}} disabled={busy} aria-pressed={!selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-semibold ${!selectedEnabled?"bg-rose-600 text-white":"theme-muted"}`}>OFF</button>
@@ -468,10 +502,11 @@ export default function IVSkewFlipPage() {
       </div>
     </header>
     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border theme-border px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border theme-border px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Orders OFF</span></div>
+    {snapshotNotice&&<div role="status" className="rounded-xl border theme-border p-3 text-sm theme-muted">{snapshotNotice} • broker snapshot saved as LAST data</div>}
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
-      <div className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">Expiry selection date: {String(nifty.expiry_selection?.selection_date??"—")} • Selected: {String(nifty.expiry_selection?.selected_expiry??(liveFeed.expiry??"—"))} • Master candidates: {Array.isArray(nifty.expiry_selection?.available_expiries)?(nifty.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"}</div>
+      <div className="rounded-lg border theme-border px-3 py-2 text-xs theme-muted">Expiry selection date: {String(nifty.expiry_selection?.selection_date??"—")} • Selected: {String(nifty.expiry_selection?.selected_expiry??(liveFeed.expiry??"—"))} • Master candidates: {Array.isArray(nifty.expiry_selection?.available_expiries)?(nifty.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"} • Last Angel One snapshot: {sampleTime(durableHistory?.snapshot_at_ns)}</div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
       <NiftyWeeklyOiVolumeChart chain={nifty} spot={niftySpot}/>
       <NiftyWeeklySpotIvChart history={chartHistory} spot={niftySpot} chain={nifty}/>

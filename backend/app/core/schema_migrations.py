@@ -293,6 +293,7 @@ def run_schema_migrations() -> None:
                 spot_price FLOAT,
                 sampled_at_ns BIGINT NOT NULL,
                 iv FLOAT,
+                iv_source VARCHAR(24) NOT NULL DEFAULT 'LOCAL_MODEL',
                 oi BIGINT,
                 bid FLOAT,
                 ask FLOAT,
@@ -304,6 +305,8 @@ def run_schema_migrations() -> None:
         observation_columns = {column["name"] for column in inspect(connection).get_columns("iv_option_observations")}
         if "spot_price" not in observation_columns:
             connection.execute(text("ALTER TABLE iv_option_observations ADD COLUMN spot_price FLOAT"))
+        if "iv_source" not in observation_columns:
+            connection.execute(text("ALTER TABLE iv_option_observations ADD COLUMN iv_source VARCHAR(24) NOT NULL DEFAULT 'LOCAL_MODEL'"))
         connection.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_iv_option_observation_source "
             "ON iv_option_observations (token, source_timestamp_ns)"

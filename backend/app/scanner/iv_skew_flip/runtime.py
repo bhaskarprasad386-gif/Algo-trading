@@ -851,6 +851,18 @@ class IVSkewFlipRuntime:
             if delay == 0.0 and monotonic() - next_run > self.refresh_seconds:
                 next_run = monotonic()
 
+    def broker_snapshot_context(self, stream_id: str = "NIFTY_WEEKLY") -> tuple[Any, Any]:
+        """Return the active IV universe and last spot observation for broker snapshots."""
+        with self._lock:
+            feed = self._option_feeds.get(str(stream_id).strip().upper())
+        if feed is None:
+            raise RuntimeError(f"IV option feed {stream_id} is not initialized")
+        universe = feed.resolved_universe()
+        if universe is None:
+            raise RuntimeError(f"IV option universe {stream_id} is not resolved")
+        spot = self.spot_feed.last_spot_snapshot(universe.underlying)
+        return universe, spot
+
     def snapshot(self) -> dict[str, Any]:
         # Capture one manager view and reuse it in the spot diagnostics. Calling
         # snapshot twice could otherwise report a transient socket retirement

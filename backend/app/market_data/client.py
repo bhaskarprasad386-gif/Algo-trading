@@ -107,6 +107,27 @@ class MarketDataClient:
             app_logger.error(f"Quote batch request failed for {exchange}: {str(e)}")
             raise TradingAppException("QuoteBatchRequestError", "Market data provider request failed", 502) from e
 
+    def option_greeks(self, underlying: str, expirydate: str) -> Dict[str, Any]:
+        """Fetch Angel One's broker-calculated IV and option Greeks for one NSE expiry."""
+        name = str(underlying or "").strip().upper()
+        expiry = str(expirydate or "").strip().upper()
+        if not name or not expiry:
+            raise ValueError("underlying and expirydate are required")
+        try:
+            response = self._request_with_retry(
+                f"Option Greeks {name} {expiry}",
+                lambda: self.get_client().optionGreek({"name": name, "expirydate": expiry}),
+            )
+            if response and response.get("status"):
+                return response
+            message = response.get("message", "Unknown option-Greeks error") if response else "Empty response from Angel One"
+            raise TradingAppException("OptionGreeksRequestFailed", message, 502)
+        except TradingAppException:
+            raise
+        except Exception as exc:
+            app_logger.error(f"Option Greeks request failed for {name} {expiry}: {exc}")
+            raise TradingAppException("OptionGreeksRequestError", "Angel One option-Greeks request failed", 502) from exc
+
     def margin(self, positions: list[dict[str, Any]]) -> Dict[str, Any]:
         """Fetch Angel One's real-time margin requirement for a position basket."""
         if not positions:

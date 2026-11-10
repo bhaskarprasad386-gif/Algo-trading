@@ -33,6 +33,7 @@ from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
 from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
 from app.models.synthetic_trace_opportunity import SyntheticTraceOpportunity
 from app.algo.auth import AngelOneAuth
+from app.market_data.client import MarketDataClient
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
@@ -61,6 +62,7 @@ from app.scanner.live_synthetic_routes import router as live_synthetic_router, c
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
 from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
@@ -316,7 +318,7 @@ configure_live_box_spread_websocket_depth(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, iv_skew_flip_runtime
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, iv_skew_flip_runtime
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -335,6 +337,8 @@ async def lifespan(app: FastAPI):
             app_logger.exception("Persisted IV Scanner ON could not be restored; runner remains STOPPED")
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
+    if _iv_option_snapshot_task is None:
+        _iv_option_snapshot_task = asyncio.create_task(_iv_option_snapshot_daily_loop())
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     if _collector_enabled() and _history_collector_task is None:
@@ -359,7 +363,7 @@ async def lifespan(app: FastAPI):
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
         paper_rule_task.cancel()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -372,6 +376,7 @@ async def lifespan(app: FastAPI):
                 _live_synthetic_task,
                 _live_box_spread_task,
                 _weekly_swing_refresh_task,
+                _iv_option_snapshot_task,
                 paper_rule_task,
             )
             if task is not None
@@ -391,6 +396,7 @@ async def lifespan(app: FastAPI):
         _live_synthetic_task = None
         _live_box_spread_task = None
         _weekly_swing_refresh_task = None
+        _iv_option_snapshot_task = None
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
@@ -584,6 +590,7 @@ async def dashboard_websocket(websocket: WebSocket):
             pass
 
 _history_collector_task: asyncio.Task | None = None
+_iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 _live_cash_future_task: asyncio.Task | None = None
@@ -1938,6 +1945,7 @@ def iv_skew_flip_option_timeseries(
             base_query = db.query(IVOptionObservation).filter(
                 IVOptionObservation.underlying == symbol,
                 IVOptionObservation.expiry == selected_expiry,
+                IVOptionObservation.iv_source == "ANGEL_ONE",
                 IVOptionObservation.source_timestamp_ns <= now_ns,
             )
             rows = (
@@ -1992,6 +2000,73 @@ def iv_skew_flip_option_timeseries(
     }
 
 
+def _capture_iv_broker_option_snapshot():
+    runtime = iv_skew_flip_runtime
+    if runtime is None or runtime.snapshot().get("status") != "RUNNING":
+        raise RuntimeError("IV Scanner runner must be ON before broker option snapshot capture")
+    universe, spot = runtime.broker_snapshot_context("NIFTY_WEEKLY")
+    return capture_angelone_option_snapshot(
+        universe=universe,
+        spot_snapshot=spot,
+        client=MarketDataClient(),
+        session_factory=SessionLocal,
+    )
+
+
+def _iv_snapshot_saved_today(day):
+    # An earlier manual fetch must not suppress the scheduled near-close snapshot.
+    start = datetime.combine(day, time(15, 27), tzinfo=IST).timestamp() * 1_000_000_000
+    end = datetime.combine(day, time.max, tzinfo=IST).timestamp() * 1_000_000_000
+    with SessionLocal() as db:
+        received_iv_contracts = db.query(
+            func.count(func.distinct(IVOptionObservation.token))
+        ).filter(
+            IVOptionObservation.underlying == "NIFTY",
+            IVOptionObservation.iv_source == "ANGEL_ONE",
+            IVOptionObservation.iv.isnot(None),
+            IVOptionObservation.sampled_at_ns >= int(start),
+            IVOptionObservation.sampled_at_ns <= int(end),
+        ).scalar() or 0
+        return received_iv_contracts >= 22
+
+
+async def _iv_option_snapshot_daily_loop():
+    """Capture one Angel One Greeks/FULL quote snapshot near the NSE close."""
+    while True:
+        now = datetime.now(IST)
+        if time(15, 28) <= now.time() <= time(15, 30, 20):
+            runtime = iv_skew_flip_runtime
+            if runtime is None or runtime.snapshot().get("status") != "RUNNING":
+                await asyncio.sleep(15)
+                continue
+            try:
+                already_saved = await asyncio.to_thread(_iv_snapshot_saved_today, now.date())
+                if not already_saved:
+                    result = await asyncio.to_thread(_capture_iv_broker_option_snapshot)
+                    app_logger.info(
+                        "IV EOD Angel One option snapshot saved: expiry=%s contracts=%s IV=%s",
+                        result.get("expiry"), result.get("saved_contracts"),
+                        result.get("iv_received_contracts"),
+                    )
+            except Exception:
+                # Retry within the close window; Angel One Greeks is a live-only API.
+                app_logger.exception("IV EOD Angel One option snapshot attempt failed")
+        await asyncio.sleep(15)
+
+
+@app.post("/api/v1/scanner/iv-skew-flip/snapshot")
+def capture_iv_skew_flip_broker_snapshot():
+    """Manually fetch Angel One Greeks + FULL quote for the active NIFTY weekly chain."""
+    try:
+        return _capture_iv_broker_option_snapshot()
+    except Exception as exc:
+        app_logger.exception("Manual IV broker option snapshot failed")
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "Angel One option-chain snapshot could not be captured.", "reason": str(exc)},
+        ) from exc
+
+
 @app.get("/api/v1/scanner/iv-skew-flip/history")
 def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = None, limit: int = 1000):
     """Return the newest durable option observation per contract for display as LAST."""
@@ -2034,6 +2109,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
                 .filter(
                     IVOptionObservation.underlying == symbol,
                     IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.iv_source == "ANGEL_ONE",
                 )
                 .group_by(IVOptionObservation.token)
                 .subquery()
@@ -2048,6 +2124,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
                 .filter(
                     IVOptionObservation.underlying == symbol,
                     IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.iv_source == "ANGEL_ONE",
                 )
                 .order_by(IVOptionObservation.strike.asc(), IVOptionObservation.option_type.asc())
                 .limit(limit)
@@ -2072,6 +2149,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
             "oi_timestamp_ns": row.source_timestamp_ns if row.oi is not None else None,
             "oi_stale": row.oi is not None,
             "iv": row.iv,
+            "iv_source": row.iv_source,
             "iv_unit": "PERCENT",
             "iv_live": False,
             "iv_status": "LAST",
@@ -2100,7 +2178,9 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
         "count": len(metrics),
         "metrics": metrics,
         "data_status": "LAST" if metrics else "EMPTY",
-        "source": "iv_option_observations",
+        "snapshot_at_ns": max((row.sampled_at_ns for row in rows), default=None),
+        "source": "ANGEL_ONE",
+
     }
 
 
