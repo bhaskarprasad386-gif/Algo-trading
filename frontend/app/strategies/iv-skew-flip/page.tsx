@@ -140,7 +140,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const spotPrice = n(spot.price);
   const feedAtm = n(feed.atm_strike);
   const atmTarget = spotPrice ?? feedAtm;
-  const atmIndex = allStrikes.length ? atmTarget === null ? Math.floor(allStrikes.length / 2) : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget)?i:best,0) : -1;
+  const atmIndex = allStrikes.length ? atmTarget === null ? Math.floor(allStrikes.length / 2) : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget)||(Math.abs(x-atmTarget)===Math.abs(allStrikes[best]-atmTarget)&&x>allStrikes[best])?i:best,0) : -1;
   const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-5),atmIndex+6);
   const byKey = new Map(merged.map(x => [`${x.strike}:${x.option_type}`, x]));
   const spotFeed = feed.status ?? "WAITING";
