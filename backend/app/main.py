@@ -395,7 +395,8 @@ async def lifespan(app: FastAPI):
         _live_calendar_spread_task = None
         _live_synthetic_task = None
         _live_box_spread_task = None
-        _weekly_swing_refresh_task = None\n        _iv_option_snapshot_task = None
+        _weekly_swing_refresh_task = None
+        _iv_option_snapshot_task = None
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
