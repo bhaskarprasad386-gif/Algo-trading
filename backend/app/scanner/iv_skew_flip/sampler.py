@@ -245,7 +245,9 @@ class IVOneSecondSampler:
                 or spot_source_age < 0
                 or spot_source_age > self.max_spot_age_ns):
             with self._lock:
-                self._latest.clear()
+                # Keep expiry-scoped durable/last-known rows visible while the
+                # market is closed or spot is stale. They remain LAST only:
+                # no new sampling, IV recalculation, or signal evaluation.
                 self._previous_cycle.clear()
                 self._one_second_changes = {}
                 self._last_error = "fresh spot snapshot unavailable"
