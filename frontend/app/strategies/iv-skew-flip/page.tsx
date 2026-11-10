@@ -177,6 +177,62 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
     <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask columns are intentionally hidden. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; new fresh quotes update the IV and its percentage-point change. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent; OI is explicitly marked LIVE only when its source timestamp is within five minutes, otherwise LAST. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
   </section>;
 }
+
+type OiVolumeMockRow = { strike: number; peOi: number; peVolume: number; ceOi: number; ceVolume: number };
+const OI_VOLUME_MOCK: OiVolumeMockRow[] = [
+  { strike: 25300, peOi: 18.4, peVolume: 7.2, ceOi: 4.8, ceVolume: 2.1 },
+  { strike: 25350, peOi: 22.1, peVolume: 9.8, ceOi: 6.2, ceVolume: 2.8 },
+  { strike: 25400, peOi: 28.7, peVolume: 12.4, ceOi: 8.1, ceVolume: 3.7 },
+  { strike: 25450, peOi: 34.2, peVolume: 15.1, ceOi: 11.4, ceVolume: 5.2 },
+  { strike: 25500, peOi: 42.6, peVolume: 19.3, ceOi: 16.8, ceVolume: 7.4 },
+  { strike: 25550, peOi: 49.8, peVolume: 23.7, ceOi: 23.6, ceVolume: 10.8 },
+  { strike: 25600, peOi: 37.5, peVolume: 17.2, ceOi: 31.9, ceVolume: 14.6 },
+  { strike: 25650, peOi: 25.3, peVolume: 11.6, ceOi: 39.4, ceVolume: 18.2 },
+  { strike: 25700, peOi: 17.2, peVolume: 7.8, ceOi: 46.7, ceVolume: 21.5 },
+  { strike: 25750, peOi: 11.6, peVolume: 5.1, ceOi: 38.2, ceVolume: 17.3 },
+  { strike: 25800, peOi: 7.4, peVolume: 3.2, ceOi: 29.6, ceVolume: 13.1 },
+];
+function MiniStrikeBars({ title, rows, field, tone, unit }: { title: string; rows: OiVolumeMockRow[]; field: "peOi" | "peVolume" | "ceOi" | "ceVolume"; tone: "put" | "call"; unit: string }) {
+  const max = Math.max(...rows.map(row => row[field]));
+  return <div className="min-w-0 rounded-xl border theme-border p-3">
+    <div className="mb-3 flex items-center justify-between gap-2"><h4 className="text-sm font-bold theme-text">{title}</h4><span className="text-[10px] theme-muted">{unit}</span></div>
+    <div className="space-y-2">
+      {rows.map(row => <div key={row.strike} className="grid grid-cols-[46px_minmax(0,1fr)_42px] items-center gap-2 text-[10px]">
+        <span className="theme-muted tabular-nums">{row.strike}</span>
+        <div className="h-4 overflow-hidden rounded-sm theme-surface-2">
+          <div className={`h-full rounded-sm ${tone === "put" ? "bg-rose-500/75" : "bg-emerald-500/75"}`} style={{ width: `${Math.max(3, row[field] / max * 100)}%` }} />
+        </div>
+        <span className="text-right font-semibold theme-text tabular-nums">{row[field].toFixed(1)}</span>
+      </div>)}
+    </div>
+  </div>;
+}
+function NiftyWeeklyOiVolumeMock() {
+  return <section className="space-y-3 rounded-2xl border theme-border theme-surface p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div><div className="flex items-center gap-2"><h2 className="text-lg font-bold theme-text">NIFTY Weekly OI &amp; Volume Profile</h2><span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-700">MOCK PREVIEW</span></div><p className="mt-1 text-xs theme-muted">Opstra-style strike-wise comparison • PE on left • CE on right • common strike ladder</p></div>
+      <span className="rounded-full border theme-border px-3 py-1 text-[10px] theme-muted">Sample data only • Not live</span>
+    </div>
+    <div className="grid gap-3 xl:grid-cols-2">
+      <div className="space-y-2 rounded-xl border theme-border p-3">
+        <div className="flex items-center justify-between"><b className="text-sm text-rose-600">PE • PUT SIDE</b><span className="text-[10px] theme-muted">Left panel</span></div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <MiniStrikeBars title="PE Open Interest" rows={OI_VOLUME_MOCK} field="peOi" tone="put" unit="Lakh contracts"/>
+          <MiniStrikeBars title="PE Traded Volume" rows={OI_VOLUME_MOCK} field="peVolume" tone="put" unit="Lakh contracts"/>
+        </div>
+      </div>
+      <div className="space-y-2 rounded-xl border theme-border p-3">
+        <div className="flex items-center justify-between"><b className="text-sm text-emerald-600">CE • CALL SIDE</b><span className="text-[10px] theme-muted">Right panel</span></div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <MiniStrikeBars title="CE Open Interest" rows={OI_VOLUME_MOCK} field="ceOi" tone="call" unit="Lakh contracts"/>
+          <MiniStrikeBars title="CE Traded Volume" rows={OI_VOLUME_MOCK} field="ceVolume" tone="call" unit="Lakh contracts"/>
+        </div>
+      </div>
+    </div>
+    <p className="text-[11px] theme-muted">Design mock only. Final live version will use the selected NIFTY Weekly expiry and the same strike ladder for all four panels. OI and volume bars will refresh from timestamp-validated Angel One data; stale or missing values will be marked instead of being presented as live.</p>
+  </section>;
+}
+
 export default function IVSkewFlipPage() {
   const [runtime,setRuntime]=useState<Runtime|null>(null);
   const [basketRegistry,setBasketRegistry]=useState<BasketRegistry|null>(null);
@@ -304,6 +360,7 @@ export default function IVSkewFlipPage() {
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
+      <NiftyWeeklyOiVolumeMock/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
     <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3">
