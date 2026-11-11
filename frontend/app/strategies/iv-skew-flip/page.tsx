@@ -132,7 +132,10 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   // Keep sampler-only rows too: a quote can disappear from the fresh feed while
   // its last valid IV is intentionally retained and must still render as LAST.
   const merged = [
-    ...quotes.map(q => ({ ...q, ...(byToken.get(String(q.token ?? "")) ?? {}) })),
+    ...quotes.map(q => {
+      const metric = byToken.get(String(q.token ?? "")) ?? {};
+      return { ...metric, ...q, iv: metric.iv_source === "ANGEL_ONE" ? metric.iv : q.iv, iv_source: metric.iv_source ?? q.iv_source };
+    }),
     ...metrics.filter(x => !quoteTokens.has(String(x.token ?? ""))),
   ];
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
@@ -231,7 +234,7 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
         <span className={volumeStatus==="LIVE"?"theme-text":volumeStatus==="LAST"?"text-amber-600":"theme-muted"}>{volume===null?"—":compactIndian(volume)}</span>
       </div>
     </div>;
-  });
+  };
   const oiLive = eligible.filter(item=>item.oi!==null&&item.oi!==undefined&&item.oi_live===true).length;
   const oiLast = eligible.filter(item=>item.oi!==null&&item.oi!==undefined&&item.oi_status==="LAST").length;
   const volumeLive = eligible.filter(item=>n(item.volume)!==null&&n(item.source_age_ms)!==null&&Number(item.source_age_ms)<=5000).length;
