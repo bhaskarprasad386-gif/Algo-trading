@@ -1,0 +1,85 @@
+name: Box Spread Instrument Master Cache
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/app/market_data/box_spread_instrument_cache.py"
+      - ".github/workflows/box-spread-master-cache.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/market_data/box_spread_instrument_cache.py"
+      - ".github/workflows/box-spread-master-cache.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-box-spread-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Fetch, validate and write isolated Box Spread cache
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+          BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH: ${{ runner.temp }}/box_spread_instrument_master_cache.json
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import requests
+          from app.market_data import box_spread_instrument_cache as cache
+
+          errors = []
+          rows = None
+          for label, url, timeout in (
+              ("primary", cache.ALTERNATE_MASTER_URL.replace("margincalculator.angelone.in", "margincalculator.angelbroking.com"), (5, 30)),
+              ("alternate", cache.ALTERNATE_MASTER_URL, (5, 30)),
+          ):
+              try:
+                  response = requests.get(url, timeout=timeout, stream=True)
+                  response.raise_for_status()
+                  chunks, total = [], 0
+                  try:
+                      for chunk in response.iter_content(chunk_size=cache.MASTER_CHUNK_BYTES):
+                          if not chunk:
+                              continue
+                          total += len(chunk)
+                          if total > cache.MASTER_MAX_BYTES:
+                              raise ValueError("master exceeds 64 MiB limit")
+                          chunks.append(chunk)
+                  finally:
+                      response.close()
+                  import json
+                  payload = json.loads(b"".join(chunks).decode("utf-8"))
+                  rows = cache._validated_rows(payload)
+                  if rows is None:
+                      raise ValueError("production Box Spread row validation failed")
+                  print(f"{label}_download_validation=PASS rows={len(rows)}")
+                  break
+              except Exception as exc:
+                  errors.append(f"{label}: {type(exc).__name__}: {exc}")
+                  print(errors[-1])
+          if rows is None:
+              raise SystemExit("No official Angel One master passed validation: " + " | ".join(errors))
+          cache._write_cache(rows)
+          installed = cache._read_cache()
+          if installed is None or cache._canonical_rows_digest(installed[0]) != cache._canonical_rows_digest(rows):
+              raise SystemExit("Box Spread cache read-back verification failed")
+          path = Path(os.environ["BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH"])
+          print(f"box_cache_path={path} rows={len(rows)} sha256={cache._canonical_rows_digest(rows)}")
+          PY
+      - name: Upload validated Box Spread-only cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: box-spread-instrument-master-validated
+          path: ${{ runner.temp }}/box_spread_instrument_master_cache.json
+          if-no-files-found: error
+          retention-days: 1

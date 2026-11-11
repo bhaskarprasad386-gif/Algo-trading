@@ -128,6 +128,7 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
     import app.market_data.live_box_spread_runner as mod
 
     class Master:
+        _loaded = True
         instruments = [
             {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "22OCT2026", "strike": "10000", "symbol": "NIFTY100CE", "token": "0"},
             {"exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "25NOV2027", "strike": "10000", "symbol": "NIFTY100CE", "token": "1"},
@@ -177,6 +178,7 @@ def test_sensex_weekly_expiry_uses_bfo_option_master_without_future_contracts(mo
     import app.market_data.live_box_spread_runner as mod
 
     class Master:
+        _loaded = True
         instruments = [
             {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "22OCT2026", "strike": "10000"},
             {"exch_seg": "BFO", "name": "SENSEX", "instrumenttype": "OPTIDX", "expiry": "30NOV2027", "strike": "10000"},
