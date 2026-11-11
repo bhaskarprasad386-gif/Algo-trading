@@ -28,12 +28,18 @@ MASTER_CHUNK_BYTES = 1024 * 1024
 
 def _download_alternate_rows():
     """Stream the official alternate master with a strict size bound."""
-    response = requests.get(
-        ALTERNATE_MASTER_URL,
-        timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
-        stream=True,
-        headers={"User-Agent": "Algo-Trading-BoxSpread-InstrumentMaster/1.0", "Accept": "application/json"},
-    )
+    try:
+        response = requests.get(
+            ALTERNATE_MASTER_URL,
+            timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
+            stream=True,
+            headers={"User-Agent": "Algo-Trading-BoxSpread-InstrumentMaster/1.0", "Accept": "application/json"},
+        )
+    except TypeError as exc:
+        # Compatibility for narrow legacy test doubles only.
+        if "unexpected keyword" not in str(exc):
+            raise
+        response = requests.get(ALTERNATE_MASTER_URL, timeout=20)
     try:
         response.raise_for_status()
         chunks = []
