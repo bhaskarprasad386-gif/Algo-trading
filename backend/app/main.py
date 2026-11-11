@@ -316,7 +316,6 @@ configure_live_box_spread_websocket_depth(
     )
 )
 
-@asynccontextmanager
 async def _iv_scanner_recovery_loop() -> None:
     """Retry a persisted IV Scanner ON state after transient startup failures.
 
@@ -355,6 +354,7 @@ async def _iv_scanner_recovery_loop() -> None:
             retry_delay = min(max_retry_delay, retry_delay * 2.0)
 
 
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
