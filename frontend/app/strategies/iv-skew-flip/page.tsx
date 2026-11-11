@@ -131,8 +131,11 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const quoteTokens = new Set(quotes.map(q => String(q.token ?? "")).filter(Boolean));
   // Keep sampler-only rows too: a quote can disappear from the fresh feed while
   // its last valid IV is intentionally retained and must still render as LAST.
-  const merged = [
-    ...quotes.map(q => ({ ...q, ...(byToken.get(String(q.token ?? "")) ?? {}) })),
+  const merged: Row[] = [
+    ...quotes.map(q => {
+      const metric = byToken.get(String(q.token ?? "")) ?? {};
+      return { ...metric, ...q, iv: metric.iv_source === "ANGEL_ONE" ? metric.iv : q.iv, iv_source: metric.iv_source ?? q.iv_source };
+    }),
     ...metrics.filter(x => !quoteTokens.has(String(x.token ?? ""))),
   ];
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
@@ -142,7 +145,16 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const atmTarget = spotPrice ?? feedAtm;
   const atmIndex = allStrikes.length ? atmTarget === null ? Math.floor(allStrikes.length / 2) : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget)||(Math.abs(x-atmTarget)===Math.abs(allStrikes[best]-atmTarget)&&x>allStrikes[best])?i:best,0) : -1;
   const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-5),atmIndex+6);
-  const byKey = new Map(merged.map(x => [`${x.strike}:${x.option_type}`, x]));
+  const optionSide = (value: unknown) => {
+    const side = String(value ?? "").trim().toUpperCase();
+    return side === "CE" || side === "CALL" ? "CE" : side === "PE" || side === "PUT" ? "PE" : "";
+  };
+  const contractKey = (item: Row) => {
+    const strike = n(item.strike);
+    const side = optionSide(item.option_type);
+    return strike === null || !side ? null : `${strike}:${side}`;
+  };
+  const byKey = new Map(merged.map(item => [contractKey(item), item]).filter((entry): entry is [string, Row] => entry[0] !== null));
   const spotFeed = feed.status ?? "WAITING";
   const cell=(v:unknown,d=2)=>n(v)===null?"—":fmt(v,d);
   const quoteTitle=(x:Row,field:string)=>n(x[field])===null?"No broker quote received":`Broker ${field.toUpperCase()} • ${x.fresh===true?"LIVE":`last received ${age(x.age_ms)} ago; may be stale`}`;
@@ -153,28 +165,38 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
     </div>
     {chain.error && <div className="m-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-600">{chain.error}</div>}
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[900px] border-collapse border theme-border text-center text-xs">
-        <thead><tr><th colSpan={4} className="border theme-border bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="border theme-border theme-surface-2 px-3 font-bold theme-text">Strike</th><th colSpan={4} className="border theme-border bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
-          <tr className="theme-surface-2 theme-muted">{["Volume","OI","IV %","LTP","LTP","IV %","OI","Volume"].map((x,i)=><th key={i} className="border theme-border px-2 py-2 font-semibold">{x}<span className="block text-[9px] font-normal opacity-70">{["Δ / %","Δ / %","Δ pt","Δ / %","Δ / %","Δ pt","Δ / %","Δ / %"][i]}</span></th>)}</tr></thead>
-        <tbody>{strikes.length === 0 ? <tr><td colSpan={9} className="border theme-border p-10 theme-muted">Waiting for strike universe and broker quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
+      <table className="w-full min-w-[1450px] border-collapse border theme-border text-center text-[10px] sm:text-xs">
+        <thead><tr><th colSpan={8} className="border theme-border bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="border theme-border theme-surface-2 px-2 sm:px-3 font-bold theme-text">Strike</th><th colSpan={8} className="border theme-border bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
+          <tr className="theme-surface-2 theme-muted">{["Volume","OI","IV %","Bid Qty","Bid","Ask","Ask Qty","LTP","LTP","Bid Qty","Bid","Ask","Ask Qty","IV %","OI","Volume"].map((x,i)=><th key={i} className="border theme-border px-1 sm:px-2 py-2 font-semibold whitespace-nowrap">{x}<span className="block text-[9px] font-normal opacity-70">{["Δ / %","Δ / %","Δ pt","—","₹","₹","—","Δ / %","Δ / %","—","₹","₹","—","Δ pt","Δ / %","Δ / %"][i]}</span></th>)}</tr></thead>
+        <tbody>{strikes.length === 0 ? <tr><td colSpan={17} className="border theme-border p-10 theme-muted">Waiting for strike universe and broker quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
           const ivStatus=(x:Row)=>n(x.iv)===null?"Angel One IV not received":`Angel One broker IV • ${x.iv_status==="LIVE"?"LIVE":"LAST"} • fetched ${sampleTime(x.sampled_at_ns)}`;
           const ivLabel=(x:Row)=>n(x.iv)===null?"—":x.iv_live===true||x.iv_status==="LIVE"?"LIVE":"LAST";
+          const depth=(x:Row,field:string)=>n(x[field])===null?"—":fmt(x[field],0);
+          const depthTitle=(x:Row)=>x.fresh===true?"Angel One live best bid/ask depth":`Depth last received ${age(x.age_ms)} ago`;
           return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
-            <td className="border theme-border px-2 py-2"><StackedMetric value={ce.volume} change={ce.volume_change_1s} pct={ce.volume_change_pct_1s} compact/></td>
-            <td className="border theme-border px-2 py-2" title={ce.oi===null||ce.oi===undefined?"OI not received":`OI ${String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(ce.oi_timestamp_ns)} • age ${age(ce.oi_age_ms)}`}><StackedMetric value={ce.oi} change={ce.oi_change_1s} pct={ce.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{ce.oi===null||ce.oi===undefined?"—":String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))}</span></td>
-            <td className="border theme-border px-2 py-2 font-semibold" title={ivStatus(ce)}><StackedMetric value={ce.iv} change={ce.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(ce)}</span></td>
-            <td className="border theme-border px-2 py-2" title={quoteTitle(ce,"ltp")}><StackedMetric value={ce.ltp} change={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s} digits={2}/></td>
-            <td className={`border theme-border px-3 py-2 font-bold ${strike===allStrikes[atmIndex]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="block text-[9px]">ATM</span>}</td>
-            <td className="border theme-border px-2 py-2" title={quoteTitle(pe,"ltp")}><StackedMetric value={pe.ltp} change={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s} digits={2}/></td>
-            <td className="border theme-border px-2 py-2 font-semibold" title={ivStatus(pe)}><StackedMetric value={pe.iv} change={pe.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(pe)}</span></td>
-            <td className="border theme-border px-2 py-2" title={pe.oi===null||pe.oi===undefined?"OI not received":`OI ${String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(pe.oi_timestamp_ns)} • age ${age(pe.oi_age_ms)}`}><StackedMetric value={pe.oi} change={pe.oi_change_1s} pct={pe.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{pe.oi===null||pe.oi===undefined?"—":String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))}</span></td>
-            <td className="border theme-border px-2 py-2"><StackedMetric value={pe.volume} change={pe.volume_change_1s} pct={pe.volume_change_pct_1s} compact/></td>
+            <td className="border theme-border px-1 sm:px-2 py-2"><StackedMetric value={ce.volume} change={ce.volume_change_1s} pct={ce.volume_change_pct_1s} compact/></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={ce.oi===null||ce.oi===undefined?"OI not received":`OI ${String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(ce.oi_timestamp_ns)} • age ${age(ce.oi_age_ms)}`}><StackedMetric value={ce.oi} change={ce.oi_change_1s} pct={ce.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{ce.oi===null||ce.oi===undefined?"—":String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2 font-semibold" title={ivStatus(ce)}><StackedMetric value={ce.iv} change={ce.iv_change_since_prev} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(ce)}{n(ce.iv_interval_seconds)!==null?` • Δ ${fmt(ce.iv_interval_seconds,0)}s`:""}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"bid_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"bid")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"ask")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"ask_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={quoteTitle(ce,"ltp")}><StackedMetric value={ce.ltp} change={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s} digits={2}/></td>
+            <td className={`border theme-border px-2 py-2 font-bold ${strike===allStrikes[atmIndex]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="block text-[9px]">ATM</span>}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={quoteTitle(pe,"ltp")}><StackedMetric value={pe.ltp} change={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s} digits={2}/></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"bid_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"bid")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"ask")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"ask_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2 font-semibold" title={ivStatus(pe)}><StackedMetric value={pe.iv} change={pe.iv_change_since_prev} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(pe)}{n(pe.iv_interval_seconds)!==null?` • Δ ${fmt(pe.iv_interval_seconds,0)}s`:""}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={pe.oi===null||pe.oi===undefined?"OI not received":`OI ${String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(pe.oi_timestamp_ns)} • age ${age(pe.oi_age_ms)}`}><StackedMetric value={pe.oi} change={pe.oi_change_1s} pct={pe.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{pe.oi===null||pe.oi===undefined?"—":String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2"><StackedMetric value={pe.volume} change={pe.volume_change_1s} pct={pe.volume_change_pct_1s} compact/></td>
           </tr>;
         })}</tbody>
       </table>
     </div>
-    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask columns are intentionally hidden. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; new fresh quotes update the IV and its percentage-point change. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent; OI is explicitly marked LIVE only when its source timestamp is within five minutes, otherwise LAST. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
+    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask best prices and quantities are shown from the live broker depth feed; missing or stale depth is never substituted. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; Angel One broker IV delta is measured only between actual broker Greeks snapshots (interval shown); local-model 1s IV deltas are suppressed and never paired with broker IV. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent; OI is explicitly marked LIVE only when its source timestamp is within five minutes, otherwise LAST. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
   </section>;
 }
 
@@ -203,23 +225,26 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
   const maxOi = Math.max(1,...oiValues);
   const maxVolume = Math.max(1,...volumeValues);
   const value = (item:Row|undefined,key:string) => item ? n(item[key]) : null;
-  const side = (kind:"PE"|"CE") => rows.map(row => {
-    const item = kind==="PE" ? row.pe : row.ce;
+  const barCell = (item: Row | undefined, kind: "PE" | "CE") => {
     const oi = value(item,"oi");
     const volume = value(item,"volume");
     const oiStatus = oi===null ? "MISSING" : String(item?.oi_status ?? (item?.oi_live===true?"LIVE":"LAST"));
     const volumeFresh = n(item?.source_age_ms)!==null && n(item?.source_age_ms)! <= 5000;
     const volumeStatus = volume===null ? "MISSING" : volumeFresh ? "LIVE" : "LAST";
-    const tone = kind==="PE" ? "bg-pink-500" : "bg-emerald-500";
+    const oiTone = kind==="PE" ? "bg-pink-500" : "bg-emerald-500";
     const volumeTone = kind==="PE" ? "bg-pink-300" : "bg-emerald-300";
-    return <div key={row.strike} className="grid grid-cols-[42px_minmax(0,1fr)] items-center gap-2 border-b theme-border py-1.5">
-      <div className="text-[10px] font-semibold tabular-nums leading-4"><span className={oiStatus==="LIVE"?"theme-text":oiStatus==="LAST"?"text-amber-600":"theme-muted"}>{oi===null?"—":compactIndian(oi)}</span><br/><span className={volumeStatus==="LIVE"?"theme-text":volumeStatus==="LAST"?"text-amber-600":"theme-muted"}>{volume===null?"—":compactIndian(volume)}</span></div>
+    return <div className="grid grid-cols-[minmax(0,1fr)_42px] items-center gap-2">
       <div className="space-y-1">
-        <div className="h-3 overflow-hidden rounded-sm theme-surface-2" title={`OI ${oiStatus} • ${item?.oi_timestamp_ns?sampleTime(item.oi_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${tone}`} style={{width:oi===null?"0%":`${oi/maxOi*100}%`}}/></div>
+        <div className="h-3 overflow-hidden rounded-sm theme-surface-2" title={`OI ${oiStatus} • ${item?.oi_timestamp_ns?sampleTime(item.oi_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${oiTone}`} style={{width:oi===null?"0%":`${oi/maxOi*100}%`}}/></div>
         <div className="h-2.5 overflow-hidden rounded-sm theme-surface-2" title={`Volume ${volumeStatus} • option tick ${item?.source_timestamp_ns?sampleTime(item.source_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${volumeTone}`} style={{width:volume===null?"0%":`${volume/maxVolume*100}%`}}/></div>
       </div>
+      <div className="text-right text-[9px] font-semibold tabular-nums leading-4">
+        <span className={oiStatus==="LIVE"?"theme-text":oiStatus==="LAST"?"text-amber-600":"theme-muted"}>{oi===null?"—":compactIndian(oi)}</span>
+        <br/>
+        <span className={volumeStatus==="LIVE"?"theme-text":volumeStatus==="LAST"?"text-amber-600":"theme-muted"}>{volume===null?"—":compactIndian(volume)}</span>
+      </div>
     </div>;
-  });
+  };
   const oiLive = eligible.filter(item=>item.oi!==null&&item.oi!==undefined&&item.oi_live===true).length;
   const oiLast = eligible.filter(item=>item.oi!==null&&item.oi!==undefined&&item.oi_status==="LAST").length;
   const volumeLive = eligible.filter(item=>n(item.volume)!==null&&n(item.source_age_ms)!==null&&Number(item.source_age_ms)<=5000).length;
@@ -237,18 +262,18 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
       <Metric label="CE Total Volume" value={compactIndian(volumeTotal("CE"))}/>
     </div>
     <div className="flex flex-wrap gap-2 text-[10px] theme-muted"><span className="rounded border theme-border px-2 py-1">OI LIVE {oiLive}</span><span className="rounded border theme-border px-2 py-1">OI LAST {oiLast}</span><span className="rounded border theme-border px-2 py-1">Volume fresh {volumeLive}/{eligible.length}</span><span className="rounded border theme-border px-2 py-1">Expiry {expiry||"WAITING"}</span></div>
-    <div className="grid grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] gap-2">
-      <div className="min-w-0 rounded-xl border theme-border p-2">
-        <div className="mb-2 flex items-center justify-between"><b className="text-xs text-rose-600">PE • PUT</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
-        {side("PE")}
-      </div>
-      <div className="rounded-xl border theme-border p-2">
-        <div className="mb-2 text-center text-xs font-bold theme-text">Strike</div>
-        {strikes.map(strike=><div key={strike} className={`flex min-h-[42px] items-center justify-center border-b theme-border text-[10px] font-semibold tabular-nums ${strike===allStrikes[atmIndex]?"rounded bg-amber-400/20 text-amber-700":"theme-text"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="ml-1 text-[8px]">ATM</span>}</div>)}
-      </div>
-      <div className="min-w-0 rounded-xl border theme-border p-2">
-        <div className="mb-2 flex items-center justify-between"><b className="text-xs text-emerald-600">CE • CALL</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
-        {side("CE")}
+    <div className="overflow-x-auto rounded-xl border theme-border">
+      <div className="min-w-[560px]">
+        <div className="grid grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] gap-2 border-b theme-border theme-surface-2 px-2 py-2">
+          <b className="text-xs text-rose-600">PE • PUT <span className="font-normal theme-muted">OI / Volume</span></b>
+          <b className="text-center text-xs theme-text">Strike</b>
+          <b className="text-right text-xs text-emerald-600">CE • CALL <span className="font-normal theme-muted">OI / Volume</span></b>
+        </div>
+        {rows.map(row=><div key={row.strike} className="grid min-h-[48px] grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] items-center gap-2 border-b theme-border px-2 py-1.5">
+          <div className="min-w-0">{barCell(row.pe,"PE")}</div>
+          <div className={`flex min-h-[38px] items-center justify-center rounded text-[10px] font-bold tabular-nums ${row.strike===allStrikes[atmIndex]?"bg-amber-400/20 text-amber-700":"theme-text"}`}>{fmt(row.strike,0)}{row.strike===allStrikes[atmIndex]&&<span className="ml-1 text-[8px]">ATM</span>}</div>
+          <div className="min-w-0">{barCell(row.ce,"CE")}</div>
+        </div>)}
       </div>
     </div>
     <div className="flex flex-wrap gap-4 text-[10px] theme-muted"><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-500"/> PE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-300"/> PE Volume</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-500"/> CE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-300"/> CE Volume</span></div>
@@ -305,6 +330,7 @@ function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null;
   const strikes=selectedStrikes;
   const atm=atmIndex>=0?listed[atmIndex]:null;
   const ordered=[...groups.entries()].sort((a,b)=>a[1].strike-b[1].strike||a[1].kind.localeCompare(b[1].kind));
+  const hasPlottableData=spotPoints.length>0||ordered.length>0;
   const latest=valid.length?Math.max(...valid.map(x=>Number(x.timestamp_ns))):0;
   const live=latest>0&&Date.now()*1_000_000-latest<=5_000_000_000&&history?.data_status==="LIVE";
   const latestAgeSeconds=latest>0?Math.max(0,Date.now()*1_000_000-latest)/1_000_000_000:null;
@@ -313,12 +339,13 @@ function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null;
   return <section className="space-y-3 rounded-2xl border theme-border theme-surface p-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-lg font-bold theme-text">NIFTY Weekly • Spot + IV Time Series</h2><p className="mt-1 text-xs theme-muted">ATM ±5 strikes • live strikes + durable-history fallback • dual Y-axis</p></div><span className={`rounded-full border px-3 py-1 text-[10px] ${live?"border-emerald-500/40 text-emerald-700":"theme-border theme-muted"}`}>{live?"LIVE • tick ≤ 5s":valid.length?"LAST • persisted broker data":"NO SAVED DATA"} • {valid.length} observations</span></div>
     <p className="text-[11px] theme-muted">Expiry {expiry||"—"} • Saved rows {allValid.length} • Displayed strikes {selectedStrikes.length}/11 • Latest observation {latest?sampleTime(latest):"—"} • Age {latestAgeSeconds===null?"—":latestAgeSeconds<60?`${latestAgeSeconds.toFixed(1)}s`:latestAgeSeconds<3600?`${(latestAgeSeconds/60).toFixed(1)}m`:`${(latestAgeSeconds/3600).toFixed(1)}h`} • {String(history?.data_status??"UNKNOWN")}{expiryMismatch?" • EXPIRY MISMATCH — chart suppressed":""}</p>
-    {valid.length===0?<div className="rounded-xl border theme-border p-8 text-center text-sm theme-muted">{expiryMismatch? `Feed expiry ${feedExpiry} does not match saved-history expiry ${historyExpiry}; cross-expiry plotting is blocked.` : allValid.length? "Saved observations exist, but none match the selected strike window." : `No persisted observations are available for expiry ${expiry||"selected weekly"}. The chart will populate from real broker IV/spot ticks when this expiry is first sampled; no synthetic values are shown.`}</div>:<>
+    {valid.length===0||!hasPlottableData?<div className="rounded-xl border theme-border p-8 text-center text-sm theme-muted">{expiryMismatch? `Feed expiry ${feedExpiry} does not match saved-history expiry ${historyExpiry}; cross-expiry plotting is blocked.` : allValid.length? "Saved observations exist, but none match the selected strike window." : `No persisted observations are available for expiry ${expiry||"selected weekly"}. The chart will populate from real broker IV/spot ticks when this expiry is first sampled; no synthetic values are shown.`}</div>:<>
       <div className="overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="NIFTY spot price and all strike CE and PE implied volatility time series" className="w-full min-w-[760px]">
         {[0,0.25,0.5,0.75,1].map((fraction,i)=>{const yy=top+plotH*fraction;const sv=spotMax-(spotMax-spotMin)*fraction;const iv=ivMax-(ivMax-ivMin)*fraction;return <g key={i}><line x1={left} x2={width-right} y1={yy} y2={yy} stroke="currentColor" opacity=".13" strokeDasharray="3 4"/><text x={left-8} y={yy+4} textAnchor="end" fontSize="10" fill="currentColor">{sv.toFixed(1)}</text><text x={width-right+8} y={yy+4} textAnchor="start" fontSize="10" fill="currentColor">{iv.toFixed(1)}%</text></g>})}
         <line x1={left} x2={left} y1={top} y2={top+plotH} stroke="currentColor" opacity=".45"/><line x1={width-right} x2={width-right} y1={top} y2={top+plotH} stroke="currentColor" opacity=".45"/><line x1={left} x2={width-right} y1={top+plotH} y2={top+plotH} stroke="currentColor" opacity=".45"/>
         <polyline points={path(spotPoints,ySpot)} fill="none" stroke="#111827" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
-        {ordered.map(([key,series])=><polyline key={key} points={path(series.points,yIv)} fill="none" stroke={colorFor(series.strike,series.kind)} strokeWidth={series.kind==="CE"&&series.strike===atm?2.8:1.35} opacity={series.kind==="CE"&&series.strike===atm?1:0.72} strokeLinejoin="round" strokeLinecap="round"/>)}
+        {spotPoints.length===1&&<circle cx={x(spotPoints[0].t)} cy={ySpot(spotPoints[0].v)} r="4" fill="#111827"/>}
+        {ordered.map(([key,series])=><g key={key}><polyline points={path(series.points,yIv)} fill="none" stroke={colorFor(series.strike,series.kind)} strokeWidth={series.kind==="CE"&&series.strike===atm?2.8:1.35} opacity={series.kind==="CE"&&series.strike===atm?1:0.72} strokeLinejoin="round" strokeLinecap="round"/>{series.points.length===1&&<circle cx={x(series.points[0].t)} cy={yIv(series.points[0].v)} r="4" fill={colorFor(series.strike,series.kind)}/>}</g>)}
         <text x={left} y={height-8} fontSize="10" fill="currentColor">{new Date(minT/1e6).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}</text><text x={width-right} y={height-8} textAnchor="end" fontSize="10" fill="currentColor">{new Date(maxT/1e6).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}</text>
       </svg></div>
       <div className="flex flex-wrap gap-x-4 gap-y-2 text-[10px] theme-muted"><span><i className="mr-1 inline-block h-[3px] w-5 align-middle bg-gray-900"/>Spot (left axis)</span><span><i className="mr-1 inline-block h-[3px] w-5 align-middle bg-blue-600"/>IV % (right axis)</span><span>ATM CE {atm===null?"—":fmt(atm,0)} • selected {selectedStrikes.length} strikes</span><span>Expiry {String(history?.expiry??"—")}</span></div>
@@ -376,7 +403,7 @@ export default function IVSkewFlipPage() {
       try{
         const expiry=activeWeeklyExpiry;
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
-        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=600&limit=20000${query}`,{cache:"no-store"});
+        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
         if(active&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
@@ -449,6 +476,7 @@ export default function IVSkewFlipPage() {
       bid:live?.bid??item.bid,
       ask:live?.ask??item.ask,
       iv:item.iv,
+      iv_change_1s:null,
       iv_source:item.iv_source,
       iv_live:false,
       iv_status:"LAST",

@@ -106,7 +106,7 @@ def test_snapshot_keeps_broker_iv_if_full_quote_request_fails():
     class GreeksOnlyClient:
         def option_greeks(self, underlying, expirydate):
             return {"status": True, "data": [{
-                "strikePrice": "25000", "optionType": "PE",
+                "expiry": "17NOV2026", "strikePrice": "25000", "optionType": "PE",
                 "impliedVolatility": "18.75",
             }]}
 
@@ -137,4 +137,40 @@ def test_snapshot_keeps_broker_iv_if_full_quote_request_fails():
         assert row.oi is None
         assert row.spot_price is None
         assert row.spot_timestamp_ns == 0
+    engine.dispose()
+
+
+def test_snapshot_rejects_monthly_greeks_returned_for_weekly_expiry():
+    class WrongExpiryClient:
+        def option_greeks(self, underlying, expirydate):
+            assert expirydate == "17NOV2026"
+            return {"status": True, "data": [{
+                "expiry": "26NOV2026", "strikePrice": "25000",
+                "optionType": "CE", "impliedVolatility": "31.75",
+            }]}
+
+        def quote_many(self, exchange, instruments):
+            return {"status": True, "data": {"fetched": [], "unfetched": instruments}}
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    universe = SimpleNamespace(
+        underlying="NIFTY", expiry="2026-11-17", expiry_type="WEEKLY",
+        option_exchange="NFO",
+        contracts=(SimpleNamespace(token="ce-token", strike=25000.0, option_type="CE"),),
+    )
+    result = capture_angelone_option_snapshot(
+        universe=universe, spot_snapshot=None, client=WrongExpiryClient(),
+        session_factory=Session, captured_at_ns=1_795_000_000_000_000_002,
+    )
+    assert result["saved_contracts"] == 1
+    assert result["iv_received_contracts"] == 0
+    with Session() as db:
+        row = db.query(IVOptionObservation).one()
+        assert row.iv is None
     engine.dispose()

@@ -44,7 +44,25 @@ def _rows(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _greek_key(row: dict[str, Any]) -> tuple[float, str] | None:
+def _expiry_key(value: Any) -> str | None:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return None
+    for pattern in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
+        try:
+            return datetime.strptime(raw, pattern).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _greek_key(row: dict[str, Any], expected_expiry: str) -> tuple[float, str] | None:
+    # Angel One's Option Greeks endpoint has historically returned monthly
+    # Greeks for a weekly request. Never join by strike alone: validate the
+    # expiry echoed by the broker before accepting any IV.
+    returned_expiry = _expiry_key(row.get("expiry", row.get("expiryDate")))
+    if returned_expiry != expected_expiry:
+        return None
     strike = _number(row.get("strikePrice", row.get("strike")))
     side = str(row.get("optionType", row.get("option_type", ""))).strip().upper()
     if strike is None or strike <= 0 or side not in {"CE", "PE"}:
@@ -78,12 +96,13 @@ def capture_angelone_option_snapshot(
 
     broker = client or MarketDataClient()
     captured_ns = int(captured_at_ns or time.time_ns())
+    expiry_date = datetime.strptime(str(universe.expiry), "%Y-%m-%d").date().isoformat()
     expiry = datetime.strptime(str(universe.expiry), "%Y-%m-%d").strftime("%d%b%Y").upper()
     greeks_response = broker.option_greeks(universe.underlying, expiry)
     greek_rows = _rows(greeks_response.get("data"))
     greek_by_key: dict[tuple[float, str], dict[str, Any]] = {}
     for row in greek_rows:
-        key = _greek_key(row)
+        key = _greek_key(row, expiry_date)
         if key is not None:
             greek_by_key[key] = row
 

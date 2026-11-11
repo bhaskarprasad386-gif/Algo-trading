@@ -1954,7 +1954,10 @@ def iv_skew_flip_option_timeseries(
                 .limit(limit)
                 .all()
             )
-            data_status = "LIVE" if rows and now_ns - rows[0].source_timestamp_ns <= 5_000_000_000 else "LAST"
+            # Option Greeks has no exchange event timestamp; source_timestamp_ns
+            # is our response-capture time, so it must never be advertised as a
+            # fresh exchange tick even when fetched moments ago.
+            data_status = "LAST"
             # After the live window expires (including overnight and across
             # non-trading days), retain the newest durable observations for this
             # exact expiry. The query remains bounded by limit and never mixes
@@ -2197,6 +2200,31 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
                 .all()
             )
             last_valid_iv_by_token = {row.token: row for row in latest_iv_rows}
+            # Broker IV delta is measured between actual Angel One snapshots,
+            # never copied from the local-model 1-second sampler.
+            ranked_iv = (
+                db.query(
+                    IVOptionObservation.id.label("id"),
+                    func.row_number().over(
+                        partition_by=IVOptionObservation.token,
+                        order_by=IVOptionObservation.source_timestamp_ns.desc(),
+                    ).label("row_number"),
+                )
+                .filter(
+                    IVOptionObservation.underlying == symbol,
+                    IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.iv_source == "ANGEL_ONE",
+                    IVOptionObservation.iv.isnot(None),
+                )
+                .subquery()
+            )
+            prior_iv_rows = (
+                db.query(IVOptionObservation)
+                .join(ranked_iv, IVOptionObservation.id == ranked_iv.c.id)
+                .filter(ranked_iv.c.row_number == 2)
+                .all()
+            )
+            prior_iv_by_token = {row.token: row for row in prior_iv_rows}
     except Exception as exc:
         app_logger.exception("IV option history read failed")
         raise HTTPException(
@@ -2206,6 +2234,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
     metrics = []
     for row in rows:
         iv_row = last_valid_iv_by_token.get(row.token)
+        prior_iv_row = prior_iv_by_token.get(row.token)
         metrics.append({
             "token": row.token,
             "underlying": row.underlying,
@@ -2220,6 +2249,15 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
             "iv": iv_row.iv if iv_row is not None else None,
             "iv_source": "ANGEL_ONE" if iv_row is not None else None,
             "iv_unit": "PERCENT",
+            "iv_change_since_prev": (
+                round(iv_row.iv - prior_iv_row.iv, 4)
+                if iv_row is not None and prior_iv_row is not None
+                and iv_row.iv is not None and prior_iv_row.iv is not None else None
+            ),
+            "iv_interval_seconds": (
+                round((iv_row.source_timestamp_ns - prior_iv_row.source_timestamp_ns) / 1_000_000_000, 2)
+                if iv_row is not None and prior_iv_row is not None else None
+            ),
             "iv_live": False,
             "iv_status": "LAST" if iv_row is not None else "UNAVAILABLE",
             "iv_source_timestamp_ns": iv_row.source_timestamp_ns if iv_row is not None else None,
