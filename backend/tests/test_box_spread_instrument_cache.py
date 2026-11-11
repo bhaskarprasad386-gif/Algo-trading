@@ -68,8 +68,9 @@ def test_box_spread_rejects_stale_cache_and_preserves_download_error(monkeypatch
     path = tmp_path / "box-cache.json"
     monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
     path.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
         "fetched_at": (datetime.now(timezone.utc) - timedelta(hours=37)).isoformat(),
+        "content_sha256": cache_module._canonical_rows_digest(_rows()),
         "instruments": _rows(),
     }))
     master = FakeMaster(error=RuntimeError("provider timeout"))
