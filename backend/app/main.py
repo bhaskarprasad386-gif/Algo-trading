@@ -2080,9 +2080,11 @@ async def _iv_option_snapshot_daily_loop():
                             next_attempt_delay,
                         )
         else:
-            # Re-enabling the runner during a session should trigger a fresh
-            # attempt immediately rather than inheriting yesterday's throttle.
-            if current_time < time(9, 20) or current_time > time(15, 30, 20):
+            # OFF must pause all broker calls and clear the throttle so turning
+            # the scanner ON during market hours starts capture immediately.
+            runner_off = runtime is None or runtime.snapshot().get("status") != "RUNNING"
+            outside_capture_hours = current_time < time(9, 20) or current_time > time(15, 30, 20)
+            if runner_off or outside_capture_hours:
                 last_attempt_monotonic = 0.0
                 next_attempt_delay = 0.0
         await asyncio.sleep(15)
