@@ -19,6 +19,7 @@ from sqlalchemy import func
 
 from app.core.config import settings
 from app.core.logger import app_logger
+from app.core.daemon_worker import run_blocking_daemon
 from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
@@ -340,7 +341,7 @@ async def _iv_scanner_recovery_loop() -> None:
             # Only the blocking HTTP/cache preparation runs in a worker. Runtime/feed
             # creation stays on the event-loop thread, so cancellation cannot leave
             # a worker that creates a socket after application shutdown.
-            iv_instruments = await asyncio.to_thread(download_iv_instruments, instrument_master)
+            iv_instruments = await run_blocking_daemon(download_iv_instruments, instrument_master, thread_name="iv-instrument-master-fetch")
             snapshot = _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
             if snapshot.get("status") == "RUNNING":
                 app_logger.info("IV Scanner recovered successfully after startup retry")
@@ -375,7 +376,7 @@ async def lifespan(app: FastAPI):
             # Never block the ASGI event loop on Angel One's static master host.
             # If startup is cancelled, the worker can finish only the data fetch;
             # it cannot create an IV feed/socket.
-            iv_instruments = await asyncio.to_thread(download_iv_instruments, instrument_master)
+            iv_instruments = await run_blocking_daemon(download_iv_instruments, instrument_master, thread_name="iv-instrument-master-fetch")
             _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
         except Exception:
             app_logger.exception("Persisted IV Scanner ON could not be restored immediately; recovery loop will retry")
@@ -854,7 +855,7 @@ async def _live_synthetic_loop() -> None:
         try:
             # Instrument-master HTTP I/O must not block ASGI health routes or shutdown.
             # Keep all synthetic runner construction and lifecycle work on the event loop.
-            await asyncio.to_thread(master.download)
+            await run_blocking_daemon(master.download, thread_name="synthetic-instrument-master-fetch")
             today = datetime.now(IST).date()
             top15_liquid_stocks: set[str] = set()
             index_symbols: set[str] = set()
