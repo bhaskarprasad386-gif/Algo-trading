@@ -1,6 +1,10 @@
 name: Box Spread Instrument Master Cache
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/app/market_data/box_spread_instrument_cache.py"
+      - ".github/workflows/box-spread-master-cache.yml"
   push:
     branches: [main]
     paths:
