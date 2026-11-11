@@ -1954,7 +1954,10 @@ def iv_skew_flip_option_timeseries(
                 .limit(limit)
                 .all()
             )
-            data_status = "LIVE" if rows and now_ns - rows[0].source_timestamp_ns <= 5_000_000_000 else "LAST"
+            # Option Greeks has no exchange event timestamp; source_timestamp_ns
+            # is our response-capture time, so it must never be advertised as a
+            # fresh exchange tick even when fetched moments ago.
+            data_status = "LAST"
             # After the live window expires (including overnight and across
             # non-trading days), retain the newest durable observations for this
             # exact expiry. The query remains bounded by limit and never mixes
