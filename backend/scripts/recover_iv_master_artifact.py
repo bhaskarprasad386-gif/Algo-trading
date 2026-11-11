@@ -2,7 +2,7 @@
 
 Run from the backend directory:
   export GITHUB_TOKEN="$(gh auth token)"
-  python scripts/recover_iv_master_artifact.py \
+  PYTHONPATH=. python scripts/recover_iv_master_artifact.py \
     --artifact-id 13847286083 \
     --sha256 ee592b3a0e92ea536d9522253787dcd2de86ed6750d142128625993fdec65bb1
 
@@ -19,12 +19,9 @@ import os
 import sys
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import requests
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.scanner.iv_skew_flip.instruments import (
     CACHE_SCHEMA_VERSION,
