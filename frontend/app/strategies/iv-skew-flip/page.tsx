@@ -165,28 +165,38 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
     </div>
     {chain.error && <div className="m-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-600">{chain.error}</div>}
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[900px] border-collapse border theme-border text-center text-xs">
-        <thead><tr><th colSpan={4} className="border theme-border bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="border theme-border theme-surface-2 px-3 font-bold theme-text">Strike</th><th colSpan={4} className="border theme-border bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
-          <tr className="theme-surface-2 theme-muted">{["Volume","OI","IV %","LTP","LTP","IV %","OI","Volume"].map((x,i)=><th key={i} className="border theme-border px-2 py-2 font-semibold">{x}<span className="block text-[9px] font-normal opacity-70">{["Δ / %","Δ / %","Δ pt","Δ / %","Δ / %","Δ pt","Δ / %","Δ / %"][i]}</span></th>)}</tr></thead>
-        <tbody>{strikes.length === 0 ? <tr><td colSpan={9} className="border theme-border p-10 theme-muted">Waiting for strike universe and broker quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
+      <table className="w-full min-w-[1450px] border-collapse border theme-border text-center text-[10px] sm:text-xs">
+        <thead><tr><th colSpan={8} className="border theme-border bg-emerald-500/10 py-2 text-emerald-700 text-sm">Calls (CE)</th><th rowSpan={2} className="sticky left-0 z-10 border theme-border theme-surface-2 px-2 sm:px-3 font-bold theme-text">Strike</th><th colSpan={8} className="border theme-border bg-rose-500/10 py-2 text-rose-700 text-sm">Puts (PE)</th></tr>
+          <tr className="theme-surface-2 theme-muted">{["Volume","OI","IV %","Bid Qty","Bid","Ask","Ask Qty","LTP","LTP","Bid Qty","Bid","Ask","Ask Qty","IV %","OI","Volume"].map((x,i)=><th key={i} className="border theme-border px-1 sm:px-2 py-2 font-semibold whitespace-nowrap">{x}<span className="block text-[9px] font-normal opacity-70">{["Δ / %","Δ / %","Δ pt","—","₹","₹","—","Δ / %","Δ / %","—","₹","₹","—","Δ pt","Δ / %","Δ / %"][i]}</span></th>)}</tr></thead>
+        <tbody>{strikes.length === 0 ? <tr><td colSpan={17} className="border theme-border p-10 theme-muted">Waiting for strike universe and broker quotes. No placeholder market values are displayed.</td></tr> : strikes.map(strike=>{
           const ce=byKey.get(`${strike}:CE`) ?? {}, pe=byKey.get(`${strike}:PE`) ?? {};
           const ivStatus=(x:Row)=>n(x.iv)===null?"Angel One IV not received":`Angel One broker IV • ${x.iv_status==="LIVE"?"LIVE":"LAST"} • fetched ${sampleTime(x.sampled_at_ns)}`;
           const ivLabel=(x:Row)=>n(x.iv)===null?"—":x.iv_live===true||x.iv_status==="LIVE"?"LIVE":"LAST";
+          const depth=(x:Row,field:string)=>n(x[field])===null?"—":fmt(x[field],0);
+          const depthTitle=(x:Row)=>x.fresh===true?"Angel One live best bid/ask depth":`Depth last received ${age(x.age_ms)} ago`;
           return <tr key={strike} className="border-b theme-border hover:theme-surface-2">
-            <td className="border theme-border px-2 py-2"><StackedMetric value={ce.volume} change={ce.volume_change_1s} pct={ce.volume_change_pct_1s} compact/></td>
-            <td className="border theme-border px-2 py-2" title={ce.oi===null||ce.oi===undefined?"OI not received":`OI ${String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(ce.oi_timestamp_ns)} • age ${age(ce.oi_age_ms)}`}><StackedMetric value={ce.oi} change={ce.oi_change_1s} pct={ce.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{ce.oi===null||ce.oi===undefined?"—":String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))}</span></td>
-            <td className="border theme-border px-2 py-2 font-semibold" title={ivStatus(ce)}><StackedMetric value={ce.iv} change={ce.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(ce)}</span></td>
-            <td className="border theme-border px-2 py-2" title={quoteTitle(ce,"ltp")}><StackedMetric value={ce.ltp} change={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s} digits={2}/></td>
-            <td className={`border theme-border px-3 py-2 font-bold ${strike===allStrikes[atmIndex]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="block text-[9px]">ATM</span>}</td>
-            <td className="border theme-border px-2 py-2" title={quoteTitle(pe,"ltp")}><StackedMetric value={pe.ltp} change={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s} digits={2}/></td>
-            <td className="border theme-border px-2 py-2 font-semibold" title={ivStatus(pe)}><StackedMetric value={pe.iv} change={pe.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(pe)}</span></td>
-            <td className="border theme-border px-2 py-2" title={pe.oi===null||pe.oi===undefined?"OI not received":`OI ${String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(pe.oi_timestamp_ns)} • age ${age(pe.oi_age_ms)}`}><StackedMetric value={pe.oi} change={pe.oi_change_1s} pct={pe.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{pe.oi===null||pe.oi===undefined?"—":String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))}</span></td>
-            <td className="border theme-border px-2 py-2"><StackedMetric value={pe.volume} change={pe.volume_change_1s} pct={pe.volume_change_pct_1s} compact/></td>
+            <td className="border theme-border px-1 sm:px-2 py-2"><StackedMetric value={ce.volume} change={ce.volume_change_1s} pct={ce.volume_change_pct_1s} compact/></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={ce.oi===null||ce.oi===undefined?"OI not received":`OI ${String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(ce.oi_timestamp_ns)} • age ${age(ce.oi_age_ms)}`}><StackedMetric value={ce.oi} change={ce.oi_change_1s} pct={ce.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{ce.oi===null||ce.oi===undefined?"—":String(ce.oi_status??(ce.oi_live===true?"LIVE":"LAST"))}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2 font-semibold" title={ivStatus(ce)}><StackedMetric value={ce.iv} change={ce.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(ce)}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"bid_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"bid")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"ask")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(ce)}>{depth(ce,"ask_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={quoteTitle(ce,"ltp")}><StackedMetric value={ce.ltp} change={ce.ltp_change_1s} pct={ce.ltp_change_pct_1s} digits={2}/></td>
+            <td className={`sticky left-0 z-10 border theme-border px-2 py-2 font-bold ${strike===allStrikes[atmIndex]?"bg-blue-500/15 text-blue-700":"theme-surface-2"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="block text-[9px]">ATM</span>}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={quoteTitle(pe,"ltp")}><StackedMetric value={pe.ltp} change={pe.ltp_change_1s} pct={pe.ltp_change_pct_1s} digits={2}/></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"bid_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"bid")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"ask")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={depthTitle(pe)}>{depth(pe,"ask_qty")}</td>
+            <td className="border theme-border px-1 sm:px-2 py-2 font-semibold" title={ivStatus(pe)}><StackedMetric value={pe.iv} change={pe.iv_change_1s} suffix=" pt" digits={2}/><span className="block text-[9px] theme-muted">{ivLabel(pe)}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2" title={pe.oi===null||pe.oi===undefined?"OI not received":`OI ${String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))} • source ${sampleTime(pe.oi_timestamp_ns)} • age ${age(pe.oi_age_ms)}`}><StackedMetric value={pe.oi} change={pe.oi_change_1s} pct={pe.oi_change_pct_1s} compact/><span className="block text-[9px] theme-muted">{pe.oi===null||pe.oi===undefined?"—":String(pe.oi_status??(pe.oi_live===true?"LIVE":"LAST"))}</span></td>
+            <td className="border theme-border px-1 sm:px-2 py-2"><StackedMetric value={pe.volume} change={pe.volume_change_1s} pct={pe.volume_change_pct_1s} compact/></td>
           </tr>;
         })}</tbody>
       </table>
     </div>
-    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask columns are intentionally hidden. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; new fresh quotes update the IV and its percentage-point change. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent; OI is explicitly marked LIVE only when its source timestamp is within five minutes, otherwise LAST. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
+    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask best prices and quantities are shown from the live broker depth feed; missing or stale depth is never substituted. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; new fresh quotes update the IV and its percentage-point change. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent; OI is explicitly marked LIVE only when its source timestamp is within five minutes, otherwise LAST. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
   </section>;
 }
 
