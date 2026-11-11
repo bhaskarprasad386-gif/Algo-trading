@@ -1103,7 +1103,9 @@ async def _live_box_spread_loop() -> None:
         try:
             # Box Spread uses its own recent instrument-master cache on download failure.
             # The shared InstrumentMaster behavior for other scanners remains unchanged.
-            download_box_spread_instruments(master)
+            # This downloader performs synchronous network I/O; keep it off the ASGI
+            # event loop so Angel One TLS/read timeouts cannot stall API health/routes.
+            await asyncio.to_thread(download_box_spread_instruments, master)
             today = datetime.now(IST).date()
             stock_symbols, index_symbols = set(), set()
             for item in master.instruments:
