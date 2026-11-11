@@ -338,7 +338,9 @@ async def _iv_scanner_recovery_loop() -> None:
             if state and state.get("status") == "RUNNING":
                 retry_delay = 5.0
                 continue
-            snapshot = await asyncio.to_thread(_start_iv_skew_flip_runtime)
+            # Keep startup ownership on the event-loop thread: cancellation must not
+            # leave a background worker that can create a feed after app shutdown.
+            snapshot = _start_iv_skew_flip_runtime()
             if snapshot.get("status") == "RUNNING":
                 app_logger.info("IV Scanner recovered successfully after startup retry")
             retry_delay = 5.0
