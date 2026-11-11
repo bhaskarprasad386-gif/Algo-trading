@@ -176,7 +176,10 @@ def _valid_option_expiry(value: Any) -> bool:
         return False
 
 
-def _write_snapshot(rows: list[dict[str, Any]]) -> None:
+def _write_snapshot(
+    rows: list[dict[str, Any]],
+    fetched_at: datetime | None = None,
+) -> None:
     path = _cache_path()
     temp_name = None
     try:
@@ -188,7 +191,7 @@ def _write_snapshot(rows: list[dict[str, Any]]) -> None:
             temp_name = handle.name
             json.dump({
                 "schema_version": CACHE_SCHEMA_VERSION,
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "fetched_at": (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
                 "content_sha256": _canonical_rows_digest(rows),
                 "instruments": rows,
             }, handle, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
