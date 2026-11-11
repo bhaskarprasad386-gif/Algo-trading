@@ -196,7 +196,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
         })}</tbody>
       </table>
     </div>
-    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask best prices and quantities are shown from the live broker depth feed; missing or stale depth is never substituted. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; new fresh quotes update the IV and its percentage-point change. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent; OI is explicitly marked LIVE only when its source timestamp is within five minutes, otherwise LAST. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
+    <div className="border-t theme-border px-3 py-2 text-[11px] theme-muted">LTP is the actual broker last-traded price. Bid/Ask best prices and quantities are shown from the live broker depth feed; missing or stale depth is never substituted. IV retains the last received value when a fresh tick is unavailable and labels it LAST rather than hiding it; Angel One broker IV updates only when the broker Greeks snapshot is refreshed; local-model 1s IV deltas are intentionally suppressed so they cannot be paired with broker IV. Volume/OI show the full Indian-formatted number alongside the Cr/Lakh equivalent; OI is explicitly marked LIVE only when its source timestamp is within five minutes, otherwise LAST. Green/red changes indicate positive/negative movement; stale or repeated ticks do not create artificial deltas.</div>
   </section>;
 }
 
@@ -476,6 +476,7 @@ export default function IVSkewFlipPage() {
       bid:live?.bid??item.bid,
       ask:live?.ask??item.ask,
       iv:item.iv,
+      iv_change_1s:null,
       iv_source:item.iv_source,
       iv_live:false,
       iv_status:"LAST",
