@@ -337,9 +337,11 @@ async def _iv_scanner_recovery_loop() -> None:
             if state and state.get("status") == "RUNNING":
                 retry_delay = 5.0
                 continue
-            # Keep startup ownership on the event-loop thread: cancellation must not
-            # leave a background worker that can create a feed after app shutdown.
-            snapshot = _start_iv_skew_flip_runtime()
+            # Only the blocking HTTP/cache preparation runs in a worker. Runtime/feed
+            # creation stays on the event-loop thread, so cancellation cannot leave
+            # a worker that creates a socket after application shutdown.
+            iv_instruments = await asyncio.to_thread(download_iv_instruments, instrument_master)
+            snapshot = _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
             if snapshot.get("status") == "RUNNING":
                 app_logger.info("IV Scanner recovered successfully after startup retry")
             retry_delay = 5.0
@@ -370,7 +372,11 @@ async def lifespan(app: FastAPI):
     # Restore only the IV Scanner when its own persisted switch is ON.
     if _get_iv_scanner_enabled():
         try:
-            _start_iv_skew_flip_runtime()
+            # Never block the ASGI event loop on Angel One's static master host.
+            # If startup is cancelled, the worker can finish only the data fetch;
+            # it cannot create an IV feed/socket.
+            iv_instruments = await asyncio.to_thread(download_iv_instruments, instrument_master)
+            _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
         except Exception:
             app_logger.exception("Persisted IV Scanner ON could not be restored immediately; recovery loop will retry")
     if _iv_scanner_recovery_task is None:
@@ -1097,7 +1103,9 @@ async def _live_box_spread_loop() -> None:
         try:
             # Box Spread uses its own recent instrument-master cache on download failure.
             # The shared InstrumentMaster behavior for other scanners remains unchanged.
-            download_box_spread_instruments(master)
+            # This downloader performs synchronous network I/O; keep it off the ASGI
+            # event loop so Angel One TLS/read timeouts cannot stall API health/routes.
+            await asyncio.to_thread(download_box_spread_instruments, master)
             today = datetime.now(IST).date()
             stock_symbols, index_symbols = set(), set()
             for item in master.instruments:
@@ -1802,7 +1810,7 @@ def _save_iv_scanner_enabled(enabled: bool) -> bool:
     return bool(enabled)
 
 
-def _start_iv_skew_flip_runtime():
+def _start_iv_skew_flip_runtime(*, iv_instruments=None):
     global iv_skew_flip_runtime
     # Serialize start/stop requests so simultaneous UI/API requests cannot
     # create duplicate IV consumers or publish a half-started runtime.
@@ -1824,7 +1832,8 @@ def _start_iv_skew_flip_runtime():
         # Previously validation ran before runtime.start() downloaded that snapshot,
         # so a valid basket could be marked unavailable against an empty/stale master.
         # This downloader is isolated and never reads or mutates the Box Spread cache.
-        iv_instruments = download_iv_instruments(instrument_master)
+        if iv_instruments is None:
+            iv_instruments = download_iv_instruments(instrument_master)
         # Runner ON is the user's explicit activation for IV market-data analysis.
         # Load both official index baskets, verify the complete rosters/token mappings,
         # then subscribe only to each index's dynamically ranked top 10 constituents.
