@@ -131,7 +131,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const quoteTokens = new Set(quotes.map(q => String(q.token ?? "")).filter(Boolean));
   // Keep sampler-only rows too: a quote can disappear from the fresh feed while
   // its last valid IV is intentionally retained and must still render as LAST.
-  const merged = [
+  const merged: Row[] = [
     ...quotes.map(q => {
       const metric = byToken.get(String(q.token ?? "")) ?? {};
       return { ...metric, ...q, iv: metric.iv_source === "ANGEL_ONE" ? metric.iv : q.iv, iv_source: metric.iv_source ?? q.iv_source };
