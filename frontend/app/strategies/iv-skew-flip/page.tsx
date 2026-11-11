@@ -142,7 +142,16 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const atmTarget = spotPrice ?? feedAtm;
   const atmIndex = allStrikes.length ? atmTarget === null ? Math.floor(allStrikes.length / 2) : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget)||(Math.abs(x-atmTarget)===Math.abs(allStrikes[best]-atmTarget)&&x>allStrikes[best])?i:best,0) : -1;
   const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-5),atmIndex+6);
-  const byKey = new Map(merged.map(x => [`${x.strike}:${x.option_type}`, x]));
+  const optionSide = (value: unknown) => {
+    const side = String(value ?? "").trim().toUpperCase();
+    return side === "CE" || side === "CALL" ? "CE" : side === "PE" || side === "PUT" ? "PE" : "";
+  };
+  const contractKey = (item: Row) => {
+    const strike = n(item.strike);
+    const side = optionSide(item.option_type);
+    return strike === null || !side ? null : `${strike}:${side}`;
+  };
+  const byKey = new Map(merged.map(item => [contractKey(item), item]).filter((entry): entry is [string, Row] => entry[0] !== null));
   const spotFeed = feed.status ?? "WAITING";
   const cell=(v:unknown,d=2)=>n(v)===null?"—":fmt(v,d);
   const quoteTitle=(x:Row,field:string)=>n(x[field])===null?"No broker quote received":`Broker ${field.toUpperCase()} • ${x.fresh===true?"LIVE":`last received ${age(x.age_ms)} ago; may be stale`}`;
@@ -203,20 +212,23 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
   const maxOi = Math.max(1,...oiValues);
   const maxVolume = Math.max(1,...volumeValues);
   const value = (item:Row|undefined,key:string) => item ? n(item[key]) : null;
-  const side = (kind:"PE"|"CE") => rows.map(row => {
-    const item = kind==="PE" ? row.pe : row.ce;
+  const barCell = (item: Row | undefined, kind: "PE" | "CE") => {
     const oi = value(item,"oi");
     const volume = value(item,"volume");
     const oiStatus = oi===null ? "MISSING" : String(item?.oi_status ?? (item?.oi_live===true?"LIVE":"LAST"));
     const volumeFresh = n(item?.source_age_ms)!==null && n(item?.source_age_ms)! <= 5000;
     const volumeStatus = volume===null ? "MISSING" : volumeFresh ? "LIVE" : "LAST";
-    const tone = kind==="PE" ? "bg-pink-500" : "bg-emerald-500";
+    const oiTone = kind==="PE" ? "bg-pink-500" : "bg-emerald-500";
     const volumeTone = kind==="PE" ? "bg-pink-300" : "bg-emerald-300";
-    return <div key={row.strike} className="grid grid-cols-[42px_minmax(0,1fr)] items-center gap-2 border-b theme-border py-1.5">
-      <div className="text-[10px] font-semibold tabular-nums leading-4"><span className={oiStatus==="LIVE"?"theme-text":oiStatus==="LAST"?"text-amber-600":"theme-muted"}>{oi===null?"—":compactIndian(oi)}</span><br/><span className={volumeStatus==="LIVE"?"theme-text":volumeStatus==="LAST"?"text-amber-600":"theme-muted"}>{volume===null?"—":compactIndian(volume)}</span></div>
+    return <div className="grid grid-cols-[minmax(0,1fr)_42px] items-center gap-2">
       <div className="space-y-1">
-        <div className="h-3 overflow-hidden rounded-sm theme-surface-2" title={`OI ${oiStatus} • ${item?.oi_timestamp_ns?sampleTime(item.oi_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${tone}`} style={{width:oi===null?"0%":`${oi/maxOi*100}%`}}/></div>
+        <div className="h-3 overflow-hidden rounded-sm theme-surface-2" title={`OI ${oiStatus} • ${item?.oi_timestamp_ns?sampleTime(item.oi_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${oiTone}`} style={{width:oi===null?"0%":`${oi/maxOi*100}%`}}/></div>
         <div className="h-2.5 overflow-hidden rounded-sm theme-surface-2" title={`Volume ${volumeStatus} • option tick ${item?.source_timestamp_ns?sampleTime(item.source_timestamp_ns):"timestamp unavailable"}`}><div className={`h-full rounded-sm ${volumeTone}`} style={{width:volume===null?"0%":`${volume/maxVolume*100}%`}}/></div>
+      </div>
+      <div className="text-right text-[9px] font-semibold tabular-nums leading-4">
+        <span className={oiStatus==="LIVE"?"theme-text":oiStatus==="LAST"?"text-amber-600":"theme-muted"}>{oi===null?"—":compactIndian(oi)}</span>
+        <br/>
+        <span className={volumeStatus==="LIVE"?"theme-text":volumeStatus==="LAST"?"text-amber-600":"theme-muted"}>{volume===null?"—":compactIndian(volume)}</span>
       </div>
     </div>;
   });
@@ -237,18 +249,18 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
       <Metric label="CE Total Volume" value={compactIndian(volumeTotal("CE"))}/>
     </div>
     <div className="flex flex-wrap gap-2 text-[10px] theme-muted"><span className="rounded border theme-border px-2 py-1">OI LIVE {oiLive}</span><span className="rounded border theme-border px-2 py-1">OI LAST {oiLast}</span><span className="rounded border theme-border px-2 py-1">Volume fresh {volumeLive}/{eligible.length}</span><span className="rounded border theme-border px-2 py-1">Expiry {expiry||"WAITING"}</span></div>
-    <div className="grid grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] gap-2">
-      <div className="min-w-0 rounded-xl border theme-border p-2">
-        <div className="mb-2 flex items-center justify-between"><b className="text-xs text-rose-600">PE • PUT</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
-        {side("PE")}
-      </div>
-      <div className="rounded-xl border theme-border p-2">
-        <div className="mb-2 text-center text-xs font-bold theme-text">Strike</div>
-        {strikes.map(strike=><div key={strike} className={`flex min-h-[42px] items-center justify-center border-b theme-border text-[10px] font-semibold tabular-nums ${strike===allStrikes[atmIndex]?"rounded bg-amber-400/20 text-amber-700":"theme-text"}`}>{fmt(strike,0)}{strike===allStrikes[atmIndex]&&<span className="ml-1 text-[8px]">ATM</span>}</div>)}
-      </div>
-      <div className="min-w-0 rounded-xl border theme-border p-2">
-        <div className="mb-2 flex items-center justify-between"><b className="text-xs text-emerald-600">CE • CALL</b><span className="text-[9px] theme-muted">OI / Volume</span></div>
-        {side("CE")}
+    <div className="overflow-x-auto rounded-xl border theme-border">
+      <div className="min-w-[560px]">
+        <div className="grid grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] gap-2 border-b theme-border theme-surface-2 px-2 py-2">
+          <b className="text-xs text-rose-600">PE • PUT <span className="font-normal theme-muted">OI / Volume</span></b>
+          <b className="text-center text-xs theme-text">Strike</b>
+          <b className="text-right text-xs text-emerald-600">CE • CALL <span className="font-normal theme-muted">OI / Volume</span></b>
+        </div>
+        {rows.map(row=><div key={row.strike} className="grid min-h-[48px] grid-cols-[minmax(0,1fr)_76px_minmax(0,1fr)] items-center gap-2 border-b theme-border px-2 py-1.5">
+          <div className="min-w-0">{barCell(row.pe,"PE")}</div>
+          <div className={`flex min-h-[38px] items-center justify-center rounded text-[10px] font-bold tabular-nums ${row.strike===allStrikes[atmIndex]?"bg-amber-400/20 text-amber-700":"theme-text"}`}>{fmt(row.strike,0)}{row.strike===allStrikes[atmIndex]&&<span className="ml-1 text-[8px]">ATM</span>}</div>
+          <div className="min-w-0">{barCell(row.ce,"CE")}</div>
+        </div>)}
       </div>
     </div>
     <div className="flex flex-wrap gap-4 text-[10px] theme-muted"><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-500"/> PE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-300"/> PE Volume</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-500"/> CE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-300"/> CE Volume</span></div>
@@ -376,7 +388,7 @@ export default function IVSkewFlipPage() {
       try{
         const expiry=activeWeeklyExpiry;
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
-        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=600&limit=20000${query}`,{cache:"no-store"});
+        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
         if(active&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
