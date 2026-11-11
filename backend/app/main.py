@@ -2031,26 +2031,60 @@ def _iv_snapshot_saved_today(day):
 
 
 async def _iv_option_snapshot_daily_loop():
-    """Capture one Angel One Greeks/FULL quote snapshot near the NSE close."""
+    """Persist broker IV during market hours and make bounded near-close retries."""
+    last_attempt_monotonic = 0.0
+    next_attempt_delay = 0.0
     while True:
         now = datetime.now(IST)
-        if time(15, 28) <= now.time() <= time(15, 30, 20):
-            runtime = iv_skew_flip_runtime
-            if runtime is None or runtime.snapshot().get("status") != "RUNNING":
-                await asyncio.sleep(15)
-                continue
-            try:
-                already_saved = await asyncio.to_thread(_iv_snapshot_saved_today, now.date())
-                if not already_saved:
-                    result = await asyncio.to_thread(_capture_iv_broker_option_snapshot)
-                    app_logger.info(
-                        "IV EOD Angel One option snapshot saved: expiry=%s contracts=%s IV=%s",
-                        result.get("expiry"), result.get("saved_contracts"),
-                        result.get("iv_received_contracts"),
-                    )
-            except Exception:
-                # Retry within the close window; Angel One Greeks is a live-only API.
-                app_logger.exception("IV EOD Angel One option snapshot attempt failed")
+        current_time = now.time()
+        runtime = iv_skew_flip_runtime
+        if (
+            runtime is not None
+            and runtime.snapshot().get("status") == "RUNNING"
+            and time(9, 20) <= current_time <= time(15, 30, 20)
+        ):
+            near_close = time(15, 28) <= current_time <= time(15, 30, 20)
+            already_saved = False
+            if near_close:
+                try:
+                    already_saved = await asyncio.to_thread(_iv_snapshot_saved_today, now.date())
+                except Exception:
+                    app_logger.exception("IV EOD snapshot completion check failed")
+            if not already_saved:
+                monotonic_now = time_module.monotonic()
+                retry_delay = 15.0 if near_close else (
+                    next_attempt_delay if next_attempt_delay > 0 else 300.0
+                )
+                if monotonic_now - last_attempt_monotonic >= retry_delay:
+                    last_attempt_monotonic = monotonic_now
+                    try:
+                        result = await asyncio.to_thread(_capture_iv_broker_option_snapshot)
+                        received = int(result.get("iv_received_contracts") or 0)
+                        expected = int(result.get("expected_contracts") or 22)
+                        if received >= expected:
+                            next_attempt_delay = 300.0
+                            app_logger.info(
+                                "IV Angel One option snapshot persisted: expiry=%s contracts=%s IV=%s",
+                                result.get("expiry"), result.get("saved_contracts"), received,
+                            )
+                        else:
+                            next_attempt_delay = 15.0 if near_close else 60.0
+                            app_logger.warning(
+                                "IV Angel One snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
+                                result.get("expiry"), received, expected,
+                            )
+                    except Exception:
+                        next_attempt_delay = 15.0 if near_close else 60.0
+                        app_logger.exception(
+                            "IV Angel One option snapshot attempt failed; next retry in %.0fs",
+                            next_attempt_delay,
+                        )
+        else:
+            # Re-enabling the runner during a session should trigger a fresh
+            # attempt immediately rather than inheriting yesterday's throttle.
+            if current_time < time(9, 20) or current_time > time(15, 30, 20):
+                last_attempt_monotonic = 0.0
+                next_attempt_delay = 0.0
         await asyncio.sleep(15)
 
 
@@ -2130,14 +2164,47 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
                 .limit(limit)
                 .all()
             )
+            # A later quote-only/partial Greeks response must not erase the
+            # last valid broker IV shown for that contract.
+            latest_iv_per_token = (
+                db.query(
+                    IVOptionObservation.token.label("token"),
+                    func.max(IVOptionObservation.source_timestamp_ns).label("latest_iv_tick"),
+                )
+                .filter(
+                    IVOptionObservation.underlying == symbol,
+                    IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.iv_source == "ANGEL_ONE",
+                    IVOptionObservation.iv.isnot(None),
+                )
+                .group_by(IVOptionObservation.token)
+                .subquery()
+            )
+            latest_iv_rows = (
+                db.query(IVOptionObservation)
+                .join(
+                    latest_iv_per_token,
+                    (IVOptionObservation.token == latest_iv_per_token.c.token)
+                    & (IVOptionObservation.source_timestamp_ns == latest_iv_per_token.c.latest_iv_tick),
+                )
+                .filter(
+                    IVOptionObservation.underlying == symbol,
+                    IVOptionObservation.expiry == selected_expiry,
+                    IVOptionObservation.iv_source == "ANGEL_ONE",
+                )
+                .all()
+            )
+            last_valid_iv_by_token = {row.token: row for row in latest_iv_rows}
     except Exception as exc:
         app_logger.exception("IV option history read failed")
         raise HTTPException(
             status_code=503,
             detail={"message": "Durable IV option history is temporarily unavailable.", "reason": f"{type(exc).__name__}: {exc}"},
         ) from exc
-    metrics = [
-        {
+    metrics = []
+    for row in rows:
+        iv_row = last_valid_iv_by_token.get(row.token)
+        metrics.append({
             "token": row.token,
             "underlying": row.underlying,
             "expiry": row.expiry,
@@ -2148,12 +2215,16 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
             "oi_live": False,
             "oi_timestamp_ns": row.source_timestamp_ns if row.oi is not None else None,
             "oi_stale": row.oi is not None,
-            "iv": row.iv,
-            "iv_source": row.iv_source,
+            "iv": iv_row.iv if iv_row is not None else None,
+            "iv_source": "ANGEL_ONE" if iv_row is not None else None,
             "iv_unit": "PERCENT",
             "iv_live": False,
-            "iv_status": "LAST",
-            "iv_input": "BID_ASK_MIDPOINT" if row.bid is not None and row.ask is not None else ("LTP" if row.ltp is not None else None),
+            "iv_status": "LAST" if iv_row is not None else "UNAVAILABLE",
+            "iv_source_timestamp_ns": iv_row.source_timestamp_ns if iv_row is not None else None,
+            "iv_input": (
+                "BID_ASK_MIDPOINT" if iv_row is not None and iv_row.bid is not None and iv_row.ask is not None
+                else ("LTP" if iv_row is not None and iv_row.ltp is not None else None)
+            ),
             "mark": row.mark,
             "ltp": row.ltp,
             "source_timestamp_ns": row.source_timestamp_ns,
@@ -2167,9 +2238,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
             "iv_change_1s": None,
             "ltp_change_1s": None,
             "ltp_change_pct_1s": None,
-        }
-        for row in rows
-    ]
+        })
     return {
         "status": "ok",
         "underlying": symbol,
