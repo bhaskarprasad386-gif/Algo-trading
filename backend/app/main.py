@@ -19,6 +19,7 @@ from sqlalchemy import func
 
 from app.core.config import settings
 from app.core.logger import app_logger
+from app.core.daemon_worker import run_blocking_daemon
 from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
@@ -323,10 +324,11 @@ async def _iv_scanner_recovery_loop() -> None:
     instrument snapshot freshness/integrity checks. An explicitly saved OFF
     state is always respected.
     """
-    retry_delay = 5.0
+    retry_delay = 0.0
     max_retry_delay = 60.0
     while True:
-        await asyncio.sleep(retry_delay)
+        if retry_delay:
+            await asyncio.sleep(retry_delay)
         try:
             if not _get_iv_scanner_enabled():
                 retry_delay = 5.0
@@ -340,7 +342,7 @@ async def _iv_scanner_recovery_loop() -> None:
             # Only the blocking HTTP/cache preparation runs in a worker. Runtime/feed
             # creation stays on the event-loop thread, so cancellation cannot leave
             # a worker that creates a socket after application shutdown.
-            iv_instruments = await asyncio.to_thread(download_iv_instruments, instrument_master)
+            iv_instruments = await run_blocking_daemon(download_iv_instruments, instrument_master, thread_name="iv-instrument-master-fetch")
             snapshot = _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
             if snapshot.get("status") == "RUNNING":
                 app_logger.info("IV Scanner recovered successfully after startup retry")
@@ -353,7 +355,7 @@ async def _iv_scanner_recovery_loop() -> None:
                 retry_delay,
                 exc,
             )
-            retry_delay = min(max_retry_delay, retry_delay * 2.0)
+            retry_delay = min(max_retry_delay, max(5.0, retry_delay * 2.0))
 
 
 @asynccontextmanager
@@ -369,16 +371,9 @@ async def lifespan(app: FastAPI):
     # restarts. Never trust a persisted connected flag after process startup.
     with SessionLocal() as owner_state_db:
         reconcile_owner_state_on_startup(owner_state_db)
-    # Restore only the IV Scanner when its own persisted switch is ON.
-    if _get_iv_scanner_enabled():
-        try:
-            # Never block the ASGI event loop on Angel One's static master host.
-            # If startup is cancelled, the worker can finish only the data fetch;
-            # it cannot create an IV feed/socket.
-            iv_instruments = await asyncio.to_thread(download_iv_instruments, instrument_master)
-            _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
-        except Exception:
-            app_logger.exception("Persisted IV Scanner ON could not be restored immediately; recovery loop will retry")
+    # Restore the opt-in IV Scanner asynchronously after lifespan startup.
+    # The API must become available even while Angel One's static master host
+    # is timing out; the recovery task below owns retries and cache validation.
     if _iv_scanner_recovery_task is None:
         _iv_scanner_recovery_task = asyncio.create_task(_iv_scanner_recovery_loop())
     if _weekly_swing_refresh_task is None:
@@ -854,7 +849,7 @@ async def _live_synthetic_loop() -> None:
         try:
             # Instrument-master HTTP I/O must not block ASGI health routes or shutdown.
             # Keep all synthetic runner construction and lifecycle work on the event loop.
-            await asyncio.to_thread(master.download)
+            await run_blocking_daemon(master.download, thread_name="synthetic-instrument-master-fetch")
             today = datetime.now(IST).date()
             top15_liquid_stocks: set[str] = set()
             index_symbols: set[str] = set()

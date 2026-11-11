@@ -378,3 +378,18 @@ def test_streamed_master_download_rejects_oversized_payload(monkeypatch):
     with pytest.raises(ValueError, match="exceeded"):
         loader._download_master_payload(loader.PRIMARY_MASTER_URL)
     assert response.closed is True
+
+def test_snapshot_writer_preserves_original_fetched_at_on_recovery(monkeypatch, tmp_path):
+    rows = valid_rows()
+    cache = tmp_path / "iv_snapshot.json"
+    fetched_at = datetime.now(timezone.utc) - timedelta(minutes=15)
+    monkeypatch.setattr(loader, "_cache_path", lambda: cache)
+
+    loader._write_snapshot(rows, fetched_at=fetched_at)
+
+    payload = json.loads(cache.read_text(encoding="utf-8"))
+    assert datetime.fromisoformat(payload["fetched_at"]) == fetched_at
+    assert payload["content_sha256"] == hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    ).hexdigest()
+    assert loader._read_recent_snapshot() is not None
