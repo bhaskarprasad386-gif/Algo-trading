@@ -19,6 +19,7 @@ import os
 import sys
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -116,16 +117,23 @@ def _extract_verified_snapshot(archive_bytes: bytes, expected_sha256: str) -> tu
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifact-id", type=int, required=True)
+    parser.add_argument("--artifact-id", type=int, help="GitHub Actions artifact ID (use with a token)")
+    parser.add_argument("--archive-path", type=Path, help="Previously downloaded ZIP; useful after GitHub artifact expiry")
     parser.add_argument("--sha256", required=True, help="GitHub artifact ZIP SHA-256 from Actions metadata")
     args = parser.parse_args()
-
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if not token:
-        parser.error("set GITHUB_TOKEN or GH_TOKEN; do not put the token on the command line")
+    if bool(args.artifact_id) == bool(args.archive_path):
+        parser.error("provide exactly one of --artifact-id or --archive-path")
 
     try:
-        archive = _download_artifact(args.artifact_id, token)
+        if args.archive_path:
+            archive = args.archive_path.read_bytes()
+            if len(archive) > MASTER_MAX_BYTES:
+                raise ValueError(f"artifact ZIP exceeds {MASTER_MAX_BYTES} byte limit")
+        else:
+            token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+            if not token:
+                parser.error("set GITHUB_TOKEN or GH_TOKEN; do not put the token on the command line")
+            archive = _download_artifact(args.artifact_id, token)
         rows, fetched_at = _extract_verified_snapshot(archive, args.sha256)
         _write_snapshot(rows, fetched_at=fetched_at)
         installed = _read_recent_snapshot()
