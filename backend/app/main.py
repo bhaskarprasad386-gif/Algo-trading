@@ -2068,13 +2068,13 @@ async def _iv_option_snapshot_daily_loop():
                                 result.get("expiry"), result.get("saved_contracts"), received,
                             )
                         else:
-                            next_attempt_delay = 15.0 if near_close else 60.0
+                            next_attempt_delay = 15.0 if near_close else (60.0 if received > 0 else 300.0)
                             app_logger.warning(
                                 "IV Angel One snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
                                 result.get("expiry"), received, expected,
                             )
                     except Exception:
-                        next_attempt_delay = 15.0 if near_close else 60.0
+                        next_attempt_delay = 15.0 if near_close else 300.0
                         app_logger.exception(
                             "IV Angel One option snapshot attempt failed; next retry in %.0fs",
                             next_attempt_delay,
