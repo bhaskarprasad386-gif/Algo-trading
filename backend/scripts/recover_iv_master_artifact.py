@@ -19,9 +19,12 @@ import os
 import sys
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.scanner.iv_skew_flip.instruments import (
     CACHE_SCHEMA_VERSION,
