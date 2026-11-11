@@ -316,9 +316,47 @@ configure_live_box_spread_websocket_depth(
     )
 )
 
+async def _iv_scanner_recovery_loop() -> None:
+    """Retry a persisted IV Scanner ON state after transient startup failures.
+
+    This loop is deliberately isolated from Box Spread and never relaxes the
+    instrument snapshot freshness/integrity checks. An explicitly saved OFF
+    state is always respected.
+    """
+    retry_delay = 5.0
+    max_retry_delay = 60.0
+    while True:
+        await asyncio.sleep(retry_delay)
+        try:
+            if not _get_iv_scanner_enabled():
+                retry_delay = 5.0
+                continue
+            with _iv_skew_flip_runtime_lock:
+                runtime = iv_skew_flip_runtime
+                state = runtime.snapshot() if runtime is not None else None
+            if state and state.get("status") == "RUNNING":
+                retry_delay = 5.0
+                continue
+            # Keep startup ownership on the event-loop thread: cancellation must not
+            # leave a background worker that can create a feed after app shutdown.
+            snapshot = _start_iv_skew_flip_runtime()
+            if snapshot.get("status") == "RUNNING":
+                app_logger.info("IV Scanner recovered successfully after startup retry")
+            retry_delay = 5.0
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.warning(
+                "IV Scanner startup recovery failed; retrying in {:.1f}s: {}",
+                retry_delay,
+                exc,
+            )
+            retry_delay = min(max_retry_delay, retry_delay * 2.0)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, iv_skew_flip_runtime
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -334,7 +372,9 @@ async def lifespan(app: FastAPI):
         try:
             _start_iv_skew_flip_runtime()
         except Exception:
-            app_logger.exception("Persisted IV Scanner ON could not be restored; runner remains STOPPED")
+            app_logger.exception("Persisted IV Scanner ON could not be restored immediately; recovery loop will retry")
+    if _iv_scanner_recovery_task is None:
+        _iv_scanner_recovery_task = asyncio.create_task(_iv_scanner_recovery_loop())
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
     if _iv_option_snapshot_task is None:
@@ -363,7 +403,7 @@ async def lifespan(app: FastAPI):
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
         paper_rule_task.cancel()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -377,6 +417,7 @@ async def lifespan(app: FastAPI):
                 _live_box_spread_task,
                 _weekly_swing_refresh_task,
                 _iv_option_snapshot_task,
+                _iv_scanner_recovery_task,
                 paper_rule_task,
             )
             if task is not None
@@ -397,6 +438,7 @@ async def lifespan(app: FastAPI):
         _live_box_spread_task = None
         _weekly_swing_refresh_task = None
         _iv_option_snapshot_task = None
+        _iv_scanner_recovery_task = None
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
@@ -590,6 +632,7 @@ async def dashboard_websocket(websocket: WebSocket):
             pass
 
 _history_collector_task: asyncio.Task | None = None
+_iv_scanner_recovery_task: asyncio.Task | None = None
 _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
