@@ -52,7 +52,8 @@ def test_box_spread_uses_recent_own_cache_on_download_failure(monkeypatch, tmp_p
     monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
     rows = _rows()
     path.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
+        "content_sha256": cache_module._canonical_rows_digest(_rows()),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "instruments": rows,
     }))
@@ -180,3 +181,36 @@ def test_box_spread_streaming_rejects_oversized_payload(monkeypatch):
     with pytest.raises(ValueError, match="exceeded"):
         cache_module._download_alternate_rows()
     assert response.closed is True
+
+def test_box_spread_cache_rejects_tampered_content_digest(monkeypatch, tmp_path):
+    path = tmp_path / "box-cache.json"
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
+    rows = _rows()
+    cache_module._write_cache(rows)
+    payload = json.loads(path.read_text())
+    payload["instruments"][0]["symbol"] = "TAMPERED"
+    path.write_text(json.dumps(payload))
+    assert cache_module._read_cache() is None
+
+
+def test_box_spread_cache_rejects_legacy_schema_without_digest(monkeypatch, tmp_path):
+    path = tmp_path / "box-cache.json"
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "instruments": _rows(),
+    }))
+    assert cache_module._read_cache() is None
+
+
+def test_box_spread_cache_rejects_malformed_rows(monkeypatch, tmp_path):
+    path = tmp_path / "box-cache.json"
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
+    path.write_text(json.dumps({
+        "schema_version": 2,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "content_sha256": cache_module._canonical_rows_digest([{"symbol": "X"}]),
+        "instruments": [{"symbol": "X"}],
+    }))
+    assert cache_module._read_cache() is None
