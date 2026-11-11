@@ -852,7 +852,9 @@ async def _live_synthetic_loop() -> None:
         master = InstrumentMaster()
         runner = None
         try:
-            master.download()
+            # Instrument-master HTTP I/O must not block ASGI health routes or shutdown.
+            # Keep all synthetic runner construction and lifecycle work on the event loop.
+            await asyncio.to_thread(master.download)
             today = datetime.now(IST).date()
             top15_liquid_stocks: set[str] = set()
             index_symbols: set[str] = set()
