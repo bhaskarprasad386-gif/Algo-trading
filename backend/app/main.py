@@ -1102,7 +1102,10 @@ async def _live_box_spread_loop() -> None:
             # The shared InstrumentMaster behavior for other scanners remains unchanged.
             # This downloader performs synchronous network I/O; keep it off the ASGI
             # event loop so Angel One TLS/read timeouts cannot stall API health/routes.
-            await asyncio.to_thread(download_box_spread_instruments, master)
+            await run_blocking_daemon(
+                download_box_spread_instruments, master,
+                thread_name="box-spread-instrument-master-fetch",
+            )
             today = datetime.now(IST).date()
             stock_symbols, index_symbols = set(), set()
             for item in master.instruments:
