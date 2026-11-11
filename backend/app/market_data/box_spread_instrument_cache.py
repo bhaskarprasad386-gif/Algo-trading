@@ -42,6 +42,8 @@ def _download_alternate_rows():
         response = requests.get(ALTERNATE_MASTER_URL, timeout=20)
     try:
         response.raise_for_status()
+        if not hasattr(response, "iter_content"):
+            return response.json()
         chunks = []
         total = 0
         for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
