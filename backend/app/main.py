@@ -324,10 +324,11 @@ async def _iv_scanner_recovery_loop() -> None:
     instrument snapshot freshness/integrity checks. An explicitly saved OFF
     state is always respected.
     """
-    retry_delay = 5.0
+    retry_delay = 0.0
     max_retry_delay = 60.0
     while True:
-        await asyncio.sleep(retry_delay)
+        if retry_delay:
+            await asyncio.sleep(retry_delay)
         try:
             if not _get_iv_scanner_enabled():
                 retry_delay = 5.0
@@ -354,7 +355,7 @@ async def _iv_scanner_recovery_loop() -> None:
                 retry_delay,
                 exc,
             )
-            retry_delay = min(max_retry_delay, retry_delay * 2.0)
+            retry_delay = min(max_retry_delay, max(5.0, retry_delay * 2.0))
 
 
 @asynccontextmanager
@@ -370,16 +371,9 @@ async def lifespan(app: FastAPI):
     # restarts. Never trust a persisted connected flag after process startup.
     with SessionLocal() as owner_state_db:
         reconcile_owner_state_on_startup(owner_state_db)
-    # Restore only the IV Scanner when its own persisted switch is ON.
-    if _get_iv_scanner_enabled():
-        try:
-            # Never block the ASGI event loop on Angel One's static master host.
-            # If startup is cancelled, the worker can finish only the data fetch;
-            # it cannot create an IV feed/socket.
-            iv_instruments = await run_blocking_daemon(download_iv_instruments, instrument_master, thread_name="iv-instrument-master-fetch")
-            _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
-        except Exception:
-            app_logger.exception("Persisted IV Scanner ON could not be restored immediately; recovery loop will retry")
+    # Restore the opt-in IV Scanner asynchronously after lifespan startup.
+    # The API must become available even while Angel One's static master host
+    # is timing out; the recovery task below owns retries and cache validation.
     if _iv_scanner_recovery_task is None:
         _iv_scanner_recovery_task = asyncio.create_task(_iv_scanner_recovery_loop())
     if _weekly_swing_refresh_task is None:
