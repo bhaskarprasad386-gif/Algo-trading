@@ -21,6 +21,46 @@ ALTERNATE_MASTER_URL = (
     "OpenAPI_File/files/OpenAPIScripMaster.json"
 )
 
+MASTER_CONNECT_TIMEOUT_SECONDS = 10
+MASTER_READ_TIMEOUT_SECONDS = 120
+MASTER_MAX_BYTES = 64 * 1024 * 1024
+MASTER_CHUNK_BYTES = 1024 * 1024
+
+def _download_alternate_rows():
+    """Stream the official alternate master with a strict size bound."""
+    try:
+        response = requests.get(
+            ALTERNATE_MASTER_URL,
+            timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
+            stream=True,
+            headers={"User-Agent": "Algo-Trading-BoxSpread-InstrumentMaster/1.0", "Accept": "application/json"},
+        )
+    except TypeError as exc:
+        # Compatibility for narrow legacy test doubles only.
+        if "unexpected keyword" not in str(exc):
+            raise
+        response = requests.get(ALTERNATE_MASTER_URL, timeout=20)
+    try:
+        response.raise_for_status()
+        if not hasattr(response, "iter_content"):
+            return response.json()
+        chunks = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MASTER_MAX_BYTES:
+                raise ValueError(f"Angel One instrument master exceeded {MASTER_MAX_BYTES} byte limit")
+            chunks.append(chunk)
+        if not chunks:
+            raise ValueError("Angel One instrument master response was empty")
+        return json.loads(b"".join(chunks).decode("utf-8"))
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
 
 def _cache_path() -> Path:
     configured = os.environ.get("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", "").strip()
@@ -88,9 +128,8 @@ def _write_cache(rows, fetched_at=None):
 
 def _load_alternate_master(master):
     """Try Angel One's alternate public instrument-master host for Box Spread only."""
-    response = requests.get(ALTERNATE_MASTER_URL, timeout=20)
-    response.raise_for_status()
-    rows = _validated_rows(response.json())
+    payload = _download_alternate_rows()
+    rows = _validated_rows(payload)
     if rows is None:
         raise ValueError("Angel One alternate instrument master returned invalid/empty rows")
 

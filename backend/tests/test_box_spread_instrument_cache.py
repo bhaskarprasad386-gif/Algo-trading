@@ -139,3 +139,44 @@ def test_box_spread_ignores_stale_in_process_iv_snapshot(monkeypatch, tmp_path):
     _fail_alternate_host(monkeypatch)
     with pytest.raises(RuntimeError, match="provider timeout"):
         download_box_spread_instruments(master)
+
+
+def test_box_spread_streams_bounded_alternate_master_and_closes_response(monkeypatch):
+    rows = _rows()
+    payload = json.dumps(rows).encode("utf-8")
+    calls = []
+    class Response:
+        closed = False
+        def raise_for_status(self):
+            pass
+        def iter_content(self, chunk_size):
+            assert chunk_size == cache_module.MASTER_CHUNK_BYTES
+            yield payload
+        def close(self):
+            self.closed = True
+    response = Response()
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return response
+    monkeypatch.setattr(cache_module.requests, "get", fake_get)
+    assert cache_module._download_alternate_rows() == rows
+    assert response.closed is True
+    assert calls[0][0] == cache_module.ALTERNATE_MASTER_URL
+    assert calls[0][1]["stream"] is True
+    assert calls[0][1]["timeout"] == (10, 120)
+
+
+def test_box_spread_streaming_rejects_oversized_payload(monkeypatch):
+    class Response:
+        closed = False
+        def raise_for_status(self):
+            pass
+        def iter_content(self, chunk_size):
+            yield b"x" * (cache_module.MASTER_MAX_BYTES + 1)
+        def close(self):
+            self.closed = True
+    response = Response()
+    monkeypatch.setattr(cache_module.requests, "get", lambda *args, **kwargs: response)
+    with pytest.raises(ValueError, match="exceeded"):
+        cache_module._download_alternate_rows()
+    assert response.closed is True

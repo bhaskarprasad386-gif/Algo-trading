@@ -30,6 +30,53 @@ ALTERNATE_MASTER_URL = (
 MAX_CACHE_AGE_SECONDS = 36 * 60 * 60
 CACHE_SCHEMA_VERSION = 2
 
+# Angel One's instrument master is large; bound memory and reject partial payloads.
+MASTER_CONNECT_TIMEOUT_SECONDS = 10
+MASTER_READ_TIMEOUT_SECONDS = 120
+MASTER_MAX_BYTES = 64 * 1024 * 1024
+MASTER_CHUNK_BYTES = 1024 * 1024
+MASTER_USER_AGENT = "Algo-Trading-IV-InstrumentMaster/1.0"
+
+def _download_master_payload(url: str) -> Any:
+    """Download a complete bounded JSON payload and always close the response."""
+    response = requests.get(
+        url,
+        timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
+        stream=True,
+        headers={"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"},
+    )
+    try:
+        response.raise_for_status()
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MASTER_MAX_BYTES:
+                raise ValueError(f"Angel One instrument master exceeded {MASTER_MAX_BYTES} byte limit")
+            chunks.append(chunk)
+        if not chunks:
+            raise ValueError("Angel One instrument master response was empty")
+        return json.loads(b"".join(chunks).decode("utf-8"))
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+def _fetch_validated_master(url: str) -> list[dict[str, Any]]:
+    """Fetch and validate one official source before exposing its rows."""
+    try:
+        payload = _download_master_payload(url)
+    except TypeError as exc:
+        # Retain compatibility with narrow legacy test doubles only.
+        if "unexpected keyword" not in str(exc):
+            raise
+        response = requests.get(url, timeout=(5, 20))
+        response.raise_for_status()
+        payload = response.json()
+    return _validate_rows(payload)
+
 
 def _cache_path() -> Path:
     configured = os.environ.get("IV_INSTRUMENT_MASTER_CACHE_PATH", "").strip()
@@ -241,9 +288,7 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
     try:
         # Do not call InstrumentMaster.download(): it reads/writes a
         # process-wide cache shared with Box Spread and other consumers.
-        response = requests.get(PRIMARY_MASTER_URL, timeout=(5, 20))
-        response.raise_for_status()
-        rows = _validate_rows(response.json())
+        rows = _fetch_validated_master(PRIMARY_MASTER_URL)
         installed = _install_snapshot(instrument_master, rows)
         _write_snapshot(installed)
         return installed
@@ -255,9 +300,7 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
         )
 
     try:
-        response = requests.get(ALTERNATE_MASTER_URL, timeout=(5, 20))
-        response.raise_for_status()
-        rows = _validate_rows(response.json())
+        rows = _fetch_validated_master(ALTERNATE_MASTER_URL)
         installed = _install_snapshot(instrument_master, rows)
         _write_snapshot(installed)
         app_logger.warning(
