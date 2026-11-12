@@ -98,6 +98,12 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
             or pe3[-1].expiry != expiry or tgt[-1].expiry != expiry
             or ce3[-1].strike != tgt[-1].strike):
         return StrategyEvaluation(AlertState.WATCH, reasons=("PAIR_NOT_SAME_STRIKE_EXPIRY",))
+    # Reject malformed observations before cadence checks so a corrupt
+    # source/OI timestamp is never hidden behind a secondary alignment error.
+    for series in (ce3, pe3, tgt):
+        if any(_structurally_valid(row) for row in series):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
+
     # Compare IV/volume changes over the same exchange-minute windows.
     # Per-contract cadence alone is insufficient if CE and PE buckets drift.
     ce_minutes = tuple(row.source_timestamp_ns // (60*NS) for row in ce3)
@@ -107,8 +113,6 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNALIGNED_OPTION_HISTORY",))
 
     for series in (ce3, pe3, tgt):
-        if any(_structurally_valid(row) for row in series):
-            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
         # Historical quote freshness is intentionally wider than the live
         # option/spot gate, but its OI timestamp must still be a real, recent
         # observation. A refreshed price quote cannot make carried-forward OI
