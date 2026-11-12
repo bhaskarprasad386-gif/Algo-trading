@@ -11,6 +11,10 @@ from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
 
 
+class AmbiguousDeliveryError(RuntimeError):
+    """Transport failed after a send may have reached the remote provider."""
+
+
 class TelegramOutboxWorker:
     def __init__(
         self, session_factory: Any, *, max_attempts: int = 6,
@@ -94,7 +98,13 @@ class TelegramOutboxWorker:
         try:
             sender(payload)
             final_status, error = "SENT", ""
+        except AmbiguousDeliveryError:
+            # A timeout/connection loss after POST may mean Telegram accepted
+            # the message. Never retry an outcome that could duplicate a send.
+            final_status = "UNCERTAIN"
+            error = "DELIVERY_OUTCOME_UNKNOWN_AFTER_TRANSPORT_FAILURE"
         except Exception as exc:
+            # A definitive provider/API rejection can be retried with backoff.
             final_status = "RETRY"
             error = f"{type(exc).__name__}: {exc}"[:2000]
 
@@ -124,4 +134,4 @@ class TelegramOutboxWorker:
             session.close()
 
 
-__all__ = ["TelegramOutboxWorker"]
+__all__ = ["AmbiguousDeliveryError", "TelegramOutboxWorker"]
