@@ -3,6 +3,7 @@ from urllib.error import HTTPError
 
 from app.core.config import settings
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.alerts.notifications import TelegramRejectedError
 
 
 class FakeResponse:
@@ -95,7 +96,7 @@ def test_telegram_sender_rejects_http_200_with_provider_ok_false(monkeypatch):
     )
     try:
         IVSkewFlipRuntime._telegram_sender({"event_id": 12})
-    except RuntimeError as exc:
+    except TelegramRejectedError as exc:
         assert str(exc) == "TELEGRAM_API_REJECTED"
         assert "chat not found" not in str(exc)
     else:
@@ -157,3 +158,50 @@ def test_telegram_sender_reads_retry_after_from_bot_api_error_parameters(monkeyp
         assert exc.retry_after_seconds == 42
     else:
         raise AssertionError("Telegram retry_after response parameter must be honored")
+
+
+
+def test_telegram_sender_classifies_http_4xx_as_permanent_rejection(monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+
+    def rejected(_request, timeout):
+        raise HTTPError(
+            "https://api.telegram.org/bot/test-token/sendMessage",
+            403, "Forbidden", {}, None,
+        )
+
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen", rejected,
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 15})
+    except TelegramRejectedError as exc:
+        assert str(exc) == "TELEGRAM_API_REJECTED"
+        assert "test-token" not in str(exc)
+    else:
+        raise AssertionError("HTTP 403 must be a permanent Telegram rejection")
+
+
+def test_telegram_sender_keeps_http_5xx_retryable(monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+
+    def temporary_failure(_request, timeout):
+        raise HTTPError(
+            "https://api.telegram.org/bot/test-token/sendMessage",
+            503, "Service Unavailable", {}, None,
+        )
+
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen", temporary_failure,
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 16})
+    except RuntimeError as exc:
+        assert str(exc) == "TELEGRAM_PROVIDER_TEMPORARY_FAILURE"
+        assert "test-token" not in str(exc)
+    else:
+        raise AssertionError("HTTP 503 must remain retryable")
