@@ -69,11 +69,13 @@ fi
 
 mkdir -p "$BACKEND_DIR/data"
 
-# Verify imports before installing any systemd files.
+# Verify the complete recovery entrypoint and both isolated cache helpers
+# before installing any systemd files. Importing the entrypoint also catches
+# missing IV/Box helper modules and incompatible runtime dependencies.
 (
   cd "$BACKEND_DIR"
-  PYTHONPATH="$BACKEND_DIR" "$PYTHON_PATH" -c \
-    'import requests; from app.market_data import box_spread_instrument_cache'
+  PYTHONPATH="$BACKEND_DIR:$BACKEND_DIR/scripts" "$PYTHON_PATH" -c \
+    'import requests; import recover_latest_master_artifacts'
 )
 
 cat > "$SERVICE_FILE" <<EOF
