@@ -37,7 +37,7 @@ def test_download_master_streams_valid_rows_and_closes_response():
     assert transport.download_master_rows("https://example.test/master", get=get) == rows
     assert response.closed
     assert calls[0][1]["stream"] is True
-    assert calls[0][1]["timeout"] == (10, 120)
+    assert calls[0][1]["timeout"] == (8, 90)
 
 
 def test_download_master_retries_transient_failure():
