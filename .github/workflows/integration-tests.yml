@@ -207,3 +207,44 @@ jobs:
           python -m pytest -q --tb=short --timeout=30 --timeout-method=thread \
             backend/tests/test_box_spread_instrument_cache.py \
             backend/tests/test_daemon_worker.py
+
+  instrument-master-transport:
+    name: Instrument Master Transport Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest
+      - name: Compile shared instrument-master consumers
+        run: |
+          python -m py_compile backend/app/market_data/master_transport.py
+          python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
+          python -m py_compile backend/app/market_data/instruments.py
+          python -m py_compile backend/tests/test_instrument_master_concurrency.py
+          python -m py_compile backend/app/instruments/manager.py
+          python -m py_compile backend/app/market_data/instruments.py
+          python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
+          python -m py_compile backend/scripts/recover_box_spread_master_artifact.py
+          python -m py_compile backend/scripts/recover_iv_master_artifact.py
+          python -m py_compile backend/scripts/recover_latest_master_artifacts.py
+          python -m py_compile backend/scripts/recover_latest_box_spread_master_artifact.py
+          bash -n backend/scripts/diagnose_angelone_tls_path.sh
+          bash -n backend/scripts/install_master_recovery_timer.sh
+      - name: Run instrument-master regression suite
+        run: |
+          python -m pytest -q --tb=short \
+            backend/tests/test_master_transport.py \
+            backend/tests/test_instrument_master_concurrency.py \
+            backend/tests/test_box_spread_instrument_cache.py \
+            backend/tests/test_iv_skew_flip_instruments.py \
+            backend/tests/test_recover_latest_box_spread_master_artifact.py

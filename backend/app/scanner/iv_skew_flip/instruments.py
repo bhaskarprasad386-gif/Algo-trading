@@ -17,6 +17,7 @@ from typing import Any
 import requests
 
 from app.core.logger import app_logger
+from app.market_data.master_transport import download_master_rows
 
 
 PRIMARY_MASTER_URL = (
@@ -38,31 +39,13 @@ MASTER_CHUNK_BYTES = 1024 * 1024
 MASTER_USER_AGENT = "Algo-Trading-IV-InstrumentMaster/1.0"
 
 def _download_master_payload(url: str) -> Any:
-    """Download a complete bounded JSON payload and always close the response."""
-    response = requests.get(
+    """Use shared TLS-profile fallback and bounded streaming for IV master fetches."""
+    return download_master_rows(
         url,
-        timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
-        stream=True,
-        headers={"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"},
+        timeout=(8, 90),
+        retries=3,
     )
-    try:
-        response.raise_for_status()
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > MASTER_MAX_BYTES:
-                raise ValueError(f"Angel One instrument master exceeded {MASTER_MAX_BYTES} byte limit")
-            chunks.append(chunk)
-        if not chunks:
-            raise ValueError("Angel One instrument master response was empty")
-        return json.loads(b"".join(chunks).decode("utf-8"))
-    finally:
-        close = getattr(response, "close", None)
-        if callable(close):
-            close()
+
 
 def _fetch_validated_master(url: str) -> list[dict[str, Any]]:
     """Fetch and validate one official source before exposing its rows."""
@@ -205,6 +188,9 @@ def _write_snapshot(
                 os.unlink(temp_name)
             except OSError:
                 pass
+        # A refresh is not durable until the atomic replace succeeds. Surface
+        # the failure so callers/workflows cannot report a false successful save.
+        raise
 
 
 def _read_recent_snapshot() -> tuple[list[dict[str, Any]], datetime] | None:
@@ -292,8 +278,14 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
         # Do not call InstrumentMaster.download(): it reads/writes a
         # process-wide cache shared with Box Spread and other consumers.
         rows = _fetch_validated_master(PRIMARY_MASTER_URL)
-        installed = _install_snapshot(instrument_master, rows)
-        _write_snapshot(installed)
+        # Persist and verify durability before publishing rows to the live
+        # scanner instance. A failed disk write must never expose an
+        # unpersisted master as a successful refresh.
+        _write_snapshot(rows)
+        persisted = _read_recent_snapshot()
+        if persisted is None or _canonical_rows_digest(persisted[0]) != _canonical_rows_digest(rows):
+            raise RuntimeError("IV primary master snapshot failed post-write verification")
+        installed = _install_snapshot(instrument_master, persisted[0], fetched_at=persisted[1])
         return installed
     except Exception as exc:
         primary_error = exc
@@ -304,8 +296,14 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
 
     try:
         rows = _fetch_validated_master(ALTERNATE_MASTER_URL)
-        installed = _install_snapshot(instrument_master, rows)
-        _write_snapshot(installed)
+        # Keep publication ordered after durable write/read-back just like the
+        # primary path; if persistence fails, fall back to the prior verified
+        # snapshot rather than retaining unpersisted alternate rows.
+        _write_snapshot(rows)
+        persisted = _read_recent_snapshot()
+        if persisted is None or _canonical_rows_digest(persisted[0]) != _canonical_rows_digest(rows):
+            raise RuntimeError("IV alternate master snapshot failed post-write verification")
+        installed = _install_snapshot(instrument_master, persisted[0], fetched_at=persisted[1])
         app_logger.warning(
             "IV scanner loaded validated Angel One instrument master from alternate official host (rows={})",
             len(installed),

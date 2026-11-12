@@ -61,59 +61,43 @@ def valid_rows():
 def test_primary_master_is_used_without_shared_cache_or_alternate_request(monkeypatch):
     rows = valid_rows()
     monkeypatch.setattr(loader, "_write_snapshot", lambda rows: None)
+    monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: (rows, datetime.now(timezone.utc)))
     shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
     FakeMaster._cached_instruments = shared_rows
     FakeMaster._cached_snapshot_date = "2000-01-01"
     master = FakeMaster()
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return rows
-
     calls = []
-
-    def fake_get(url, timeout):
-        calls.append((url, timeout))
-        if url != loader.PRIMARY_MASTER_URL:
-            raise AssertionError("alternate host must not be requested")
-        return Response()
-
-    monkeypatch.setattr(loader.requests, "get", fake_get)
+    def fake_fetch(url):
+        calls.append(url)
+        assert url == loader.PRIMARY_MASTER_URL
+        return rows
+    monkeypatch.setattr(loader, "_download_master_payload", fake_fetch)
     assert loader.download_iv_instruments(master) == rows
     assert master.instruments == rows
     assert master._loaded is True
     assert FakeMaster._cached_instruments is shared_rows
     assert FakeMaster._cached_snapshot_date == "2000-01-01"
-    assert calls == [(loader.PRIMARY_MASTER_URL, (5, 20))]
+    assert calls == [loader.PRIMARY_MASTER_URL]
 
 
 def test_alternate_official_master_is_validated_without_mutating_shared_cache(monkeypatch):
     rows = valid_rows()
     monkeypatch.setattr(loader, "_write_snapshot", lambda rows: None)
+    monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: (rows, datetime.now(timezone.utc)))
     shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
     FakeMaster._cached_instruments = shared_rows
     FakeMaster._cached_snapshot_date = "2000-01-01"
     master = FakeMaster(error=TimeoutError("primary host timeout"))
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return rows
-
     calls = []
-
-    def fake_get(url, timeout):
-        calls.append((url, timeout))
+    def fake_fetch(url):
+        calls.append(url)
         if url == loader.PRIMARY_MASTER_URL:
             raise TimeoutError("primary host timeout")
-        return Response()
-
-    monkeypatch.setattr(loader.requests, "get", fake_get)
+        assert url == loader.ALTERNATE_MASTER_URL
+        return rows
+    monkeypatch.setattr(loader, "_download_master_payload", fake_fetch)
     result = loader.download_iv_instruments(master)
 
     assert result == rows
@@ -122,10 +106,7 @@ def test_alternate_official_master_is_validated_without_mutating_shared_cache(mo
     assert master._symbol_exchange_index is None
     assert FakeMaster._cached_instruments is shared_rows
     assert FakeMaster._cached_snapshot_date == "2000-01-01"
-    assert calls == [
-        (loader.PRIMARY_MASTER_URL, (5, 20)),
-        (loader.ALTERNATE_MASTER_URL, (5, 20)),
-    ]
+    assert calls == [loader.PRIMARY_MASTER_URL, loader.ALTERNATE_MASTER_URL]
 
 
 def test_alternate_master_rejects_missing_nse_index_token(monkeypatch, tmp_path):
@@ -134,14 +115,7 @@ def test_alternate_master_rejects_missing_nse_index_token(monkeypatch, tmp_path)
     master = FakeMaster(error=TimeoutError("primary host timeout"))
     rows = [row for row in valid_rows() if row["name"] != "BANKNIFTY" or row["exch_seg"] != "NSE"]
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return rows
-
-    monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(loader, "_download_master_payload", lambda url: rows)
     with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
         loader.download_iv_instruments(master)
 
@@ -151,14 +125,7 @@ def test_alternate_master_rejects_non_list_payload(monkeypatch, tmp_path):
     monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: None)
     master = FakeMaster(error=TimeoutError("primary host timeout"))
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"instruments": valid_rows()}
-
-    monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(loader, "_download_master_payload", lambda url: {"instruments": valid_rows()})
     with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
         loader.download_iv_instruments(master)
 
@@ -177,8 +144,8 @@ def test_recent_validated_snapshot_is_used_without_mutating_shared_cache(monkeyp
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "_cache_path", lambda: cache)
     monkeypatch.setattr(
-        loader.requests, "get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
+        loader, "_download_master_payload",
+        lambda url: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
     )
     master = FakeMaster(error=TimeoutError("primary timeout"))
 
@@ -199,8 +166,8 @@ def test_stale_or_incomplete_snapshot_is_never_used(monkeypatch, tmp_path):
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "_cache_path", lambda: cache)
     monkeypatch.setattr(
-        loader.requests, "get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
+        loader, "_download_master_payload",
+        lambda url: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
     )
     master = FakeMaster(error=TimeoutError("primary timeout"))
 
@@ -217,7 +184,7 @@ def test_total_master_failure_exposes_both_source_errors(monkeypatch, tmp_path):
             raise TimeoutError("alternate host timed out")
         raise AssertionError(f"unexpected instrument-master URL: {url}")
 
-    monkeypatch.setattr(loader.requests, "get", fail_both_hosts)
+    monkeypatch.setattr(loader, "_download_master_payload", fail_both_hosts)
     master = FakeMaster()
 
     with pytest.raises(RuntimeError) as exc:
@@ -333,51 +300,26 @@ def test_non_numeric_tokens_in_iv_required_exchanges_are_rejected(exchange):
         loader._validate_rows(rows)
 
 
-def test_streamed_master_download_uses_bounded_chunks_and_closes_response(monkeypatch):
+def test_streamed_master_download_delegates_to_shared_transport(monkeypatch):
     rows = valid_rows()
-    payload = json.dumps(rows).encode("utf-8")
     calls = []
-
-    class Response:
-        closed = False
-        def raise_for_status(self):
-            pass
-        def iter_content(self, chunk_size):
-            assert chunk_size == loader.MASTER_CHUNK_BYTES
-            yield payload[:17]
-            yield b""
-            yield payload[17:]
-        def close(self):
-            self.closed = True
-
-    response = Response()
-    def fake_get(url, **kwargs):
-        calls.append((url, kwargs))
-        return response
-
-    monkeypatch.setattr(loader.requests, "get", fake_get)
+    def fake_transport(url, *, timeout, retries):
+        calls.append((url, timeout, retries))
+        return rows
+    monkeypatch.setattr(loader, "download_master_rows", fake_transport)
     assert loader._fetch_validated_master(loader.PRIMARY_MASTER_URL) == rows
-    assert response.closed is True
-    assert calls[0][1]["stream"] is True
-    assert calls[0][1]["timeout"] == (10, 120)
-    assert calls[0][1]["headers"]["User-Agent"] == loader.MASTER_USER_AGENT
+    assert calls == [(loader.PRIMARY_MASTER_URL, (8, 90), 3)]
 
 
-def test_streamed_master_download_rejects_oversized_payload(monkeypatch):
-    class Response:
-        closed = False
-        def raise_for_status(self):
-            pass
-        def iter_content(self, chunk_size):
-            yield b"x" * (loader.MASTER_MAX_BYTES + 1)
-        def close(self):
-            self.closed = True
-
-    response = Response()
-    monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: response)
+def test_streamed_master_download_propagates_transport_size_limit(monkeypatch):
+    monkeypatch.setattr(
+        loader,
+        "download_master_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("exceeded")),
+    )
     with pytest.raises(ValueError, match="exceeded"):
         loader._download_master_payload(loader.PRIMARY_MASTER_URL)
-    assert response.closed is True
+
 
 def test_snapshot_writer_preserves_original_fetched_at_on_recovery(monkeypatch, tmp_path):
     rows = valid_rows()
@@ -393,3 +335,46 @@ def test_snapshot_writer_preserves_original_fetched_at_on_recovery(monkeypatch, 
         json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
     ).hexdigest()
     assert loader._read_recent_snapshot() is not None
+
+
+
+
+def test_failed_iv_snapshot_write_never_publishes_unpersisted_rows(monkeypatch, tmp_path):
+    monkeypatch.setattr(loader, "_cache_path", lambda: tmp_path / "unwritable.json")
+    monkeypatch.setattr(
+        loader, "_write_snapshot",
+        lambda rows: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: None)
+    master = FakeMaster()
+    master.instruments = [{"symbol": "PREVIOUS-LIVE-SNAPSHOT"}]
+    master._loaded = True
+
+    def fetch(url):
+        if url == loader.PRIMARY_MASTER_URL:
+            return valid_rows()
+        if url == loader.ALTERNATE_MASTER_URL:
+            return valid_rows()
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(loader, "_download_master_payload", fetch)
+
+    with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
+        loader.download_iv_instruments(master)
+
+    assert master.instruments == [{"symbol": "PREVIOUS-LIVE-SNAPSHOT"}]
+    assert master._loaded is True
+
+
+def test_snapshot_write_failure_is_not_reported_as_success(monkeypatch, tmp_path):
+    cache = tmp_path / "iv_snapshot.json"
+    cache.write_text("last-known-good", encoding="utf-8")
+    monkeypatch.setattr(loader, "_cache_path", lambda: cache)
+    monkeypatch.setattr(
+        loader.os, "replace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    with pytest.raises(OSError, match="disk unavailable"):
+        loader._write_snapshot(valid_rows())
+    assert cache.read_text(encoding="utf-8") == "last-known-good"
+    assert list(tmp_path.glob("iv_snapshot.json.*.tmp")) == []

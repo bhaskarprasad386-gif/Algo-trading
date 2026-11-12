@@ -5,24 +5,31 @@ from sqlalchemy.orm import Session
 from app.core.logger import app_logger
 from app.core.database import engine
 from app.models.instrument import Instrument
+from app.market_data.master_transport import download_master_rows
 
 
 class InstrumentManager:
     """Manager to download, parse, and sync Angel One instrument master list."""
 
     SCRIP_MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+    ALTERNATE_SCRIP_MASTER_URL = "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
 
     def fetch_master_json(self):
         """Fetch the latest scrip master json from Angel One."""
         try:
             app_logger.info("Downloading Angel One Instrument Master list...")
-            response = requests.get(self.SCRIP_MASTER_URL, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, list):
-                raise ValueError("instrument master response must be a JSON list")
-            if any(not isinstance(item, dict) for item in data):
-                raise ValueError("instrument master response contains a non-object item")
+            errors = []
+            data = None
+            for source_url in (self.SCRIP_MASTER_URL, self.ALTERNATE_SCRIP_MASTER_URL):
+                try:
+                    data = download_master_rows(source_url, timeout=(8, 90), retries=3)
+                    app_logger.info("Instrument master fetched from {}", source_url)
+                    break
+                except Exception as source_error:
+                    errors.append(f"{source_url}: {type(source_error).__name__}: {source_error}")
+                    app_logger.warning("Instrument master source failed; trying official alternate: {}", errors[-1])
+            if data is None:
+                raise RuntimeError("All official Angel One instrument-master hosts failed: " + " | ".join(errors))
             app_logger.info(f"Successfully downloaded {len(data)} instruments.")
             return data
         except Exception as e:

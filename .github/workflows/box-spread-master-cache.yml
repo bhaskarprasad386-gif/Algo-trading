@@ -1,14 +1,19 @@
 name: Box Spread Instrument Master Cache
 on:
+  # Independent egress refresh; 00:00 UTC is 05:30 IST.
+  schedule:
+    - cron: '0 0 * * *'
   workflow_dispatch:
   pull_request:
     paths:
       - "backend/app/market_data/box_spread_instrument_cache.py"
+      - "backend/app/market_data/master_transport.py"
       - ".github/workflows/box-spread-master-cache.yml"
   push:
     branches: [main]
     paths:
       - "backend/app/market_data/box_spread_instrument_cache.py"
+      - "backend/app/market_data/master_transport.py"
       - ".github/workflows/box-spread-master-cache.yml"
 
 permissions:
@@ -34,31 +39,18 @@ jobs:
           python - <<'PY'
           import os
           from pathlib import Path
-          import requests
           from app.market_data import box_spread_instrument_cache as cache
+          from app.market_data.master_transport import download_master_rows
 
           errors = []
           rows = None
-          for label, url, timeout in (
-              ("primary", cache.ALTERNATE_MASTER_URL.replace("margincalculator.angelone.in", "margincalculator.angelbroking.com"), (5, 30)),
-              ("alternate", cache.ALTERNATE_MASTER_URL, (5, 30)),
-          ):
+          sources = (
+              ("primary", "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"),
+              ("alternate", cache.ALTERNATE_MASTER_URL),
+          )
+          for label, url in sources:
               try:
-                  response = requests.get(url, timeout=timeout, stream=True)
-                  response.raise_for_status()
-                  chunks, total = [], 0
-                  try:
-                      for chunk in response.iter_content(chunk_size=cache.MASTER_CHUNK_BYTES):
-                          if not chunk:
-                              continue
-                          total += len(chunk)
-                          if total > cache.MASTER_MAX_BYTES:
-                              raise ValueError("master exceeds 64 MiB limit")
-                          chunks.append(chunk)
-                  finally:
-                      response.close()
-                  import json
-                  payload = json.loads(b"".join(chunks).decode("utf-8"))
+                  payload = download_master_rows(url, timeout=(5, 30), retries=3)
                   rows = cache._validated_rows(payload)
                   if rows is None:
                       raise ValueError("production Box Spread row validation failed")
@@ -82,4 +74,4 @@ jobs:
           name: box-spread-instrument-master-validated
           path: ${{ runner.temp }}/box_spread_instrument_master_cache.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14

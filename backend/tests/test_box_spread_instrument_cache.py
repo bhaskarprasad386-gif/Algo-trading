@@ -32,10 +32,12 @@ def _rows():
 
 
 def _fail_alternate_host(monkeypatch):
+    # The cache now delegates HTTP to master_transport.download_master_rows;
+    # patch the cache's transport seam so tests never make real network calls.
     monkeypatch.setattr(
-        cache_module.requests,
-        "get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("alternate timeout")),
+        cache_module,
+        "_download_alternate_rows",
+        lambda: (_ for _ in ()).throw(RuntimeError("alternate timeout")),
     )
 
 
@@ -85,15 +87,7 @@ def test_box_spread_tries_alternate_angel_one_host_before_disk_cache(monkeypatch
     rows = _rows()
     master = FakeMaster(error=RuntimeError("primary host timeout"))
 
-    def fake_get(url, timeout):
-        assert url == cache_module.ALTERNATE_MASTER_URL
-        assert timeout == 20
-        return SimpleNamespace(
-            raise_for_status=lambda: None,
-            json=lambda: rows,
-        )
-
-    monkeypatch.setattr(cache_module.requests, "get", fake_get)
+    monkeypatch.setattr(cache_module, "_download_alternate_rows", lambda: rows)
     assert download_box_spread_instruments(master) == rows
     assert master.instruments == rows
     assert master._loaded is True
@@ -106,14 +100,7 @@ def test_box_spread_rejects_invalid_alternate_and_preserves_download_error(monke
     monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
     master = FakeMaster(error=RuntimeError("provider timeout"))
 
-    monkeypatch.setattr(
-        cache_module.requests,
-        "get",
-        lambda *args, **kwargs: SimpleNamespace(
-            raise_for_status=lambda: None,
-            json=lambda: {"not": "an instrument list"},
-        ),
-    )
+    monkeypatch.setattr(cache_module, "_download_alternate_rows", lambda: {"not": "an instrument list"})
     with pytest.raises(RuntimeError, match="provider timeout"):
         download_box_spread_instruments(master)
 
@@ -160,12 +147,12 @@ def test_box_spread_streams_bounded_alternate_master_and_closes_response(monkeyp
     def fake_get(url, **kwargs):
         calls.append((url, kwargs))
         return response
-    monkeypatch.setattr(cache_module.requests, "get", fake_get)
+    def fake_transport(url, *, timeout, retries):
+        calls.append((url, timeout, retries))
+        return rows
+    monkeypatch.setattr(cache_module, "download_master_rows", fake_transport)
     assert cache_module._download_alternate_rows() == rows
-    assert response.closed is True
-    assert calls[0][0] == cache_module.ALTERNATE_MASTER_URL
-    assert calls[0][1]["stream"] is True
-    assert calls[0][1]["timeout"] == (10, 120)
+    assert calls == [(cache_module.ALTERNATE_MASTER_URL, (10, 120), 3)]
 
 
 def test_box_spread_streaming_rejects_oversized_payload(monkeypatch):
@@ -178,10 +165,13 @@ def test_box_spread_streaming_rejects_oversized_payload(monkeypatch):
         def close(self):
             self.closed = True
     response = Response()
-    monkeypatch.setattr(cache_module.requests, "get", lambda *args, **kwargs: response)
+    monkeypatch.setattr(
+        cache_module,
+        "download_master_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("exceeded")),
+    )
     with pytest.raises(ValueError, match="exceeded"):
         cache_module._download_alternate_rows()
-    assert response.closed is True
 
 def test_box_spread_cache_rejects_tampered_content_digest(monkeypatch, tmp_path):
     path = tmp_path / "box-cache.json"
@@ -215,3 +205,17 @@ def test_box_spread_cache_rejects_malformed_rows(monkeypatch, tmp_path):
         "instruments": [{"symbol": "X"}],
     }))
     assert cache_module._read_cache() is None
+
+
+def test_box_spread_cache_write_failure_is_not_reported_as_success(monkeypatch, tmp_path):
+    path = tmp_path / "box-cache.json"
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
+    path.write_text("last-known-good")
+    monkeypatch.setattr(
+        cache_module.os, "replace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    with pytest.raises(OSError, match="disk unavailable"):
+        cache_module._write_cache(_rows())
+    assert path.read_text() == "last-known-good"
+    assert list(tmp_path.glob("box-cache.json.*.tmp")) == []
