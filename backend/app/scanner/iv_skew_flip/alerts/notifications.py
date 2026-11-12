@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Callable
 
 from sqlalchemy import or_
@@ -29,6 +30,7 @@ class TelegramOutboxWorker:
         """Claim one due message. If config is absent, never attempt network delivery."""
         session = self.session_factory()
         claimed_id = None
+        claim_token = None
         try:
             with session.begin():
                 row = (session.query(IVEarlyEntryNotificationOutbox)
@@ -53,6 +55,8 @@ class TelegramOutboxWorker:
                     return {"processed": True, "status": "WAITING_CONFIG", "outbox_id": row.id}
                 row.status = "IN_FLIGHT"
                 row.lease_until_ns = now_ns + self.lease_ns
+                claim_token = uuid.uuid4().hex
+                row.lease_token = claim_token
                 row.attempts += 1
                 claimed_id = row.id
                 payload = json.loads(row.payload_json)
@@ -63,17 +67,19 @@ class TelegramOutboxWorker:
             sender(payload)
             final_status, error = "SENT", ""
         except Exception as exc:
-            final_status = "FAILED" if payload is None else "RETRY"
+            final_status = "RETRY"
             error = f"{type(exc).__name__}: {exc}"[:2000]
 
         session = self.session_factory()
         try:
             with session.begin():
                 row = session.get(IVEarlyEntryNotificationOutbox, claimed_id)
-                if row is None or row.status != "IN_FLIGHT":
+                if (row is None or row.status != "IN_FLIGHT"
+                        or row.lease_token != claim_token):
                     return {"processed": True, "status": "LEASE_LOST", "outbox_id": claimed_id}
                 row.status = final_status
                 row.lease_until_ns = None
+                row.lease_token = None
                 row.last_error = error
                 if final_status == "RETRY":
                     if row.attempts >= self.max_attempts:
@@ -83,8 +89,9 @@ class TelegramOutboxWorker:
                         row.next_attempt_ns = now_ns + delay
                 event = session.get(IVEarlyEntryAlertEvent, row.event_id)
                 if event is not None:
-                    event.delivery_status = "SENT" if row.status == "SENT" else row.status
-            return {"processed": True, "status": final_status, "outbox_id": claimed_id}
+                    event.delivery_status = row.status
+                persisted_status = row.status
+            return {"processed": True, "status": persisted_status, "outbox_id": claimed_id}
         finally:
             session.close()
 
