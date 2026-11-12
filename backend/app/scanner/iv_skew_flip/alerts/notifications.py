@@ -95,6 +95,36 @@ class TelegramOutboxWorker:
         finally:
             session.close()
 
+        # Revalidate immediately before the external side effect. The first
+        # transaction claims the durable lease; this second transaction is
+        # the dispatch authorization point. If lifecycle invalidation won the
+        # race before this check, suppress the Telegram send.
+        session = self.session_factory()
+        try:
+            with session.begin():
+                row = (session.query(IVEarlyEntryNotificationOutbox)
+                       .filter(IVEarlyEntryNotificationOutbox.id == claimed_id)
+                       .with_for_update().one_or_none())
+                if (row is None or row.status != "IN_FLIGHT"
+                        or row.lease_token != claim_token):
+                    return {"processed": True, "status": "LEASE_LOST", "outbox_id": claimed_id}
+                event = (session.query(IVEarlyEntryAlertEvent)
+                         .filter(IVEarlyEntryAlertEvent.id == row.event_id)
+                         .with_for_update().one_or_none())
+                if event is None or event.state != "EARLY_ENTRY":
+                    row.status = "SKIPPED"
+                    row.lease_until_ns = None
+                    row.lease_token = None
+                    row.last_error = "ALERT_NO_LONGER_ACTIVE_BEFORE_DISPATCH"
+                    if event is not None:
+                        event.delivery_status = "SKIPPED"
+                    return {"processed": True, "status": "SKIPPED", "outbox_id": claimed_id}
+        finally:
+            session.close()
+
+        # A lifecycle change after dispatch authorization cannot retract an
+        # HTTP request already being issued; the database check above defines
+        # the ordering boundary and minimizes that unavoidable network race.
         try:
             sender(payload)
             final_status, error = "SENT", ""
