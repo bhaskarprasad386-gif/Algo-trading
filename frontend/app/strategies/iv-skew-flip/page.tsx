@@ -405,8 +405,8 @@ export default function IVSkewFlipPage() {
               gain.gain.exponentialRampToValueAtTime(0.12,ctx.currentTime+0.02);
               gain.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.24);
               oscillator.connect(gain);gain.connect(ctx.destination);
+              oscillator.onended=()=>{void ctx.close();};
               oscillator.start();oscillator.stop(ctx.currentTime+0.25);
-              void oscillator.onended&&ctx.close();
             }
           }catch{/* audio is optional and browser-controlled */}
         }
