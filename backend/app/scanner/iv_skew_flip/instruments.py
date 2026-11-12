@@ -17,6 +17,7 @@ from typing import Any
 import requests
 
 from app.core.logger import app_logger
+from app.market_data.master_transport import download_master_rows
 
 
 PRIMARY_MASTER_URL = (
@@ -38,31 +39,13 @@ MASTER_CHUNK_BYTES = 1024 * 1024
 MASTER_USER_AGENT = "Algo-Trading-IV-InstrumentMaster/1.0"
 
 def _download_master_payload(url: str) -> Any:
-    """Download a complete bounded JSON payload and always close the response."""
-    response = requests.get(
+    """Use shared TLS-profile fallback and bounded streaming for IV master fetches."""
+    return download_master_rows(
         url,
-        timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
-        stream=True,
-        headers={"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"},
+        timeout=(8, 90),
+        retries=3,
     )
-    try:
-        response.raise_for_status()
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > MASTER_MAX_BYTES:
-                raise ValueError(f"Angel One instrument master exceeded {MASTER_MAX_BYTES} byte limit")
-            chunks.append(chunk)
-        if not chunks:
-            raise ValueError("Angel One instrument master response was empty")
-        return json.loads(b"".join(chunks).decode("utf-8"))
-    finally:
-        close = getattr(response, "close", None)
-        if callable(close):
-            close()
+
 
 def _fetch_validated_master(url: str) -> list[dict[str, Any]]:
     """Fetch and validate one official source before exposing its rows."""
