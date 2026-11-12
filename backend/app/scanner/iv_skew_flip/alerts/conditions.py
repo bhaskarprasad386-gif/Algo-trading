@@ -64,6 +64,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BUCKET_ORDER",))
     if any(not 30*NS <= b-a <= 90*NS for a, b in zip(stamps, stamps[1:])):
         return StrategyEvaluation(AlertState.WATCH, reasons=("MISSING_SPOT_BUCKET",))
+    if any(not (_positive(b.open) and _positive(b.high) and _positive(b.low) and _positive(b.close)) or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high) for b in last_bars):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BAR",))
     if max(b.high for b in last_bars)-min(b.low for b in last_bars) > 55:
         return StrategyEvaluation(AlertState.WATCH, reasons=("NOT_CONSOLIDATING",))
     if len(ce) < 3 or len(pe) < 3 or len(target) < 5:
@@ -91,7 +93,10 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     threshold = 0.18 if direction == "BULLISH" else 0.20
     if iv_jump < threshold or opposite_jump > 0.05:
         return StrategyEvaluation(AlertState.WATCH, reasons=("IV_FLIP_NOT_CONFIRMED",))
-    increments = [max(0, int(tgt[i].volume)-int(tgt[i-1].volume)) for i in range(1, 5)]
+    raw_increments = [int(tgt[i].volume)-int(tgt[i-1].volume) for i in range(1, 5)]
+    if any(delta < 0 for delta in raw_increments):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("CUMULATIVE_VOLUME_RESET",))
+    increments = raw_increments
     baseline = sum(increments[:3])/3
     current_volume = increments[3]
     if baseline <= 0 or current_volume < 2.5*baseline:
@@ -150,13 +155,16 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     errors = _fresh(latest, now_ns)
     if errors:
         return StrategyEvaluation(AlertState.WATCH, reasons=errors)
-    if wall_rows[-1].oi <= wall_rows[-2].oi:
+    if any(row.oi is None for row in wall_rows) or not (wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi):
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_OI_NOT_RISING",))
     iv_change = float(wall_rows[-1].iv)-float(wall_rows[-2].iv)
     if iv_change > -0.10:
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_IV_NOT_COOLING",))
     bars = tuple(spot_bars[-2:])
-    if any(bar.timestamp_ns <= 0 for bar in bars) or bars[-1].timestamp_ns <= bars[-2].timestamp_ns:
+    if any(bar.timestamp_ns <= 0 or now_ns < bar.timestamp_ns or now_ns-bar.timestamp_ns > 120*NS
+           or not (_positive(bar.open) and _positive(bar.high) and _positive(bar.low) and _positive(bar.close))
+           or bar.high < max(bar.open, bar.close, bar.low) or bar.low > min(bar.open, bar.close, bar.high)
+           for bar in bars) or bars[-1].timestamp_ns <= bars[-2].timestamp_ns:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_PRICE_BAR_ORDER",))
     prior, current = bars
     wall = latest.strike
