@@ -139,7 +139,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
 
         def connect(self, **kwargs):
             nonlocal base_timestamp
-            base_timestamp = (time_ns() // 1_000_000_000 - 1) * 1_000_000_000 + 50_000_000
+            base_timestamp = (time_ns() // 1_000_000_000 - 2) * 1_000_000_000 + 50_000_000
             on_data = kwargs["on_data"]
             on_data({
                 "token": "101",
