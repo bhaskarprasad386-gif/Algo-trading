@@ -243,9 +243,12 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
             or now_ns - latest.source_timestamp_ns > wall_max_age_ns
             or latest.spot_timestamp_ns > now_ns
             or now_ns - latest.spot_timestamp_ns > wall_max_age_ns
-            or latest.oi_timestamp_ns is None
-            or latest.oi_timestamp_ns > now_ns
-            or now_ns - latest.oi_timestamp_ns > 300 * NS):
+            or any(
+                row.oi_timestamp_ns is None
+                or row.oi_timestamp_ns > now_ns
+                or now_ns - row.oi_timestamp_ns > 300 * NS
+                for row in wall_rows
+            )):
         return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_WALL_OBSERVATION",))
     wall_oi_timestamps = [row.oi_timestamp_ns for row in wall_rows]
     if any(
