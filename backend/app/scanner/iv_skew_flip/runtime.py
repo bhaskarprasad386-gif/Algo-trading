@@ -169,6 +169,7 @@ class IVSkewFlipRuntime:
         self._lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
+        self._telegram_thread: Thread | None = None
         self._rows_by_stream: dict[str, tuple[dict[str, Any], ...]] = {}
         self._option_feeds: dict[str, IVSkewFlipFeedAdapter] = {}
         self._samplers: dict[str, IVOneSecondSampler] = {}
@@ -277,6 +278,12 @@ class IVSkewFlipRuntime:
                 daemon=True,
             )
             self._thread.start()
+            self._telegram_thread = Thread(
+                target=self._run_telegram_notifications,
+                name="iv-skew-flip-telegram-outbox",
+                daemon=True,
+            )
+            self._telegram_thread.start()
         return self.snapshot()
 
     @staticmethod
@@ -911,12 +918,17 @@ class IVSkewFlipRuntime:
                 "last_error": f"{type(exc).__name__}: {exc}"[:500],
             }
 
+    def _run_telegram_notifications(self) -> None:
+        """Deliver outbox messages independently so Telegram latency never blocks market data."""
+        while not self._stop.is_set():
+            self._process_telegram_outbox(self.clock_ns())
+            self._stop.wait(1.0)
+
     def _run(self) -> None:
         next_run = monotonic()
         while not self._stop.is_set():
             try:
                 self.refresh_once()
-                self._process_telegram_outbox(self.clock_ns())
                 with self._lock:
                     self._last_error.pop("RUNTIME", None)
             except Exception as exc:
@@ -1035,8 +1047,11 @@ class IVSkewFlipRuntime:
     def stop(self) -> dict[str, Any]:
         self._stop.set()
         thread = self._thread
+        telegram_thread = self._telegram_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=3.0)
+        if telegram_thread is not None and telegram_thread.is_alive():
+            telegram_thread.join(timeout=6.0)
         if thread is not None and thread.is_alive():
             # Do not tear down feeds while refresh_once() may still be using
             # them. Keep the runtime registered and allow a later stop retry.
@@ -1084,6 +1099,7 @@ class IVSkewFlipRuntime:
             self._started = False
             self._stopping = False
             self._thread = None
+            self._telegram_thread = None
             self._last_error.pop("CLEANUP", None)
             self._samplers.clear()
             self._option_feeds.clear()
