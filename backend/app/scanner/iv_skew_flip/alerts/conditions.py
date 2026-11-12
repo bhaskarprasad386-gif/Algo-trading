@@ -116,6 +116,9 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         errors = _fresh(row, now_ns)
         if errors:
             return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+    for live, history in ((live_ce, ce3), (live_pe, pe3), (live_target, tgt)):
+        if live.source_timestamp_ns <= history[-1].source_timestamp_ns:
+            return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_QUOTE_NOT_NEWER_THAN_HISTORY",))
     # A quote refresh does not prove that OI itself was refreshed. The target
     # leg must carry a strictly newer broker OI timestamp than the completed
     # minute close before an OI-decrease condition can authorize an alert.
