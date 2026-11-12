@@ -224,7 +224,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if any(bar.timestamp_ns <= 0 or now_ns < bar.timestamp_ns or now_ns-bar.timestamp_ns > 120*NS
            or not (_positive(bar.open) and _positive(bar.high) and _positive(bar.low) and _positive(bar.close))
            or bar.high < max(bar.open, bar.close, bar.low) or bar.low > min(bar.open, bar.close, bar.high)
-           for bar in bars) or bars[-1].timestamp_ns <= bars[-2].timestamp_ns:
+           for bar in bars) or not 30*NS <= bars[-1].timestamp_ns-bars[-2].timestamp_ns <= 90*NS:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_PRICE_BAR_ORDER",))
     prior, current = bars
     wall = latest.strike
