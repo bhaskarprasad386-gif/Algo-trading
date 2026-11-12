@@ -20,7 +20,10 @@ class InstrumentMaster:
         "https://margincalculator.angelone.in/"
         "OpenAPI_File/files/OpenAPIScripMaster.json"
     )
+    # Protect only in-memory snapshot reads/writes; never hold this lock over network I/O.
     _cache_lock = Lock()
+    # Single-flight refresh: concurrent callers share one download attempt.
+    _download_lock = Lock()
     _cached_instruments: Optional[List[Dict[str, Any]]] = None
     _cached_snapshot_date: Optional[str] = None
 
@@ -44,19 +47,38 @@ class InstrumentMaster:
             return cls._cached_instruments
 
     def download(self, *, force: bool = False, timeout: Any = 30) -> List[Dict[str, Any]]:
-        """Download Angel One instrument master at most once per IST day unless forced.
+        """Refresh once per IST day without holding the cache lock during network I/O.
 
-        Daily refresh is intentional because expiry/roll-day contracts can change
-        without a process restart.
+        A dedicated single-flight lock prevents duplicate concurrent downloads.
+        The short cache lock protects publication only, so lookups and other
+        instances can continue reading the last-known-good snapshot while a
+        refresh is waiting on Angel One TLS/network timeouts.
         """
+        cls = self.__class__
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
-        with self._cache_lock:
-            if not force and self._loaded and self.instruments and self.__class__._cached_snapshot_date == today:
-                return self.instruments
-            if not force and self._cached_instruments is not None and self.__class__._cached_snapshot_date == today:
-                self.instruments = self._cached_instruments
-                self._loaded = True
-                return self.instruments
+
+        def cached_for_today():
+            with cls._cache_lock:
+                if not force and self._loaded and self.instruments and cls._cached_snapshot_date == today:
+                    return self.instruments
+                if not force and cls._cached_instruments is not None and cls._cached_snapshot_date == today:
+                    self.instruments = cls._cached_instruments
+                    self._loaded = True
+                    self._symbol_exchange_index = None
+                    return self.instruments
+            return None
+
+        cached = cached_for_today()
+        if cached is not None:
+            return cached
+
+        # Recheck after acquiring the single-flight lock: another caller may
+        # have completed the refresh while this caller was waiting.
+        with cls._download_lock:
+            cached = cached_for_today()
+            if cached is not None:
+                return cached
+
             try:
                 source_errors = []
                 data = None
@@ -74,24 +96,38 @@ class InstrumentMaster:
                         app_logger.info("Instrument master downloaded from {}", source_url)
                         break
                     except Exception as source_error:
-                        source_errors.append(f"{source_url}: {type(source_error).__name__}: {source_error}")
-                        app_logger.warning("Instrument master source failed; trying official alternate host: {}", source_errors[-1])
+                        source_errors.append(
+                            f"{source_url}: {type(source_error).__name__}: {source_error}"
+                        )
+                        app_logger.warning(
+                            "Instrument master source failed; trying official alternate host: {}",
+                            source_errors[-1],
+                        )
                 if data is None:
-                    raise RuntimeError("All official Angel One instrument-master hosts failed: " + " | ".join(source_errors))
-                self.__class__._cached_instruments = data
-                self.__class__._cached_snapshot_date = today
-                self.instruments = data
-                self._loaded = True
-                self._symbol_exchange_index = None
+                    raise RuntimeError(
+                        "All official Angel One instrument-master hosts failed: "
+                        + " | ".join(source_errors)
+                    )
+
+                # Publish atomically under the short-lived cache lock only
+                # after the complete payload has passed transport validation.
+                with cls._cache_lock:
+                    cls._cached_instruments = data
+                    cls._cached_snapshot_date = today
+                    self.instruments = data
+                    self._loaded = True
+                    self._symbol_exchange_index = None
+
                 app_logger.info(
-                    f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
+                    "Loaded {} instruments from Angel One instrument master",
+                    len(data),
                 )
-                return self.instruments
+                return data
             except TradingAppException:
                 raise
-            except Exception as e:
-                app_logger.error(f"Failed to download instrument master: {str(e)}")
-                raise TradingAppException("InstrumentMasterDownloadError", str(e), 502)
+            except Exception as exc:
+                app_logger.error("Failed to download instrument master: {}", str(exc))
+                raise TradingAppException("InstrumentMasterDownloadError", str(exc), 502)
 
     def search(
         self,
