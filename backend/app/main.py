@@ -28,6 +28,7 @@ from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.iv_scanner_control import IVScannerControl
 from app.models.iv_option_observation import IVOptionObservation
+from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown  # noqa: F401 - register durable IV early-entry alert tables
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion  # noqa: F401 - register isolated IV basket history table
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
