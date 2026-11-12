@@ -49,6 +49,18 @@ class TelegramOutboxWorker:
                 if row is None:
                     return {"processed": False, "reason": "NO_DUE_NOTIFICATION"}
                 event = session.get(IVEarlyEntryAlertEvent, row.event_id)
+                if row.status == "IN_FLIGHT":
+                    # The previous worker may have reached Telegram before it
+                    # crashed, so blindly retrying can send a duplicate. Telegram
+                    # sendMessage has no client idempotency key: surface the
+                    # ambiguous outcome for manual reconciliation instead.
+                    row.status = "UNCERTAIN"
+                    row.lease_until_ns = None
+                    row.lease_token = None
+                    row.last_error = "DELIVERY_OUTCOME_UNKNOWN_AFTER_EXPIRED_LEASE"
+                    if event is not None:
+                        event.delivery_status = "UNCERTAIN"
+                    return {"processed": True, "status": "UNCERTAIN", "outbox_id": row.id}
                 if event is None or event.state != "EARLY_ENTRY":
                     # Do not send a queued alert after it has been invalidated,
                     # expired, or otherwise transitioned out of the active state.
