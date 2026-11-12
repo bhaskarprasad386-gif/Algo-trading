@@ -149,6 +149,10 @@ def _write_cache(rows, fetched_at=None):
                 os.unlink(temp_name)
             except OSError:
                 pass
+        # Do not report a successful refresh when the durable snapshot was
+        # not committed. The caller can then retain/use the last-known-good
+        # cache rather than silently believing this refresh is recoverable.
+        raise
 
 
 def _install_rows(master, rows):
