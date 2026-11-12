@@ -96,6 +96,13 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
             or pe3[-1].expiry != expiry or tgt[-1].expiry != expiry
             or ce3[-1].strike != tgt[-1].strike):
         return StrategyEvaluation(AlertState.WATCH, reasons=("PAIR_NOT_SAME_STRIKE_EXPIRY",))
+    # Compare IV/volume changes over the same exchange-minute windows.
+    # Per-contract cadence alone is insufficient if CE and PE buckets drift.
+    ce_minutes = tuple(row.source_timestamp_ns // (60*NS) for row in ce3)
+    pe_minutes = tuple(row.source_timestamp_ns // (60*NS) for row in pe3)
+    target_minutes = tuple(row.source_timestamp_ns // (60*NS) for row in tgt)
+    if ce_minutes != pe_minutes[-2:] or ce_minutes != target_minutes[-2:]:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("UNALIGNED_OPTION_HISTORY",))
 
     for series in (ce3, pe3, tgt):
         if any(_structurally_valid(row) for row in series):
