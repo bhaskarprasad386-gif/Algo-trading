@@ -51,7 +51,7 @@ Missing GitHub Actions read-only credential file: $ENV_FILE
 Create it securely (use a fine-grained token limited to this repository with
 Actions: read permission only):
   sudo install -d -m 700 /etc/algo-trading
-  sudo bash -c 'umask 077; read -rsp "GitHub Actions-read token: " t; echo; printf "GH_TOKEN=%s\\n" "$t" > "$ENV_FILE"'
+  sudo bash -c 'umask 077; read -rsp "GitHub Actions-read token: " t; echo; printf "GH_TOKEN=%s\\n" "$t" > /etc/algo-trading/master-recovery.env"'
   sudo chmod 600 "$ENV_FILE"
 
 Then rerun this installer. Never paste the token into chat or commit it.
@@ -78,7 +78,7 @@ mkdir -p "$BACKEND_DIR/data"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Recover validated Angel One instrument-master artifacts from GitHub Actions
+Description=Recover validated Box Spread instrument-master artifact from GitHub Actions
 Wants=network-online.target
 After=network-online.target
 
@@ -90,7 +90,7 @@ UMask=0077
 WorkingDirectory=$BACKEND_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PYTHONPATH=$BACKEND_DIR
-ExecStart=$PYTHON_PATH $BACKEND_DIR/scripts/recover_latest_master_artifacts.py
+ExecStart=$PYTHON_PATH $BACKEND_DIR/scripts/recover_latest_box_spread_master_artifact.py
 TimeoutStartSec=240
 NoNewPrivileges=true
 PrivateTmp=true
