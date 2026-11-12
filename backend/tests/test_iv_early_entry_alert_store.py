@@ -507,3 +507,36 @@ def test_ambiguous_telegram_transport_failure_is_not_retried():
         assert row.lease_until_ns is None
     finally:
         session.close()
+
+
+
+def test_notification_revalidates_lifecycle_after_claim_before_dispatch():
+    store = make_store()
+    result = store.record(candidate())
+    base_factory = store.session_factory
+    factory_calls = 0
+
+    def racing_factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        # The worker's second DB session is its final pre-dispatch check.
+        # Simulate a spot invalidation winning after lease claim but before
+        # that authorization check.
+        if factory_calls == 2:
+            assert store.transition(
+                result["event_id"], AlertState.INVALIDATED,
+                reason="SPOT_WALL_BREACHED_DURING_QUEUE_HANDOFF",
+            )
+        return base_factory()
+
+    worker = TelegramOutboxWorker(racing_factory)
+    delivered = []
+    outcome = worker.process_one(
+        now_ns=candidate().observed_at_ns,
+        sender=lambda payload: delivered.append(payload),
+        configured=True,
+    )
+    assert outcome["status"] == "SKIPPED"
+    assert delivered == []
+    assert store.latest()[0]["state"] == "INVALIDATED"
+    assert store.latest()[0]["delivery_status"] == "SKIPPED"
