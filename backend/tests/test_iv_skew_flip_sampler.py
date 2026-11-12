@@ -537,3 +537,33 @@ def test_sampler_reports_volume_change_only_on_new_monotonic_source_ticks():
     )
     assert reset["live_metrics"][0]["volume_change_1s"] is None
     assert reset["live_metrics"][0]["volume_change_pct_1s"] is None
+
+
+
+def test_snapshot_separates_raw_live_samples_from_display_carried_iv():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns + 1_000_000_000)
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    last_iv = first["live_samples"][0].iv
+    assert last_iv is not None
+
+    # A fresh broker quote can exist while its current mark/IV is unavailable.
+    # UI continuity may retain last-good IV, but alert logic must see None.
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns + 1_000_000_000,
+        None, None, None, 10000, 10, "ce-token",
+    ),)
+    second = sampler.sample_once(
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    assert second["live_samples"][0].iv is None
+    assert second["samples"][0].iv == last_iv
