@@ -23,10 +23,12 @@ class AlertCooldownStore:
 
     @staticmethod
     def key(candidate: AlertCandidate) -> str:
+        # A single market move can satisfy both Strategy A and Strategy B.
+        # Share the cooldown across strategies for the same contract/direction
+        # so the user receives one actionable alert, not duplicate messages.
         return "|".join((
-            candidate.strategy.upper(), candidate.underlying.upper(),
-            candidate.expiry, f"{candidate.strike:g}",
-            candidate.direction.upper(),
+            candidate.underlying.upper(), candidate.expiry,
+            f"{candidate.strike:g}", candidate.direction.upper(),
         ))
 
     def record(self, candidate: AlertCandidate) -> dict[str, Any]:
