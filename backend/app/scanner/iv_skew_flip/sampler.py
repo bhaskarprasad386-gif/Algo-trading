@@ -580,6 +580,16 @@ class IVOneSecondSampler:
             "oi_values": {item.token: item.oi for item in samples},
             "iv_values": {item.token: item.iv for item in samples},
             "live_metrics": live_metrics,
+            # The legacy early-move detector consumes metric dictionaries.
+            # Keep its IV fields bound to raw current-cycle observations too;
+            # never let display-carried IV inherit a fresh quote timestamp.
+            "raw_live_metrics": tuple({
+                "token": item.token,
+                "iv": item.iv,
+                "iv_input": item.iv_input,
+                "source_timestamp_ns": item.source_timestamp_ns,
+                "spot_timestamp_ns": item.spot_timestamp_ns,
+            } for item in live_samples),
             # Signal engines must consume raw current observations only. The
             # display `samples` collection may carry forward last-good IV values.
             "live_samples": live_samples,
