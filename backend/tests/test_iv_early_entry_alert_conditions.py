@@ -21,20 +21,38 @@ def setup():
 
 def test_strategy_a_emits_early_entry_without_breakout_close():
     now, bars, ce, pe = setup()
-    result = evaluate_strategy_a(now_ns=now, expiry="2026-11-19", bars=bars,
-        ce=ce[-3:], pe=pe, target=ce, direction="BULLISH")
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
+    )
     assert result.state == AlertState.EARLY_ENTRY
     assert result.candidate is not None
     assert result.candidate.direction == "BULLISH"
+    assert result.candidate.volume_ratio == 37.0
 
 
-def test_strategy_a_rejects_stale_latest_quote():
+def test_strategy_a_uses_fresh_live_quote_not_stale_completed_minute_close():
     now, bars, ce, pe = setup()
-    stale = list(ce)
-    stale[-1] = observation(token="CE1", option_type="CE", ts=now-6*NS,
-        iv=10.4, volume=500, oi=900, premium=105)
-    result = evaluate_strategy_a(now_ns=now, expiry="2026-11-19", bars=bars,
-        ce=stale[-3:], pe=pe, target=stale, direction="BULLISH")
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
+    )
+    assert result.state == AlertState.EARLY_ENTRY
+
+
+def test_strategy_a_rejects_stale_live_quote():
+    now, bars, ce, pe = setup()
+    stale_live = observation(
+        token="CE1", option_type="CE", ts=now-6*NS,
+        iv=10.4, volume=500, oi=960, premium=105,
+    )
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        live_ce=stale_live, live_pe=pe[-1], live_target=stale_live,
+    )
     assert result.state == AlertState.WATCH
     assert "STALE_OPTION_QUOTE" in result.reasons
 
