@@ -1,3 +1,4 @@
+from dataclasses import replace
 from app.scanner.iv_skew_flip.alerts.conditions import evaluate_strategy_a, even_strikes, NS
 from app.scanner.iv_skew_flip.alerts.models import AlertState, OptionObservation, SpotBar
 
@@ -61,3 +62,15 @@ def test_even_strikes_includes_full_nifty_50_point_grid():
     assert even_strikes([24950, 25000, 25050, 25100, 25100, 25125]) == (
         24950.0, 25000.0, 25050.0, 25100.0,
     )
+
+
+def test_strategy_a_rejects_oi_decline_without_a_new_broker_oi_observation():
+    now, bars, ce, pe = setup()
+    stale_oi_live = replace(ce[-1], oi_timestamp_ns=ce[-2].oi_timestamp_ns)
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        live_ce=ce[-1], live_pe=pe[-1], live_target=stale_oi_live,
+    )
+    assert result.state == AlertState.WATCH
+    assert "LIVE_OI_NOT_UPDATED" in result.reasons
