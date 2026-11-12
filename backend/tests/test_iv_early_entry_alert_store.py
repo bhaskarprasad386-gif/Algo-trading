@@ -104,36 +104,6 @@ def test_malformed_expiry_fails_closed_and_cancels_queued_notification():
         session.close()
 
 
-def test_expiry_parser_accepts_universe_supported_formats():
-    assert AlertCooldownStore._parse_expiry_day("2026-11-19").isoformat() == "2026-11-19"
-    assert AlertCooldownStore._parse_expiry_day("19NOV2026").isoformat() == "2026-11-19"
-    assert AlertCooldownStore._parse_expiry_day("19-NOV-2026").isoformat() == "2026-11-19"
-
-
-def test_malformed_expiry_fails_closed_and_cancels_queued_notification():
-    store = make_store()
-    result = store.record(candidate())
-    session = store.session_factory()
-    try:
-        row = session.get(IVEarlyEntryAlertEvent, result["event_id"])
-        row.expiry = "NOT-A-REAL-EXPIRY"
-        session.commit()
-    finally:
-        session.close()
-
-    now = datetime(2026, 11, 12, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
-    assert store.expire_session_alerts(now=now) == 1
-    latest = store.latest()[0]
-    assert latest["state"] == "EXPIRED"
-    assert latest["reason"] == "INVALID_EXPIRY_FORMAT"
-    assert latest["delivery_status"] == "SKIPPED"
-    session = store.session_factory()
-    try:
-        row = session.query(IVEarlyEntryNotificationOutbox).one()
-        assert row.status == "SKIPPED"
-    finally:
-        session.close()
-
 def test_active_alert_expires_after_session_close():
     store = make_store()
     result = store.record(candidate())
