@@ -34,6 +34,13 @@ class IVEarlyEntryAlertEngine:
         if now.tzinfo is None:
             raise ValueError("alert engine requires timezone-aware datetime")
         self.store.expire_session_alerts(now=now)
+        live_spot_stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
+        live_spot_price = float(getattr(spot, "price", 0) or 0)
+        if (0 < live_spot_stamp <= now_ns and now_ns-live_spot_stamp <= 5_000_000_000
+                and live_spot_price > 0):
+            self.store.invalidate_breached_oi_walls(
+                spot=live_spot_price, observed_at_ns=now_ns,
+            )
         if not expiry:
             return {"state": "WATCH", "reason": "WAITING_FOR_WEEKLY_EXPIRY", "signals_allowed": False}
         snapshot = sampler.snapshot()
