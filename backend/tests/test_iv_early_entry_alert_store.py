@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
-from app.scanner.iv_skew_flip.alerts.notifications import TelegramOutboxWorker
+from app.scanner.iv_skew_flip.alerts.notifications import AmbiguousDeliveryError, TelegramOutboxWorker
 from app.scanner.iv_skew_flip.alerts.models import AlertCandidate, AlertState
 from app.scanner.iv_skew_flip.alerts.store import AlertCooldownStore
 
@@ -468,3 +468,42 @@ def test_pending_notification_survives_worker_restart_and_is_delivered():
     assert sent["status"] == "SENT"
     assert [payload["event_id"] for payload in delivered] == [result["event_id"]]
     assert store.latest()[0]["delivery_status"] == "SENT"
+
+
+
+def test_ambiguous_telegram_transport_failure_is_not_retried():
+    store = make_store()
+    store.record(candidate())
+    worker = TelegramOutboxWorker(store.session_factory, base_retry_seconds=1)
+    calls = []
+
+    def ambiguous_sender(_payload):
+        calls.append("attempted")
+        raise AmbiguousDeliveryError("remote acceptance cannot be ruled out")
+
+    first = worker.process_one(
+        now_ns=candidate().observed_at_ns,
+        sender=ambiguous_sender,
+        configured=True,
+    )
+    assert first["status"] == "UNCERTAIN"
+
+    # Even after the ordinary retry interval, uncertain deliveries are terminal
+    # for automation and must never be sent a second time.
+    second = worker.process_one(
+        now_ns=candidate().observed_at_ns + 120_000_000_000,
+        sender=ambiguous_sender,
+        configured=True,
+    )
+    assert second["processed"] is False
+    assert calls == ["attempted"]
+    assert store.latest()[0]["delivery_status"] == "UNCERTAIN"
+
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "UNCERTAIN"
+        assert row.lease_token is None
+        assert row.lease_until_ns is None
+    finally:
+        session.close()
