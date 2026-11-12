@@ -125,3 +125,32 @@ def test_telegram_sender_classifies_429_and_preserves_retry_after(monkeypatch):
         assert "test-token" not in str(exc)
     else:
         raise AssertionError("HTTP 429 must be classified as retryable rate limit")
+
+
+
+def test_telegram_sender_reads_retry_after_from_bot_api_error_parameters(monkeypatch):
+    from app.scanner.iv_skew_flip.alerts.notifications import TelegramRateLimitError
+
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+
+    class ErrorBody:
+        def read(self):
+            return b'{"ok": false, "parameters": {"retry_after": 42}}'
+
+    def rate_limited(_request, timeout):
+        raise HTTPError(
+            "https://api.telegram.org/bot/test-token/sendMessage",
+            429, "Too Many Requests", {}, ErrorBody(),
+        )
+
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen", rate_limited,
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 14})
+    except TelegramRateLimitError as exc:
+        assert exc.retry_after_seconds == 42
+    else:
+        raise AssertionError("Telegram retry_after response parameter must be honored")
