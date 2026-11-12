@@ -174,3 +174,64 @@ def test_notification_worker_recovers_expired_in_flight_lease():
     assert len(delivered) == 1
     assert delivered[0]["event_id"] == result["event_id"]
     assert store.latest()[0]["delivery_status"] == "SENT"
+
+
+
+def test_notification_worker_reports_terminal_failure_at_attempt_limit():
+    store = make_store()
+    store.record(candidate())
+    worker = TelegramOutboxWorker(
+        store.session_factory, max_attempts=1, base_retry_seconds=1,
+    )
+
+    def fail(_payload):
+        raise TimeoutError("permanent for this attempt")
+
+    result = worker.process_one(
+        now_ns=candidate().observed_at_ns,
+        sender=fail,
+        configured=True,
+    )
+    assert result["status"] == "FAILED"
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "FAILED"
+        assert row.lease_token is None
+        assert row.lease_until_ns is None
+    finally:
+        session.close()
+    assert store.latest()[0]["delivery_status"] == "FAILED"
+
+
+def test_expired_worker_cannot_overwrite_newer_lease_owner():
+    store = make_store()
+    store.record(candidate())
+    worker = TelegramOutboxWorker(store.session_factory)
+
+    def sender(_payload):
+        # Simulate another worker reclaiming the expired lease while this
+        # sender is still running. The new token owns all future transitions.
+        session = store.session_factory()
+        try:
+            row = session.query(IVEarlyEntryNotificationOutbox).one()
+            row.lease_token = "new-owner-token"
+            row.lease_until_ns = candidate().observed_at_ns + 90_000_000_000
+            session.commit()
+        finally:
+            session.close()
+
+    result = worker.process_one(
+        now_ns=candidate().observed_at_ns,
+        sender=sender,
+        configured=True,
+    )
+    assert result["status"] == "LEASE_LOST"
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "IN_FLIGHT"
+        assert row.lease_token == "new-owner-token"
+    finally:
+        session.close()
+    assert store.latest()[0]["delivery_status"] == "PENDING"
