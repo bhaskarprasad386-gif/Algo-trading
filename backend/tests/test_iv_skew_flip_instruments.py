@@ -298,51 +298,26 @@ def test_non_numeric_tokens_in_iv_required_exchanges_are_rejected(exchange):
         loader._validate_rows(rows)
 
 
-def test_streamed_master_download_uses_bounded_chunks_and_closes_response(monkeypatch):
+def test_streamed_master_download_delegates_to_shared_transport(monkeypatch):
     rows = valid_rows()
-    payload = json.dumps(rows).encode("utf-8")
     calls = []
-
-    class Response:
-        closed = False
-        def raise_for_status(self):
-            pass
-        def iter_content(self, chunk_size):
-            assert chunk_size == loader.MASTER_CHUNK_BYTES
-            yield payload[:17]
-            yield b""
-            yield payload[17:]
-        def close(self):
-            self.closed = True
-
-    response = Response()
-    def fake_get(url, **kwargs):
-        calls.append((url, kwargs))
-        return response
-
-    monkeypatch.setattr(loader.requests, "get", fake_get)
+    def fake_transport(url, *, timeout, retries):
+        calls.append((url, timeout, retries))
+        return rows
+    monkeypatch.setattr(loader, "download_master_rows", fake_transport)
     assert loader._fetch_validated_master(loader.PRIMARY_MASTER_URL) == rows
-    assert response.closed is True
-    assert calls[0][1]["stream"] is True
-    assert calls[0][1]["timeout"] == (10, 120)
-    assert calls[0][1]["headers"]["User-Agent"] == loader.MASTER_USER_AGENT
+    assert calls == [(loader.PRIMARY_MASTER_URL, (8, 90), 3)]
 
 
-def test_streamed_master_download_rejects_oversized_payload(monkeypatch):
-    class Response:
-        closed = False
-        def raise_for_status(self):
-            pass
-        def iter_content(self, chunk_size):
-            yield b"x" * (loader.MASTER_MAX_BYTES + 1)
-        def close(self):
-            self.closed = True
-
-    response = Response()
-    monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: response)
+def test_streamed_master_download_propagates_transport_size_limit(monkeypatch):
+    monkeypatch.setattr(
+        loader,
+        "download_master_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("exceeded")),
+    )
     with pytest.raises(ValueError, match="exceeded"):
         loader._download_master_payload(loader.PRIMARY_MASTER_URL)
-    assert response.closed is True
+
 
 def test_snapshot_writer_preserves_original_fetched_at_on_recovery(monkeypatch, tmp_path):
     rows = valid_rows()
