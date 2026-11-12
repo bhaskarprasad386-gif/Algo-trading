@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -235,3 +236,38 @@ def test_expired_worker_cannot_overwrite_newer_lease_owner():
     finally:
         session.close()
     assert store.latest()[0]["delivery_status"] == "PENDING"
+
+
+
+def test_cooldown_claim_is_atomic_across_independent_store_instances(tmp_path):
+    database = tmp_path / "concurrent-alerts.sqlite"
+    engine_a = create_engine(
+        f"sqlite:///{database}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine_a, tables=[
+        IVEarlyEntryAlertEvent.__table__, IVEarlyEntryCooldown.__table__,
+        IVEarlyEntryNotificationOutbox.__table__,
+    ])
+    engine_b = create_engine(
+        f"sqlite:///{database}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    factory_a = sessionmaker(bind=engine_a, expire_on_commit=False)
+    factory_b = sessionmaker(bind=engine_b, expire_on_commit=False)
+    stores = [AlertCooldownStore(factory_a), AlertCooldownStore(factory_b)]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda store: store.record(candidate()), stores))
+
+    assert sum(result["accepted"] is True for result in results) == 1
+    assert sum(result.get("reason") == "COOLDOWN_ACTIVE" for result in results) == 1
+    session = factory_a()
+    try:
+        assert session.query(IVEarlyEntryAlertEvent).count() == 1
+        assert session.query(IVEarlyEntryCooldown).count() == 1
+        assert session.query(IVEarlyEntryNotificationOutbox).count() == 1
+    finally:
+        session.close()
+        engine_a.dispose()
+        engine_b.dispose()
