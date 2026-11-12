@@ -94,7 +94,12 @@ def test_strategy_a_rejects_stale_completed_spot_history():
 def test_strategy_a_rejects_ce_pe_history_from_different_minutes():
     now, bars, ce, pe = setup()
     shifted_pe = [
-        replace(row, source_timestamp_ns=row.source_timestamp_ns-60*NS)
+        replace(
+            row,
+            timestamp_ns=row.timestamp_ns-60*NS,
+            source_timestamp_ns=row.source_timestamp_ns-60*NS,
+            oi_timestamp_ns=row.oi_timestamp_ns-60*NS,
+        )
         for row in pe[-3:-1]
     ]
     result = evaluate_strategy_a(
