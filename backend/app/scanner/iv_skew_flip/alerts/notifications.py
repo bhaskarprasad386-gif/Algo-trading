@@ -159,7 +159,9 @@ class TelegramOutboxWorker:
             final_status = "FAILED"
             error = "TELEGRAM_API_REJECTED"
         except Exception as exc:
-            # A definitive provider/API rejection can be retried with backoff.
+            # Unexpected transport/worker errors are treated as transient and
+            # retried with bounded exponential backoff. Definitive Telegram
+            # rejections are classified above and never reach this branch.
             final_status = "RETRY"
             error = f"{type(exc).__name__}: {exc}"[:2000]
 
