@@ -8,7 +8,10 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
-from app.scanner.iv_skew_flip.alerts.notifications import AmbiguousDeliveryError, TelegramRateLimitError, TelegramOutboxWorker
+from app.scanner.iv_skew_flip.alerts.notifications import (
+    AmbiguousDeliveryError, TelegramRateLimitError, TelegramRejectedError,
+    TelegramOutboxWorker,
+)
 from app.scanner.iv_skew_flip.alerts.models import AlertCandidate, AlertState
 from app.scanner.iv_skew_flip.alerts.store import AlertCooldownStore
 
@@ -237,6 +240,34 @@ def test_notification_worker_marks_expired_in_flight_delivery_uncertain():
         session.close()
     assert store.latest()[0]["delivery_status"] == "UNCERTAIN"
 
+
+
+def test_notification_worker_marks_permanent_telegram_rejection_failed_immediately():
+    store = make_store()
+    store.record(candidate())
+    worker = TelegramOutboxWorker(
+        store.session_factory, max_attempts=6, base_retry_seconds=1,
+    )
+
+    result = worker.process_one(
+        now_ns=candidate().observed_at_ns,
+        sender=lambda _payload: (_ for _ in ()).throw(
+            TelegramRejectedError("TELEGRAM_API_REJECTED")
+        ),
+        configured=True,
+    )
+    assert result["status"] == "FAILED"
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "FAILED"
+        assert row.attempts == 1
+        assert row.next_attempt_ns == candidate().observed_at_ns
+        assert row.lease_token is None
+        assert row.lease_until_ns is None
+    finally:
+        session.close()
+    assert store.latest()[0]["delivery_status"] == "FAILED"
 
 
 def test_notification_worker_reports_terminal_failure_at_attempt_limit():
