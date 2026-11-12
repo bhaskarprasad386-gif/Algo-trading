@@ -876,7 +876,7 @@ class IVSkewFlipRuntime:
             f"<b>Reason:</b> {escape(str(payload.get('reason') or 'Conditions satisfied'))}",
             f"<b>Alert ID:</b> {int(payload.get('event_id') or 0)} • Alert only; no order placed",
         ]
-        body = json.dumps({"chat_id": chat_id, "text": "\\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": True}).encode("utf-8")
+        body = json.dumps({"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": True}).encode("utf-8")
         request = Request(
             f"https://api.telegram.org/bot{token}/sendMessage",
             data=body, headers={"Content-Type": "application/json"}, method="POST",
