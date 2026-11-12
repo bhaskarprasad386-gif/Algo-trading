@@ -63,10 +63,14 @@ class _TLSAdapter(HTTPAdapter):
         return super().init_poolmanager(connections, maxsize, block=block, **pool_kwargs)
 
 
+def _tcp_mss_for_url(url: str) -> int | None:
+    host = (urlsplit(url).hostname or "").lower()
+    return ANGEL_MASTER_TCP_MSS if host in ANGEL_MASTER_HOSTS else None
+
+
 def _profile_request(url: str, *, timeout: Any, profile: str):
     headers = {"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"}
-    host = (urlsplit(url).hostname or "").lower()
-    tcp_mss = ANGEL_MASTER_TCP_MSS if host in ANGEL_MASTER_HOSTS else None
+    tcp_mss = _tcp_mss_for_url(url)
     # Use a session for all TLS profiles so the narrowly scoped TCP MSS
     # mitigation also applies to the initial system-negotiated attempt.
     # Default SSLContext retains normal certificate verification and OS CAs.
