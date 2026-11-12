@@ -719,3 +719,65 @@ def test_weekly_expiry_selection_rolls_after_1530_ist_and_stays_rolled_next_day(
     assert _universe_selection_date(before_close).isoformat() == "2026-11-17"
     assert _universe_selection_date(at_close).isoformat() == "2026-11-18"
     assert _universe_selection_date(next_day).isoformat() == "2026-11-18"
+
+
+
+def test_runtime_start_waits_for_lifecycle_transaction_lock():
+    from threading import Event, Thread
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    finished = Event()
+    errors = []
+
+    def start_runtime():
+        try:
+            runtime.start(instruments=[])
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    runtime._lifecycle_lock.acquire()
+    worker = Thread(target=start_runtime)
+    worker.start()
+    try:
+        assert finished.wait(0.05) is False
+    finally:
+        runtime._lifecycle_lock.release()
+    worker.join(timeout=2)
+
+    assert finished.is_set()
+    assert len(errors) == 1
+    assert "instrument master is empty" in str(errors[0])
+
+
+def test_runtime_stop_waits_for_lifecycle_transaction_lock():
+    from threading import Event, Thread
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    finished = Event()
+    results = []
+
+    def stop_runtime():
+        results.append(runtime.stop())
+        finished.set()
+
+    runtime._lifecycle_lock.acquire()
+    worker = Thread(target=stop_runtime)
+    worker.start()
+    try:
+        assert finished.wait(0.05) is False
+    finally:
+        runtime._lifecycle_lock.release()
+    worker.join(timeout=2)
+
+    assert finished.is_set()
+    assert results[0]["status"] == "STOPPED"
