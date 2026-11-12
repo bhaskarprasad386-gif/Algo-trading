@@ -42,6 +42,8 @@ type Runtime = {
   equity_pressure_by_underlying?: Record<string, Row>;
   index_future_feed?: Row;
   spot_future_basis?: Record<string, Row>;
+  telegram_configured?: boolean;
+  telegram_delivery?: Row;
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
