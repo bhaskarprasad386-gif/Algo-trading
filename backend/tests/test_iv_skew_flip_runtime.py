@@ -730,10 +730,12 @@ def test_runtime_start_waits_for_lifecycle_transaction_lock():
         spot_feed=FakeSpotFeed(),
         clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
     )
+    entered = Event()
     finished = Event()
     errors = []
 
     def start_runtime():
+        entered.set()
         try:
             runtime.start(instruments=[])
         except Exception as exc:
@@ -745,7 +747,8 @@ def test_runtime_start_waits_for_lifecycle_transaction_lock():
     worker = Thread(target=start_runtime)
     worker.start()
     try:
-        assert finished.wait(0.05) is False
+        assert entered.wait(2)
+        assert finished.is_set() is False
     finally:
         runtime._lifecycle_lock.release()
     worker.join(timeout=2)
@@ -763,10 +766,12 @@ def test_runtime_stop_waits_for_lifecycle_transaction_lock():
         spot_feed=FakeSpotFeed(),
         clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
     )
+    entered = Event()
     finished = Event()
     results = []
 
     def stop_runtime():
+        entered.set()
         results.append(runtime.stop())
         finished.set()
 
@@ -774,7 +779,8 @@ def test_runtime_stop_waits_for_lifecycle_transaction_lock():
     worker = Thread(target=stop_runtime)
     worker.start()
     try:
-        assert finished.wait(0.05) is False
+        assert entered.wait(2)
+        assert finished.is_set() is False
     finally:
         runtime._lifecycle_lock.release()
     worker.join(timeout=2)
