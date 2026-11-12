@@ -33,6 +33,7 @@ class IVEarlyEntryAlertEngine:
     def evaluate(self, *, sampler: Any, spot: Any, expiry: str, now: datetime, now_ns: int) -> dict[str, Any]:
         if now.tzinfo is None:
             raise ValueError("alert engine requires timezone-aware datetime")
+        self.store.expire_session_alerts(now=now)
         if not expiry:
             return {"state": "WATCH", "reason": "WAITING_FOR_WEEKLY_EXPIRY", "signals_allowed": False}
         snapshot = sampler.snapshot()
