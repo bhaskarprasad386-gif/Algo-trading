@@ -297,6 +297,27 @@ def test_notification_worker_reports_terminal_failure_at_attempt_limit():
     assert store.latest()[0]["delivery_status"] == "FAILED"
 
 
+def test_notification_worker_marks_definitive_provider_rejection_failed_without_retry():
+    store = make_store()
+    store.record(candidate())
+    worker = TelegramOutboxWorker(store.session_factory, max_attempts=6)
+    result = worker.process_one(
+        now_ns=candidate().observed_at_ns,
+        sender=lambda _payload: (_ for _ in ()).throw(TelegramRejectedError("TELEGRAM_API_REJECTED")),
+        configured=True,
+    )
+    assert result["status"] == "FAILED"
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "FAILED"
+        assert row.attempts == 1
+        assert row.last_error == "TELEGRAM_API_REJECTED"
+    finally:
+        session.close()
+    assert store.latest()[0]["delivery_status"] == "FAILED"
+
+
 def test_expired_worker_cannot_overwrite_newer_lease_owner():
     store = make_store()
     store.record(candidate())
