@@ -72,7 +72,7 @@ def test_telegram_sender_never_exposes_bot_token_in_transport_error(monkeypatch)
     try:
         IVSkewFlipRuntime._telegram_sender({"event_id": 9})
     except RuntimeError as exc:
-        assert str(exc) == "TELEGRAM_TRANSPORT_ERROR"
+        assert str(exc) == "TELEGRAM_DELIVERY_OUTCOME_UNKNOWN"
         assert "sensitive-token" not in str(exc)
     else:
         raise AssertionError("transport failure must be reported safely")
