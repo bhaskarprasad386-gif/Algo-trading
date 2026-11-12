@@ -12,16 +12,24 @@ class InstrumentManager:
     """Manager to download, parse, and sync Angel One instrument master list."""
 
     SCRIP_MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+    ALTERNATE_SCRIP_MASTER_URL = "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
 
     def fetch_master_json(self):
         """Fetch the latest scrip master json from Angel One."""
         try:
             app_logger.info("Downloading Angel One Instrument Master list...")
-            data = download_master_rows(
-                self.SCRIP_MASTER_URL,
-                timeout=(10, 120),
-                retries=3,
-            )
+            errors = []
+            data = None
+            for source_url in (self.SCRIP_MASTER_URL, self.ALTERNATE_SCRIP_MASTER_URL):
+                try:
+                    data = download_master_rows(source_url, timeout=(8, 90), retries=3)
+                    app_logger.info("Instrument master fetched from {}", source_url)
+                    break
+                except Exception as source_error:
+                    errors.append(f"{source_url}: {type(source_error).__name__}: {source_error}")
+                    app_logger.warning("Instrument master source failed; trying official alternate: {}", errors[-1])
+            if data is None:
+                raise RuntimeError("All official Angel One instrument-master hosts failed: " + " | ".join(errors))
             app_logger.info(f"Successfully downloaded {len(data)} instruments.")
             return data
         except Exception as e:
