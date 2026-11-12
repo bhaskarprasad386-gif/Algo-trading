@@ -11,7 +11,7 @@ from urllib.error import URLError, HTTPError
 from html import escape
 
 from app.core.config import settings
-from .alerts.notifications import TelegramOutboxWorker
+from .alerts.notifications import AmbiguousDeliveryError, TelegramOutboxWorker
 from zoneinfo import ZoneInfo
 
 from app.core.database import SessionLocal
@@ -884,10 +884,14 @@ class IVSkewFlipRuntime:
         try:
             with urlopen(request, timeout=5) as response:
                 result = json.loads(response.read().decode("utf-8"))
+        except HTTPError:
+            # A concrete HTTP response is a definitive provider rejection; the
+            # worker may retry it with backoff. Never expose response URL/token.
+            raise RuntimeError("TELEGRAM_API_REJECTED") from None
         except Exception:
-            # urllib exceptions can embed the full Bot API URL (and token).
-            # Never persist or expose provider exception text.
-            raise RuntimeError("TELEGRAM_TRANSPORT_ERROR") from None
+            # Timeout, connection reset, or unreadable response may occur after
+            # Telegram accepted the POST. Retrying could duplicate the alert.
+            raise AmbiguousDeliveryError("TELEGRAM_DELIVERY_OUTCOME_UNKNOWN") from None
         if not isinstance(result, dict) or result.get("ok") is not True:
             raise RuntimeError("TELEGRAM_API_REJECTED")
 
