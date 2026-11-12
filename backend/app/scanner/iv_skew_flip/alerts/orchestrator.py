@@ -78,14 +78,31 @@ class IVEarlyEntryAlertEngine:
 
         # Select the highest-OI persistent wall from completed minute observations.
         def wall_history(option_type: str):
-            eligible = []
+            # A wall must be the highest-OI eligible contract on each of the
+            # same three completed minute buckets, not merely the current
+            # highest-OI contract with an old history.
+            winners: dict[int, tuple[int, str]] = {}
+            histories: dict[str, tuple[Any, ...]] = {}
             for token, history in token_rows.items():
-                rows = tuple(row for row in history if row.expiry == expiry and row.option_type == option_type
-                             and row.strike in even_strikes([row.strike]) and row.oi is not None)
-                if len(rows) >= 3:
-                    eligible.append((rows[-1].oi, token, rows))
-            return max(eligible, key=lambda item: item[0])[2] if eligible else ()
-
+                rows = tuple(row for row in history if row.expiry == expiry
+                             and row.option_type == option_type
+                             and row.strike in even_strikes([row.strike])
+                             and row.oi is not None)
+                histories[token] = rows
+                for row in rows:
+                    minute = row.source_timestamp_ns // 60_000_000_000
+                    current_winner = winners.get(minute)
+                    if current_winner is None or row.oi > current_winner[0]:
+                        winners[minute] = (row.oi, token)
+            minutes = sorted(winners)[-3:]
+            if len(minutes) != 3 or any(b-a != 1 for a, b in zip(minutes, minutes[1:])):
+                return ()
+            tokens = {winners[minute][1] for minute in minutes}
+            if len(tokens) != 1:
+                return ()
+            token = next(iter(tokens))
+            by_minute = {row.source_timestamp_ns // 60_000_000_000: row for row in histories[token]}
+            return tuple(by_minute[minute] for minute in minutes if minute in by_minute)
         ce_wall, pe_wall = wall_history("CE"), wall_history("PE")
         if self._in_window(now, "OI_WALL_REJECTION"):
             for direction in ("BULLISH", "BEARISH"):
