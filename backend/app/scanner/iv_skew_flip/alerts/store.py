@@ -71,6 +71,33 @@ class AlertCooldownStore:
         finally:
             session.close()
 
+    def record_conflict(self, candidate: AlertCandidate) -> dict[str, Any]:
+        """Persist an opposing-signal candidate for manual review without cooldown."""
+        if candidate.state not in {AlertState.EARLY_ENTRY, AlertState.CONFLICT}:
+            raise ValueError("conflict records require an entry candidate")
+        key = self.key(candidate)
+        session = self.session_factory()
+        try:
+            row = IVEarlyEntryAlertEvent(
+                strategy=candidate.strategy, underlying=candidate.underlying,
+                expiry=candidate.expiry, strike=candidate.strike,
+                direction=candidate.direction, option_type=candidate.option_type,
+                state=AlertState.CONFLICT.value, observed_at_ns=candidate.observed_at_ns,
+                spot=candidate.spot, premium=candidate.premium,
+                iv_change_points=candidate.iv_change_points,
+                volume_ratio=candidate.volume_ratio, reason=candidate.reason,
+                metadata_json=json.dumps(candidate.metadata, sort_keys=True, separators=(",", ":"), default=str),
+                cooldown_key=key, delivery_status="SKIPPED",
+            )
+            session.add(row)
+            session.commit()
+            return {"accepted": True, "event_id": row.id, "state": "CONFLICT"}
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def mark_delivery(self, event_id: int, status: str) -> bool:
         normalized = str(status).upper()
         if normalized not in {"PENDING", "SENT", "FAILED", "SKIPPED"}:
