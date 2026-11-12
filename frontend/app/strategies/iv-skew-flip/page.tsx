@@ -324,11 +324,14 @@ function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null;
   const spotValues=spotPoints.map(x=>x.v);
   const ivValues=[...groups.values()].flatMap(x=>x.points.map(p=>p.v));
   const bounds=(values:number[])=>{if(!values.length)return [0,1] as [number,number];const lo=Math.min(...values),hi=Math.max(...values);const pad=Math.max((hi-lo)*0.12,0.5);return [lo-pad,hi+pad] as [number,number]};
-  const [spotMin,spotMax]=bounds(spotValues),[ivMin,ivMax]=bounds(ivValues);
-  const zoomCoordinate=(value:number,center:number)=>center+(value-center)*chartZoom;
-  const x=(t:number)=>zoomCoordinate(left+(t-minT)/Math.max(1,maxT-minT)*plotW,left+plotW/2);
-  const ySpot=(v:number)=>zoomCoordinate(top+(spotMax-v)/Math.max(0.0001,spotMax-spotMin)*plotH,top+plotH/2);
-  const yIv=(v:number)=>zoomCoordinate(top+(ivMax-v)/Math.max(0.0001,ivMax-ivMin)*plotH,top+plotH/2);
+  const zoomBounds=(values:number[])=>{const [lo,hi]=bounds(values);const center=(lo+hi)/2;const half=(hi-lo)/(2*chartZoom);return [center-half,center+half] as [number,number]};
+  const [spotMin,spotMax]=zoomBounds(spotValues),[ivMin,ivMax]=zoomBounds(ivValues);
+  const timeCenter=(minT+maxT)/2;
+  const timeHalf=Math.max(1,(maxT-minT)/(2*chartZoom));
+  const zoomMinT=timeCenter-timeHalf,zoomMaxT=timeCenter+timeHalf;
+  const x=(t:number)=>left+(t-zoomMinT)/Math.max(1,zoomMaxT-zoomMinT)*plotW;
+  const ySpot=(v:number)=>top+(spotMax-v)/Math.max(0.0001,spotMax-spotMin)*plotH;
+  const yIv=(v:number)=>top+(ivMax-v)/Math.max(0.0001,ivMax-ivMin)*plotH;
   const decimate=(points:{t:number;v:number}[])=>{const step=Math.max(1,Math.ceil(points.length/220));return points.filter((_,i)=>i%step===0||i===points.length-1)};
   const path=(points:{t:number;v:number}[],scale:(v:number)=>number)=>decimate(points).map(p=>`${x(p.t).toFixed(1)},${scale(p.v).toFixed(1)}`).join(" ");
   const strikes=selectedStrikes;
@@ -575,7 +578,7 @@ export default function IVSkewFlipPage() {
   const bankExpiry=String((bank.option_feed??{}).expiry_type??"");
   return <main className="space-y-4 p-3 sm:p-5 theme-text">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-bold sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • Angel One broker IV + FULL quote data • other chains temporarily disabled</p></div>
+      <div><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • Angel One broker IV + FULL quote data • other chains temporarily disabled</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
         <button onClick={()=>void fetchBrokerSnapshot()} disabled={!running||snapshotBusy} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm font-bold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch Broker IV + Chain"}</button>
@@ -587,6 +590,7 @@ export default function IVSkewFlipPage() {
       </div>
     </header>
     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Orders OFF</span></div>
+    <section aria-label="Scanner at a glance" className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="NIFTY Spot" value={fmt(niftySpot.price)} sub={`Feed age ${age(niftySpot.age_ms)}`}/><Metric label="ATM Strike" value={fmt(liveFeed.atm_strike??nifty.option_feed?.atm_strike,0)} sub={`Expiry ${String(liveFeed.expiry??"—")}`}/><Metric label="Option Chain" value={String(liveFeed.status??"WAITING")} sub={`${fmt(liveNiftySampler.contracts_live??liveNiftySampler.live_contracts,0)} live contracts`}/><Metric label="IV Data" value={String(liveNiftySampler.status??"WAITING")} sub={`Live IV ${fmt(liveNiftySampler.iv_live_count,0)} • OI ${fmt(liveNiftySampler.oi_live_count,0)}`}/></section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="font-extrabold tracking-tight theme-text">NIFTY Weekly Early-Entry Alerts</h2><p className="mt-1 text-xs theme-muted">Strategy A: IV + volume momentum • Strategy B: OI wall rejection • alert-only</p></div>
