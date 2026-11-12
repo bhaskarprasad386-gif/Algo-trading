@@ -37,6 +37,7 @@ def test_one_second_sampler_calculates_iv_and_samples_oi_from_fresh_quotes():
         rows.append(OptionQuote(
             "NIFTY", "2026-11-12", strike, side, now_ns,
             premium, premium - 0.5, premium + 0.5, oi, 10, token,
+            oi_timestamp_ns=now_ns,
         ))
     source.quotes = tuple(rows)
     sampler = _sampler(source, lambda: now_ns)
@@ -73,13 +74,13 @@ def test_one_second_sampler_records_new_oi_only_on_new_source_tick():
     premium = 100.0
     source.quotes = (OptionQuote(
         "NIFTY", "2026-11-12", 21950, "CE", now_ns,
-        premium, 99.5, 100.5, 10000, 100, "ce-token",
+        premium, 99.5, 100.5, 10000, 100, "ce-token", oi_timestamp_ns=now_ns,
     ),)
     sampler = _sampler(source, lambda: now_ns + 1_000_000_000)
     sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
     source.quotes = (OptionQuote(
         "NIFTY", "2026-11-12", 21950, "CE", now_ns + 1_000_000_000,
-        premium + 5, 104.5, 105.5, 9400, 150, "ce-token",
+        premium + 5, 104.5, 105.5, 9400, 150, "ce-token", oi_timestamp_ns=now_ns + 1_000_000_000,
     ),)
     result = sampler.sample_once(
         now_ns=now_ns + 1_000_000_000, now=now,
@@ -312,7 +313,7 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
     source.quotes = (
         OptionQuote(
             "NIFTY", "2026-11-12", 21950, "CE", now_ns,
-            100.0, 99.5, 100.5, 10000, 250, "durable-ce",
+            100.0, 99.5, 100.5, 10000, 250, "durable-ce", oi_timestamp_ns=now_ns,
         ),
         OptionQuote(
             "NIFTY", "2026-11-12", 22000, "PE", now_ns,
@@ -657,3 +658,24 @@ def test_sampler_does_not_invent_oi_freshness_for_legacy_rows_without_oi_timesta
     assert restored.oi == 10000
     assert restored.oi_timestamp_ns is None
     engine.dispose()
+
+
+
+def test_sampler_does_not_infer_oi_timestamp_from_price_quote_timestamp():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 100, "ce-token",
+        # Broker sent a price quote and OI value but no OI observation time.
+        oi_timestamp_ns=None,
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert result["oi_values"]["ce-token"] == 10000
+    assert result["oi_live_count"] == 0
+    assert result["live_metrics"][0]["oi_live"] is False
+    assert sampler.history_snapshot("ce-token")[-1].oi_timestamp_ns is None
