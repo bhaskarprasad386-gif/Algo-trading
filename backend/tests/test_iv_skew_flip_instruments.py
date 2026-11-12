@@ -393,3 +393,17 @@ def test_snapshot_writer_preserves_original_fetched_at_on_recovery(monkeypatch, 
         json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
     ).hexdigest()
     assert loader._read_recent_snapshot() is not None
+
+
+def test_snapshot_write_failure_is_not_reported_as_success(monkeypatch, tmp_path):
+    cache = tmp_path / "iv_snapshot.json"
+    cache.write_text("last-known-good", encoding="utf-8")
+    monkeypatch.setattr(loader, "_cache_path", lambda: cache)
+    monkeypatch.setattr(
+        loader.os, "replace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    with pytest.raises(OSError, match="disk unavailable"):
+        loader._write_snapshot(valid_rows())
+    assert cache.read_text(encoding="utf-8") == "last-known-good"
+    assert list(tmp_path.glob("iv_snapshot.json.*.tmp")) == []
