@@ -23,9 +23,11 @@ def download_master_rows(
     timeout: Any = (10, 120),
     retries: int = 3,
     backoff_seconds: float = 1.0,
-    get=requests.get,
+    get=None,
 ) -> list[dict[str, Any]]:
     """Fetch a complete JSON list with bounded memory, retries and strict shape checks."""
+    if get is None:
+        get = requests.get
     if retries < 1:
         raise ValueError("retries must be at least one")
     last_error: Exception | None = None
