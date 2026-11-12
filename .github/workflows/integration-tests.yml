@@ -228,6 +228,7 @@ jobs:
       - name: Compile shared instrument-master consumers
         run: |
           python -m py_compile backend/app/market_data/master_transport.py
+          python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
           python -m py_compile backend/app/market_data/instruments.py
           python -m py_compile backend/app/instruments/manager.py
           python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
