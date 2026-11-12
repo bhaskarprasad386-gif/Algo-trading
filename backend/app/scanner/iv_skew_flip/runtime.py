@@ -618,7 +618,7 @@ class IVSkewFlipRuntime:
                     )
                 result = self._early_move_detectors[stream_id].update(
                     quotes=feed.latest_quotes(),
-                    metrics=sampler_snapshot.get("live_metrics", ()),
+                    metrics=sampler_snapshot.get("raw_live_metrics", ()),
                     spot_price=spot.price,
                     now_ns=now_ns,
                     spot_timestamp_ns=getattr(spot, "timestamp_ns", None),
