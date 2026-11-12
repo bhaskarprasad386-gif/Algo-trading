@@ -5,9 +5,9 @@ Requires a repository-scoped GitHub token with Actions: read permission.
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -126,7 +126,7 @@ def main() -> int:
             or box._canonical_rows_digest(installed[0]) != box._canonical_rows_digest(rows)
         ):
             raise RuntimeError("Box Spread cache read-back integrity/freshness verification failed")
-        age = (box.datetime.now(box.timezone.utc) - fetched_at).total_seconds()
+        age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
         print(
             f"Box Spread recovery PASS artifact_id={metadata['id']} "
             f"rows={len(rows)} fetched_at={fetched_at.isoformat()} "
