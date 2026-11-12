@@ -161,6 +161,14 @@ class AlertCooldownStore:
                 return False
             row.state = state.value
             row.reason = str(reason)[:2000]
+            if state == AlertState.INVALIDATED:
+                # Release only this event's cooldown claim. The timestamp
+                # predicate prevents a late lifecycle update from clearing a
+                # newer alert's cooldown for the same signal key.
+                session.query(IVEarlyEntryCooldown).filter(
+                    IVEarlyEntryCooldown.cooldown_key == row.cooldown_key,
+                    IVEarlyEntryCooldown.last_alert_ns == row.observed_at_ns,
+                ).delete(synchronize_session=False)
             session.commit()
             return True
         except Exception:
@@ -195,6 +203,10 @@ class AlertCooldownStore:
                 if breached and observed_at_ns >= row.observed_at_ns:
                     row.state = AlertState.INVALIDATED.value
                     row.reason = "OI_WALL_BREACHED_BY_LIVE_SPOT"
+                    session.query(IVEarlyEntryCooldown).filter(
+                        IVEarlyEntryCooldown.cooldown_key == row.cooldown_key,
+                        IVEarlyEntryCooldown.last_alert_ns == row.observed_at_ns,
+                    ).delete(synchronize_session=False)
                     changed += 1
             if changed:
                 session.commit()
