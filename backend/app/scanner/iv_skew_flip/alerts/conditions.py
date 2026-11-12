@@ -74,7 +74,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     if len(ce) < 2 or len(pe) < 2 or len(target) < 4:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INSUFFICIENT_OPTION_HISTORY",))
 
-    ce3, pe3, tgt = tuple(ce[-3:]), tuple(pe[-3:]), tuple(target[-4:])
+    ce3, pe3, tgt = tuple(ce[-2:]), tuple(pe[-2:]), tuple(target[-4:])
     if (not _same_contract(ce3, "CE") or not _same_contract(pe3, "PE")
             or not _same_contract(tgt, tgt[-1].option_type)):
         return StrategyEvaluation(AlertState.WATCH, reasons=("CONTRACT_OR_EXPIRY_MISMATCH",))
