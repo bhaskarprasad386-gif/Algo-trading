@@ -16,6 +16,10 @@ class InstrumentMaster:
         "https://margincalculator.angelbroking.com/"
         "OpenAPI_File/files/OpenAPIScripMaster.json"
     )
+    ALTERNATE_MASTER_URL = (
+        "https://margincalculator.angelone.in/"
+        "OpenAPI_File/files/OpenAPIScripMaster.json"
+    )
     _cache_lock = Lock()
     _cached_instruments: Optional[List[Dict[str, Any]]] = None
     _cached_snapshot_date: Optional[str] = None
@@ -54,11 +58,23 @@ class InstrumentMaster:
                 self._loaded = True
                 return self.instruments
             try:
-                data = download_master_rows(
-                    self.MASTER_URL,
-                    timeout=(10, timeout if isinstance(timeout, (int, float)) else 120),
-                    retries=3,
-                )
+                source_errors = []
+                data = None
+                request_timeout = (8, timeout if isinstance(timeout, (int, float)) else 90)
+                for source_url in (self.MASTER_URL, self.ALTERNATE_MASTER_URL):
+                    try:
+                        data = download_master_rows(
+                            source_url,
+                            timeout=request_timeout,
+                            retries=3,
+                        )
+                        app_logger.info("Instrument master downloaded from {}", source_url)
+                        break
+                    except Exception as source_error:
+                        source_errors.append(f"{source_url}: {type(source_error).__name__}: {source_error}")
+                        app_logger.warning("Instrument master source failed; trying official alternate host: {}", source_errors[-1])
+                if data is None:
+                    raise RuntimeError("All official Angel One instrument-master hosts failed: " + " | ".join(source_errors))
                 self.__class__._cached_instruments = data
                 self.__class__._cached_snapshot_date = today
                 self.instruments = data
