@@ -133,9 +133,16 @@ class TelegramOutboxWorker:
         # A lifecycle change after dispatch authorization cannot retract an
         # HTTP request already being issued; the database check above defines
         # the ordering boundary and minimizes that unavoidable network race.
+        retry_after_seconds = None
         try:
             sender(payload)
             final_status, error = "SENT", ""
+        except TelegramRateLimitError as exc:
+            # Preserve Retry-After outside the except block (Python clears the
+            # exception target after the handler) for the persistence phase.
+            retry_after_seconds = exc.retry_after_seconds
+            final_status = "RETRY"
+            error = "TELEGRAM_RATE_LIMITED"
         except AmbiguousDeliveryError:
             # A timeout/connection loss after POST may mean Telegram accepted
             # the message. Never retry an outcome that could duplicate a send.
@@ -162,8 +169,8 @@ class TelegramOutboxWorker:
                         row.status = "FAILED"
                     else:
                         delay = self.base_retry_ns * (2 ** min(row.attempts - 1, 8))
-                        if isinstance(exc, TelegramRateLimitError) and exc.retry_after_seconds is not None:
-                            retry_after_ns = int(max(0.0, exc.retry_after_seconds) * 1_000_000_000)
+                        if retry_after_seconds is not None:
+                            retry_after_ns = int(max(0.0, retry_after_seconds) * 1_000_000_000)
                             delay = max(delay, retry_after_ns)
                         row.next_attempt_ns = now_ns + delay
                 event = session.get(IVEarlyEntryAlertEvent, row.event_id)
