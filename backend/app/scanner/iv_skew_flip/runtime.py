@@ -1067,6 +1067,14 @@ class IVSkewFlipRuntime:
             with self._lock:
                 self._stopping = True
             return self.snapshot()
+        if telegram_thread is not None and telegram_thread.is_alive():
+            # A sender may still be completing an external Telegram request.
+            # Do not clear its thread reference or permit restart to clear the
+            # stop event while this worker is alive; that could create two
+            # concurrent outbox consumers after a slow shutdown.
+            with self._lock:
+                self._stopping = True
+            return self.snapshot()
 
         with self._lock:
             samplers = tuple(self._samplers.items())
