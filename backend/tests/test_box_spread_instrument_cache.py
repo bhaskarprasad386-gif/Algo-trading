@@ -215,3 +215,17 @@ def test_box_spread_cache_rejects_malformed_rows(monkeypatch, tmp_path):
         "instruments": [{"symbol": "X"}],
     }))
     assert cache_module._read_cache() is None
+
+
+def test_box_spread_cache_write_failure_is_not_reported_as_success(monkeypatch, tmp_path):
+    path = tmp_path / "box-cache.json"
+    monkeypatch.setenv("BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH", str(path))
+    path.write_text("last-known-good")
+    monkeypatch.setattr(
+        cache_module.os, "replace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    with pytest.raises(OSError, match="disk unavailable"):
+        cache_module._write_cache(_rows())
+    assert path.read_text() == "last-known-good"
+    assert list(tmp_path.glob("box-cache.json.*.tmp")) == []
