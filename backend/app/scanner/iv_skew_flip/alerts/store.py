@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, time as clock_time
+from zoneinfo import ZoneInfo
 from threading import RLock
 from typing import Any
 
@@ -92,6 +94,58 @@ class AlertCooldownStore:
             session.add(row)
             session.commit()
             return {"accepted": True, "event_id": row.id, "state": "CONFLICT"}
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def transition(self, event_id: int, state: AlertState, *, reason: str) -> bool:
+        """Idempotently update an alert lifecycle state without consuming cooldown."""
+        if state not in {AlertState.INVALIDATED, AlertState.EXPIRED, AlertState.CONFLICT}:
+            raise ValueError("unsupported lifecycle transition")
+        session = self.session_factory()
+        try:
+            row = session.get(IVEarlyEntryAlertEvent, int(event_id))
+            if row is None or row.state != AlertState.EARLY_ENTRY.value:
+                return False
+            row.state = state.value
+            row.reason = str(reason)[:2000]
+            session.commit()
+            return True
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def expire_session_alerts(self, *, now: datetime) -> int:
+        """Expire active alerts after session close or after their option expiry."""
+        if now.tzinfo is None:
+            raise ValueError("now must be timezone-aware")
+        local = now.astimezone(ZoneInfo("Asia/Kolkata"))
+        session = self.session_factory()
+        changed = 0
+        try:
+            rows = (session.query(IVEarlyEntryAlertEvent)
+                    .filter(IVEarlyEntryAlertEvent.state == AlertState.EARLY_ENTRY.value)
+                    .all())
+            for row in rows:
+                try:
+                    expiry_day = datetime.strptime(row.expiry[:10], "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                if expiry_day < local.date():
+                    row.state = AlertState.EXPIRED.value
+                    row.reason = "OPTION_EXPIRY_PASSED"
+                    changed += 1
+                elif local.time() > clock_time(15, 5):
+                    row.state = AlertState.EXPIRED.value
+                    row.reason = "TRADING_SESSION_CLOSED"
+                    changed += 1
+            if changed:
+                session.commit()
+            return changed
         except Exception:
             session.rollback()
             raise
