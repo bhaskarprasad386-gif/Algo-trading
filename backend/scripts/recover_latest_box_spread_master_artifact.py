@@ -13,10 +13,9 @@ from typing import Any
 import requests
 
 from app.market_data import box_spread_instrument_cache as box
-try:
-    # Package import used by pytest and other backend modules.
+if __package__:
     from .recover_box_spread_master_artifact import _extract
-except ImportError:
+else:
     # Direct script execution: python scripts/recover_latest_box_spread_master_artifact.py
     from recover_box_spread_master_artifact import _extract
 
