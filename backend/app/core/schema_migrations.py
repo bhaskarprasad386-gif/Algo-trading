@@ -295,6 +295,7 @@ def run_schema_migrations() -> None:
                 iv FLOAT,
                 iv_source VARCHAR(24) NOT NULL DEFAULT 'LOCAL_MODEL',
                 oi BIGINT,
+                oi_timestamp_ns BIGINT,
                 bid FLOAT,
                 ask FLOAT,
                 ltp FLOAT,
@@ -307,6 +308,10 @@ def run_schema_migrations() -> None:
             connection.execute(text("ALTER TABLE iv_option_observations ADD COLUMN spot_price FLOAT"))
         if "iv_source" not in observation_columns:
             connection.execute(text("ALTER TABLE iv_option_observations ADD COLUMN iv_source VARCHAR(24) NOT NULL DEFAULT 'LOCAL_MODEL'"))
+        if "oi_timestamp_ns" not in observation_columns:
+            # Legacy rows cannot prove when their retained OI was observed.
+            # Leave NULL and require a fresh broker OI tick before using them.
+            connection.execute(text("ALTER TABLE iv_option_observations ADD COLUMN oi_timestamp_ns BIGINT"))
         connection.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_iv_option_observation_source "
             "ON iv_option_observations (token, source_timestamp_ns)"
