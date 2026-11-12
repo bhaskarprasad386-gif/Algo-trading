@@ -314,3 +314,20 @@ def test_waiting_config_clears_lease_and_defers_next_attempt():
     )
     assert not_due["processed"] is False
     assert not_due["reason"] == "NO_DUE_NOTIFICATION"
+
+
+
+def test_cooldown_deduplicates_same_contract_across_strategies():
+    store = make_store()
+    first = store.record(candidate())
+    base = candidate(1_800_000_001_000_000_000)
+    other_strategy = AlertCandidate(
+        "OI_WALL_REJECTION", base.underlying, base.expiry, base.strike,
+        base.direction, base.option_type, base.state, base.observed_at_ns,
+        base.spot, base.premium, -0.12, None, "same market move via OI wall",
+    )
+    second = store.record(other_strategy)
+    assert first["accepted"] is True
+    assert second["accepted"] is False
+    assert second["reason"] == "COOLDOWN_ACTIVE"
+    assert len(store.latest()) == 1
