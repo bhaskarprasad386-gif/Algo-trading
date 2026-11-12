@@ -149,7 +149,7 @@ def test_oi_wall_alert_invalidates_only_when_live_spot_breaches_wall():
     assert latest["reason"] == "OI_WALL_BREACHED_BY_LIVE_SPOT"
 
 
-def test_notification_worker_recovers_expired_in_flight_lease():
+def test_notification_worker_marks_expired_in_flight_delivery_uncertain():
     store = make_store()
     result = store.record(candidate())
     session = store.session_factory()
@@ -160,6 +160,7 @@ def test_notification_worker_recovers_expired_in_flight_lease():
         row.status = "IN_FLIGHT"
         row.attempts = 1
         row.lease_until_ns = candidate().observed_at_ns + 1_000_000_000
+        row.lease_token = "abandoned-worker"
         session.commit()
     finally:
         session.close()
@@ -171,10 +172,17 @@ def test_notification_worker_recovers_expired_in_flight_lease():
         sender=lambda payload: delivered.append(payload),
         configured=True,
     )
-    assert recovered["status"] == "SENT"
-    assert len(delivered) == 1
-    assert delivered[0]["event_id"] == result["event_id"]
-    assert store.latest()[0]["delivery_status"] == "SENT"
+    assert recovered["status"] == "UNCERTAIN"
+    assert delivered == []
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "UNCERTAIN"
+        assert row.lease_token is None
+        assert row.lease_until_ns is None
+    finally:
+        session.close()
+    assert store.latest()[0]["delivery_status"] == "UNCERTAIN"
 
 
 
