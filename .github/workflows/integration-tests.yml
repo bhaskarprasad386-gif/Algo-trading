@@ -230,5 +230,12 @@ jobs:
           python -m py_compile backend/app/market_data/master_transport.py
           python -m py_compile backend/app/market_data/instruments.py
           python -m py_compile backend/app/instruments/manager.py
-      - name: Run bounded transport regressions
-        run: python -m pytest -q backend/tests/test_master_transport.py --tb=short
+          python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
+          python -m py_compile backend/scripts/recover_box_spread_master_artifact.py
+          python -m py_compile backend/scripts/recover_iv_master_artifact.py
+      - name: Run instrument-master regression suite
+        run: |
+          python -m pytest -q --tb=short \
+            backend/tests/test_master_transport.py \
+            backend/tests/test_box_spread_instrument_cache.py \
+            backend/tests/test_iv_skew_flip_instruments.py
