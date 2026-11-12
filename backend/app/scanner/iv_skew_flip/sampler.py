@@ -314,7 +314,7 @@ class IVOneSecondSampler:
                 bid=quote.bid if quote.bid is not None and isfinite(quote.bid) and quote.bid > 0 else None,
                 ask=quote.ask if quote.ask is not None and isfinite(quote.ask) and quote.ask > 0 else None,
                 volume=quote.volume if isinstance(quote.volume, int) and not isinstance(quote.volume, bool) and quote.volume >= 0 else None,
-                oi_timestamp_ns=(quote.oi_timestamp_ns or quote.timestamp_ns) if quote.oi is not None else None,
+                oi_timestamp_ns=quote.oi_timestamp_ns if quote.oi is not None else None,
             )
             updates[quote.token] = sample
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
