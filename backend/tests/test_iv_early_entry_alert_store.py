@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
-from app.scanner.iv_skew_flip.alerts.notifications import AmbiguousDeliveryError, TelegramOutboxWorker
+from app.scanner.iv_skew_flip.alerts.notifications import AmbiguousDeliveryError, TelegramRateLimitError, TelegramOutboxWorker
 from app.scanner.iv_skew_flip.alerts.models import AlertCandidate, AlertState
 from app.scanner.iv_skew_flip.alerts.store import AlertCooldownStore
 
@@ -660,3 +660,45 @@ def test_lifecycle_transition_cancels_unclaimed_outbox_but_preserves_in_flight_l
 
     latest = {row["id"]: row for row in store.latest(limit=10)}
     assert latest[queued["event_id"]]["delivery_status"] == "SKIPPED"
+
+
+
+def test_telegram_rate_limit_retry_after_is_honored_and_not_sent_early():
+    store = make_store()
+    store.record(candidate())
+    worker = TelegramOutboxWorker(store.session_factory, base_retry_seconds=5)
+    now_ns = candidate().observed_at_ns
+
+    limited = worker.process_one(
+        now_ns=now_ns,
+        sender=lambda _payload: (_ for _ in ()).throw(TelegramRateLimitError(30)),
+        configured=True,
+    )
+    assert limited["status"] == "RETRY"
+
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "RETRY"
+        assert row.next_attempt_ns == now_ns + 30_000_000_000
+        assert row.lease_token is None
+        assert row.lease_until_ns is None
+    finally:
+        session.close()
+
+    too_early = worker.process_one(
+        now_ns=now_ns + 29_000_000_000,
+        sender=lambda _payload: (_ for _ in ()).throw(AssertionError("sent before Retry-After")),
+        configured=True,
+    )
+    assert too_early["processed"] is False
+    assert too_early["reason"] == "NO_DUE_NOTIFICATION"
+
+    sent = []
+    retried = worker.process_one(
+        now_ns=now_ns + 30_000_000_000,
+        sender=lambda payload: sent.append(payload["event_id"]),
+        configured=True,
+    )
+    assert retried["status"] == "SENT"
+    assert len(sent) == 1
