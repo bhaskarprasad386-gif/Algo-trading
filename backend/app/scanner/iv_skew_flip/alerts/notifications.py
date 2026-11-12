@@ -47,6 +47,9 @@ class TelegramOutboxWorker:
                     row.status = "WAITING_CONFIG"
                     row.lease_until_ns = None
                     row.last_error = "TELEGRAM_CONFIGURATION_MISSING"
+                    event = session.get(IVEarlyEntryAlertEvent, row.event_id)
+                    if event is not None:
+                        event.delivery_status = "WAITING_CONFIG"
                     return {"processed": True, "status": "WAITING_CONFIG", "outbox_id": row.id}
                 row.status = "IN_FLIGHT"
                 row.lease_until_ns = now_ns + self.lease_ns
