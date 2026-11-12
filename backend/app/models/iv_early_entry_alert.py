@@ -1,5 +1,5 @@
 """Durable IV early-entry alert history and cooldown state."""
-from sqlalchemy import BigInteger, Float, Index, String, Text
+from sqlalchemy import BigInteger, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -12,7 +12,7 @@ class IVEarlyEntryAlertEvent(Base):
         Index("ix_iv_early_entry_alert_strategy", "strategy", "state", "observed_at_ns"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy: Mapped[str] = mapped_column(String(40), nullable=False)
     underlying: Mapped[str] = mapped_column(String(16), nullable=False)
     expiry: Mapped[str] = mapped_column(String(32), nullable=False)
