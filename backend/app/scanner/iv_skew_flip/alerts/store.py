@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, time as clock_time
 from zoneinfo import ZoneInfo
-from threading import RLock
 from typing import Any
+
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
@@ -18,7 +20,6 @@ class AlertCooldownStore:
             raise ValueError("cooldown_seconds must be positive")
         self.session_factory = session_factory
         self.cooldown_ns = cooldown_seconds * 1_000_000_000
-        self._lock = RLock()
 
     @staticmethod
     def key(candidate: AlertCandidate) -> str:
@@ -29,33 +30,49 @@ class AlertCooldownStore:
         ))
 
     def record(self, candidate: AlertCandidate) -> dict[str, Any]:
-        """Persist event and cooldown atomically; return accepted=False during cooldown."""
+        """Atomically claim the cooldown key and persist event plus outbox."""
         if candidate.state != AlertState.EARLY_ENTRY:
             raise ValueError("only EARLY_ENTRY candidates can consume cooldown")
         key = self.key(candidate)
         session = self.session_factory()
         try:
-            # Serialize local evaluator threads; DB transaction makes event and
-            # cooldown update commit or roll back together.
-            with self._lock:
+            try:
                 with session.begin():
-                    state = session.get(IVEarlyEntryCooldown, key)
-                    if state is not None and candidate.observed_at_ns - state.last_alert_ns < self.cooldown_ns:
-                        return {
-                            "accepted": False, "reason": "COOLDOWN_ACTIVE",
-                            "cooldown_key": key,
-                            "remaining_ns": max(0, self.cooldown_ns - (candidate.observed_at_ns - state.last_alert_ns)),
-                        }
-                    if state is None:
-                        state = IVEarlyEntryCooldown(
-                            cooldown_key=key, last_alert_ns=candidate.observed_at_ns,
-                            expiry=candidate.expiry, strategy=candidate.strategy,
+                    # Conditional UPDATE is the cross-process compare-and-set:
+                    # the database rechecks the cooldown predicate after any
+                    # competing writer commits. It also obtains SQLite's write
+                    # lock before the absent-row insert path.
+                    claimed = session.execute(
+                        update(IVEarlyEntryCooldown)
+                        .where(
+                            IVEarlyEntryCooldown.cooldown_key == key,
+                            IVEarlyEntryCooldown.last_alert_ns
+                            <= candidate.observed_at_ns - self.cooldown_ns,
                         )
-                        session.add(state)
-                    else:
-                        state.last_alert_ns = candidate.observed_at_ns
-                        state.expiry = candidate.expiry
-                        state.strategy = candidate.strategy
+                        .values(
+                            last_alert_ns=candidate.observed_at_ns,
+                            expiry=candidate.expiry,
+                            strategy=candidate.strategy,
+                        )
+                    )
+                    if claimed.rowcount == 0:
+                        state = session.get(IVEarlyEntryCooldown, key)
+                        if state is not None:
+                            elapsed = candidate.observed_at_ns - state.last_alert_ns
+                            if elapsed < self.cooldown_ns:
+                                return {
+                                    "accepted": False, "reason": "COOLDOWN_ACTIVE",
+                                    "cooldown_key": key,
+                                    "remaining_ns": max(0, self.cooldown_ns - elapsed),
+                                }
+                        else:
+                            session.add(IVEarlyEntryCooldown(
+                                cooldown_key=key,
+                                last_alert_ns=candidate.observed_at_ns,
+                                expiry=candidate.expiry,
+                                strategy=candidate.strategy,
+                            ))
+
                     event = IVEarlyEntryAlertEvent(
                         strategy=candidate.strategy, underlying=candidate.underlying,
                         expiry=candidate.expiry, strike=candidate.strike,
@@ -87,6 +104,20 @@ class AlertCooldownStore:
                         lease_until_ns=None, last_error="",
                     ))
                 return {"accepted": True, "event_id": event_id, "cooldown_key": key}
+            except IntegrityError:
+                # On databases where two first-time inserts can race, the
+                # unique cooldown key elects one winner. Re-read after rollback.
+                session.rollback()
+                state = session.get(IVEarlyEntryCooldown, key)
+                if state is not None:
+                    elapsed = candidate.observed_at_ns - state.last_alert_ns
+                    if elapsed < self.cooldown_ns:
+                        return {
+                            "accepted": False, "reason": "COOLDOWN_ACTIVE",
+                            "cooldown_key": key,
+                            "remaining_ns": max(0, self.cooldown_ns - elapsed),
+                        }
+                raise
         finally:
             session.close()
 
