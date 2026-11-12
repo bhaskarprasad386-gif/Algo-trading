@@ -57,5 +57,7 @@ def test_strategy_a_rejects_stale_live_quote():
     assert "STALE_OPTION_QUOTE" in result.reasons
 
 
-def test_even_strikes_uses_100_point_grid():
-    assert even_strikes([24950, 25000, 25050, 25100, 25100]) == (25000.0, 25100.0)
+def test_even_strikes_includes_full_nifty_50_point_grid():
+    assert even_strikes([24950, 25000, 25050, 25100, 25100, 25125]) == (
+        24950.0, 25000.0, 25050.0, 25100.0,
+    )
