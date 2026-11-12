@@ -23,7 +23,7 @@ def test_strategy_a_emits_early_entry_without_breakout_close():
     now, bars, ce, pe = setup()
     result = evaluate_strategy_a(
         now_ns=now, expiry="2026-11-19", bars=bars,
-        ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        ce=ce[-3:], pe=pe, target=ce[:4], direction="BULLISH",
         live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
     )
     assert result.state == AlertState.EARLY_ENTRY
