@@ -23,6 +23,7 @@ class IVEarlyEntryNotificationOutbox(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_attempt_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     lease_until_ns: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
