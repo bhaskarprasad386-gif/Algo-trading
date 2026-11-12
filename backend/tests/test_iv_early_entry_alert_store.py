@@ -540,3 +540,54 @@ def test_notification_revalidates_lifecycle_after_claim_before_dispatch():
     assert delivered == []
     assert store.latest()[0]["state"] == "INVALIDATED"
     assert store.latest()[0]["delivery_status"] == "SKIPPED"
+
+
+
+def test_lifecycle_transition_cancels_unclaimed_outbox_but_preserves_in_flight_lease():
+    store = make_store()
+    queued = store.record(candidate())
+    other = candidate()
+    inflight_candidate = AlertCandidate(
+        other.strategy, other.underlying, other.expiry, 25050.0,
+        other.direction, other.option_type, other.state,
+        other.observed_at_ns + 1_000_000_000, other.spot, other.premium,
+        other.iv_change_points, other.volume_ratio, "in-flight test",
+    )
+    inflight = store.record(inflight_candidate)
+
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).filter_by(
+            event_id=inflight["event_id"]
+        ).one()
+        row.status = "IN_FLIGHT"
+        row.lease_token = "active-send-lease"
+        row.lease_until_ns = candidate().observed_at_ns + 60_000_000_000
+        session.commit()
+    finally:
+        session.close()
+
+    assert store.transition(
+        queued["event_id"], AlertState.INVALIDATED, reason="PRICE_STRUCTURE_BROKE",
+    )
+
+    session = store.session_factory()
+    try:
+        queued_row = session.query(IVEarlyEntryNotificationOutbox).filter_by(
+            event_id=queued["event_id"]
+        ).one()
+        inflight_row = session.query(IVEarlyEntryNotificationOutbox).filter_by(
+            event_id=inflight["event_id"]
+        ).one()
+        assert queued_row.status == "SKIPPED"
+        assert queued_row.lease_token is None
+        assert queued_row.lease_until_ns is None
+        # A network send already claimed by a worker cannot be cancelled
+        # transactionally; leave its lease for the worker's completion path.
+        assert inflight_row.status == "IN_FLIGHT"
+        assert inflight_row.lease_token == "active-send-lease"
+    finally:
+        session.close()
+
+    latest = {row["id"]: row for row in store.latest(limit=10)}
+    assert latest[queued["event_id"]]["delivery_status"] == "SKIPPED"
