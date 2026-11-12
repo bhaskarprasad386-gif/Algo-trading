@@ -273,6 +273,32 @@ def test_runtime_refresh_worker_retries_after_transient_refresh_error(monkeypatc
     assert "RUNTIME" not in runtime._last_error
 
 
+def test_runtime_stop_preserves_worker_reference_while_telegram_thread_is_alive():
+    class StillAliveThread:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            return None
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    telegram_thread = StillAliveThread()
+    runtime._telegram_thread = telegram_thread
+    stopped_spot = []
+    runtime.spot_feed.stop = lambda: stopped_spot.append(True)
+
+    pending = runtime.stop()
+
+    assert pending["status"] == "STOPPING"
+    assert runtime._stopping is True
+    assert runtime._telegram_thread is telegram_thread
+    assert stopped_spot == []
+
+
 def test_runtime_stop_preserves_resources_while_refresh_worker_is_alive():
     class DelayedWorker:
         def __init__(self):
