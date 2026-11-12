@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
