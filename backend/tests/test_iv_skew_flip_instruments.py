@@ -66,28 +66,18 @@ def test_primary_master_is_used_without_shared_cache_or_alternate_request(monkey
     FakeMaster._cached_snapshot_date = "2000-01-01"
     master = FakeMaster()
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return rows
-
     calls = []
-
-    def fake_get(url, timeout):
-        calls.append((url, timeout))
-        if url != loader.PRIMARY_MASTER_URL:
-            raise AssertionError("alternate host must not be requested")
-        return Response()
-
-    monkeypatch.setattr(loader.requests, "get", fake_get)
+    def fake_fetch(url):
+        calls.append(url)
+        assert url == loader.PRIMARY_MASTER_URL
+        return rows
+    monkeypatch.setattr(loader, "_download_master_payload", fake_fetch)
     assert loader.download_iv_instruments(master) == rows
     assert master.instruments == rows
     assert master._loaded is True
     assert FakeMaster._cached_instruments is shared_rows
     assert FakeMaster._cached_snapshot_date == "2000-01-01"
-    assert calls == [(loader.PRIMARY_MASTER_URL, (5, 20))]
+    assert calls == [loader.PRIMARY_MASTER_URL]
 
 
 def test_alternate_official_master_is_validated_without_mutating_shared_cache(monkeypatch):
@@ -98,22 +88,14 @@ def test_alternate_official_master_is_validated_without_mutating_shared_cache(mo
     FakeMaster._cached_snapshot_date = "2000-01-01"
     master = FakeMaster(error=TimeoutError("primary host timeout"))
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return rows
-
     calls = []
-
-    def fake_get(url, timeout):
-        calls.append((url, timeout))
+    def fake_fetch(url):
+        calls.append(url)
         if url == loader.PRIMARY_MASTER_URL:
             raise TimeoutError("primary host timeout")
-        return Response()
-
-    monkeypatch.setattr(loader.requests, "get", fake_get)
+        assert url == loader.ALTERNATE_MASTER_URL
+        return rows
+    monkeypatch.setattr(loader, "_download_master_payload", fake_fetch)
     result = loader.download_iv_instruments(master)
 
     assert result == rows
@@ -122,10 +104,7 @@ def test_alternate_official_master_is_validated_without_mutating_shared_cache(mo
     assert master._symbol_exchange_index is None
     assert FakeMaster._cached_instruments is shared_rows
     assert FakeMaster._cached_snapshot_date == "2000-01-01"
-    assert calls == [
-        (loader.PRIMARY_MASTER_URL, (5, 20)),
-        (loader.ALTERNATE_MASTER_URL, (5, 20)),
-    ]
+    assert calls == [loader.PRIMARY_MASTER_URL, loader.ALTERNATE_MASTER_URL]
 
 
 def test_alternate_master_rejects_missing_nse_index_token(monkeypatch, tmp_path):
@@ -134,14 +113,7 @@ def test_alternate_master_rejects_missing_nse_index_token(monkeypatch, tmp_path)
     master = FakeMaster(error=TimeoutError("primary host timeout"))
     rows = [row for row in valid_rows() if row["name"] != "BANKNIFTY" or row["exch_seg"] != "NSE"]
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return rows
-
-    monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(loader, "_download_master_payload", lambda url: rows)
     with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
         loader.download_iv_instruments(master)
 
@@ -151,14 +123,7 @@ def test_alternate_master_rejects_non_list_payload(monkeypatch, tmp_path):
     monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: None)
     master = FakeMaster(error=TimeoutError("primary host timeout"))
 
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"instruments": valid_rows()}
-
-    monkeypatch.setattr(loader.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(loader, "_download_master_payload", lambda url: {"instruments": valid_rows()})
     with pytest.raises(RuntimeError, match="no recent integrity-checked IV snapshot"):
         loader.download_iv_instruments(master)
 
@@ -177,8 +142,8 @@ def test_recent_validated_snapshot_is_used_without_mutating_shared_cache(monkeyp
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "_cache_path", lambda: cache)
     monkeypatch.setattr(
-        loader.requests, "get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
+        loader, "_download_master_payload",
+        lambda url: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
     )
     master = FakeMaster(error=TimeoutError("primary timeout"))
 
@@ -199,8 +164,8 @@ def test_stale_or_incomplete_snapshot_is_never_used(monkeypatch, tmp_path):
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "_cache_path", lambda: cache)
     monkeypatch.setattr(
-        loader.requests, "get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
+        loader, "_download_master_payload",
+        lambda url: (_ for _ in ()).throw(TimeoutError("alternate timeout")),
     )
     master = FakeMaster(error=TimeoutError("primary timeout"))
 
@@ -217,7 +182,7 @@ def test_total_master_failure_exposes_both_source_errors(monkeypatch, tmp_path):
             raise TimeoutError("alternate host timed out")
         raise AssertionError(f"unexpected instrument-master URL: {url}")
 
-    monkeypatch.setattr(loader.requests, "get", fail_both_hosts)
+    monkeypatch.setattr(loader, "_download_master_payload", fail_both_hosts)
     master = FakeMaster()
 
     with pytest.raises(RuntimeError) as exc:
