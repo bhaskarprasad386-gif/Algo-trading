@@ -125,10 +125,13 @@ def test_strategy_a_rejects_stale_historical_oi_even_when_quote_minutes_are_alig
 
 def test_strategy_a_rejects_oi_timestamp_after_its_quote_timestamp():
     now, bars, ce, pe = setup()
-    future_oi = replace(ce[0], oi_timestamp_ns=ce[0].source_timestamp_ns+1)
+    # Keep CE/PE/target source-minute buckets aligned so the evaluator
+    # reaches structural timestamp validation instead of returning the earlier
+    # UNALIGNED_OPTION_HISTORY guard.
+    future_oi = replace(ce[2], oi_timestamp_ns=ce[2].source_timestamp_ns+1)
     result = evaluate_strategy_a(
         now_ns=now, expiry="2026-11-19", bars=bars,
-        ce=(future_oi, ce[1]), pe=pe[-3:-1], target=ce[:4],
+        ce=(future_oi, ce[3]), pe=pe[-3:-1], target=ce[:4],
         direction="BULLISH", live_ce=ce[-1], live_pe=pe[-1],
         live_target=ce[-1],
     )
