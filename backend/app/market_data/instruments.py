@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.exceptions import TradingAppException
 from app.core.logger import app_logger
+from app.market_data.master_transport import download_master_rows
 
 
 class InstrumentMaster:
@@ -53,15 +54,11 @@ class InstrumentMaster:
                 self._loaded = True
                 return self.instruments
             try:
-                response = requests.get(self.MASTER_URL, timeout=timeout)
-                response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, list):
-                    raise TradingAppException(
-                        "InvalidInstrumentMaster",
-                        "Angel One instrument master format is invalid.",
-                        502,
-                    )
+                data = download_master_rows(
+                    self.MASTER_URL,
+                    timeout=(10, timeout if isinstance(timeout, (int, float)) else 120),
+                    retries=3,
+                )
                 self.__class__._cached_instruments = data
                 self.__class__._cached_snapshot_date = today
                 self.instruments = data
