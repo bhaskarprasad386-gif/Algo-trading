@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any
 
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown
+from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
 from .models import AlertCandidate, AlertState
 
 
@@ -69,6 +70,22 @@ class AlertCooldownStore:
                     session.add(event)
                     session.flush()
                     event_id = event.id
+                    notification_payload = {
+                        "event_id": event_id, "strategy": candidate.strategy,
+                        "underlying": candidate.underlying, "expiry": candidate.expiry,
+                        "strike": candidate.strike, "direction": candidate.direction,
+                        "option_type": candidate.option_type, "state": candidate.state.value,
+                        "spot": candidate.spot, "premium": candidate.premium,
+                        "iv_change_points": candidate.iv_change_points,
+                        "volume_ratio": candidate.volume_ratio, "reason": candidate.reason,
+                        "observed_at_ns": candidate.observed_at_ns,
+                    }
+                    session.add(IVEarlyEntryNotificationOutbox(
+                        event_id=event_id, channel="TELEGRAM", status="PENDING",
+                        payload_json=json.dumps(notification_payload, sort_keys=True, separators=(",", ":"), default=str),
+                        attempts=0, next_attempt_ns=candidate.observed_at_ns,
+                        lease_until_ns=None, last_error="",
+                    ))
                 return {"accepted": True, "event_id": event_id, "cooldown_key": key}
         finally:
             session.close()
@@ -154,7 +171,7 @@ class AlertCooldownStore:
 
     def mark_delivery(self, event_id: int, status: str) -> bool:
         normalized = str(status).upper()
-        if normalized not in {"PENDING", "SENT", "FAILED", "SKIPPED"}:
+        if normalized not in {"PENDING", "SENT", "FAILED", "SKIPPED", "WAITING_CONFIG"}:
             raise ValueError("unsupported delivery status")
         session = self.session_factory()
         try:
