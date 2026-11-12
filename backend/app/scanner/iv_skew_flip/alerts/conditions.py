@@ -74,10 +74,16 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     if len(ce) < 2 or len(pe) < 2 or len(target) < 4:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INSUFFICIENT_OPTION_HISTORY",))
 
-    ce3, pe3 = tuple(ce[-2:]) + (live_ce,), tuple(pe[-2:]) + (live_pe,)
-    tgt = tuple(target[-4:]) + (live_target,)
-    if not _same_contract(ce3, "CE") or not _same_contract(pe3, "PE") or not _same_contract(tgt, tgt[-1].option_type):
+    ce3, pe3, tgt = tuple(ce[-3:]), tuple(pe[-3:]), tuple(target[-4:])
+    if (not _same_contract(ce3, "CE") or not _same_contract(pe3, "PE")
+            or not _same_contract(tgt, tgt[-1].option_type)):
         return StrategyEvaluation(AlertState.WATCH, reasons=("CONTRACT_OR_EXPIRY_MISMATCH",))
+    live_rows = (live_ce, live_pe, live_target)
+    for live, history in ((live_ce, ce3), (live_pe, pe3), (live_target, tgt)):
+        if (live.token != history[-1].token or live.expiry != expiry
+                or live.strike != history[-1].strike
+                or live.option_type != history[-1].option_type):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_CONTRACT_MISMATCH",))
     if (ce3[-1].strike != pe3[-1].strike or ce3[-1].expiry != expiry
             or pe3[-1].expiry != expiry or tgt[-1].expiry != expiry
             or ce3[-1].strike != tgt[-1].strike):
@@ -91,7 +97,15 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
                 or any(not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:]))):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
 
-    for row in (live_ce, live_pe, live_target):
+    for series in (ce3, pe3, tgt):
+        if any(_structurally_valid(row) for row in series):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
+        times = [row.source_timestamp_ns for row in series]
+        if any(b <= a or not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
+    for row in live_rows:
+        if _structurally_valid(row):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_LIVE_OBSERVATION",))
         errors = _fresh(row, now_ns)
         if errors:
             return StrategyEvaluation(AlertState.WATCH, reasons=errors)
@@ -109,17 +123,17 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     baseline_increments = [
         int(tgt[i].volume)-int(tgt[i-1].volume) for i in range(1, 4)
     ]
-    current_increment = int(live_target.volume)-int(target[-1].volume)
+    current_increment = int(live_target.volume)-int(tgt[-1].volume)
     if any(delta < 0 for delta in baseline_increments) or current_increment < 0:
         return StrategyEvaluation(AlertState.WATCH, reasons=("CUMULATIVE_VOLUME_RESET",))
     baseline = sum(baseline_increments)/3
     if baseline <= 0 or current_increment < 2.5*baseline:
         return StrategyEvaluation(AlertState.WATCH, reasons=("VOLUME_EXPANSION_MISSING",))
 
-    premium_now, premium_prev = live_target.ask, target[-1].ask
+    premium_now, premium_prev = live_target.ask, tgt[-1].ask
     if not (_positive(premium_now) and _positive(premium_prev) and premium_now > premium_prev):
         return StrategyEvaluation(AlertState.WATCH, reasons=("PREMIUM_NOT_RISING",))
-    if live_target.oi is None or target[-1].oi is None or live_target.oi >= target[-1].oi:
+    if live_target.oi is None or target[-1].oi is None or live_target.oi >= tgt[-1].oi:
         return StrategyEvaluation(AlertState.WATCH, reasons=("OI_NOT_DECREASING",))
     candidate = AlertCandidate(
         "IV_VOLUME_MOMENTUM", "NIFTY", expiry, live_target.strike, direction,
