@@ -67,7 +67,7 @@ jobs:
           REMOTE_SCRIPT
           printf 'REMOTE_DEPLOY_LAUNCH_DETACHED\\n'
           REMOTE_RUN_DIR="/tmp/algo-trading-deploy-${{ github.run_id }}"
-          REMOTE_LAUNCH_CMD="set -eu; run_dir='$REMOTE_RUN_DIR'; if test -d \"\$run_dir\"; then echo REMOTE_DEPLOY_RUN_ALREADY_EXISTS; exit 99; fi; umask 077; mkdir \"\$run_dir\"; cat > \"\$run_dir/deploy.sh\"; ( set +e; bash \"\$run_dir/deploy.sh\"; rc=\$?; printf 'DEPLOY_EXIT_CODE=%s\\n' \"\$rc\" > \"\$run_dir/exit.tmp\"; mv \"\$run_dir/exit.tmp\" \"\$run_dir/exit\"; exit 0 ) > \"\$run_dir/deploy.log\" 2>&1 < /dev/null & echo REMOTE_DEPLOY_STARTED pid=\$!"
+          REMOTE_LAUNCH_CMD="set -eu; run_dir='$REMOTE_RUN_DIR'; if test -d \"\$run_dir\"; then echo REMOTE_DEPLOY_RUN_ALREADY_EXISTS; exit 99; fi; umask 077; mkdir \"\$run_dir\"; cat > \"\$run_dir/deploy.sh\"; nohup setsid bash -c 'set +e; bash \"\$1\"; rc=\$?; printf \"DEPLOY_EXIT_CODE=%s\\\\n\" \"\$rc\" > \"\$2/exit.tmp\"; mv \"\$2/exit.tmp\" \"\$2/exit\"; exit 0' _ \"\$run_dir/deploy.sh\" \"\$run_dir\" > \"\$run_dir/deploy.log\" 2>&1 < /dev/null & echo REMOTE_DEPLOY_STARTED pid=\$!"
           if ! timeout 35s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "$REMOTE_LAUNCH_CMD" < /tmp/vps_remote_deploy.sh; then
             printf 'REMOTE_DEPLOY_LAUNCH_FAILED; refusing blind retry to avoid duplicate deployment\\n' >&2
             exit 1
