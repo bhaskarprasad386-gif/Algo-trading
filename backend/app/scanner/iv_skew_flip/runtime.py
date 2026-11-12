@@ -11,7 +11,7 @@ from urllib.error import URLError, HTTPError
 from html import escape
 
 from app.core.config import settings
-from .alerts.notifications import AmbiguousDeliveryError, TelegramOutboxWorker
+from .alerts.notifications import AmbiguousDeliveryError, TelegramRateLimitError, TelegramOutboxWorker
 from zoneinfo import ZoneInfo
 
 from app.core.database import SessionLocal
@@ -893,9 +893,20 @@ class IVSkewFlipRuntime:
         try:
             with urlopen(request, timeout=5) as response:
                 result = json.loads(response.read().decode("utf-8"))
-        except HTTPError:
-            # A concrete HTTP response is a definitive provider rejection; the
-            # worker may retry it with backoff. Never expose response URL/token.
+        except HTTPError as exc:
+            # Telegram rate limits are retryable. Preserve its Retry-After
+            # hint without exposing response URLs, headers, or bot credentials.
+            if exc.code == 429:
+                retry_after = None
+                try:
+                    raw_retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                    retry_after = float(raw_retry_after) if raw_retry_after is not None else None
+                    if retry_after is not None and retry_after < 0:
+                        retry_after = None
+                except (TypeError, ValueError):
+                    retry_after = None
+                raise TelegramRateLimitError(retry_after) from None
+            # Other concrete HTTP responses are definitive provider rejection.
             raise RuntimeError("TELEGRAM_API_REJECTED") from None
         except Exception:
             # Timeout, connection reset, or unreadable response may occur after
