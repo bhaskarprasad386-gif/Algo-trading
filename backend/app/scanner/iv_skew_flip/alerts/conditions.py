@@ -162,12 +162,12 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     wall = latest.strike
     if direction == "BEARISH":
         # Probe the CE resistance, reject it and close back below the wall.
-        near_wall = 0 <= wall-current.high <= 15 or abs(wall-current.high) <= 15
+        near_wall = current.high <= wall and wall-current.high <= 15
         rejection = current.close < current.open and current.close < prior.close and current.close < wall
         reason = "CE OI resistance rejected; PE early entry"
     else:
         # Probe the PE support, reject it and close back above the wall.
-        near_wall = 0 <= current.low-wall <= 15 or abs(current.low-wall) <= 15
+        near_wall = current.low >= wall and current.low-wall <= 15
         rejection = current.close > current.open and current.close > prior.close and current.close > wall
         reason = "PE OI support defended; CE early entry"
     if not near_wall:
