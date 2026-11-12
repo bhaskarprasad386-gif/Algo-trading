@@ -289,3 +289,28 @@ def test_notification_worker_skips_alert_invalidated_before_delivery():
     assert skipped["status"] == "SKIPPED"
     assert delivered == []
     assert store.latest()[0]["delivery_status"] == "SKIPPED"
+
+
+def test_waiting_config_clears_lease_and_defers_next_attempt():
+    store = make_store()
+    store.record(candidate())
+    worker = TelegramOutboxWorker(store.session_factory, config_retry_seconds=60)
+    now_ns = candidate().observed_at_ns
+    waiting = worker.process_one(
+        now_ns=now_ns, sender=None, configured=False,
+    )
+    assert waiting["status"] == "WAITING_CONFIG"
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.lease_until_ns is None
+        assert row.lease_token is None
+        assert row.next_attempt_ns == now_ns + 60_000_000_000
+    finally:
+        session.close()
+    not_due = worker.process_one(
+        now_ns=now_ns + 30_000_000_000,
+        sender=None, configured=False,
+    )
+    assert not_due["processed"] is False
+    assert not_due["reason"] == "NO_DUE_NOTIFICATION"
