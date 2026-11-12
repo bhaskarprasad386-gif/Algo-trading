@@ -396,3 +396,27 @@ def test_distinct_strikes_can_each_emit_a_valid_alert_in_same_window():
     assert first["accepted"] is True
     assert second["accepted"] is True
     assert len(store.latest()) == 2
+
+
+
+def test_telegram_outbox_delivers_same_cycle_alerts_in_persisted_fifo_order():
+    store = make_store()
+    first = store.record(candidate())
+    base = candidate()
+    second_candidate = AlertCandidate(
+        base.strategy, base.underlying, base.expiry, 25050.0,
+        base.direction, base.option_type, base.state,
+        base.observed_at_ns, base.spot, base.premium,
+        base.iv_change_points, base.volume_ratio, "second strike",
+    )
+    second = store.record(second_candidate)
+    worker = TelegramOutboxWorker(store.session_factory)
+    delivered_ids = []
+    for _ in range(2):
+        result = worker.process_one(
+            now_ns=base.observed_at_ns,
+            sender=lambda payload: delivered_ids.append(payload["event_id"]),
+            configured=True,
+        )
+        assert result["status"] == "SENT"
+    assert delivered_ids == [first["event_id"], second["event_id"]]
