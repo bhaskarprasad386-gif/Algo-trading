@@ -267,6 +267,17 @@ class AlertCooldownStore:
                     if self._skip_queued_notifications(session, row.id):
                         row.delivery_status = "SKIPPED"
                     changed += 1
+                elif datetime.fromtimestamp(
+                    row.observed_at_ns / 1_000_000_000,
+                    tz=ZoneInfo("Asia/Kolkata"),
+                ).date() < local.date():
+                    # A process restart before today's close must not revive
+                    # an EARLY_ENTRY alert from the previous trading session.
+                    row.state = AlertState.EXPIRED.value
+                    row.reason = "PRIOR_SESSION_ALERT"
+                    if self._skip_queued_notifications(session, row.id):
+                        row.delivery_status = "SKIPPED"
+                    changed += 1
                 elif expiry_day < local.date():
                     row.state = AlertState.EXPIRED.value
                     row.reason = "OPTION_EXPIRY_PASSED"
