@@ -881,8 +881,13 @@ class IVSkewFlipRuntime:
             f"https://api.telegram.org/bot{token}/sendMessage",
             data=body, headers={"Content-Type": "application/json"}, method="POST",
         )
-        with urlopen(request, timeout=5) as response:
-            result = json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(request, timeout=5) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            # urllib exceptions can embed the full Bot API URL (and token).
+            # Never persist or expose provider exception text.
+            raise RuntimeError("TELEGRAM_TRANSPORT_ERROR") from None
         if not isinstance(result, dict) or result.get("ok") is not True:
             raise RuntimeError("TELEGRAM_API_REJECTED")
 
