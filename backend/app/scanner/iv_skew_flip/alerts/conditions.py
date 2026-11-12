@@ -92,14 +92,6 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     for series in (ce3, pe3, tgt):
         if any(_structurally_valid(row) for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
-        times = [r.source_timestamp_ns for r in series]
-        if (any(b <= a for a, b in zip(times, times[1:]))
-                or any(not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:]))):
-            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
-
-    for series in (ce3, pe3, tgt):
-        if any(_structurally_valid(row) for row in series):
-            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
         times = [row.source_timestamp_ns for row in series]
         if any(b <= a or not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
@@ -113,9 +105,9 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
             or abs(live_target.spot_price-live_ce.spot_price) > 5):
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_SPOT",))
 
-    wanted, opposite = (ce3, pe3) if direction == "BULLISH" else (pe3, ce3)
-    iv_jump = float(wanted[-1].iv)-float(wanted[0].iv)
-    opposite_jump = float(opposite[-1].iv)-float(opposite[0].iv)
+    wanted, opposite = ((ce3, live_ce), (pe3, live_pe)) if direction == "BULLISH" else ((pe3, live_pe), (ce3, live_ce))
+    iv_jump = float(wanted[1].iv)-float(wanted[0][-2].iv)
+    opposite_jump = float(opposite[1].iv)-float(opposite[0][-2].iv)
     threshold = 0.18 if direction == "BULLISH" else 0.20
     if iv_jump < threshold or opposite_jump > 0.05:
         return StrategyEvaluation(AlertState.WATCH, reasons=("IV_FLIP_NOT_CONFIRMED",))
@@ -133,7 +125,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     premium_now, premium_prev = live_target.ask, tgt[-1].ask
     if not (_positive(premium_now) and _positive(premium_prev) and premium_now > premium_prev):
         return StrategyEvaluation(AlertState.WATCH, reasons=("PREMIUM_NOT_RISING",))
-    if live_target.oi is None or target[-1].oi is None or live_target.oi >= tgt[-1].oi:
+    if live_target.oi is None or tgt[-1].oi is None or live_target.oi >= tgt[-1].oi:
         return StrategyEvaluation(AlertState.WATCH, reasons=("OI_NOT_DECREASING",))
     candidate = AlertCandidate(
         "IV_VOLUME_MOMENTUM", "NIFTY", expiry, live_target.strike, direction,
