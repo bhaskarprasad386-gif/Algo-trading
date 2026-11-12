@@ -150,6 +150,22 @@ class AlertCooldownStore:
         finally:
             session.close()
 
+    @staticmethod
+    def _skip_queued_notifications(session: Any, event_id: int) -> int:
+        """Cancel notifications not yet claimed; an in-flight HTTP send cannot be recalled."""
+        result = session.execute(
+            update(IVEarlyEntryNotificationOutbox)
+            .where(
+                IVEarlyEntryNotificationOutbox.event_id == int(event_id),
+                IVEarlyEntryNotificationOutbox.status.in_(("PENDING", "RETRY", "WAITING_CONFIG")),
+            )
+            .values(
+                status="SKIPPED", lease_until_ns=None, lease_token=None,
+                last_error="ALERT_NO_LONGER_ACTIVE",
+            )
+        )
+        return int(result.rowcount or 0)
+
     def transition(self, event_id: int, state: AlertState, *, reason: str) -> bool:
         """Idempotently update an alert lifecycle state without consuming cooldown."""
         if state not in {AlertState.INVALIDATED, AlertState.EXPIRED, AlertState.CONFLICT}:
@@ -161,6 +177,8 @@ class AlertCooldownStore:
                 return False
             row.state = state.value
             row.reason = str(reason)[:2000]
+            if self._skip_queued_notifications(session, row.id):
+                row.delivery_status = "SKIPPED"
             if state == AlertState.INVALIDATED:
                 # Release only this event's cooldown claim. The timestamp
                 # predicate prevents a late lifecycle update from clearing a
@@ -203,6 +221,8 @@ class AlertCooldownStore:
                 if breached and observed_at_ns >= row.observed_at_ns:
                     row.state = AlertState.INVALIDATED.value
                     row.reason = "OI_WALL_BREACHED_BY_LIVE_SPOT"
+                    if self._skip_queued_notifications(session, row.id):
+                        row.delivery_status = "SKIPPED"
                     session.query(IVEarlyEntryCooldown).filter(
                         IVEarlyEntryCooldown.cooldown_key == row.cooldown_key,
                         IVEarlyEntryCooldown.last_alert_ns == row.observed_at_ns,
@@ -236,10 +256,14 @@ class AlertCooldownStore:
                 if expiry_day < local.date():
                     row.state = AlertState.EXPIRED.value
                     row.reason = "OPTION_EXPIRY_PASSED"
+                    if self._skip_queued_notifications(session, row.id):
+                        row.delivery_status = "SKIPPED"
                     changed += 1
                 elif local.time() > clock_time(15, 5):
                     row.state = AlertState.EXPIRED.value
                     row.reason = "TRADING_SESSION_CLOSED"
+                    if self._skip_queued_notifications(session, row.id):
+                        row.delivery_status = "SKIPPED"
                     changed += 1
             if changed:
                 session.commit()
