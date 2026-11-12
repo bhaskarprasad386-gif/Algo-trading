@@ -104,3 +104,15 @@ def test_strategy_a_rejects_ce_pe_history_from_different_minutes():
     )
     assert result.state == AlertState.WATCH
     assert "UNALIGNED_OPTION_HISTORY" in result.reasons
+
+
+def test_strategy_a_rejects_live_quote_not_newer_than_completed_history():
+    now, bars, ce, pe = setup()
+    repeated_live = replace(ce[-1], source_timestamp_ns=ce[-2].source_timestamp_ns)
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        live_ce=repeated_live, live_pe=pe[-1], live_target=ce[-1],
+    )
+    assert result.state == AlertState.WATCH
+    assert "LIVE_QUOTE_NOT_NEWER_THAN_HISTORY" in result.reasons
