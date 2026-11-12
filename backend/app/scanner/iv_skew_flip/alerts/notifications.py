@@ -15,6 +15,14 @@ class AmbiguousDeliveryError(RuntimeError):
     """Transport failed after a send may have reached the remote provider."""
 
 
+class TelegramRateLimitError(RuntimeError):
+    """Telegram returned HTTP 429 with an optional Retry-After delay."""
+
+    def __init__(self, retry_after_seconds: float | None = None) -> None:
+        super().__init__("TELEGRAM_RATE_LIMITED")
+        self.retry_after_seconds = retry_after_seconds
+
+
 class TelegramOutboxWorker:
     def __init__(
         self, session_factory: Any, *, max_attempts: int = 6,
@@ -154,6 +162,9 @@ class TelegramOutboxWorker:
                         row.status = "FAILED"
                     else:
                         delay = self.base_retry_ns * (2 ** min(row.attempts - 1, 8))
+                        if isinstance(exc, TelegramRateLimitError) and exc.retry_after_seconds is not None:
+                            retry_after_ns = int(max(0.0, exc.retry_after_seconds) * 1_000_000_000)
+                            delay = max(delay, retry_after_ns)
                         row.next_attempt_ns = now_ns + delay
                 event = session.get(IVEarlyEntryAlertEvent, row.event_id)
                 if event is not None:
@@ -164,4 +175,4 @@ class TelegramOutboxWorker:
             session.close()
 
 
-__all__ = ["AmbiguousDeliveryError", "TelegramOutboxWorker"]
+__all__ = ["AmbiguousDeliveryError", "TelegramRateLimitError", "TelegramOutboxWorker"]
