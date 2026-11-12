@@ -47,28 +47,38 @@ def _get_json(url: str, token: str) -> dict[str, Any]:
 
 
 def _latest_artifact(name: str, token: str) -> dict[str, Any]:
-    payload = _get_json(
-        f"{API_BASE}/repos/{REPOSITORY}/actions/artifacts?per_page=100",
-        token,
-    )
-    artifacts = payload.get("artifacts")
-    if not isinstance(artifacts, list):
-        raise ValueError("GitHub artifact listing is malformed")
-    # Never install an artifact produced by an arbitrary PR, fork, or failed
-    # workflow. Only artifacts from a successful run on the protected main
-    # branch are eligible for production recovery.
-    candidates = [
-        item for item in artifacts
-        if isinstance(item, dict)
-        and item.get("name") == name
-        and item.get("expired") is False
-        and isinstance(item.get("id"), int)
-        and isinstance(item.get("created_at"), str)
-        and isinstance(item.get("workflow_run"), dict)
-        and item["workflow_run"].get("head_branch") == "main"
-        and isinstance(item["workflow_run"].get("id"), int)
-    ]
-    verified = []
+    # GitHub paginates artifact listings. Walk every page so a busy repository
+    # cannot hide the newest eligible production artifact beyond page one.
+    candidates: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        payload = _get_json(
+            f"{API_BASE}/repos/{REPOSITORY}/actions/artifacts?per_page=100&page={page}",
+            token,
+        )
+        artifacts = payload.get("artifacts")
+        total_count = payload.get("total_count")
+        if not isinstance(artifacts, list) or not isinstance(total_count, int):
+            raise ValueError("GitHub artifact listing is malformed")
+        # Never install an artifact produced by an arbitrary PR, fork, or failed
+        # workflow. Only artifacts from a successful run on the protected main
+        # branch are eligible for production recovery.
+        candidates.extend(
+            item for item in artifacts
+            if isinstance(item, dict)
+            and item.get("name") == name
+            and item.get("expired") is False
+            and isinstance(item.get("id"), int)
+            and isinstance(item.get("created_at"), str)
+            and isinstance(item.get("workflow_run"), dict)
+            and item["workflow_run"].get("head_branch") == "main"
+            and isinstance(item["workflow_run"].get("id"), int)
+        )
+        if not artifacts or page * 100 >= total_count:
+            break
+        page += 1
+
+    candidates.sort(key=lambda item: item["created_at"], reverse=True)
     for item in candidates:
         run = _get_json(
             f"{API_BASE}/repos/{REPOSITORY}/actions/runs/{item['workflow_run']['id']}",
@@ -80,18 +90,15 @@ def _latest_artifact(name: str, token: str) -> dict[str, Any]:
             and run.get("status") == "completed"
             and run.get("head_sha") == item["workflow_run"].get("head_sha")
         ):
-            verified.append(item)
-    if not verified:
-        raise RuntimeError(
-            f"No unexpired artifact from a successful completed main-branch workflow found: {name}"
-        )
-    verified.sort(key=lambda item: item["created_at"], reverse=True)
-    selected = verified[0]
-    digest = selected.get("digest")
-    if not isinstance(digest, str) or not digest.lower().startswith("sha256:"):
-        raise ValueError(f"Artifact {name} has no SHA-256 digest in GitHub metadata")
-    selected["sha256"] = digest.split(":", 1)[1].lower()
-    return selected
+            digest = item.get("digest")
+            if not isinstance(digest, str) or not digest.lower().startswith("sha256:"):
+                raise ValueError(f"Artifact {name} has no SHA-256 digest in GitHub metadata")
+            item["sha256"] = digest.split(":", 1)[1].lower()
+            return item
+
+    raise RuntimeError(
+        f"No unexpired artifact from a successful completed main-branch workflow found: {name}"
+    )
 
 
 def _download_zip(artifact_id: int, token: str) -> bytes:
