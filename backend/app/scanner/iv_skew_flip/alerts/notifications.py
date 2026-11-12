@@ -15,13 +15,16 @@ class TelegramOutboxWorker:
     def __init__(
         self, session_factory: Any, *, max_attempts: int = 6,
         lease_seconds: int = 45, base_retry_seconds: int = 5,
+        config_retry_seconds: int = 60,
     ) -> None:
-        if max_attempts < 1 or lease_seconds < 1 or base_retry_seconds < 1:
+        if (max_attempts < 1 or lease_seconds < 1 or base_retry_seconds < 1
+                or config_retry_seconds < 1):
             raise ValueError("retry and lease settings must be positive")
         self.session_factory = session_factory
         self.max_attempts = max_attempts
         self.lease_ns = lease_seconds * 1_000_000_000
         self.base_retry_ns = base_retry_seconds * 1_000_000_000
+        self.config_retry_ns = config_retry_seconds * 1_000_000_000
 
     def process_one(
         self, *, now_ns: int, sender: Callable[[dict[str, Any]], Any] | None,
@@ -59,6 +62,8 @@ class TelegramOutboxWorker:
                 if not configured or sender is None:
                     row.status = "WAITING_CONFIG"
                     row.lease_until_ns = None
+                    row.lease_token = None
+                    row.next_attempt_ns = now_ns + self.config_retry_ns
                     row.last_error = "TELEGRAM_CONFIGURATION_MISSING"
                     event = session.get(IVEarlyEntryAlertEvent, row.event_id)
                     if event is not None:
