@@ -33,6 +33,14 @@ for ip in "${IPS[@]}"; do
       | tee -a "$OUT/openssl.txt" | tail -n 18
   done
 
+  echo "===== curl pinned to $ip (preserve SNI/Host) =====" | tee -a "$OUT/curl-pinned.txt"
+  curl -4 -v --resolve "$HOST:443:$ip" -o /dev/null \
+    --connect-timeout 8 --max-time 20 \
+    -w 'http_code=%{http_code} connect=%{time_connect}s tls=%{time_appconnect}s total=%{time_total}s remote_ip=%{remote_ip}\\n' \
+    "https://$HOST/OpenAPI_File/files/OpenAPIScripMaster.json" \
+    >>"$OUT/curl-pinned.txt" 2>&1 || true
+  tail -n 12 "$OUT/curl-pinned.txt"
+
   echo "===== packet evidence $ip ====="
   if command -v tcpdump >/dev/null 2>&1; then
     PCAP="$OUT/$ip.pcap"
