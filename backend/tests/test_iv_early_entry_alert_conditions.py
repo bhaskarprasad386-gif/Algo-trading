@@ -105,3 +105,32 @@ def test_strategy_a_rejects_ce_pe_history_from_different_minutes():
     assert result.state == AlertState.WATCH
     assert "UNALIGNED_OPTION_HISTORY" in result.reasons
 
+
+
+def test_strategy_a_rejects_stale_historical_oi_even_when_quote_minutes_are_aligned():
+    now, bars, ce, pe = setup()
+    stale_target = [
+        replace(row, oi_timestamp_ns=now-301*NS)
+        for row in ce[:4]
+    ]
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce[-3:-1], pe=pe[-3:-1], target=stale_target,
+        direction="BULLISH", live_ce=ce[-1], live_pe=pe[-1],
+        live_target=ce[-1],
+    )
+    assert result.state == AlertState.WATCH
+    assert "STALE_HISTORICAL_OI" in result.reasons
+
+
+def test_strategy_a_rejects_oi_timestamp_after_its_quote_timestamp():
+    now, bars, ce, pe = setup()
+    future_oi = replace(ce[0], oi_timestamp_ns=ce[0].source_timestamp_ns+1)
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=(future_oi, ce[1]), pe=pe[-3:-1], target=ce[:4],
+        direction="BULLISH", live_ce=ce[-1], live_pe=pe[-1],
+        live_target=ce[-1],
+    )
+    assert result.state == AlertState.WATCH
+    assert "INVALID_HISTORICAL_OBSERVATION" in result.reasons
