@@ -26,6 +26,8 @@ def _structurally_valid(row: OptionObservation) -> tuple[str, ...]:
             or isinstance(row.oi_timestamp_ns, bool)
             or not isinstance(row.oi_timestamp_ns, int) or row.oi_timestamp_ns <= 0):
         errors.append("INVALID_OI")
+    elif row.oi_timestamp_ns > row.source_timestamp_ns:
+        errors.append("OI_TIMESTAMP_AFTER_QUOTE")
     if row.volume is None or row.volume < 0: errors.append("INVALID_VOLUME")
     return tuple(errors)
 
@@ -107,6 +109,17 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     for series in (ce3, pe3, tgt):
         if any(_structurally_valid(row) for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
+        # Historical quote freshness is intentionally wider than the live
+        # option/spot gate, but its OI timestamp must still be a real, recent
+        # observation. A refreshed price quote cannot make carried-forward OI
+        # fresh, even when the source-minute bucket itself is recent.
+        if any(
+            row.oi_timestamp_ns is None
+            or row.oi_timestamp_ns > now_ns
+            or now_ns - row.oi_timestamp_ns > 300 * NS
+            for row in series
+        ):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_HISTORICAL_OI",))
         times = [row.source_timestamp_ns for row in series]
         if any(b <= a or not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
