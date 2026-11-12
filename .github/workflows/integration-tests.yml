@@ -231,6 +231,7 @@ jobs:
           python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
           python -m py_compile backend/app/market_data/instruments.py
           python -m py_compile backend/app/instruments/manager.py
+          python -m py_compile backend/app/market_data/instruments.py
           python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
           python -m py_compile backend/scripts/recover_box_spread_master_artifact.py
           python -m py_compile backend/scripts/recover_iv_master_artifact.py
