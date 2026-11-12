@@ -15,10 +15,6 @@ class AmbiguousDeliveryError(RuntimeError):
     """Transport failed after a send may have reached the remote provider."""
 
 
-class PermanentDeliveryError(RuntimeError):
-    """Provider definitively rejected the message; configuration/action is required."""
-
-
 class TelegramRateLimitError(RuntimeError):
     """Telegram returned HTTP 429 with an optional Retry-After delay."""
 
@@ -145,9 +141,6 @@ class TelegramOutboxWorker:
         try:
             sender(payload)
             final_status, error = "SENT", ""
-        except PermanentDeliveryError:
-            final_status = "FAILED"
-            error = "TELEGRAM_API_REJECTED"
         except TelegramRateLimitError as exc:
             # Preserve Retry-After outside the except block (Python clears the
             # exception target after the handler) for the persistence phase.
