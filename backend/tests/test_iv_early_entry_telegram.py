@@ -58,3 +58,21 @@ def test_telegram_sender_fails_closed_without_credentials(monkeypatch):
         assert str(exc) == "TELEGRAM_CONFIGURATION_MISSING"
     else:
         raise AssertionError("Telegram sender must reject missing configuration")
+
+
+def test_telegram_sender_never_exposes_bot_token_in_transport_error(monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "sensitive-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    def failed_request(_request, timeout):
+        raise OSError("request failed for https://api.telegram.org/bot/sensitive-token/sendMessage")
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen", failed_request,
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 9})
+    except RuntimeError as exc:
+        assert str(exc) == "TELEGRAM_TRANSPORT_ERROR"
+        assert "sensitive-token" not in str(exc)
+    else:
+        raise AssertionError("transport failure must be reported safely")
