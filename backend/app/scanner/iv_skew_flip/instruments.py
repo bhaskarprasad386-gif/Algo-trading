@@ -278,8 +278,14 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
         # Do not call InstrumentMaster.download(): it reads/writes a
         # process-wide cache shared with Box Spread and other consumers.
         rows = _fetch_validated_master(PRIMARY_MASTER_URL)
-        installed = _install_snapshot(instrument_master, rows)
-        _write_snapshot(installed)
+        # Persist and verify durability before publishing rows to the live
+        # scanner instance. A failed disk write must never expose an
+        # unpersisted master as a successful refresh.
+        _write_snapshot(rows)
+        persisted = _read_recent_snapshot()
+        if persisted is None or _canonical_rows_digest(persisted[0]) != _canonical_rows_digest(rows):
+            raise RuntimeError("IV primary master snapshot failed post-write verification")
+        installed = _install_snapshot(instrument_master, persisted[0], fetched_at=persisted[1])
         return installed
     except Exception as exc:
         primary_error = exc
@@ -290,8 +296,14 @@ def download_iv_instruments(instrument_master: Any) -> list[dict[str, Any]]:
 
     try:
         rows = _fetch_validated_master(ALTERNATE_MASTER_URL)
-        installed = _install_snapshot(instrument_master, rows)
-        _write_snapshot(installed)
+        # Keep publication ordered after durable write/read-back just like the
+        # primary path; if persistence fails, fall back to the prior verified
+        # snapshot rather than retaining unpersisted alternate rows.
+        _write_snapshot(rows)
+        persisted = _read_recent_snapshot()
+        if persisted is None or _canonical_rows_digest(persisted[0]) != _canonical_rows_digest(rows):
+            raise RuntimeError("IV alternate master snapshot failed post-write verification")
+        installed = _install_snapshot(instrument_master, persisted[0], fetched_at=persisted[1])
         app_logger.warning(
             "IV scanner loaded validated Angel One instrument master from alternate official host (rows={})",
             len(installed),
