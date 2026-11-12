@@ -1,4 +1,5 @@
 import json
+from urllib.error import HTTPError
 
 from app.core.config import settings
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
@@ -76,3 +77,51 @@ def test_telegram_sender_never_exposes_bot_token_in_transport_error(monkeypatch)
         assert "sensitive-token" not in str(exc)
     else:
         raise AssertionError("transport failure must be reported safely")
+
+
+
+def test_telegram_sender_rejects_http_200_with_provider_ok_false(monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+
+    class RejectedResponse(FakeResponse):
+        def read(self):
+            return b'{"ok": false, "description": "chat not found"}'
+
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen",
+        lambda _request, timeout: RejectedResponse(),
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 12})
+    except RuntimeError as exc:
+        assert str(exc) == "TELEGRAM_API_REJECTED"
+        assert "chat not found" not in str(exc)
+    else:
+        raise AssertionError("Telegram ok=false must not be marked as sent")
+
+
+def test_telegram_sender_classifies_429_and_preserves_retry_after(monkeypatch):
+    from app.scanner.iv_skew_flip.alerts.notifications import TelegramRateLimitError
+
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+
+    def rate_limited(_request, timeout):
+        raise HTTPError(
+            "https://api.telegram.org/bot/test-token/sendMessage",
+            429, "Too Many Requests", {"Retry-After": "30"}, None,
+        )
+
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen", rate_limited,
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 13})
+    except TelegramRateLimitError as exc:
+        assert exc.retry_after_seconds == 30
+        assert "test-token" not in str(exc)
+    else:
+        raise AssertionError("HTTP 429 must be classified as retryable rate limit")
