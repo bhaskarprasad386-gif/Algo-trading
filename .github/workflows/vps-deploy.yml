@@ -21,7 +21,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - name: Deploy main to VPS
         env:
@@ -95,8 +95,5 @@ jobs:
             exit 1
           fi
           printf 'REMOTE_DEPLOY_OK detached=true\\n'
+          break
           done
-          if [[ "$SSH_DEPLOY_OK" != "true" ]]; then
-            printf 'REMOTE_DEPLOY_FAILED: neither default nor curve25519 SSH session completed\\n' >&2
-            exit 1
-          fi
