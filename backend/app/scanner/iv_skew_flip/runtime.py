@@ -167,6 +167,9 @@ class IVSkewFlipRuntime:
             "timeframe_agreement": False, "windows": {},
         }
         self._lock = RLock()
+        # Serialize full startup/shutdown transactions, including slow external
+        # feed registration and instrument-master loading.
+        self._lifecycle_lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
         self._telegram_thread: Thread | None = None
@@ -199,6 +202,12 @@ class IVSkewFlipRuntime:
         )
 
     def start(self, *, instruments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        # A separate re-entrant lock covers the entire lifecycle transaction.
+        # Re-entrancy is required because failed startup calls stop() to unwind.
+        with self._lifecycle_lock:
+            return self._start_locked(instruments=instruments)
+
+    def _start_locked(self, *, instruments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         with self._lock:
             if self._stopping:
                 raise RuntimeError("IV scanner runtime is still stopping; retry after shutdown completes")
@@ -1054,6 +1063,10 @@ class IVSkewFlipRuntime:
         }
 
     def stop(self) -> dict[str, Any]:
+        with self._lifecycle_lock:
+            return self._stop_locked()
+
+    def _stop_locked(self) -> dict[str, Any]:
         self._stop.set()
         thread = self._thread
         telegram_thread = self._telegram_thread
