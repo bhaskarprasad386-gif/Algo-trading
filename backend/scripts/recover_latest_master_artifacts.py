@@ -54,18 +54,39 @@ def _latest_artifact(name: str, token: str) -> dict[str, Any]:
     artifacts = payload.get("artifacts")
     if not isinstance(artifacts, list):
         raise ValueError("GitHub artifact listing is malformed")
-    matches = [
+    # Never install an artifact produced by an arbitrary PR, fork, or failed
+    # workflow. Only artifacts from a successful run on the protected main
+    # branch are eligible for production recovery.
+    candidates = [
         item for item in artifacts
         if isinstance(item, dict)
         and item.get("name") == name
         and item.get("expired") is False
         and isinstance(item.get("id"), int)
         and isinstance(item.get("created_at"), str)
+        and isinstance(item.get("workflow_run"), dict)
+        and item["workflow_run"].get("head_branch") == "main"
+        and isinstance(item["workflow_run"].get("id"), int)
     ]
-    if not matches:
-        raise RuntimeError(f"No unexpired GitHub Actions artifact found: {name}")
-    matches.sort(key=lambda item: item["created_at"], reverse=True)
-    selected = matches[0]
+    verified = []
+    for item in candidates:
+        run = _get_json(
+            f"{API_BASE}/repos/{REPOSITORY}/actions/runs/{item['workflow_run']['id']}",
+            token,
+        )
+        if (
+            run.get("head_branch") == "main"
+            and run.get("conclusion") == "success"
+            and run.get("status") == "completed"
+            and run.get("head_sha") == item["workflow_run"].get("head_sha")
+        ):
+            verified.append(item)
+    if not verified:
+        raise RuntimeError(
+            f"No unexpired artifact from a successful completed main-branch workflow found: {name}"
+        )
+    verified.sort(key=lambda item: item["created_at"], reverse=True)
+    selected = verified[0]
     digest = selected.get("digest")
     if not isinstance(digest, str) or not digest.lower().startswith("sha256:"):
         raise ValueError(f"Artifact {name} has no SHA-256 digest in GitHub metadata")
