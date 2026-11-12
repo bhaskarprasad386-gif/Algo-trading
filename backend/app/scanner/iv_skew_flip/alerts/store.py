@@ -276,7 +276,7 @@ class AlertCooldownStore:
 
     def mark_delivery(self, event_id: int, status: str) -> bool:
         normalized = str(status).upper()
-        if normalized not in {"PENDING", "SENT", "FAILED", "SKIPPED", "WAITING_CONFIG"}:
+        if normalized not in {"PENDING", "SENT", "FAILED", "SKIPPED", "WAITING_CONFIG", "UNCERTAIN"}:
             raise ValueError("unsupported delivery status")
         session = self.session_factory()
         try:
