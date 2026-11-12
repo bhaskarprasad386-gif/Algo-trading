@@ -64,6 +64,7 @@ from app.scanner.live_synthetic_routes import router as live_synthetic_router, c
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
 from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
@@ -1915,6 +1916,22 @@ def iv_skew_flip_basket_registry():
         )
     return summarize_basket_registry(records, as_of=datetime.now(timezone.utc).date())
 
+
+
+@app.get("/api/latest-alert")
+def iv_early_entry_latest_alert(limit: int = 20):
+    """Read-only NIFTY Weekly early-entry alert history and live evaluator state."""
+    store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
+    with _iv_skew_flip_runtime_lock:
+        runtime = iv_skew_flip_runtime
+        live = runtime.snapshot().get("early_entry_alerts") if runtime is not None else None
+    return {
+        "status": "ok",
+        "strategy_scope": "NIFTY_WEEKLY",
+        "orders_enabled": False,
+        "live": live or {"state": "WATCH", "signals_allowed": False, "reason": "IV_RUNTIME_STOPPED"},
+        "alerts": store.latest(limit=limit),
+    }
 
 @app.get("/api/v1/scanner/iv-skew-flip/status")
 def iv_skew_flip_status():
