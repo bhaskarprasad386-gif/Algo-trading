@@ -12,7 +12,7 @@ def setup():
     now = 1_800_000_000 * NS
     bars = [SpotBar(now-(15-i)*60*NS, 25000, 25010, 24990, 25000) for i in range(15)]
     ce_all = [observation(token="CE1", option_type="CE", ts=now-(4-i)*60*NS,
-        iv=[10.0, 10.1, 10.25, 10.3, 10.4][i], volume=[100,110,120,130,500][i],
+        iv=[10.0, 10.1, 10.15, 10.3, 10.4][i], volume=[100,110,120,130,500][i],
         oi=1000-i*10, premium=100+i) for i in range(5)]
     pe_all = [observation(token="PE1", option_type="PE", ts=now-(2-i)*60*NS,
         iv=[10.0,10.01,10.02][i], volume=100+i*10, premium=90) for i in range(3)]
