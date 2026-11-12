@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from app.core.logger import app_logger
+from app.market_data.master_transport import download_master_rows
 
 
 CACHE_SCHEMA_VERSION = 2
@@ -39,38 +40,12 @@ def _canonical_rows_digest(rows):
 
 
 def _download_alternate_rows():
-    """Stream the official alternate master with a strict size bound."""
-    try:
-        response = requests.get(
-            ALTERNATE_MASTER_URL,
-            timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
-            stream=True,
-            headers={"User-Agent": "Algo-Trading-BoxSpread-InstrumentMaster/1.0", "Accept": "application/json"},
-        )
-    except TypeError as exc:
-        if "unexpected keyword" not in str(exc):
-            raise
-        response = requests.get(ALTERNATE_MASTER_URL, timeout=20)
-    try:
-        response.raise_for_status()
-        if not hasattr(response, "iter_content"):
-            return response.json()
-        chunks = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > MASTER_MAX_BYTES:
-                raise ValueError(f"Angel One instrument master exceeded {MASTER_MAX_BYTES} byte limit")
-            chunks.append(chunk)
-        if not chunks:
-            raise ValueError("Angel One instrument master response was empty")
-        return json.loads(b"".join(chunks).decode("utf-8"))
-    finally:
-        close = getattr(response, "close", None)
-        if callable(close):
-            close()
+    """Fetch the official alternate host through the shared bounded TLS transport."""
+    return download_master_rows(
+        ALTERNATE_MASTER_URL,
+        timeout=(MASTER_CONNECT_TIMEOUT_SECONDS, MASTER_READ_TIMEOUT_SECONDS),
+        retries=3,
+    )
 
 
 def _cache_path() -> Path:
