@@ -29,6 +29,9 @@ def test_strategy_b_early_support_bounce_before_second_candle_confirmation():
     assert result.candidate is not None
     assert result.candidate.option_type == "CE"
     assert result.candidate.premium == 101.0
+    wall_age = result.candidate.metadata["checks"]["wall_observation_age_seconds"]
+    assert wall_age["threshold_max"] == 90
+    assert wall_age["actual"] == 0
 
 
 def test_strategy_b_rejects_wall_that_shifts_strike():
