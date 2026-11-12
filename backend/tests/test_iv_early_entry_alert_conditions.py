@@ -96,7 +96,6 @@ def test_strategy_a_rejects_ce_pe_history_from_different_minutes():
     shifted_pe = [
         replace(
             row,
-            timestamp_ns=row.timestamp_ns-60*NS,
             source_timestamp_ns=row.source_timestamp_ns-60*NS,
             oi_timestamp_ns=row.oi_timestamp_ns-60*NS,
         )
