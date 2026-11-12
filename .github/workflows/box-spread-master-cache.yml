@@ -8,11 +8,13 @@ on:
     paths:
       - "backend/app/market_data/box_spread_instrument_cache.py"
       - "backend/app/market_data/master_transport.py"
+      - "backend/app/market_data/master_transport.py"
       - ".github/workflows/box-spread-master-cache.yml"
   push:
     branches: [main]
     paths:
       - "backend/app/market_data/box_spread_instrument_cache.py"
+      - "backend/app/market_data/master_transport.py"
       - ".github/workflows/box-spread-master-cache.yml"
 
 permissions:
