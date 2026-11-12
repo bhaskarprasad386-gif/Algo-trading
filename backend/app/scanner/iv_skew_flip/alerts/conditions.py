@@ -68,6 +68,11 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BUCKET_ORDER",))
     if any(not 30*NS <= b-a <= 90*NS for a, b in zip(stamps, stamps[1:])):
         return StrategyEvaluation(AlertState.WATCH, reasons=("MISSING_SPOT_BUCKET",))
+    # Bars are timestamped at the start of their source minute. The newest
+    # completed bar should therefore be no more than two minutes old; otherwise
+    # a stale consolidation window could authorize a fresh live-option signal.
+    if last_bars[-1].timestamp_ns > now_ns or now_ns-last_bars[-1].timestamp_ns > 120*NS:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_SPOT_HISTORY",))
     if any(not (_positive(b.open) and _positive(b.high) and _positive(b.low) and _positive(b.close))
            or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high)
            for b in last_bars):
