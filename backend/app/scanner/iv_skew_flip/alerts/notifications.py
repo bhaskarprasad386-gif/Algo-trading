@@ -45,6 +45,17 @@ class TelegramOutboxWorker:
                        .with_for_update(skip_locked=True).first())
                 if row is None:
                     return {"processed": False, "reason": "NO_DUE_NOTIFICATION"}
+                event = session.get(IVEarlyEntryAlertEvent, row.event_id)
+                if event is None or event.state != "EARLY_ENTRY":
+                    # Do not send a queued alert after it has been invalidated,
+                    # expired, or otherwise transitioned out of the active state.
+                    row.status = "SKIPPED"
+                    row.lease_until_ns = None
+                    row.lease_token = None
+                    row.last_error = "ALERT_NO_LONGER_ACTIVE"
+                    if event is not None:
+                        event.delivery_status = "SKIPPED"
+                    return {"processed": True, "status": "SKIPPED", "outbox_id": row.id}
                 if not configured or sender is None:
                     row.status = "WAITING_CONFIG"
                     row.lease_until_ns = None
