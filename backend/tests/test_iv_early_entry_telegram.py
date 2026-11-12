@@ -139,6 +139,9 @@ def test_telegram_sender_reads_retry_after_from_bot_api_error_parameters(monkeyp
         def read(self):
             return b'{"ok": false, "parameters": {"retry_after": 42}}'
 
+        def close(self):
+            pass
+
     def rate_limited(_request, timeout):
         raise HTTPError(
             "https://api.telegram.org/bot/test-token/sendMessage",
