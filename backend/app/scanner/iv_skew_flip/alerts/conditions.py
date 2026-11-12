@@ -209,9 +209,19 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if len({row.strike for row in wall_rows}) != 1:
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_NOT_PERSISTENT",))
     latest = wall_rows[-1]
-    errors = _fresh(latest, now_ns)
-    if errors:
-        return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+    # Wall rows are completed-minute observations, not live quotes. Requiring
+    # the latest completed bucket to be <=5s old suppresses almost every valid
+    # signal after the first seconds of a new minute. Bound it to one minute
+    # plus a small source-time tolerance; the separate entry quote remains <=5s.
+    wall_max_age_ns = 90 * NS
+    if (latest.source_timestamp_ns > now_ns
+            or now_ns - latest.source_timestamp_ns > wall_max_age_ns
+            or latest.spot_timestamp_ns > now_ns
+            or now_ns - latest.spot_timestamp_ns > wall_max_age_ns
+            or latest.oi_timestamp_ns is None
+            or latest.oi_timestamp_ns > now_ns
+            or now_ns - latest.oi_timestamp_ns > 300 * NS):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_WALL_OBSERVATION",))
     wall_oi_timestamps = [row.oi_timestamp_ns for row in wall_rows]
     if any(
         current is None or previous is None or current <= previous
