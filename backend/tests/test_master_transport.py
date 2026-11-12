@@ -150,3 +150,29 @@ def test_transport_cleanup_does_not_mask_original_download_error():
             retries=1,
             get=lambda *args, **kwargs: response,
         )
+
+
+
+def test_tcp_mss_mitigation_is_scoped_only_to_official_master_hosts():
+    assert transport._tcp_mss_for_url(
+        "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+    ) == 1100
+    assert transport._tcp_mss_for_url(
+        "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
+    ) == 1100
+    assert transport._tcp_mss_for_url("https://apiconnect.angelone.in/rest/secure/angelbroking") is None
+    assert transport._tcp_mss_for_url("https://example.test/master") is None
+
+
+def test_tls_adapter_applies_reduced_mss_before_connect_only_when_configured():
+    import socket
+    from urllib3.connection import HTTPConnection
+
+    adapter = transport._TLSAdapter("system", tcp_mss=1100)
+    options = adapter.poolmanager.connection_pool_kw["socket_options"]
+    assert options == [
+        *HTTPConnection.default_socket_options,
+        (socket.IPPROTO_TCP, socket.TCP_MAXSEG, 1100),
+    ]
+    default_adapter = transport._TLSAdapter("system")
+    assert "socket_options" not in default_adapter.poolmanager.connection_pool_kw
