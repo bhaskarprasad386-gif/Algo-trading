@@ -5,7 +5,7 @@ import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
 type Row = Record<string, unknown>;
-type EarlyAlert = { id: number; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string };
+type EarlyAlert = { id: number; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
 type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; expiry_selection?: Row; error?: string | null; signals?: Row };
 type BasketEntry = {
   status?: string;
@@ -604,10 +604,11 @@ export default function IVSkewFlipPage() {
         </div><p className="mt-2 text-xs theme-muted">{alert.reason??"Signal criteria met"} • IV Δ {delta(alert.iv_change_points," pt",3)} • Volume {fmt(alert.volume_ratio)}x</p>
       </div>;})() : <div className="rounded-xl border theme-border theme-surface-2 p-3 text-sm theme-muted">Abhi koi active EARLY_ENTRY alert nahi hai. WATCH / stale feed ko entry signal nahi maana jayega.</div>}
       <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs">
-        <thead className="theme-muted"><tr>{["Time (IST)","Strategy","Contract","Direction","Spot","State","Delivery"].map(label=><th key={label} className="border-b theme-border px-2 py-2">{label}</th>)}</tr></thead>
-        <tbody>{earlyAlerts.length===0?<tr><td colSpan={7} className="px-2 py-4 theme-muted">No saved early-entry alerts yet.</td></tr>:earlyAlerts.map(alert=><tr key={alert.id} className="border-b theme-border">
-          <td className="px-2 py-2 whitespace-nowrap">{sampleTime(alert.observed_at_ns)}</td><td className="px-2 py-2">{alert.strategy.replaceAll("_"," ")}</td><td className="px-2 py-2">{alert.strike} {alert.option_type}</td><td className="px-2 py-2">{alert.direction}</td><td className="px-2 py-2">{fmt(alert.spot)}</td><td className="px-2 py-2"><span className="rounded-md border theme-border px-2 py-1">{alert.state}</span></td><td className="px-2 py-2">{alert.delivery_status??"—"}</td>
-        </tr>)}</tbody>
+        <thead className="theme-muted"><tr>{["Time (IST)","Strategy","Contract","Direction","Spot","State","Delivery","Conditions / saved values"].map(label=><th key={label} className="border-b theme-border px-2 py-2">{label}</th>)}</tr></thead>
+        <tbody>{earlyAlerts.length===0?<tr><td colSpan={8} className="px-2 py-4 theme-muted">No saved early-entry alerts yet.</td></tr>:earlyAlerts.map(alert=>{const checks=alert.metadata?.checks&&typeof alert.metadata.checks==="object"?alert.metadata.checks as Row:{};return <tr key={alert.id} className="border-b theme-border align-top">
+          <td className="px-2 py-2 whitespace-nowrap">{sampleTime(alert.observed_at_ns)}</td><td className="px-2 py-2">{alert.strategy.replaceAll("_"," ")}</td><td className="px-2 py-2">{alert.strike} {alert.option_type}<span className="block theme-muted">{alert.expiry}</span></td><td className="px-2 py-2">{alert.direction}</td><td className="px-2 py-2">{fmt(alert.spot)}</td><td className="px-2 py-2"><span className="rounded-md border theme-border px-2 py-1">{alert.state}</span></td><td className="px-2 py-2">{alert.delivery_status??"—"}</td>
+          <td className="px-2 py-2"><details className="min-w-[220px]"><summary className="cursor-pointer font-semibold text-blue-600">View {Object.keys(checks).length} checks</summary><div className="mt-2 space-y-2">{Object.entries(checks).map(([name,value])=>{const item=value&&typeof value==="object"?value as Row:{};return <div key={name} className="rounded border theme-border p-2"><div className="flex items-center justify-between gap-2"><b>{name.replaceAll("_"," ")}</b><span className={item.passed===true?"text-emerald-600":item.passed===false?"text-rose-600":"theme-muted"}>{item.passed===true?"PASS":item.passed===false?"FAIL":"RECORDED"}</span></div><pre className="mt-1 whitespace-pre-wrap break-words text-[10px] theme-muted">{JSON.stringify(item,null,2)}</pre></div>})}</div><pre className="mt-2 whitespace-pre-wrap break-words text-[10px] theme-muted">{JSON.stringify(alert.metadata?.live_quotes??{},null,2)}</pre></details></td>
+        </tr>})}</tbody>
       </table></div>
       <p className="text-[10px] theme-muted">Sound browser permission ke bina default OFF hai. Sound ON karne par sirf naye EARLY_ENTRY alert par local beep hoga. Ye dashboard kisi broker order ko place nahi karta.</p>
     </section>
