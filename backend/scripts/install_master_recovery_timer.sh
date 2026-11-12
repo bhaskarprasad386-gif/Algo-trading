@@ -68,7 +68,6 @@ if ! grep -Eq '^(GITHUB_TOKEN|GH_TOKEN)=.+' "$ENV_FILE"; then
 fi
 
 mkdir -p "$BACKEND_DIR/data"
-chmod 700 "$BACKEND_DIR/data"
 
 # Verify imports before installing any systemd files.
 (
