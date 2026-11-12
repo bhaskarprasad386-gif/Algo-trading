@@ -16,11 +16,19 @@ def test_strategy_b_early_support_bounce_before_second_candle_confirmation():
         SpotBar(now-60*NS, 24990, 25002, 24980, 24995),
         SpotBar(now, 24990, 25010, 24988, 25005),
     ]
+    entry = wall_observation(token="CE25000", option_type="CE", ts=now,
+        strike=25000, iv=12.1, oi=9000)
+    entry = OptionObservation(entry.token, entry.underlying, entry.expiry, entry.strike,
+        entry.option_type, entry.source_timestamp_ns, entry.sampled_at_ns,
+        entry.spot_timestamp_ns, entry.spot_price, entry.iv, entry.iv_input,
+        99.0, 101.0, 100.0, entry.oi, entry.oi_timestamp_ns, entry.volume)
     result = evaluate_strategy_b(now_ns=now, expiry="2026-11-19",
-        spot_bars=bars, ce_wall_history=[], pe_wall_history=wall, direction="BULLISH")
+        spot_bars=bars, ce_wall_history=[], pe_wall_history=wall,
+        entry_quote=entry, direction="BULLISH")
     assert result.state == AlertState.EARLY_ENTRY
     assert result.candidate is not None
     assert result.candidate.option_type == "CE"
+    assert result.candidate.premium == 101.0
 
 
 def test_strategy_b_rejects_wall_that_shifts_strike():
@@ -29,7 +37,10 @@ def test_strategy_b_rejects_wall_that_shifts_strike():
         strike=25000+i*50, iv=11.0-i*.1, oi=10000+i*100) for i in range(3)]
     bars = [SpotBar(now-60*NS, 24990, 25002, 24980, 24995),
             SpotBar(now, 24990, 25010, 24988, 25005)]
+    entry = wall_observation(token="CE25000", option_type="CE", ts=now,
+        strike=25000, iv=12.1, oi=9000)
     result = evaluate_strategy_b(now_ns=now, expiry="2026-11-19",
-        spot_bars=bars, ce_wall_history=[], pe_wall_history=wall, direction="BULLISH")
+        spot_bars=bars, ce_wall_history=[], pe_wall_history=wall,
+        entry_quote=entry, direction="BULLISH")
     assert result.state == AlertState.WATCH
     assert "WALL_CONTRACT_SHIFTED" in result.reasons
