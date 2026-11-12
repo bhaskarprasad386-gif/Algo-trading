@@ -281,7 +281,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
                 "wall_iv_cooling": {"threshold_max_change_points": -0.10, "actual_change_points": iv_change, "previous_iv": wall_rows[-2].iv, "live_iv": latest.iv, "passed": iv_change <= -0.10},
                 "spot_distance_to_wall": {"threshold_max_points": 15, "actual_points": (wall-current.low) if direction == "BULLISH" else (current.high-wall), "wall_strike": wall, "passed": near_wall},
                 "initial_rejection_candle": {"open": current.open, "high": current.high, "low": current.low, "close": current.close, "previous_close": prior.close, "passed": rejection},
-                "quote_freshness_seconds": {"threshold_max": 5, "actual": max(0, (now_ns-latest.source_timestamp_ns)/NS), "passed": True},
+                "wall_observation_age_seconds": {"threshold_max": 90, "actual": max(0, (now_ns-latest.source_timestamp_ns)/NS), "passed": True},
                 "oi_freshness_seconds": {"threshold_max": 300, "actual": max(0, (now_ns-latest.oi_timestamp_ns)/NS), "passed": True},
                 "same_expiry_contract": {"expiry": expiry, "strike": wall, "option_type": option_type, "passed": True},
             },
