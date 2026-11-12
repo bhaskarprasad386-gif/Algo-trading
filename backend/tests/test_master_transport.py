@@ -81,3 +81,30 @@ def test_download_master_rejects_oversized_payload():
             "https://example.test/master", retries=1, get=lambda *a, **k: response
         )
     assert response.closed
+
+
+def test_transport_tries_system_then_tls12_then_tls13(monkeypatch):
+    rows = [{"symbol": "NIFTY", "exch_seg": "NSE", "token": "99926000"}]
+    payload = json.dumps(rows).encode()
+    profiles = []
+    responses = [Response(b"", fail=True), Response(b"", fail=True), Response(payload)]
+
+    def fake_profile_request(url, *, timeout, profile):
+        profiles.append((url, timeout, profile))
+        return responses.pop(0)
+
+    monkeypatch.setattr(transport, "_profile_request", fake_profile_request)
+    assert transport.download_master_rows(
+        "https://example.test/master", retries=3, backoff_seconds=0
+    ) == rows
+    assert [profile for _, _, profile in profiles] == ["system", "tls12", "tls13"]
+
+
+def test_tls_adapter_pins_requested_protocol_versions():
+    import ssl
+
+    tls12 = transport._TLSAdapter("tls12")
+    tls13 = transport._TLSAdapter("tls13")
+    assert tls12._profile == "tls12"
+    assert tls13._profile == "tls13"
+    assert ssl.TLSVersion.TLSv1_2 < ssl.TLSVersion.TLSv1_3
