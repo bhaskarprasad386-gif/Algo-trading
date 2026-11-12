@@ -1,5 +1,8 @@
 name: Box Spread Instrument Master Cache
 on:
+  # Independent egress refresh; 00:00 UTC is 05:30 IST.
+  schedule:
+    - cron: '0 0 * * *'
   workflow_dispatch:
   pull_request:
     paths:
@@ -82,4 +85,4 @@ jobs:
           name: box-spread-instrument-master-validated
           path: ${{ runner.temp }}/box_spread_instrument_master_cache.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
