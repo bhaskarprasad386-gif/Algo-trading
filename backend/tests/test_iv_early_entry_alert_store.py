@@ -104,6 +104,27 @@ def test_malformed_expiry_fails_closed_and_cancels_queued_notification():
         session.close()
 
 
+def test_previous_session_alert_expires_on_next_morning_and_cancels_queue():
+    store = make_store()
+    observed = datetime(2026, 11, 11, 14, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    old_candidate = candidate(int(observed.timestamp() * 1_000_000_000))
+    result = store.record(old_candidate)
+
+    next_morning = datetime(2026, 11, 12, 9, 20, tzinfo=ZoneInfo("Asia/Kolkata"))
+    assert store.expire_session_alerts(now=next_morning) == 1
+    latest = store.latest()[0]
+    assert latest["state"] == "EXPIRED"
+    assert latest["reason"] == "PRIOR_SESSION_ALERT"
+    assert latest["delivery_status"] == "SKIPPED"
+
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "SKIPPED"
+    finally:
+        session.close()
+
+
 def test_active_alert_expires_after_session_close():
     store = make_store()
     result = store.record(candidate())
