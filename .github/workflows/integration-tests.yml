@@ -233,6 +233,7 @@ jobs:
           python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
           python -m py_compile backend/scripts/recover_box_spread_master_artifact.py
           python -m py_compile backend/scripts/recover_iv_master_artifact.py
+          python -m py_compile backend/scripts/recover_latest_master_artifacts.py
       - name: Run instrument-master regression suite
         run: |
           python -m pytest -q --tb=short \
