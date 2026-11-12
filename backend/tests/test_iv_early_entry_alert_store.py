@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -51,3 +54,24 @@ def test_delivery_status_is_persisted():
     result = store.record(candidate())
     assert store.mark_delivery(result["event_id"], "FAILED") is True
     assert store.latest()[0]["delivery_status"] == "FAILED"
+
+
+
+def test_lifecycle_transition_is_idempotent_and_keeps_delivery_status():
+    store = make_store()
+    result = store.record(candidate())
+    assert store.transition(result["event_id"], AlertState.INVALIDATED, reason="PRICE_STRUCTURE_BROKE")
+    assert not store.transition(result["event_id"], AlertState.EXPIRED, reason="LATE_DUPLICATE")
+    latest = store.latest()[0]
+    assert latest["state"] == "INVALIDATED"
+    assert latest["reason"] == "PRICE_STRUCTURE_BROKE"
+    assert latest["delivery_status"] == "PENDING"
+
+
+def test_active_alert_expires_after_session_close():
+    store = make_store()
+    result = store.record(candidate())
+    closed = datetime(2026, 11, 12, 15, 6, tzinfo=ZoneInfo("Asia/Kolkata"))
+    assert store.expire_session_alerts(now=closed) == 1
+    assert store.latest()[0]["state"] == "EXPIRED"
+    assert store.latest()[0]["reason"] == "TRADING_SESSION_CLOSED"
