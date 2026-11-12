@@ -185,7 +185,7 @@ jobs:
       SECRET_KEY: ci-test-secret-key-not-for-production
       PYTHONPATH: backend
       DATABASE_URL: "sqlite:///:memory:"
-      BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH: ${{ runner.temp }}/box-spread-test-cache.json
+      BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH: ${{ github.workspace }}/.ci-box-spread-test-cache.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
