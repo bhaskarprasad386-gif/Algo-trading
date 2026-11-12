@@ -146,3 +146,31 @@ def test_oi_wall_alert_invalidates_only_when_live_spot_breaches_wall():
     assert latest["id"] == result["event_id"]
     assert latest["state"] == "INVALIDATED"
     assert latest["reason"] == "OI_WALL_BREACHED_BY_LIVE_SPOT"
+
+
+def test_notification_worker_recovers_expired_in_flight_lease():
+    store = make_store()
+    result = store.record(candidate())
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).filter_by(
+            event_id=result["event_id"]
+        ).one()
+        row.status = "IN_FLIGHT"
+        row.attempts = 1
+        row.lease_until_ns = candidate().observed_at_ns + 1_000_000_000
+        session.commit()
+    finally:
+        session.close()
+
+    worker = TelegramOutboxWorker(store.session_factory, lease_seconds=2)
+    delivered = []
+    recovered = worker.process_one(
+        now_ns=candidate().observed_at_ns + 3_000_000_000,
+        sender=lambda payload: delivered.append(payload),
+        configured=True,
+    )
+    assert recovered["status"] == "SENT"
+    assert len(delivered) == 1
+    assert delivered[0]["event_id"] == result["event_id"]
+    assert store.latest()[0]["delivery_status"] == "SENT"
