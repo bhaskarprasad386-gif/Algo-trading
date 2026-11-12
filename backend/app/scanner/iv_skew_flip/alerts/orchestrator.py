@@ -6,6 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .aggregation import SourceMinuteAggregator
+from .data_adapter import option_observation
 from .conditions import evaluate_strategy_a, evaluate_strategy_b, even_strikes
 from .models import AlertState, StrategyEvaluation
 
@@ -75,9 +76,13 @@ class IVEarlyEntryAlertEngine:
                 if not self._in_window(now, strategy):
                     reasons.append("OUTSIDE_IV_VOLUME_WINDOW")
                     continue
+                live_ce = option_observation(current[pair["CE"]])
+                live_pe = option_observation(current[pair["PE"]])
+                live_target = option_observation(current[pair[target_type]])
                 result = evaluate_strategy_a(
                     now_ns=now_ns, expiry=expiry, bars=bars, ce=ce, pe=pe,
                     target=token_rows.get(pair[target_type], ()), direction=direction,
+                    live_ce=live_ce, live_pe=live_pe, live_target=live_target,
                 )
                 if result.candidate is not None:
                     candidates.append(result.candidate)
