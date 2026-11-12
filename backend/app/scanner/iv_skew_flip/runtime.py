@@ -21,6 +21,7 @@ from .feed import IVSkewFlipFeedAdapter
 from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
+from .alerts import AlertCooldownStore, IVEarlyEntryAlertEngine
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from .universe import resolve_option_universe
 
@@ -175,6 +176,7 @@ class IVSkewFlipRuntime:
         self._signals: dict[str, dict[str, Any]] = {}
         self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in ACTIVE_CHAIN_CONFIGS}
         self._early_move: dict[str, dict[str, Any]] = {}
+        self._early_entry_alerts = IVEarlyEntryAlertEngine(AlertCooldownStore(SessionLocal, cooldown_seconds=600))
         self._started = False
         self._stopping = False
 
@@ -593,6 +595,12 @@ class IVSkewFlipRuntime:
                 continue
             try:
                 sampler_snapshot = sampler.snapshot()
+                if stream_id == "NIFTY_WEEKLY":
+                    expiry = sampler.configured_expiry
+                    self._early_entry_alerts.evaluate(
+                        sampler=sampler, spot=spot, expiry=expiry,
+                        now=self.clock_datetime(), now_ns=now_ns,
+                    )
                 result = self._early_move_detectors[stream_id].update(
                     quotes=feed.latest_quotes(),
                     metrics=sampler_snapshot.get("live_metrics", ()),
@@ -901,6 +909,7 @@ class IVSkewFlipRuntime:
             "last_evaluation_ns": last_evaluation,
             "signals": signals,
             "early_move": early_move,
+            "early_entry_alerts": self._early_entry_alerts.snapshot(),
             "equity_pressure": {
                 **equity_pressure,
                 "enabled": self.equity_pressure_enabled,
