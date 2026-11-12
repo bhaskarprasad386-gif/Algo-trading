@@ -241,5 +241,6 @@ jobs:
         run: |
           python -m pytest -q --tb=short \
             backend/tests/test_master_transport.py \
+            backend/tests/test_instrument_master_concurrency.py \
             backend/tests/test_box_spread_instrument_cache.py \
             backend/tests/test_iv_skew_flip_instruments.py
