@@ -83,18 +83,23 @@ def download_master_rows(
                     headers={"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"},
                 )
             response.raise_for_status()
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > MASTER_MAX_BYTES:
-                    raise ValueError(f"instrument master exceeds {MASTER_MAX_BYTES} byte limit")
-                chunks.append(chunk)
-            if not chunks:
-                raise ValueError("instrument master response is empty")
-            payload = json.loads(b"".join(chunks).decode("utf-8"))
+            if not callable(getattr(response, "iter_content", None)):
+                # Narrow compatibility for lightweight legacy response doubles;
+                # real requests.Response always supports bounded streaming.
+                payload = response.json()
+            else:
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_content(chunk_size=MASTER_CHUNK_BYTES):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > MASTER_MAX_BYTES:
+                        raise ValueError(f"instrument master exceeds {MASTER_MAX_BYTES} byte limit")
+                    chunks.append(chunk)
+                if not chunks:
+                    raise ValueError("instrument master response is empty")
+                payload = json.loads(b"".join(chunks).decode("utf-8"))
             if not isinstance(payload, list) or not payload:
                 raise ValueError("instrument master must be a non-empty JSON list")
             for row in payload:
