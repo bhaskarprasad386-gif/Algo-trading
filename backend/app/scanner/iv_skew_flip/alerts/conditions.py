@@ -161,13 +161,17 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
 
 
 def even_strikes(strikes: Sequence[float]) -> tuple[float, ...]:
-    """Return NIFTY alert strikes on the ₹100 grid (every second ₹50 strike)."""
-    return tuple(sorted({float(s) for s in strikes if _positive(s) and float(s) % 100 == 0}))
+    """Return valid NIFTY strikes on the exchange ₹50 grid."""
+    return tuple(sorted({
+        float(s) for s in strikes
+        if _positive(s) and float(s) % 50 == 0
+    }))
 
 
 def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar],
                          ce_wall_history: Sequence[OptionObservation],
                          pe_wall_history: Sequence[OptionObservation],
+                         entry_quote: OptionObservation,
                          direction: str) -> StrategyEvaluation:
     """Early OI-wall rejection trigger, before a full reversal is confirmed.
 
@@ -200,6 +204,17 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     errors = _fresh(latest, now_ns)
     if errors:
         return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+    entry_type = "CE" if direction == "BULLISH" else "PE"
+    if (entry_quote.underlying.upper() != "NIFTY" or entry_quote.option_type != entry_type
+            or entry_quote.expiry != expiry or entry_quote.strike != latest.strike):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("ENTRY_CONTRACT_MISMATCH",))
+    if _structurally_valid(entry_quote):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_ENTRY_OBSERVATION",))
+    entry_errors = _fresh(entry_quote, now_ns)
+    if entry_errors:
+        return StrategyEvaluation(AlertState.WATCH, reasons=entry_errors)
+    if abs(entry_quote.spot_price-latest.spot_price) > 5:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_ENTRY_SPOT",))
     if any(row.oi is None for row in wall_rows) or not (wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi):
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_OI_NOT_RISING",))
     iv_change = float(wall_rows[-1].iv)-float(wall_rows[-2].iv)
@@ -230,9 +245,12 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     candidate = AlertCandidate(
         "OI_WALL_REJECTION", "NIFTY", expiry, wall, direction,
         "CE" if direction == "BULLISH" else "PE", AlertState.EARLY_ENTRY,
-        now_ns, current.close, latest.ask, iv_change, None, reason,
+        now_ns, current.close, entry_quote.ask, iv_change, None, reason,
         {
             "wall_oi": latest.oi, "wall_strike": wall, "wall_option_type": option_type,
+            "entry_quote": {"token": entry_quote.token, "option_type": entry_quote.option_type,
+                            "bid": entry_quote.bid, "ask": entry_quote.ask,
+                            "source_timestamp_ns": entry_quote.source_timestamp_ns},
             "checks": {
                 "persistent_wall": {"required_observations": 3, "actual": len(wall_rows), "strike_history": [row.strike for row in wall_rows], "passed": len(wall_rows) == 3 and len({row.strike for row in wall_rows}) == 1},
                 "wall_oi_rising": {"values": [row.oi for row in wall_rows], "passed": wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi},
