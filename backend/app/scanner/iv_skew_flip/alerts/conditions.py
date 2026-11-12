@@ -22,7 +22,10 @@ def _structurally_valid(row: OptionObservation) -> tuple[str, ...]:
     if not _positive(row.iv): errors.append("INVALID_IV")
     if row.iv_input != "BID_ASK_MIDPOINT": errors.append("IV_NOT_BID_ASK_MIDPOINT")
     if not (_positive(row.bid) and _positive(row.ask) and row.ask >= row.bid): errors.append("INVALID_MARKET_DEPTH")
-    if row.oi is None or row.oi < 0 or row.oi_timestamp_ns is None or row.oi_timestamp_ns <= 0: errors.append("INVALID_OI")
+    if (row.oi is None or isinstance(row.oi, bool) or not isinstance(row.oi, int) or row.oi < 0
+            or isinstance(row.oi_timestamp_ns, bool)
+            or not isinstance(row.oi_timestamp_ns, int) or row.oi_timestamp_ns <= 0):
+        errors.append("INVALID_OI")
     if row.volume is None or row.volume < 0: errors.append("INVALID_VOLUME")
     return tuple(errors)
 
@@ -101,6 +104,11 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         errors = _fresh(row, now_ns)
         if errors:
             return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+    # A quote refresh does not prove that OI itself was refreshed. The target
+    # leg must carry a strictly newer broker OI timestamp than the completed
+    # minute close before an OI-decrease condition can authorize an alert.
+    if live_target.oi_timestamp_ns <= (tgt[-1].oi_timestamp_ns or 0):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_OI_NOT_UPDATED",))
     if (abs(live_ce.spot_price-live_pe.spot_price) > 5
             or abs(live_target.spot_price-live_ce.spot_price) > 5):
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_SPOT",))
@@ -204,6 +212,12 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     errors = _fresh(latest, now_ns)
     if errors:
         return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+    wall_oi_timestamps = [row.oi_timestamp_ns for row in wall_rows]
+    if any(
+        current is None or previous is None or current <= previous
+        for previous, current in zip(wall_oi_timestamps, wall_oi_timestamps[1:])
+    ):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_OI_TIMESTAMP_NOT_ADVANCING",))
     entry_type = "CE" if direction == "BULLISH" else "PE"
     if (entry_quote.underlying.upper() != "NIFTY" or entry_quote.option_type != entry_type
             or entry_quote.expiry != expiry or entry_quote.strike != latest.strike):
