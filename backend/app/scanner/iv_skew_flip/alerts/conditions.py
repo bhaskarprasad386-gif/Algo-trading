@@ -113,3 +113,71 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
 def even_strikes(strikes: Sequence[float]) -> tuple[float, ...]:
     """Return NIFTY alert strikes on the ₹100 grid (every second ₹50 strike)."""
     return tuple(sorted({float(s) for s in strikes if _positive(s) and float(s) % 100 == 0}))
+
+
+def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar],
+                         ce_wall_history: Sequence[OptionObservation],
+                         pe_wall_history: Sequence[OptionObservation],
+                         direction: str) -> StrategyEvaluation:
+    """Early OI-wall rejection trigger, before a full reversal is confirmed.
+
+    For BULLISH, the PE-OI support wall must persist across three distinct
+    one-minute observations; spot must probe within 15 points and print an
+    initial bullish rejection candle. BEARISH mirrors this at the CE wall.
+    The function deliberately emits an early alert on the first completed
+    rejection candle; it does not wait for a second candle confirmation.
+    """
+    direction = direction.upper()
+    if direction not in {"BULLISH", "BEARISH"}:
+        return StrategyEvaluation(AlertState.INVALIDATED, reasons=("INVALID_DIRECTION",))
+    wall_rows = tuple(pe_wall_history[-3:] if direction == "BULLISH" else ce_wall_history[-3:])
+    if len(wall_rows) != 3 or len(spot_bars) < 2:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INSUFFICIENT_WALL_OR_PRICE_HISTORY",))
+    option_type = "PE" if direction == "BULLISH" else "CE"
+    if not _same_contract(wall_rows, option_type):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_CONTRACT_SHIFTED",))
+    if any(row.expiry != expiry for row in wall_rows):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_EXPIRY_MISMATCH",))
+    for row in wall_rows:
+        if _structurally_valid(row):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_OBSERVATION",))
+    times = [row.source_timestamp_ns for row in wall_rows]
+    if any(b <= a or not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_CADENCE",))
+    if len({row.strike for row in wall_rows}) != 1:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_NOT_PERSISTENT",))
+    latest = wall_rows[-1]
+    errors = _fresh(latest, now_ns)
+    if errors:
+        return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+    if wall_rows[-1].oi <= wall_rows[-2].oi:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_OI_NOT_RISING",))
+    iv_change = float(wall_rows[-1].iv)-float(wall_rows[-2].iv)
+    if iv_change > -0.10:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_IV_NOT_COOLING",))
+    bars = tuple(spot_bars[-2:])
+    if any(bar.timestamp_ns <= 0 for bar in bars) or bars[-1].timestamp_ns <= bars[-2].timestamp_ns:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_PRICE_BAR_ORDER",))
+    prior, current = bars
+    wall = latest.strike
+    if direction == "BEARISH":
+        # Probe the CE resistance, reject it and close back below the wall.
+        near_wall = 0 <= wall-current.high <= 15 or abs(wall-current.high) <= 15
+        rejection = current.close < current.open and current.close < prior.close and current.close < wall
+        reason = "CE OI resistance rejected; PE early entry"
+    else:
+        # Probe the PE support, reject it and close back above the wall.
+        near_wall = 0 <= current.low-wall <= 15 or abs(current.low-wall) <= 15
+        rejection = current.close > current.open and current.close > prior.close and current.close > wall
+        reason = "PE OI support defended; CE early entry"
+    if not near_wall:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("SPOT_NOT_AT_WALL",))
+    if not rejection:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INITIAL_REJECTION_NOT_VISIBLE",))
+    candidate = AlertCandidate(
+        "OI_WALL_REJECTION", "NIFTY", expiry, wall, direction,
+        "CE" if direction == "BULLISH" else "PE", AlertState.EARLY_ENTRY,
+        now_ns, current.close, latest.ask, iv_change, None, reason,
+        {"wall_oi": latest.oi, "wall_strike": wall, "wall_option_type": option_type},
+    )
+    return StrategyEvaluation(AlertState.EARLY_ENTRY, candidate)
