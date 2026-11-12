@@ -378,3 +378,21 @@ def test_late_invalidation_does_not_clear_newer_cooldown_claim():
         assert cooldown.last_alert_ns == later.observed_at_ns
     finally:
         session.close()
+
+
+
+def test_distinct_strikes_can_each_emit_a_valid_alert_in_same_window():
+    store = make_store()
+    first = store.record(candidate())
+    base = candidate()
+    second_candidate = AlertCandidate(
+        base.strategy, base.underlying, base.expiry, 25050.0,
+        base.direction, base.option_type, base.state,
+        base.observed_at_ns + 1_000_000_000, base.spot,
+        base.premium, base.iv_change_points, base.volume_ratio,
+        "independent adjacent-strike signal",
+    )
+    second = store.record(second_candidate)
+    assert first["accepted"] is True
+    assert second["accepted"] is True
+    assert len(store.latest()) == 2
