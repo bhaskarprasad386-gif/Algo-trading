@@ -123,3 +123,26 @@ def test_notification_worker_retries_and_then_marks_sent():
     assert len(sent) == 1
     assert sent[0]["event_id"] == result["event_id"]
     assert store.latest()[0]["delivery_status"] == "SENT"
+
+
+
+def test_oi_wall_alert_invalidates_only_when_live_spot_breaches_wall():
+    store = make_store()
+    base = candidate()
+    wall_candidate = AlertCandidate(
+        "OI_WALL_REJECTION", "NIFTY", base.expiry, 25000.0,
+        "BULLISH", "CE", AlertState.EARLY_ENTRY, base.observed_at_ns,
+        25008.0, 105.0, -0.12, None, "support defended",
+        {"wall_strike": 25000.0, "wall_option_type": "PE"},
+    )
+    result = store.record(wall_candidate)
+    assert store.invalidate_breached_oi_walls(
+        spot=25001.0, observed_at_ns=base.observed_at_ns + 1,
+    ) == 0
+    assert store.invalidate_breached_oi_walls(
+        spot=24999.0, observed_at_ns=base.observed_at_ns + 2,
+    ) == 1
+    latest = store.latest()[0]
+    assert latest["id"] == result["event_id"]
+    assert latest["state"] == "INVALIDATED"
+    assert latest["reason"] == "OI_WALL_BREACHED_BY_LIVE_SPOT"
