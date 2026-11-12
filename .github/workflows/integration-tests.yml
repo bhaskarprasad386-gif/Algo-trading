@@ -237,6 +237,7 @@ jobs:
           python -m py_compile backend/scripts/recover_box_spread_master_artifact.py
           python -m py_compile backend/scripts/recover_iv_master_artifact.py
           python -m py_compile backend/scripts/recover_latest_master_artifacts.py
+          python -m py_compile backend/scripts/recover_latest_box_spread_master_artifact.py
           bash -n backend/scripts/diagnose_angelone_tls_path.sh
           bash -n backend/scripts/install_master_recovery_timer.sh
       - name: Run instrument-master regression suite
