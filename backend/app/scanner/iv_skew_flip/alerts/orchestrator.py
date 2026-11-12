@@ -119,10 +119,18 @@ class IVEarlyEntryAlertEngine:
         ce_wall, pe_wall = wall_history("CE"), wall_history("PE")
         if self._in_window(now, "OI_WALL_REJECTION"):
             for direction in ("BULLISH", "BEARISH"):
+                wall_rows = pe_wall if direction == "BULLISH" else ce_wall
+                wall_strike = wall_rows[-1].strike if wall_rows else None
+                entry_type = "CE" if direction == "BULLISH" else "PE"
+                entry_token = by_strike.get(float(wall_strike), {}).get(entry_type) if wall_strike is not None else None
+                entry_quote = option_observation(current[entry_token]) if entry_token else None
+                if entry_quote is None:
+                    reasons.append("WAITING_FOR_FRESH_ENTRY_LEG_QUOTE")
+                    continue
                 result = evaluate_strategy_b(
                     now_ns=now_ns, expiry=expiry, spot_bars=bars,
                     ce_wall_history=ce_wall, pe_wall_history=pe_wall,
-                    direction=direction,
+                    entry_quote=entry_quote, direction=direction,
                 )
                 if result.candidate is not None:
                     candidates.append(result.candidate)
