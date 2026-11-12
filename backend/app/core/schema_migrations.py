@@ -375,3 +375,10 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
 
+
+        # Notification lease ownership is nullable for safe upgrades of existing outbox rows.
+        current_tables = set(inspect(connection).get_table_names())
+        if "iv_early_entry_notification_outbox" in current_tables:
+            outbox_columns = {column["name"] for column in inspect(connection).get_columns("iv_early_entry_notification_outbox")}
+            if "lease_token" not in outbox_columns:
+                connection.execute(text("ALTER TABLE iv_early_entry_notification_outbox ADD COLUMN lease_token VARCHAR(64)"))
