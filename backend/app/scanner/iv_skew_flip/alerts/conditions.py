@@ -133,6 +133,29 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         live_target.spot_price, float(premium_now), iv_jump,
         current_increment/baseline,
         "IV expansion, live-minute volume surge, rising premium and falling OI before confirmed breakout",
+        {
+            "checks": {
+                "spot_bars_minimum": {"threshold": 15, "actual": len(last_bars), "passed": len(last_bars) >= 15},
+                "spot_range_points": {"threshold_max": 55, "actual": max(b.high for b in last_bars)-min(b.low for b in last_bars), "passed": max(b.high for b in last_bars)-min(b.low for b in last_bars) <= 55},
+                "option_history": {"threshold": "CE/PE 2 each; target 4", "actual": {"ce": len(ce3), "pe": len(pe3), "target": len(tgt)}, "passed": True},
+                "quote_freshness_seconds": {"threshold_max": 5, "actual": {row.option_type: max(0, (now_ns-row.source_timestamp_ns)/NS) for row in live_rows}, "passed": True},
+                "spot_freshness_seconds": {"threshold_max": 5, "actual": {row.option_type: max(0, (now_ns-row.spot_timestamp_ns)/NS) for row in live_rows}, "passed": True},
+                "oi_freshness_seconds": {"threshold_max": 300, "actual": {row.option_type: max(0, (now_ns-row.oi_timestamp_ns)/NS) for row in live_rows}, "passed": True},
+                "iv_change_points": {"threshold_min": threshold, "actual": iv_jump, "opposite_max": 0.05, "opposite_actual": opposite_jump, "passed": iv_jump >= threshold and opposite_jump <= 0.05},
+                "volume_expansion": {"threshold_min_ratio": 2.5, "baseline_increment": baseline, "live_increment": current_increment, "actual_ratio": current_increment/baseline, "passed": current_increment >= 2.5*baseline},
+                "premium_rising": {"previous_ask": premium_prev, "live_ask": premium_now, "passed": premium_now > premium_prev},
+                "oi_falling": {"previous": tgt[-1].oi, "live": live_target.oi, "passed": live_target.oi < tgt[-1].oi},
+                "midpoint_iv": {"required_source": "BID_ASK_MIDPOINT", "actual": [row.iv_input for row in live_rows], "passed": True},
+                "market_depth": {"required": "positive bid/ask; ask >= bid", "passed": True},
+                "same_strike_expiry": {"strike": live_target.strike, "expiry": expiry, "passed": True},
+            },
+            "live_quotes": {
+                "ce": {"bid": live_ce.bid, "ask": live_ce.ask, "iv": live_ce.iv, "oi": live_ce.oi, "volume": live_ce.volume},
+                "pe": {"bid": live_pe.bid, "ask": live_pe.ask, "iv": live_pe.iv, "oi": live_pe.oi, "volume": live_pe.volume},
+                "target": {"bid": live_target.bid, "ask": live_target.ask, "iv": live_target.iv, "oi": live_target.oi, "volume": live_target.volume},
+            },
+            "evaluated_at_ns": now_ns,
+        },
     )
     return StrategyEvaluation(AlertState.EARLY_ENTRY, candidate)
 
@@ -208,6 +231,19 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
         "OI_WALL_REJECTION", "NIFTY", expiry, wall, direction,
         "CE" if direction == "BULLISH" else "PE", AlertState.EARLY_ENTRY,
         now_ns, current.close, latest.ask, iv_change, None, reason,
-        {"wall_oi": latest.oi, "wall_strike": wall, "wall_option_type": option_type},
+        {
+            "wall_oi": latest.oi, "wall_strike": wall, "wall_option_type": option_type,
+            "checks": {
+                "persistent_wall": {"required_observations": 3, "actual": len(wall_rows), "strike_history": [row.strike for row in wall_rows], "passed": len(wall_rows) == 3 and len({row.strike for row in wall_rows}) == 1},
+                "wall_oi_rising": {"values": [row.oi for row in wall_rows], "passed": wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi},
+                "wall_iv_cooling": {"threshold_max_change_points": -0.10, "actual_change_points": iv_change, "previous_iv": wall_rows[-2].iv, "live_iv": latest.iv, "passed": iv_change <= -0.10},
+                "spot_distance_to_wall": {"threshold_max_points": 15, "actual_points": (wall-current.low) if direction == "BULLISH" else (current.high-wall), "wall_strike": wall, "passed": near_wall},
+                "initial_rejection_candle": {"open": current.open, "high": current.high, "low": current.low, "close": current.close, "previous_close": prior.close, "passed": rejection},
+                "quote_freshness_seconds": {"threshold_max": 5, "actual": max(0, (now_ns-latest.source_timestamp_ns)/NS), "passed": True},
+                "oi_freshness_seconds": {"threshold_max": 300, "actual": max(0, (now_ns-latest.oi_timestamp_ns)/NS), "passed": True},
+                "same_expiry_contract": {"expiry": expiry, "strike": wall, "option_type": option_type, "passed": True},
+            },
+            "evaluated_at_ns": now_ns,
+        },
     )
     return StrategyEvaluation(AlertState.EARLY_ENTRY, candidate)
