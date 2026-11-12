@@ -6,6 +6,12 @@ import json
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
 from typing import Any, Callable
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+from html import escape
+
+from app.core.config import settings
+from .alerts.notifications import TelegramOutboxWorker
 from zoneinfo import ZoneInfo
 
 from app.core.database import SessionLocal
@@ -177,6 +183,8 @@ class IVSkewFlipRuntime:
         self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in ACTIVE_CHAIN_CONFIGS}
         self._early_move: dict[str, dict[str, Any]] = {}
         self._early_entry_alerts = IVEarlyEntryAlertEngine(AlertCooldownStore(SessionLocal, cooldown_seconds=600))
+        self._telegram_outbox = TelegramOutboxWorker(SessionLocal)
+        self._telegram_delivery = {"status": "DISABLED", "last_attempt_ns": None, "last_error": None}
         self._started = False
         self._stopping = False
 
@@ -839,11 +847,76 @@ class IVSkewFlipRuntime:
             self._last_refresh_ns = now_ns
         return self.snapshot()
 
+    @staticmethod
+    def _telegram_sender(payload: dict[str, Any]) -> None:
+        """Send one persisted IV alert through Telegram Bot API; no secrets enter logs."""
+        token = str(settings.TELEGRAM_BOT_TOKEN or "").strip()
+        chat_id = str(settings.TELEGRAM_CHAT_ID or "").strip()
+        if not settings.TELEGRAM_ENABLED or not token or not chat_id:
+            raise RuntimeError("TELEGRAM_CONFIGURATION_MISSING")
+        observed_ns = int(payload.get("observed_at_ns") or 0)
+        observed = datetime.fromtimestamp(observed_ns / 1_000_000_000, tz=IST).strftime("%d-%b-%Y %H:%M:%S IST") if observed_ns else "—"
+        direction = str(payload.get("direction") or "—").upper()
+        emoji = "🟢" if direction == "BULLISH" else "🔴" if direction == "BEARISH" else "⚠️"
+        lines = [
+            f"{emoji} <b>NIFTY WEEKLY IV EARLY ENTRY</b>",
+            f"<b>Strategy:</b> {escape(str(payload.get('strategy') or '—'))}",
+            f"<b>Signal:</b> {escape(direction)} • {escape(str(payload.get('option_type') or '—'))}",
+            f"<b>Contract:</b> {escape(str(payload.get('strike') or '—'))} • Expiry {escape(str(payload.get('expiry') or '—'))}",
+            f"<b>Spot:</b> {escape(str(payload.get('spot') or '—'))} • Premium: {escape(str(payload.get('premium') or '—'))}",
+            f"<b>IV Δ:</b> {escape(str(payload.get('iv_change_points') if payload.get('iv_change_points') is not None else '—'))} pt • Volume: {escape(str(payload.get('volume_ratio') if payload.get('volume_ratio') is not None else '—'))}x",
+            f"<b>Time:</b> {escape(observed)}",
+            f"<b>Reason:</b> {escape(str(payload.get('reason') or 'Conditions satisfied'))}",
+            f"<b>Alert ID:</b> {int(payload.get('event_id') or 0)} • Alert only; no order placed",
+        ]
+        body = json.dumps({"chat_id": chat_id, "text": "\\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": True}).encode("utf-8")
+        request = Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body, headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urlopen(request, timeout=5) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise RuntimeError("TELEGRAM_API_REJECTED")
+
+    def _process_telegram_outbox(self, now_ns: int) -> None:
+        configured = bool(
+            settings.TELEGRAM_ENABLED
+            and str(settings.TELEGRAM_BOT_TOKEN or "").strip()
+            and str(settings.TELEGRAM_CHAT_ID or "").strip()
+        )
+        try:
+            result = self._telegram_outbox.process_one(
+                now_ns=now_ns,
+                sender=self._telegram_sender if configured else None,
+                configured=configured,
+            )
+            if result.get("processed"):
+                self._telegram_delivery = {
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "last_attempt_ns": now_ns,
+                    "last_error": None,
+                }
+            elif not configured:
+                self._telegram_delivery = {
+                    "status": "WAITING_CONFIG",
+                    "last_attempt_ns": self._telegram_delivery.get("last_attempt_ns"),
+                    "last_error": "Set TELEGRAM_ENABLED, TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID",
+                }
+        except Exception as exc:
+            # Delivery failures are isolated from the market-data and signal loop.
+            self._telegram_delivery = {
+                "status": "ERROR",
+                "last_attempt_ns": now_ns,
+                "last_error": f"{type(exc).__name__}: {exc}"[:500],
+            }
+
     def _run(self) -> None:
         next_run = monotonic()
         while not self._stop.is_set():
             try:
                 self.refresh_once()
+                self._process_telegram_outbox(self.clock_ns())
                 with self._lock:
                     self._last_error.pop("RUNTIME", None)
             except Exception as exc:
@@ -910,6 +983,8 @@ class IVSkewFlipRuntime:
             "signals": signals,
             "early_move": early_move,
             "early_entry_alerts": self._early_entry_alerts.snapshot(),
+            "telegram_delivery": dict(self._telegram_delivery),
+            "telegram_configured": bool(settings.TELEGRAM_ENABLED and settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
             "equity_pressure": {
                 **equity_pressure,
                 "enabled": self.equity_pressure_enabled,
