@@ -47,7 +47,10 @@ class IVEarlyEntryAlertEngine:
         snapshot = sampler.snapshot()
         if snapshot.get("status") != "LIVE":
             return {"state": "WATCH", "reason": "SAMPLER_NOT_LIVE", "signals_allowed": False}
-        samples = tuple(snapshot.get("samples", ()))
+        # Never use display samples here: snapshot()["samples"] deliberately
+        # carries forward last-good IV for UI continuity when current IV is None.
+        # Only raw current-cycle samples may authorize an alert.
+        samples = tuple(snapshot.get("live_samples", ()))
         if not samples:
             return {"state": "WATCH", "reason": "NO_LIVE_OPTION_SAMPLES", "signals_allowed": False}
         self.aggregator.ingest(samples, spot, now_ns=now_ns)
