@@ -69,7 +69,7 @@ def test_lifecycle_transition_is_idempotent_and_keeps_delivery_status():
     latest = store.latest()[0]
     assert latest["state"] == "INVALIDATED"
     assert latest["reason"] == "PRICE_STRUCTURE_BROKE"
-    assert latest["delivery_status"] == "PENDING"
+    assert latest["delivery_status"] == "SKIPPED"
 
 
 def test_active_alert_expires_after_session_close():
@@ -289,14 +289,22 @@ def test_notification_worker_skips_alert_invalidated_before_delivery():
     )
     worker = TelegramOutboxWorker(store.session_factory)
     delivered = []
+    # Lifecycle transition atomically cancels the unclaimed outbox row.
     skipped = worker.process_one(
         now_ns=candidate().observed_at_ns + 1_000_000_000,
         sender=lambda payload: delivered.append(payload),
         configured=True,
     )
-    assert skipped["status"] == "SKIPPED"
+    assert skipped["processed"] is False
+    assert skipped["reason"] == "NO_DUE_NOTIFICATION"
     assert delivered == []
     assert store.latest()[0]["delivery_status"] == "SKIPPED"
+    session = store.session_factory()
+    try:
+        row = session.query(IVEarlyEntryNotificationOutbox).one()
+        assert row.status == "SKIPPED"
+    finally:
+        session.close()
 
 
 def test_waiting_config_clears_lease_and_defers_next_attempt():
@@ -438,7 +446,8 @@ def test_notification_worker_skips_alert_expired_before_delivery():
         sender=lambda payload: delivered.append(payload),
         configured=True,
     )
-    assert skipped["status"] == "SKIPPED"
+    assert skipped["processed"] is False
+    assert skipped["reason"] == "NO_DUE_NOTIFICATION"
     assert delivered == []
     assert store.latest()[0]["state"] == "EXPIRED"
     assert store.latest()[0]["delivery_status"] == "SKIPPED"
