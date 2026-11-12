@@ -160,7 +160,7 @@ class IVOneSecondSampler:
                         source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
                         spot_price=row.spot_price,
                         oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
-                        oi_timestamp_ns=row.source_timestamp_ns if row.oi is not None else None,
+                        oi_timestamp_ns=getattr(row, "oi_timestamp_ns", None),
                         iv_input=(
                             'BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None
                             else 'LTP' if row.ltp is not None else None
@@ -204,7 +204,7 @@ class IVOneSecondSampler:
                     token=item.token, underlying=item.underlying, expiry=item.expiry, strike=item.strike,
                     option_type=item.option_type, source_timestamp_ns=item.source_timestamp_ns,
                     spot_timestamp_ns=item.spot_timestamp_ns, spot_price=getattr(item, "spot_price", None), sampled_at_ns=item.sampled_at_ns,
-                    iv=item.iv, oi=item.oi, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
+                    iv=item.iv, oi=item.oi, oi_timestamp_ns=item.oi_timestamp_ns, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
                 ))
                 inserted += 1
             session.commit()
