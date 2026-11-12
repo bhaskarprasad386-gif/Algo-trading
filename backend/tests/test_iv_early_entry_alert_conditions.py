@@ -89,3 +89,18 @@ def test_strategy_a_rejects_stale_completed_spot_history():
     )
     assert result.state == AlertState.WATCH
     assert "STALE_SPOT_HISTORY" in result.reasons
+
+
+def test_strategy_a_rejects_ce_pe_history_from_different_minutes():
+    now, bars, ce, pe = setup()
+    shifted_pe = [
+        replace(row, source_timestamp_ns=row.source_timestamp_ns-60*NS)
+        for row in pe[-3:-1]
+    ]
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce[-3:-1], pe=shifted_pe, target=ce[:4], direction="BULLISH",
+        live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
+    )
+    assert result.state == AlertState.WATCH
+    assert "UNALIGNED_OPTION_HISTORY" in result.reasons
