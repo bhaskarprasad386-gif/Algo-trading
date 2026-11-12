@@ -85,9 +85,10 @@ def test_box_spread_tries_alternate_angel_one_host_before_disk_cache(monkeypatch
     rows = _rows()
     master = FakeMaster(error=RuntimeError("primary host timeout"))
 
-    def fake_get(url, timeout):
+    def fake_get(url, **kwargs):
         assert url == cache_module.ALTERNATE_MASTER_URL
-        assert timeout == 20
+        assert kwargs["timeout"] == (cache_module.MASTER_CONNECT_TIMEOUT_SECONDS, cache_module.MASTER_READ_TIMEOUT_SECONDS)
+        assert kwargs["stream"] is True
         return SimpleNamespace(
             raise_for_status=lambda: None,
             json=lambda: rows,
