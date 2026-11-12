@@ -323,6 +323,23 @@ class IVOneSecondSampler:
         # Serialize source-cursor checks, durable inserts and in-memory history
         # updates. Concurrent refreshes must not race past the same source tick.
         with self._lock:
+            # Never let a delayed/out-of-order broker frame roll a contract
+            # backwards. Use all available in-memory and durable source-time
+            # watermarks; history may still be ahead when persistence is down.
+            for token, sample in tuple(updates.items()):
+                watermark = self._last_source_timestamp.get(token, 0)
+                current = self._latest.get(token)
+                if current is not None:
+                    watermark = max(watermark, current.source_timestamp_ns)
+                history = self._history.get(token)
+                if history:
+                    watermark = max(watermark, max(row.source_timestamp_ns for row in history))
+                if sample.source_timestamp_ns < watermark:
+                    updates.pop(token, None)
+            new_history = [
+                (token, sample) for token, sample in new_history
+                if token in updates
+            ]
             pending_history = [
                 (token, sample) for token, sample in new_history
                 if self._last_source_timestamp.get(token) != sample.source_timestamp_ns
