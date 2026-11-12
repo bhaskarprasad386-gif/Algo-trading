@@ -116,11 +116,21 @@ def download_master_rows(
                 time.sleep(backoff_seconds * (2 ** attempt))
         finally:
             if response is not None:
-                close = getattr(response, "close", None)
-                if callable(close):
-                    close()
+                # Cleanup must never mask the transport/validation exception or
+                # turn a fully validated payload into a failed refresh. Always
+                # attempt to close the TLS session even if response.close fails.
                 session = getattr(response, "_master_transport_session", None)
-                if session is not None:
-                    session.close()
+                try:
+                    close = getattr(response, "close", None)
+                    if callable(close):
+                        close()
+                except Exception:
+                    pass
+                finally:
+                    if session is not None:
+                        try:
+                            session.close()
+                        except Exception:
+                            pass
     assert last_error is not None
     raise last_error
