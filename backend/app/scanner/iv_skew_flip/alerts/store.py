@@ -237,6 +237,17 @@ class AlertCooldownStore:
         finally:
             session.close()
 
+    @staticmethod
+    def _parse_expiry_day(value: Any):
+        """Normalize the expiry formats accepted by the IV universe resolver."""
+        raw = str(value or "").strip()
+        for fmt in ("%Y-%m-%d", "%d%b%Y", "%d%b%y", "%d-%b-%Y", "%d-%b-%y"):
+            try:
+                return datetime.strptime(raw.upper(), fmt).date()
+            except ValueError:
+                continue
+        return None
+
     def expire_session_alerts(self, *, now: datetime) -> int:
         """Expire active alerts after session close or after their option expiry."""
         if now.tzinfo is None:
@@ -249,11 +260,14 @@ class AlertCooldownStore:
                     .filter(IVEarlyEntryAlertEvent.state == AlertState.EARLY_ENTRY.value)
                     .all())
             for row in rows:
-                try:
-                    expiry_day = datetime.strptime(row.expiry[:10], "%Y-%m-%d").date()
-                except ValueError:
-                    continue
-                if expiry_day < local.date():
+                expiry_day = self._parse_expiry_day(row.expiry)
+                if expiry_day is None:
+                    row.state = AlertState.EXPIRED.value
+                    row.reason = "INVALID_EXPIRY_FORMAT"
+                    if self._skip_queued_notifications(session, row.id):
+                        row.delivery_status = "SKIPPED"
+                    changed += 1
+                elif expiry_day < local.date():
                     row.state = AlertState.EXPIRED.value
                     row.reason = "OPTION_EXPIRY_PASSED"
                     if self._skip_queued_notifications(session, row.id):
