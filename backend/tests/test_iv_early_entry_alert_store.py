@@ -339,3 +339,42 @@ def test_cooldown_deduplicates_same_contract_across_strategies():
     assert second["accepted"] is False
     assert second["reason"] == "COOLDOWN_ACTIVE"
     assert len(store.latest()) == 1
+
+
+
+def test_invalidation_releases_only_its_own_cooldown_for_fresh_signal():
+    store = make_store()
+    first = store.record(candidate())
+    assert first["accepted"] is True
+    assert store.transition(
+        first["event_id"], AlertState.INVALIDATED, reason="PRICE_STRUCTURE_BROKE",
+    )
+    fresh = candidate(1_800_000_001_000_000_000)
+    second = store.record(fresh)
+    assert second["accepted"] is True
+    assert len(store.latest()) == 2
+
+
+def test_late_invalidation_does_not_clear_newer_cooldown_claim():
+    store = make_store()
+    first = store.record(candidate())
+    later = candidate(1_800_000_000_700_000_000)
+    # Cooldown is 600s, so the newer claim cannot be recorded yet. Simulate
+    # a newer claim at the DB layer to exercise the timestamp ownership guard.
+    session = store.session_factory()
+    try:
+        cooldown = session.get(IVEarlyEntryCooldown, first["cooldown_key"])
+        cooldown.last_alert_ns = later.observed_at_ns
+        session.commit()
+    finally:
+        session.close()
+    assert store.transition(
+        first["event_id"], AlertState.INVALIDATED, reason="LATE_INVALIDATION",
+    )
+    session = store.session_factory()
+    try:
+        cooldown = session.get(IVEarlyEntryCooldown, first["cooldown_key"])
+        assert cooldown is not None
+        assert cooldown.last_alert_ns == later.observed_at_ns
+    finally:
+        session.close()
