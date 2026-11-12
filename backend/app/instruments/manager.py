@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.logger import app_logger
 from app.core.database import engine
 from app.models.instrument import Instrument
+from app.market_data.master_transport import download_master_rows
 
 
 class InstrumentManager:
@@ -16,13 +17,11 @@ class InstrumentManager:
         """Fetch the latest scrip master json from Angel One."""
         try:
             app_logger.info("Downloading Angel One Instrument Master list...")
-            response = requests.get(self.SCRIP_MASTER_URL, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, list):
-                raise ValueError("instrument master response must be a JSON list")
-            if any(not isinstance(item, dict) for item in data):
-                raise ValueError("instrument master response contains a non-object item")
+            data = download_master_rows(
+                self.SCRIP_MASTER_URL,
+                timeout=(10, 120),
+                retries=3,
+            )
             app_logger.info(f"Successfully downloaded {len(data)} instruments.")
             return data
         except Exception as e:
