@@ -51,7 +51,7 @@ Missing GitHub Actions read-only credential file: $ENV_FILE
 Create it securely (use a fine-grained token limited to this repository with
 Actions: read permission only):
   sudo install -d -m 700 /etc/algo-trading
-  sudo bash -c 'umask 077; read -rsp "GitHub Actions-read token: " t; echo; printf "GH_TOKEN=%s\\n" "$t" > /etc/algo-trading/master-recovery.env"'
+  sudo bash -c 'umask 077; read -rsp "GitHub Actions-read token: " t; echo; printf "GH_TOKEN=%s\\n" "$t" > /etc/algo-trading/master-recovery.env'
   sudo chmod 600 "$ENV_FILE"
 
 Then rerun this installer. Never paste the token into chat or commit it.
