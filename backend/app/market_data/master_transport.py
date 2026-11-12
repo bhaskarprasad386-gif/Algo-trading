@@ -10,27 +10,49 @@ independent-egress case.
 from __future__ import annotations
 
 import json
+import socket
 import ssl
 import time
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPConnection
 
 
 MASTER_MAX_BYTES = 64 * 1024 * 1024
 MASTER_CHUNK_BYTES = 1024 * 1024
 MASTER_USER_AGENT = "Algo-Trading-InstrumentMaster/1.1"
 TLS_PROFILES = ("system", "tls12", "tls13")
+# The VPS packet capture proved that Angel One's TLS response is segmented
+# beyond what the VPS path reliably delivers. TCP_MAXSEG advertises a smaller
+# receive MSS in the SYN, matching the successful 1100-byte MSS experiment.
+# Apply only to the two official instrument-master hosts, never broker order,
+# quote, WebSocket, or unrelated HTTPS connections.
+ANGEL_MASTER_HOSTS = frozenset({
+    "margincalculator.angelbroking.com",
+    "margincalculator.angelone.in",
+})
+ANGEL_MASTER_TCP_MSS = 1100
 
 
 class _TLSAdapter(HTTPAdapter):
-    def __init__(self, profile: str):
+    def __init__(self, profile: str, *, tcp_mss: int | None = None):
         self._profile = profile
+        self._tcp_mss = tcp_mss
         super().__init__(max_retries=0)
 
     def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
         context = ssl.create_default_context()
+        if self._tcp_mss is not None:
+            # urllib3 applies socket_options before connect(), so Linux places
+            # the reduced MSS in the SYN and the remote server segments its
+            # TLS flight accordingly. Preserve urllib3's standard options.
+            pool_kwargs["socket_options"] = [
+                *HTTPConnection.default_socket_options,
+                (socket.IPPROTO_TCP, socket.TCP_MAXSEG, self._tcp_mss),
+            ]
         if self._profile == "tls12":
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.maximum_version = ssl.TLSVersion.TLSv1_2
@@ -43,12 +65,13 @@ class _TLSAdapter(HTTPAdapter):
 
 def _profile_request(url: str, *, timeout: Any, profile: str):
     headers = {"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"}
-    if profile == "system":
-        # Keep the default requests path first for compatibility with the
-        # platform's configured CA/proxy environment.
-        return requests.get(url, timeout=timeout, stream=True, headers=headers)
+    host = (urlsplit(url).hostname or "").lower()
+    tcp_mss = ANGEL_MASTER_TCP_MSS if host in ANGEL_MASTER_HOSTS else None
+    # Use a session for all TLS profiles so the narrowly scoped TCP MSS
+    # mitigation also applies to the initial system-negotiated attempt.
+    # Default SSLContext retains normal certificate verification and OS CAs.
     session = requests.Session()
-    adapter = _TLSAdapter(profile)
+    adapter = _TLSAdapter(profile, tcp_mss=tcp_mss)
     session.mount("https://", adapter)
     try:
         response = session.get(url, timeout=timeout, stream=True, headers=headers)
