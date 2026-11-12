@@ -136,6 +136,42 @@ class AlertCooldownStore:
         finally:
             session.close()
 
+    def invalidate_breached_oi_walls(self, *, spot: float, observed_at_ns: int) -> int:
+        """Invalidate OI-wall alerts only when spot breaches the recorded wall level."""
+        if not isinstance(spot, (int, float)) or spot <= 0:
+            return 0
+        session = self.session_factory()
+        changed = 0
+        try:
+            rows = (session.query(IVEarlyEntryAlertEvent)
+                    .filter(
+                        IVEarlyEntryAlertEvent.strategy == "OI_WALL_REJECTION",
+                        IVEarlyEntryAlertEvent.state == AlertState.EARLY_ENTRY.value,
+                    ).all())
+            for row in rows:
+                try:
+                    metadata = json.loads(row.metadata_json or "{}")
+                    wall = float(metadata["wall_strike"])
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    continue
+                breached = (
+                    row.direction == "BULLISH" and float(spot) < wall
+                ) or (
+                    row.direction == "BEARISH" and float(spot) > wall
+                )
+                if breached and observed_at_ns >= row.observed_at_ns:
+                    row.state = AlertState.INVALIDATED.value
+                    row.reason = "OI_WALL_BREACHED_BY_LIVE_SPOT"
+                    changed += 1
+            if changed:
+                session.commit()
+            return changed
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def expire_session_alerts(self, *, now: datetime) -> int:
         """Expire active alerts after session close or after their option expiry."""
         if now.tzinfo is None:
