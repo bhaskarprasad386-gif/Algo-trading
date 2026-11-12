@@ -73,7 +73,7 @@ mkdir -p "$BACKEND_DIR/data"
 (
   cd "$BACKEND_DIR"
   PYTHONPATH="$BACKEND_DIR" "$PYTHON_PATH" -c \
-    'import requests; from app.market_data import box_spread_instrument_cache; from app.scanner.iv_skew_flip import instruments'
+    'import requests; from app.market_data import box_spread_instrument_cache'
 )
 
 cat > "$SERVICE_FILE" <<EOF
