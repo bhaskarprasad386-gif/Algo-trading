@@ -519,6 +519,13 @@ def test_ambiguous_telegram_transport_failure_is_not_retried():
 
 
 
+def test_mark_delivery_accepts_uncertain_for_manual_reconciliation():
+    store = make_store()
+    result = store.record(candidate())
+    assert store.mark_delivery(result["event_id"], "uncertain") is True
+    assert store.latest()[0]["delivery_status"] == "UNCERTAIN"
+
+
 def test_notification_revalidates_lifecycle_after_claim_before_dispatch():
     store = make_store()
     result = store.record(candidate())
