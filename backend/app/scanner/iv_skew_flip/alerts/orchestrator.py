@@ -104,9 +104,12 @@ class IVEarlyEntryAlertEngine:
         # Persist only valid EARLY_ENTRY transitions; store enforces durable cooldown.
         persisted = []
         conflicts = []
+        conflict_records = []
         directions = {candidate.direction for candidate in candidates}
         if len(directions) > 1:
             conflicts = candidates
+            for candidate in conflicts:
+                conflict_records.append(self.store.record_conflict(candidate))
         else:
             for candidate in candidates:
                 persisted.append(self.store.record(candidate))
@@ -115,6 +118,7 @@ class IVEarlyEntryAlertEngine:
             "state": state, "underlying": "NIFTY", "expiry": expiry,
             "signals_allowed": state == "EARLY_ENTRY",
             "accepted_alerts": persisted,
+            "conflict_records": conflict_records,
             "conflicts": [
                 {"strategy": item.strategy, "strike": item.strike, "direction": item.direction,
                  "option_type": item.option_type, "reason": item.reason}
