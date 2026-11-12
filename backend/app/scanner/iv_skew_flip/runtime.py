@@ -12,7 +12,10 @@ from html import escape
 import math
 
 from app.core.config import settings
-from .alerts.notifications import AmbiguousDeliveryError, TelegramRateLimitError, TelegramOutboxWorker
+from .alerts.notifications import (
+    AmbiguousDeliveryError, TelegramRateLimitError, TelegramRejectedError,
+    TelegramOutboxWorker,
+)
 from zoneinfo import ZoneInfo
 
 from app.core.database import SessionLocal
@@ -919,14 +922,17 @@ class IVSkewFlipRuntime:
                     except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
                         retry_after = None
                 raise TelegramRateLimitError(retry_after) from None
-            # Other concrete HTTP responses are definitive provider rejection.
-            raise RuntimeError("TELEGRAM_API_REJECTED") from None
+            # A 4xx (except 429 above) is a definitive configuration/request
+            # rejection. A 5xx may be transient, so let the outbox retry it.
+            if 400 <= exc.code < 500:
+                raise TelegramRejectedError("TELEGRAM_API_REJECTED") from None
+            raise RuntimeError("TELEGRAM_PROVIDER_TEMPORARY_FAILURE") from None
         except Exception:
             # Timeout, connection reset, or unreadable response may occur after
             # Telegram accepted the POST. Retrying could duplicate the alert.
             raise AmbiguousDeliveryError("TELEGRAM_DELIVERY_OUTCOME_UNKNOWN") from None
         if not isinstance(result, dict) or result.get("ok") is not True:
-            raise RuntimeError("TELEGRAM_API_REJECTED")
+            raise TelegramRejectedError("TELEGRAM_API_REJECTED")
 
     def _process_telegram_outbox(self, now_ns: int) -> None:
         configured = bool(
