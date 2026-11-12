@@ -451,6 +451,11 @@ class IVOneSecondSampler:
                     self._last_source_timestamp[token] = history[-1].source_timestamp_ns
         return copied
 
+    def history_snapshot(self, token: str) -> tuple[OptionMetricSample, ...]:
+        """Return an immutable, source-time-ordered copy of recent real observations."""
+        with self._lock:
+            return tuple(self._history.get(str(token), ()))
+
     def oi_reference(self, token: str, *, lookback_seconds: int = 300) -> OptionMetricSample | None:
         """Return the closest source-timestamped OI sample at/before 5m ago."""
         target = self.clock_ns() - lookback_seconds * 1_000_000_000
