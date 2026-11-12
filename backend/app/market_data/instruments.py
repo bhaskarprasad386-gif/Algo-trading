@@ -60,7 +60,10 @@ class InstrumentMaster:
             try:
                 source_errors = []
                 data = None
-                request_timeout = (8, timeout if isinstance(timeout, (int, float)) else 90)
+                request_timeout = (
+                    timeout if isinstance(timeout, tuple) and len(timeout) == 2
+                    else (8, float(timeout) if isinstance(timeout, (int, float)) else 90)
+                )
                 for source_url in (self.MASTER_URL, self.ALTERNATE_MASTER_URL):
                     try:
                         data = download_master_rows(
