@@ -350,6 +350,7 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
         iv_only = next(row for row in rows if row.token == "durable-iv-only")
         assert durable.volume == 250
         assert durable.oi == 10000
+        assert durable.oi_timestamp_ns == now_ns
         assert durable.bid == 99.5
         assert durable.ask == 100.5
         assert durable.spot_price == 21950.0
@@ -370,6 +371,9 @@ def test_sampler_persists_source_ticks_and_restores_history_after_restart():
         spot=SpotSnapshot(21950, now_ns + 2_000_000_000),
     )
     assert restored["history_samples_by_token"] == {"durable-ce": 1, "durable-iv-only": 1}
+    restored_ce = restarted.history_snapshot("durable-ce")[-1]
+    assert restored_ce.oi_timestamp_ns == now_ns
+    assert restarted.history_snapshot("durable-iv-only")[-1].oi_timestamp_ns is None
     engine.dispose()
 
 
