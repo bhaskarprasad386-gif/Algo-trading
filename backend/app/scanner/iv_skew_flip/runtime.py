@@ -9,6 +9,7 @@ from typing import Any, Callable
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from html import escape
+import math
 
 from app.core.config import settings
 from .alerts.notifications import AmbiguousDeliveryError, TelegramRateLimitError, TelegramOutboxWorker
@@ -898,13 +899,25 @@ class IVSkewFlipRuntime:
             # hint without exposing response URLs, headers, or bot credentials.
             if exc.code == 429:
                 retry_after = None
+                # Telegram commonly places retry_after in responseParameters
+                # JSON; proxies may additionally expose a Retry-After header.
                 try:
                     raw_retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                    retry_after = float(raw_retry_after) if raw_retry_after is not None else None
-                    if retry_after is not None and retry_after < 0:
-                        retry_after = None
+                    if raw_retry_after is not None:
+                        parsed = float(raw_retry_after)
+                        if math.isfinite(parsed) and parsed >= 0:
+                            retry_after = parsed
                 except (TypeError, ValueError):
                     retry_after = None
+                if retry_after is None:
+                    try:
+                        rejection = json.loads(exc.read().decode("utf-8"))
+                        raw_retry_after = rejection.get("parameters", {}).get("retry_after")
+                        parsed = float(raw_retry_after)
+                        if math.isfinite(parsed) and parsed >= 0:
+                            retry_after = parsed
+                    except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
+                        retry_after = None
                 raise TelegramRateLimitError(retry_after) from None
             # Other concrete HTTP responses are definitive provider rejection.
             raise RuntimeError("TELEGRAM_API_REJECTED") from None
