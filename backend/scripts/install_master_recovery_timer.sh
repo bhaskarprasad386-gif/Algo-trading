@@ -3,7 +3,7 @@
 # algo-trading.service, alter scanner state, or touch WebSocket processes.
 set -Eeuo pipefail
 
-REPO_DIR="${REPO_DIR:-/root/Algo-trading}"
+REPO_DIR="${REPO_DIR:-/opt/Algo-Trading}"
 ENV_FILE="/etc/algo-trading/master-recovery.env"
 SERVICE_FILE="/etc/systemd/system/algo-trading-master-recovery.service"
 TIMER_FILE="/etc/systemd/system/algo-trading-master-recovery.timer"
@@ -78,7 +78,7 @@ mkdir -p "$BACKEND_DIR/data"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Recover validated Box Spread instrument-master artifact from GitHub Actions
+Description=Recover validated Box Spread and IV instrument-master artifacts from GitHub Actions
 Wants=network-online.target
 After=network-online.target
 
@@ -90,7 +90,7 @@ UMask=0077
 WorkingDirectory=$BACKEND_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PYTHONPATH=$BACKEND_DIR
-ExecStart=$PYTHON_PATH $BACKEND_DIR/scripts/recover_latest_box_spread_master_artifact.py
+ExecStart=$PYTHON_PATH $BACKEND_DIR/scripts/recover_latest_master_artifacts.py
 TimeoutStartSec=240
 NoNewPrivileges=true
 PrivateTmp=true
@@ -101,7 +101,7 @@ EOF
 
 cat > "$TIMER_FILE" <<'EOF'
 [Unit]
-Description=Daily validated instrument-master recovery after GitHub cache refresh
+Description=Daily validated Box Spread and IV instrument-master recovery after GitHub cache refresh
 
 [Timer]
 # 00:45 UTC = 06:15 IST; both scheduled GitHub cache workflows run by 00:05 UTC.
