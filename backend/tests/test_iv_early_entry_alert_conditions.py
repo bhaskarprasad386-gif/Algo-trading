@@ -74,3 +74,18 @@ def test_strategy_a_rejects_oi_decline_without_a_new_broker_oi_observation():
     )
     assert result.state == AlertState.WATCH
     assert "LIVE_OI_NOT_UPDATED" in result.reasons
+
+
+def test_strategy_a_rejects_stale_completed_spot_history():
+    now, bars, ce, pe = setup()
+    stale_bars = [
+        replace(bar, timestamp_ns=bar.timestamp_ns-3*60*NS)
+        for bar in bars
+    ]
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=stale_bars,
+        ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
+    )
+    assert result.state == AlertState.WATCH
+    assert "STALE_SPOT_HISTORY" in result.reasons
