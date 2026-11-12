@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
@@ -87,7 +87,7 @@ def test_alert_and_telegram_outbox_are_created_atomically():
     engine = store.session_factory.kw.get("bind")
     with engine.connect() as conn:
         outbox_count = conn.execute(
-            IVEarlyEntryNotificationOutbox.__table__.count()
+            select(func.count()).select_from(IVEarlyEntryNotificationOutbox.__table__)
         ).scalar_one()
     assert result["accepted"] is True
     assert outbox_count == 1
