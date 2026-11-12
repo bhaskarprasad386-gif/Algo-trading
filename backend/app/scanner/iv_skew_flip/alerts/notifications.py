@@ -33,7 +33,7 @@ class TelegramOutboxWorker:
             with session.begin():
                 row = (session.query(IVEarlyEntryNotificationOutbox)
                        .filter(
-                           IVEarlyEntryNotificationOutbox.status.in_(("PENDING", "RETRY")),
+                           IVEarlyEntryNotificationOutbox.status.in_(("PENDING", "RETRY", "WAITING_CONFIG")),
                            IVEarlyEntryNotificationOutbox.next_attempt_ns <= now_ns,
                            or_(IVEarlyEntryNotificationOutbox.lease_until_ns.is_(None),
                                IVEarlyEntryNotificationOutbox.lease_until_ns <= now_ns),
