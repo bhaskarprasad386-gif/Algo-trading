@@ -45,13 +45,14 @@ def _same_contract(rows: Sequence[OptionObservation], option_type: str) -> bool:
 
 def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
                          ce: Sequence[OptionObservation], pe: Sequence[OptionObservation],
-                         target: Sequence[OptionObservation], direction: str) -> StrategyEvaluation:
-    """Early IV/volume momentum trigger; breakout candle close is not required.
+                         target: Sequence[OptionObservation], direction: str,
+                         live_ce: OptionObservation, live_pe: OptionObservation,
+                         live_target: OptionObservation) -> StrategyEvaluation:
+    """Evaluate completed-minute history against a separately validated live quote.
 
-    CE/PE each contain three chronological one-minute IV observations. Target
-    contains five chronological one-minute cumulative-volume observations:
-    the first three increments form the baseline and the fourth is compared.
-    Only the newest quote must meet the live 5-second freshness gate.
+    CE/PE use two completed minute observations plus the current live sample.
+    Target volume uses four completed observations (three baseline increments)
+    plus the current live cumulative volume increment.
     """
     direction = direction.upper()
     if direction not in {"BULLISH", "BEARISH"}:
@@ -64,53 +65,68 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BUCKET_ORDER",))
     if any(not 30*NS <= b-a <= 90*NS for a, b in zip(stamps, stamps[1:])):
         return StrategyEvaluation(AlertState.WATCH, reasons=("MISSING_SPOT_BUCKET",))
-    if any(not (_positive(b.open) and _positive(b.high) and _positive(b.low) and _positive(b.close)) or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high) for b in last_bars):
+    if any(not (_positive(b.open) and _positive(b.high) and _positive(b.low) and _positive(b.close))
+           or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high)
+           for b in last_bars):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BAR",))
     if max(b.high for b in last_bars)-min(b.low for b in last_bars) > 55:
         return StrategyEvaluation(AlertState.WATCH, reasons=("NOT_CONSOLIDATING",))
-    if len(ce) < 3 or len(pe) < 3 or len(target) < 5:
+    if len(ce) < 2 or len(pe) < 2 or len(target) < 4:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INSUFFICIENT_OPTION_HISTORY",))
-    ce3, pe3, tgt = tuple(ce[-3:]), tuple(pe[-3:]), tuple(target[-5:])
+
+    ce3, pe3 = tuple(ce[-2:]) + (live_ce,), tuple(pe[-2:]) + (live_pe,)
+    tgt = tuple(target[-4:]) + (live_target,)
     if not _same_contract(ce3, "CE") or not _same_contract(pe3, "PE") or not _same_contract(tgt, tgt[-1].option_type):
         return StrategyEvaluation(AlertState.WATCH, reasons=("CONTRACT_OR_EXPIRY_MISMATCH",))
-    if ce3[-1].strike != pe3[-1].strike or ce3[-1].expiry != expiry or pe3[-1].expiry != expiry or tgt[-1].expiry != expiry:
+    if (ce3[-1].strike != pe3[-1].strike or ce3[-1].expiry != expiry
+            or pe3[-1].expiry != expiry or tgt[-1].expiry != expiry
+            or ce3[-1].strike != tgt[-1].strike):
         return StrategyEvaluation(AlertState.WATCH, reasons=("PAIR_NOT_SAME_STRIKE_EXPIRY",))
+
     for series in (ce3, pe3, tgt):
         if any(_structurally_valid(row) for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
         times = [r.source_timestamp_ns for r in series]
-        if any(b <= a for a, b in zip(times, times[1:])) or any(not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
+        if (any(b <= a for a, b in zip(times, times[1:]))
+                or any(not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:]))):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
-    for row in (ce3[-1], pe3[-1], tgt[-1]):
+
+    for row in (live_ce, live_pe, live_target):
         errors = _fresh(row, now_ns)
         if errors:
             return StrategyEvaluation(AlertState.WATCH, reasons=errors)
-    if abs(ce3[-1].spot_price-pe3[-1].spot_price) > 5 or abs(tgt[-1].spot_price-ce3[-1].spot_price) > 5:
+    if (abs(live_ce.spot_price-live_pe.spot_price) > 5
+            or abs(live_target.spot_price-live_ce.spot_price) > 5):
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_SPOT",))
+
     wanted, opposite = (ce3, pe3) if direction == "BULLISH" else (pe3, ce3)
     iv_jump = float(wanted[-1].iv)-float(wanted[0].iv)
     opposite_jump = float(opposite[-1].iv)-float(opposite[0].iv)
     threshold = 0.18 if direction == "BULLISH" else 0.20
     if iv_jump < threshold or opposite_jump > 0.05:
         return StrategyEvaluation(AlertState.WATCH, reasons=("IV_FLIP_NOT_CONFIRMED",))
-    raw_increments = [int(tgt[i].volume)-int(tgt[i-1].volume) for i in range(1, 5)]
-    if any(delta < 0 for delta in raw_increments):
+
+    baseline_increments = [
+        int(tgt[i].volume)-int(tgt[i-1].volume) for i in range(1, 4)
+    ]
+    current_increment = int(live_target.volume)-int(target[-1].volume)
+    if any(delta < 0 for delta in baseline_increments) or current_increment < 0:
         return StrategyEvaluation(AlertState.WATCH, reasons=("CUMULATIVE_VOLUME_RESET",))
-    increments = raw_increments
-    baseline = sum(increments[:3])/3
-    current_volume = increments[3]
-    if baseline <= 0 or current_volume < 2.5*baseline:
+    baseline = sum(baseline_increments)/3
+    if baseline <= 0 or current_increment < 2.5*baseline:
         return StrategyEvaluation(AlertState.WATCH, reasons=("VOLUME_EXPANSION_MISSING",))
-    premium_now, premium_prev = tgt[-1].ask, tgt[-2].ask
+
+    premium_now, premium_prev = live_target.ask, target[-1].ask
     if not (_positive(premium_now) and _positive(premium_prev) and premium_now > premium_prev):
         return StrategyEvaluation(AlertState.WATCH, reasons=("PREMIUM_NOT_RISING",))
-    if tgt[-1].oi is None or tgt[-2].oi is None or tgt[-1].oi >= tgt[-2].oi:
+    if live_target.oi is None or target[-1].oi is None or live_target.oi >= target[-1].oi:
         return StrategyEvaluation(AlertState.WATCH, reasons=("OI_NOT_DECREASING",))
     candidate = AlertCandidate(
-        "IV_VOLUME_MOMENTUM", "NIFTY", expiry, tgt[-1].strike, direction,
+        "IV_VOLUME_MOMENTUM", "NIFTY", expiry, live_target.strike, direction,
         "CE" if direction == "BULLISH" else "PE", AlertState.EARLY_ENTRY, now_ns,
-        tgt[-1].spot_price, float(premium_now), iv_jump, current_volume/baseline,
-        "IV expansion, relative volume surge, rising premium and falling OI before confirmed breakout",
+        live_target.spot_price, float(premium_now), iv_jump,
+        current_increment/baseline,
+        "IV expansion, live-minute volume surge, rising premium and falling OI before confirmed breakout",
     )
     return StrategyEvaluation(AlertState.EARLY_ENTRY, candidate)
 
