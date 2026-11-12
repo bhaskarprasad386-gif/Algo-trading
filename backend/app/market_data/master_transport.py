@@ -42,17 +42,16 @@ class _TLSAdapter(HTTPAdapter):
 
 
 def _profile_request(url: str, *, timeout: Any, profile: str):
+    headers = {"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"}
+    if profile == "system":
+        # Keep the default requests path first for compatibility with the
+        # platform's configured CA/proxy environment.
+        return requests.get(url, timeout=timeout, stream=True, headers=headers)
     session = requests.Session()
     adapter = _TLSAdapter(profile)
     session.mount("https://", adapter)
     try:
-        response = session.get(
-            url,
-            timeout=timeout,
-            stream=True,
-            headers={"User-Agent": MASTER_USER_AGENT, "Accept": "application/json"},
-        )
-        # Keep the session attached so the caller can close its pool too.
+        response = session.get(url, timeout=timeout, stream=True, headers=headers)
         response._master_transport_session = session
         return response
     except Exception:
