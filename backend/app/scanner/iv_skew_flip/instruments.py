@@ -205,6 +205,9 @@ def _write_snapshot(
                 os.unlink(temp_name)
             except OSError:
                 pass
+        # A refresh is not durable until the atomic replace succeeds. Surface
+        # the failure so callers/workflows cannot report a false successful save.
+        raise
 
 
 def _read_recent_snapshot() -> tuple[list[dict[str, Any]], datetime] | None:
