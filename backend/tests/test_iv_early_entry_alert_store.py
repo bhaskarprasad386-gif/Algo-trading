@@ -271,3 +271,21 @@ def test_cooldown_claim_is_atomic_across_independent_store_instances(tmp_path):
         session.close()
         engine_a.dispose()
         engine_b.dispose()
+
+
+def test_notification_worker_skips_alert_invalidated_before_delivery():
+    store = make_store()
+    result = store.record(candidate())
+    assert store.transition(
+        result["event_id"], AlertState.INVALIDATED, reason="PRICE_STRUCTURE_BROKE",
+    )
+    worker = TelegramOutboxWorker(store.session_factory)
+    delivered = []
+    skipped = worker.process_one(
+        now_ns=candidate().observed_at_ns + 1_000_000_000,
+        sender=lambda payload: delivered.append(payload),
+        configured=True,
+    )
+    assert skipped["status"] == "SKIPPED"
+    assert delivered == []
+    assert store.latest()[0]["delivery_status"] == "SKIPPED"
