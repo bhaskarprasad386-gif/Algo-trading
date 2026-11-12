@@ -595,7 +595,7 @@ export default function IVSkewFlipPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="font-extrabold tracking-tight theme-text">NIFTY Weekly Early-Entry Alerts</h2><p className="mt-1 text-xs theme-muted">Strategy A: IV + volume momentum • Strategy B: OI wall rejection • alert-only</p></div>
         <div className="flex items-center gap-2">
-          <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span>
+          <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span><span className={`rounded-full border-2 px-2 py-1 text-xs font-bold ${runtime?.telegram_configured===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}>Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"READY"):"NOT CONFIGURED"}</span>
           <button type="button" onClick={()=>setAlertAudioEnabled(v=>!v)} className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold" aria-pressed={alertAudioEnabled}>{alertAudioEnabled?"Sound ON":"Sound OFF"}</button>
         </div>
       </div>
