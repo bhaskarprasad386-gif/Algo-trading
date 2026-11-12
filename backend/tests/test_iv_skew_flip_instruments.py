@@ -84,6 +84,7 @@ def test_primary_master_is_used_without_shared_cache_or_alternate_request(monkey
 def test_alternate_official_master_is_validated_without_mutating_shared_cache(monkeypatch):
     rows = valid_rows()
     monkeypatch.setattr(loader, "_write_snapshot", lambda rows: None)
+    monkeypatch.setattr(loader, "_read_recent_snapshot", lambda: (rows, datetime.now(timezone.utc)))
     shared_rows = [{"symbol": "BOX-SPREAD-SHARED-CACHE-SENTINEL"}]
     FakeMaster._cached_instruments = shared_rows
     FakeMaster._cached_snapshot_date = "2000-01-01"
