@@ -5,6 +5,7 @@ import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
 type Row = Record<string, unknown>;
+type EarlyAlert = { id: number; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string };
 type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; expiry_selection?: Row; error?: string | null; signals?: Row };
 type BasketEntry = {
   status?: string;
@@ -360,6 +361,11 @@ export default function IVSkewFlipPage() {
   const [basketRegistry,setBasketRegistry]=useState<BasketRegistry|null>(null);
   const [durableHistory,setDurableHistory]=useState<Row|null>(null);
   const [chartHistory,setChartHistory]=useState<Row|null>(null);
+  const [earlyAlerts,setEarlyAlerts]=useState<EarlyAlert[]>([]);
+  const [earlyAlertLive,setEarlyAlertLive]=useState<Row|null>(null);
+  const [alertAudioEnabled,setAlertAudioEnabled]=useState(false);
+  const [alertFetchError,setAlertFetchError]=useState("");
+  const seenAlertIds=useRef<Set<number>>(new Set());
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [snapshotBusy,setSnapshotBusy]=useState(false);
@@ -370,6 +376,46 @@ export default function IVSkewFlipPage() {
   const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
+  useEffect(()=>{
+    let active=true;
+    const poll=async()=>{
+      try{
+        const response=await fetch(`${base}/api/latest-alert?limit=30`,{cache:"no-store"});
+        const body=await response.json();
+        if(!response.ok)throw new Error(apiError(body,"Early alert API unavailable"));
+        if(!active||body.status!=="ok")return;
+        const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
+        const newest=rows.filter(row=>Number.isFinite(row.id));
+        const previous=seenAlertIds.current;
+        const fresh=newest.filter(row=>!previous.has(row.id)&&row.state==="EARLY_ENTRY");
+        newest.forEach(row=>previous.add(row.id));
+        if(previous.size>500){const keep=new Set(newest.map(row=>row.id));seenAlertIds.current=keep;}
+        setEarlyAlerts(newest);
+        setEarlyAlertLive(body.live&&typeof body.live==="object"?body.live as Row:null);
+        setAlertFetchError("");
+        if(alertAudioEnabled&&fresh.length){
+          try{
+            const AudioCtor=window.AudioContext||(window as Window & {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;
+            if(AudioCtor){
+              const ctx=new AudioCtor();
+              const oscillator=ctx.createOscillator();
+              const gain=ctx.createGain();
+              oscillator.type="sine";oscillator.frequency.value=880;
+              gain.gain.setValueAtTime(0.0001,ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.12,ctx.currentTime+0.02);
+              gain.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.24);
+              oscillator.connect(gain);gain.connect(ctx.destination);
+              oscillator.start();oscillator.stop(ctx.currentTime+0.25);
+              void oscillator.onended&&ctx.close();
+            }
+          }catch{/* audio is optional and browser-controlled */}
+        }
+      }catch(e){if(active)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
+    };
+    void poll();
+    const timer=window.setInterval(()=>{if(active)void poll();},3000);
+    return()=>{active=false;window.clearInterval(timer);};
+  },[base,alertAudioEnabled]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -530,6 +576,32 @@ export default function IVSkewFlipPage() {
       </div>
     </header>
     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border theme-border px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border theme-border px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border theme-border px-3 py-2">Orders OFF</span></div>
+    <section className="rounded-2xl border theme-border theme-surface p-4 space-y-3" aria-live="polite">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h2 className="font-semibold theme-text">NIFTY Weekly Early-Entry Alerts</h2><p className="mt-1 text-xs theme-muted">Strategy A: IV + volume momentum • Strategy B: OI wall rejection • alert-only</p></div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border theme-border px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span>
+          <button type="button" onClick={()=>setAlertAudioEnabled(v=>!v)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold" aria-pressed={alertAudioEnabled}>{alertAudioEnabled?"Sound ON":"Sound OFF"}</button>
+        </div>
+      </div>
+      {alertFetchError&&<p className="text-xs text-amber-600">{alertFetchError}</p>}
+      {earlyAlerts.find(row=>row.state==="EARLY_ENTRY") ? (()=>{const alert=earlyAlerts.find(row=>row.state==="EARLY_ENTRY")!;return <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm text-emerald-700">EARLY ENTRY • {alert.direction}</b><span className="text-xs theme-muted">{alert.strategy.replaceAll("_"," ")}</span></div>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 text-sm">
+          <div><span className="theme-muted text-xs">Contract</span><b className="block">{alert.strike} {alert.option_type}</b></div>
+          <div><span className="theme-muted text-xs">Expiry</span><b className="block">{alert.expiry}</b></div>
+          <div><span className="theme-muted text-xs">Spot at signal</span><b className="block">{fmt(alert.spot)}</b></div>
+          <div><span className="theme-muted text-xs">Premium</span><b className="block">{fmt(alert.premium)}</b></div>
+        </div><p className="mt-2 text-xs theme-muted">{alert.reason??"Signal criteria met"} • IV Δ {delta(alert.iv_change_points," pt",3)} • Volume {fmt(alert.volume_ratio)}x</p>
+      </div>;})() : <div className="rounded-xl border theme-border theme-surface-2 p-3 text-sm theme-muted">Abhi koi active EARLY_ENTRY alert nahi hai. WATCH / stale feed ko entry signal nahi maana jayega.</div>}
+      <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs">
+        <thead className="theme-muted"><tr>{["Time (IST)","Strategy","Contract","Direction","Spot","State","Delivery"].map(label=><th key={label} className="border-b theme-border px-2 py-2">{label}</th>)}</tr></thead>
+        <tbody>{earlyAlerts.length===0?<tr><td colSpan={7} className="px-2 py-4 theme-muted">No saved early-entry alerts yet.</td></tr>:earlyAlerts.map(alert=><tr key={alert.id} className="border-b theme-border">
+          <td className="px-2 py-2 whitespace-nowrap">{sampleTime(alert.observed_at_ns)}</td><td className="px-2 py-2">{alert.strategy.replaceAll("_"," ")}</td><td className="px-2 py-2">{alert.strike} {alert.option_type}</td><td className="px-2 py-2">{alert.direction}</td><td className="px-2 py-2">{fmt(alert.spot)}</td><td className="px-2 py-2"><span className="rounded-md border theme-border px-2 py-1">{alert.state}</span></td><td className="px-2 py-2">{alert.delivery_status??"—"}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="text-[10px] theme-muted">Sound browser permission ke bina default OFF hai. Sound ON karne par sirf naye EARLY_ENTRY alert par local beep hoga. Ye dashboard kisi broker order ko place nahi karta.</p>
+    </section>
     {snapshotNotice&&<div role="status" className="rounded-xl border theme-border p-3 text-sm theme-muted">{snapshotNotice} • broker snapshot saved as LAST data</div>}
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
     <section className="space-y-3">
