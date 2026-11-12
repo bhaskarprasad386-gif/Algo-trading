@@ -103,6 +103,48 @@ def test_telegram_sender_rejects_http_200_with_provider_ok_false(monkeypatch):
         raise AssertionError("Telegram ok=false must not be marked as sent")
 
 
+def test_telegram_sender_classifies_client_rejection_as_permanent(monkeypatch):
+    from app.scanner.iv_skew_flip.alerts.notifications import TelegramRejectedError
+
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen",
+        lambda _request, timeout: (_ for _ in ()).throw(HTTPError(
+            "https://api.telegram.org/bot/test-token/sendMessage",
+            400, "Bad Request", {}, None,
+        )),
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 15})
+    except TelegramRejectedError as exc:
+        assert str(exc) == "TELEGRAM_API_REJECTED"
+        assert "test-token" not in str(exc)
+    else:
+        raise AssertionError("Telegram 4xx client error must be terminal")
+
+
+def test_telegram_sender_classifies_provider_server_error_as_retryable(monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr(
+        "app.scanner.iv_skew_flip.runtime.urlopen",
+        lambda _request, timeout: (_ for _ in ()).throw(HTTPError(
+            "https://api.telegram.org/bot/test-token/sendMessage",
+            500, "Internal Server Error", {}, None,
+        )),
+    )
+    try:
+        IVSkewFlipRuntime._telegram_sender({"event_id": 16})
+    except RuntimeError as exc:
+        assert str(exc) == "TELEGRAM_PROVIDER_TEMPORARY_FAILURE"
+        assert "test-token" not in str(exc)
+    else:
+        raise AssertionError("Telegram 5xx must remain retryable")
+
+
 def test_telegram_sender_classifies_429_and_preserves_retry_after(monkeypatch):
     from app.scanner.iv_skew_flip.alerts.notifications import TelegramRateLimitError
 
