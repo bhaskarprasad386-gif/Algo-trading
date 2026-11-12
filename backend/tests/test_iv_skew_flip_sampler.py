@@ -567,3 +567,89 @@ def test_snapshot_separates_raw_live_samples_from_display_carried_iv():
     )
     assert second["live_samples"][0].iv is None
     assert second["samples"][0].iv == last_iv
+
+
+def test_sampler_persists_and_restores_oi_source_timestamp_separately_from_price_tick():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 250, "oi-source-ce", oi_timestamp_ns=now_ns,
+    ),)
+    sampler = IVOneSecondSampler(
+        quote_source=source, spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns, history_session_factory=Session,
+    )
+    sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    price_tick_ns = now_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", price_tick_ns,
+        101.0, 100.5, 101.5, 10000, 275, "oi-source-ce", oi_timestamp_ns=now_ns,
+    ),)
+    sampler.sample_once(now_ns=price_tick_ns, now=now, spot=SpotSnapshot(21950, price_tick_ns))
+    with Session() as session:
+        rows = session.query(IVOptionObservation).order_by(IVOptionObservation.source_timestamp_ns.asc()).all()
+        assert len(rows) == 2
+        assert rows[0].oi_timestamp_ns == now_ns
+        assert rows[1].source_timestamp_ns == price_tick_ns
+        assert rows[1].oi_timestamp_ns == now_ns
+
+    restarted = IVOneSecondSampler(
+        quote_source=QuoteSource(), spot_provider=lambda: SpotSnapshot(21950, price_tick_ns + 1_000_000_000),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: price_tick_ns + 1_000_000_000, history_session_factory=Session,
+    )
+    restarted.sample_once(
+        now_ns=price_tick_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, price_tick_ns + 1_000_000_000),
+    )
+    restored = restarted.history_snapshot("oi-source-ce")[-1]
+    assert restored.source_timestamp_ns == price_tick_ns
+    assert restored.oi_timestamp_ns == now_ns
+    engine.dispose()
+
+
+def test_sampler_does_not_invent_oi_freshness_for_legacy_rows_without_oi_timestamp():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    with Session() as session:
+        session.add(IVOptionObservation(
+            token="legacy-oi", underlying="NIFTY", expiry="2026-11-12",
+            strike=21950, option_type="CE", source_timestamp_ns=now_ns,
+            spot_timestamp_ns=now_ns, spot_price=21950, sampled_at_ns=now_ns,
+            iv=20, oi=10000, bid=99, ask=101, ltp=100, mark=100, volume=250,
+        ))
+        session.commit()
+    restarted = IVOneSecondSampler(
+        quote_source=QuoteSource(), spot_provider=lambda: SpotSnapshot(21950, now_ns + 1_000_000_000),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns + 1_000_000_000, history_session_factory=Session,
+    )
+    restarted.sample_once(
+        now_ns=now_ns + 1_000_000_000,
+        now=datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    restored = restarted.history_snapshot("legacy-oi")[-1]
+    assert restored.oi == 10000
+    assert restored.oi_timestamp_ns is None
+    engine.dispose()
