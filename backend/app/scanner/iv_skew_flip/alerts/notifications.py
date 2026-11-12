@@ -23,6 +23,10 @@ class TelegramRateLimitError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class TelegramRejectedError(RuntimeError):
+    """Telegram definitively rejected a message; retrying cannot fix it."""
+
+
 class TelegramOutboxWorker:
     def __init__(
         self, session_factory: Any, *, max_attempts: int = 6,
@@ -148,6 +152,12 @@ class TelegramOutboxWorker:
             # the message. Never retry an outcome that could duplicate a send.
             final_status = "UNCERTAIN"
             error = "DELIVERY_OUTCOME_UNKNOWN_AFTER_TRANSPORT_FAILURE"
+        except TelegramRejectedError:
+            # Invalid chat IDs, revoked bot tokens and missing permissions are
+            # definitive 4xx/provider rejections. Retrying the same payload
+            # repeatedly only burns attempts and obscures the operator action.
+            final_status = "FAILED"
+            error = "TELEGRAM_API_REJECTED"
         except Exception as exc:
             # A definitive provider/API rejection can be retried with backoff.
             final_status = "RETRY"
@@ -182,4 +192,4 @@ class TelegramOutboxWorker:
             session.close()
 
 
-__all__ = ["AmbiguousDeliveryError", "TelegramRateLimitError", "TelegramOutboxWorker"]
+__all__ = ["AmbiguousDeliveryError", "TelegramRateLimitError", "TelegramRejectedError", "TelegramOutboxWorker"]
