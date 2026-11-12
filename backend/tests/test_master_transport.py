@@ -108,3 +108,45 @@ def test_tls_adapter_pins_requested_protocol_versions():
     assert tls12._profile == "tls12"
     assert tls13._profile == "tls13"
     assert ssl.TLSVersion.TLSv1_2 < ssl.TLSVersion.TLSv1_3
+
+
+def test_transport_cleanup_closes_session_even_when_response_close_raises():
+    rows = [{"symbol": "NIFTY", "exch_seg": "NSE", "token": "99926000"}]
+    payload = json.dumps(rows).encode()
+
+    class Session:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class BrokenCloseResponse(Response):
+        def __init__(self, body):
+            super().__init__(body)
+            self._master_transport_session = Session()
+
+        def close(self):
+            raise RuntimeError("response close failed")
+
+    response = BrokenCloseResponse(payload)
+    assert transport.download_master_rows(
+        "https://example.test/master",
+        retries=1,
+        get=lambda *args, **kwargs: response,
+    ) == rows
+    assert response._master_transport_session.closed
+
+
+def test_transport_cleanup_does_not_mask_original_download_error():
+    class BrokenCloseResponse(Response):
+        def close(self):
+            raise RuntimeError("cleanup failure")
+
+    response = BrokenCloseResponse(b"", fail=True)
+    with pytest.raises(RuntimeError, match="temporary HTTP failure"):
+        transport.download_master_rows(
+            "https://example.test/master",
+            retries=1,
+            get=lambda *args, **kwargs: response,
+        )
