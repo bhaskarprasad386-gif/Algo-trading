@@ -563,6 +563,9 @@ class IVOneSecondSampler:
             "oi_values": {item.token: item.oi for item in samples},
             "iv_values": {item.token: item.iv for item in samples},
             "live_metrics": live_metrics,
+            # Signal engines must consume raw current observations only. The
+            # display `samples` collection may carry forward last-good IV values.
+            "live_samples": live_samples,
             "samples": samples,
             "history_samples_by_token": history_sizes,
             "history_persistence": "ENABLED" if self.history_session_factory is not None else "DISABLED",
