@@ -475,3 +475,59 @@ def test_concurrent_unsubscribe_then_resubscribe_preserves_final_wire_state():
     assert [frame["t"] for frame in sent] == ["u", "t"]
     assert feed.snapshot()["subscriptions"] == 1
 
+
+
+def test_frame_watchdog_marks_authenticated_silent_socket_degraded_and_closes():
+    states = []
+    closed = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+        frame_timeout_seconds=5.0,
+    )
+    fake_ws = SimpleNamespace(close=lambda: closed.append(True))
+    feed._ws = fake_ws
+    feed._connected = feed._authenticated = True
+    feed._last_frame_at = __import__("time").time() - 6.0
+
+    assert feed._check_frame_freshness(fake_ws) is True
+    snapshot = feed.snapshot()
+    assert closed == [True]
+    assert states[-1][0] == "DEGRADED"
+    assert "broker frame timeout" in states[-1][1]
+    assert snapshot["authenticated"] is False
+    assert snapshot["frame_timeout_seconds"] == 5.0
+    assert snapshot["frame_stale"] is True
+
+
+def test_frame_watchdog_keeps_fresh_authenticated_socket_open():
+    closed = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        frame_timeout_seconds=5.0,
+    )
+    fake_ws = SimpleNamespace(close=lambda: closed.append(True))
+    feed._ws = fake_ws
+    feed._connected = feed._authenticated = True
+    feed._last_frame_at = __import__("time").time()
+
+    assert feed._check_frame_freshness(fake_ws) is False
+    assert feed.snapshot()["authenticated"] is True
+    assert closed == []
+
+
+def test_frame_watchdog_ignores_unauthenticated_and_replaced_sockets():
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        frame_timeout_seconds=5.0,
+    )
+    stale_ws = SimpleNamespace(close=lambda: None)
+    current_ws = SimpleNamespace(close=lambda: None)
+    feed._ws = current_ws
+    feed._last_frame_at = __import__("time").time() - 10.0
+
+    assert feed._check_frame_freshness(stale_ws) is False
+    assert feed.snapshot()["authenticated"] is False
+    feed._authenticated = True
+    assert feed._check_frame_freshness(stale_ws) is False
+    assert feed.snapshot()["authenticated"] is True
