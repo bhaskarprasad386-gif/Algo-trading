@@ -44,6 +44,7 @@ class QuoteQualityResult:
     fresh: bool
     reasons: tuple[str, ...]
     age_ns: int | None
+    exchange_age_ns: int | None
 
 
 @dataclass(frozen=True)
@@ -70,11 +71,14 @@ def assess_quote(
     observation: ProviderQuoteObservation,
     *,
     now_monotonic_ns: int,
+    now_exchange_timestamp_ns: int,
     max_age_ns: int,
 ) -> QuoteQualityResult:
     """Validate one quote without mutating or ranking its source."""
     if isinstance(now_monotonic_ns, bool) or not isinstance(now_monotonic_ns, int) or now_monotonic_ns < 0:
         raise ValueError("now_monotonic_ns must be a non-negative integer")
+    if isinstance(now_exchange_timestamp_ns, bool) or not isinstance(now_exchange_timestamp_ns, int) or now_exchange_timestamp_ns <= 0:
+        raise ValueError("now_exchange_timestamp_ns must be a positive integer")
     if isinstance(max_age_ns, bool) or not isinstance(max_age_ns, int) or max_age_ns <= 0:
         raise ValueError("max_age_ns must be a positive integer")
 
@@ -99,14 +103,19 @@ def assess_quote(
     if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0:
         reasons.append("exchange_timestamp_missing")
         age_ns = None
+        exchange_age_ns = None
     else:
-        # Exchange time is epoch-based; freshness uses the local monotonic
-        # receive clock and must never compare those different clock domains.
+        exchange_age_ns = now_exchange_timestamp_ns - timestamp
+        if exchange_age_ns < 0:
+            reasons.append("exchange_timestamp_in_future")
+        elif exchange_age_ns > max_age_ns:
+            reasons.append("quote_stale")
+        # Never compare exchange epoch time with the local monotonic clock.
         age_ns = now_monotonic_ns - received_at if not any(r == "invalid_receive_timestamp" for r in reasons) else None
-        if age_ns < 0:
+        if age_ns is not None and age_ns < 0:
             reasons.append("receive_time_in_future")
             age_ns = None
-        elif age_ns > max_age_ns:
+        elif age_ns is not None and age_ns > max_age_ns:
             reasons.append("quote_stale")
 
     bid = _positive_decimal(observation.bid)
@@ -134,6 +143,7 @@ def assess_quote(
         fresh=fresh,
         reasons=tuple(reasons),
         age_ns=age_ns,
+        exchange_age_ns=exchange_age_ns,
     )
 
 
@@ -142,15 +152,17 @@ def compare_provider_quotes(
     right: ProviderQuoteObservation,
     *,
     now_monotonic_ns: int,
+    now_exchange_timestamp_ns: int,
     max_age_ns: int,
 ) -> QuoteParityResult:
     """Compare two provider observations for the same canonical instrument.
 
-    This is diagnostic only: it never chooses a source or creates a synthetic
+    Both epoch exchange age and monotonic local receive age are checked. This
+    is diagnostic only: it never chooses a source or creates a synthetic
     bid/ask by mixing fields from different providers.
     """
-    left_result = assess_quote(left, now_monotonic_ns=now_monotonic_ns, max_age_ns=max_age_ns)
-    right_result = assess_quote(right, now_monotonic_ns=now_monotonic_ns, max_age_ns=max_age_ns)
+    left_result = assess_quote(left, now_monotonic_ns=now_monotonic_ns, now_exchange_timestamp_ns=now_exchange_timestamp_ns, max_age_ns=max_age_ns)
+    right_result = assess_quote(right, now_monotonic_ns=now_monotonic_ns, now_exchange_timestamp_ns=now_exchange_timestamp_ns, max_age_ns=max_age_ns)
     identity_match = left.contract == right.contract
     if not identity_match:
         state = QuoteQualityState.IDENTITY_MISMATCH
