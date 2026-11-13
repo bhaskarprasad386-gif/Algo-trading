@@ -42,6 +42,7 @@ class ShoonyaMarketDataSupervisor:
         self._order_events_observed = 0
         self._last_state = "IDLE_NO_SUBSCRIPTIONS"
         self._last_state_reason: str | None = None
+        self._secret_values = tuple(value for value in (str(uid).strip(), str(actid).strip(), str(access_token).strip()) if value)
         self._adapter = ShoonyaWebSocket(
             uid=uid,
             actid=actid,
@@ -137,15 +138,26 @@ class ShoonyaMarketDataSupervisor:
         with self._lock:
             self._order_events_observed += 1
 
+    def _safe_reason(self, reason: str | None) -> str | None:
+        if not reason:
+            return None
+        safe = str(reason)
+        for secret in self._secret_values:
+            safe = safe.replace(secret, "[REDACTED]")
+        return safe[:240]
+
     def _observe_state(self, state: str, reason: str | None) -> None:
+        safe_reason = self._safe_reason(reason)
         with self._lock:
             self._last_state = str(state)
-            self._last_state_reason = reason
+            self._last_state_reason = safe_reason
         if state in {"AUTH_FAILED", "ORDER_FEED_OVERFLOW", "STOP_TIMEOUT"}:
-            app_logger.warning("Shoonya shadow feed state=%s reason=%s", state, reason)
+            app_logger.warning("Shoonya shadow feed state=%s reason=%s", state, safe_reason)
 
     def snapshot(self) -> dict[str, Any]:
         adapter = self._adapter.snapshot()
+        if adapter.get("last_error"):
+            adapter["last_error"] = self._safe_reason(adapter["last_error"])
         with self._lock:
             return {
                 "broker": "shoonya",
