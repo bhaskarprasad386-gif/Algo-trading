@@ -111,7 +111,7 @@ class ShoonyaMarketDataSupervisor:
                     try:
                         self._adapter.unsubscribe(added_descriptors)
                     except Exception as cleanup_error:
-                        app_logger.error("Shoonya subscription rollback cleanup failed: %s", self._safe_reason(str(cleanup_error)))
+                        app_logger.error("Shoonya subscription rollback cleanup failed: {}", self._safe_reason(str(cleanup_error)))
                 with self._lock:
                     added_keys = set(self._descriptors) - set(previous)
                     self._descriptors = previous
@@ -190,7 +190,7 @@ class ShoonyaMarketDataSupervisor:
             self._last_state = str(state)
             self._last_state_reason = safe_reason
         if state in {"AUTH_FAILED", "ORDER_FEED_OVERFLOW", "STOP_TIMEOUT"}:
-            app_logger.warning("Shoonya shadow feed state=%s reason=%s", state, safe_reason)
+            app_logger.warning("Shoonya shadow feed state={} reason={}", state, safe_reason)
 
     def snapshot(self) -> dict[str, Any]:
         adapter = self._adapter.snapshot()
