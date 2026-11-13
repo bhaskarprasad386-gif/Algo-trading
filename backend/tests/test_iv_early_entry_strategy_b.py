@@ -25,7 +25,8 @@ def test_strategy_b_early_support_bounce_before_second_candle_confirmation():
     result = evaluate_strategy_b(now_ns=now, expiry="2026-11-19",
         spot_bars=bars, ce_wall_history=[], pe_wall_history=wall,
         entry_quote=entry, direction="BULLISH")
-    assert result.state == AlertState.EARLY_ENTRY
+    assert result.state == AlertState.WATCH
+    assert "STALE_WALL_OBSERVATION" in result.reasons
     assert result.candidate is not None
     assert result.candidate.option_type == "CE"
     assert result.candidate.premium == 101.0
@@ -102,7 +103,7 @@ def test_strategy_b_accepts_fresh_completed_wall_bucket_older_than_live_quote_wi
 
 
 
-def test_strategy_b_accepts_oi_observations_without_fixed_age_limit():
+def test_strategy_b_rejects_stale_oi_in_earlier_wall_observation():
     from dataclasses import replace
 
     now = 1_800_000_000 * NS
