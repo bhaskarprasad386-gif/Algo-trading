@@ -63,6 +63,43 @@ def test_delivery_status_is_persisted():
     assert store.latest()[0]["delivery_status"] == "FAILED"
 
 
+def test_alert_history_cursor_keeps_timestamp_and_id_order_without_duplicates():
+    store = make_store()
+    base = 1_800_000_000_000_000_000
+    first = store.record(candidate(base))
+    second = store.record(candidate(base + 1_000_000_000))
+    third = store.record(candidate(base + 1_000_000_001))
+    # Force equal source timestamps to verify the ID tie-breaker.
+    session = store.session_factory()
+    try:
+        row = session.get(IVEarlyEntryAlertEvent, third["event_id"])
+        row.observed_at_ns = base + 1_000_000_000
+        session.commit()
+    finally:
+        session.close()
+
+    page_one = store.latest(limit=2)
+    assert [row["id"] for row in page_one] == [third["event_id"], second["event_id"]]
+    cursor = page_one[-1]
+    page_two = store.latest(
+        limit=2,
+        before_observed_at_ns=cursor["observed_at_ns"],
+        before_id=cursor["id"],
+    )
+    assert [row["id"] for row in page_two] == [first["event_id"]]
+    assert set(row["id"] for row in page_one).isdisjoint(row["id"] for row in page_two)
+
+
+def test_alert_history_cursor_requires_both_fields():
+    store = make_store()
+    try:
+        store.latest(limit=10, before_id=1)
+    except ValueError as exc:
+        assert "both cursor fields" in str(exc)
+    else:
+        raise AssertionError("partial cursor must be rejected")
+
+
 
 def test_lifecycle_transition_is_idempotent_and_keeps_delivery_status():
     store = make_store()
