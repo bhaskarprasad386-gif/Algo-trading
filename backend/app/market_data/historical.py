@@ -8,6 +8,8 @@ from app.core.logger import app_logger
 
 
 class HistoricalDataClient:
+    """Wrapper for Angel One historical candle data with bounded retry/backoff."""
+
     @staticmethod
     def _is_rate_limit_error(error: Any) -> bool:
         """Recognize provider throttling so retries do not amplify the limit."""
@@ -20,8 +22,6 @@ class HistoricalDataClient:
             "http 429",
             "status code 429",
         ))
-
-    """Wrapper for Angel One historical candle data with bounded retry/backoff."""
 
     def __init__(
         self,
