@@ -150,6 +150,7 @@ class ShoonyaWebSocket:
         """Discard per-connection tick state before opening a replacement socket."""
         with self._lock:
             self._connected = self._authenticated = False
+            self._connection_opened_at = None
             self._snapshots.clear()
             self._initialized.clear()
 
