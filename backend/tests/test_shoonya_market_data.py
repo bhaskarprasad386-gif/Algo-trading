@@ -1,0 +1,44 @@
+import json
+from types import SimpleNamespace
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import InstrumentDescriptor
+from app.market_data.shoonya_normalizer import ShoonyaTickNormalizer
+from app.market_data.shoonya_websocket import ShoonyaWebSocket
+
+def descriptor():
+    return InstrumentDescriptor(key=InstrumentKey("NFO", "NFO", "12345"),
+        symbol="NIFTY26NOV25000CE", instrument_type="option", exchange="NFO", segment="NFO",
+        expiry="2026-11-26", strike=25000, option_type="CE", lot_size=65,
+        tick_size=0.05, underlying="NIFTY")
+
+def test_shoonya_normalizer_uses_decimal_prices_and_source_metadata():
+    record = ShoonyaTickNormalizer().normalize(descriptor(), {
+        "t":"tk","e":"NFO","tk":"12345","ts":"NIFTY26NOV25000CE","lp":"125.50",
+        "bp1":"125.45","sp1":"125.55","bq1":"100","sq1":"120","v":"5000",
+        "oi":"120000","ft":"1794551794","pp":"2","ls":"65","ti":"0.05"})
+    assert record.ltp == 125.50 and record.bid == 125.45 and record.ask == 125.55
+    assert record.oi == 120000 and record.payload["broker"] == "shoonya"
+    assert record.timestamp_ns == 1794551794000000000
+
+def test_shoonya_normalizer_rejects_identity_mismatch():
+    try: ShoonyaTickNormalizer().normalize(descriptor(), {"e":"NSE","tk":"12345","ft":"1794551794"})
+    except ValueError as exc: assert "identity" in str(exc)
+    else: raise AssertionError("wrong exchange must fail closed")
+
+def test_shoonya_websocket_merges_incremental_tf_updates():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws, feed._authenticated = fake_ws, True
+    feed._on_message(fake_ws, json.dumps({"t":"tk","e":"NFO","tk":"12345","ts":"NIFTY26NOV25000CE",
+        "lp":"100.00","bp1":"99.95","sp1":"100.05","oi":"1000","ft":"1794551794"}))
+    feed._on_message(fake_ws, json.dumps({"t":"tf","e":"NFO","tk":"12345","lp":"101.00","ft":"1794551795"}))
+    assert feed._snapshots[("NFO","12345")]["oi"] == "1000"
+    assert feed._snapshots[("NFO","12345")]["lp"] == "101.00"
+    assert feed.snapshot()["ticks_received"] == 2
+    assert feed.snapshot()["dispatch_queue_depth"] == 2
+
+def test_shoonya_credentials_are_required():
+    try: ShoonyaWebSocket(uid="", actid="U1", access_token="token")
+    except ValueError as exc: assert "uid" in str(exc)
+    else: raise AssertionError("empty uid must fail closed")
