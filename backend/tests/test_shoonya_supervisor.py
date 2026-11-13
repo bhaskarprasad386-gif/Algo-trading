@@ -145,3 +145,58 @@ def test_supervisor_rolls_back_registry_when_adapter_rejects_subscription(monkey
         raise AssertionError("adapter rejection must propagate")
     assert supervisor.snapshot()["registry_instruments"] == 0
     assert supervisor._adapter.started == 0
+
+
+def test_authenticated_subscription_routes_use_supervisor_provider(monkeypatch):
+    from app.core.config import settings
+    from app.market_data import routes
+
+    class RouteSupervisor:
+        def __init__(self):
+            self.added = []
+            self.removed = []
+
+        def subscribe(self, descriptors):
+            self.added.extend(descriptors)
+            return len(descriptors)
+
+        def unsubscribe(self, descriptors):
+            self.removed.extend(descriptors)
+            return len(descriptors)
+
+    supervisor = RouteSupervisor()
+    monkeypatch.setattr(settings, "SHOONYA_MARKET_DATA_ENABLED", True)
+    routes.configure_shoonya_supervisor(lambda: supervisor)
+    payload = routes.ShoonyaSubscriptionRequest(instruments=[{
+        "exchange": "NFO", "segment": "NFO", "token": "12345",
+        "symbol": "NIFTY26NOV25000CE", "instrument_type": "option",
+        "expiry": "2026-11-26", "strike": 25000, "option_type": "CE",
+        "lot_size": 65, "tick_size": 0.05, "underlying": "NIFTY",
+    }])
+
+    added = routes.add_shoonya_subscriptions(payload, _owner_id=0)
+    removed = routes.remove_shoonya_subscriptions(payload, _owner_id=0)
+    assert added["subscribed"] == 1
+    assert removed["unsubscribed"] == 1
+    assert supervisor.added[0].key == supervisor.removed[0].key
+    assert added["order_routing_enabled"] is False
+    assert removed["strategy_fanout_enabled"] is False
+
+
+def test_shoonya_subscription_route_fails_closed_when_disabled(monkeypatch):
+    from fastapi import HTTPException
+    from app.core.config import settings
+    from app.market_data import routes
+
+    monkeypatch.setattr(settings, "SHOONYA_MARKET_DATA_ENABLED", False)
+    payload = routes.ShoonyaSubscriptionRequest(instruments=[{
+        "exchange": "NFO", "segment": "NFO", "token": "12345",
+        "symbol": "NIFTY26NOV25000CE", "instrument_type": "option",
+        "expiry": "2026-11-26", "strike": 25000, "option_type": "CE",
+    }])
+    try:
+        routes.add_shoonya_subscriptions(payload, _owner_id=0)
+    except HTTPException as exc:
+        assert exc.status_code == 409
+    else:
+        raise AssertionError("disabled Shoonya subscriptions must fail closed")
