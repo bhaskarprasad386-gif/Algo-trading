@@ -122,8 +122,6 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     # A quote refresh does not prove that OI itself was refreshed. The target
     # leg must carry a strictly newer broker OI observation than its prior
     # event before an OI-decrease condition can authorize an alert.
-    if now_ns - live_target.oi_timestamp_ns > 300 * NS:
-        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_LIVE_OI",))
     if live_target.oi_timestamp_ns <= (tgt[-1].oi_timestamp_ns or 0):
         return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_OI_NOT_UPDATED",))
     if (abs(live_ce.spot_price-live_pe.spot_price) > 5
