@@ -288,3 +288,29 @@ def test_current_socket_callback_is_allowed_only_for_current_epoch():
     guarded = feed._guard_callback(lambda socket, raw: received.append((socket, raw)), epoch)
     guarded(ws, "current")
     assert received == [(ws, "current")]
+
+
+def test_market_and_order_events_are_ignored_before_authentication_ack():
+    order_events = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_order_update=order_events.append,
+    )
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws = fake_ws
+    feed._on_open(fake_ws)
+
+    feed._on_message(fake_ws, json.dumps({
+        "t": "tk", "e": "NFO", "tk": "12345", "lp": "100.00",
+        "ft": "1794551794",
+    }))
+    feed._on_message(fake_ws, json.dumps({
+        "t": "om", "status": "COMPLETE", "norenordno": "ORDER1",
+    }))
+
+    assert feed.snapshot()["ticks_received"] == 0
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
+    assert feed.snapshot()["order_queue_depth"] == 0
+    assert order_events == []
+    assert not feed.snapshot()["authenticated"]
