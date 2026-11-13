@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS: float = 1.0
     SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS: float = 30.0
     SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS: float = 30.0
+    SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS: float = 15.0
 
     # Angel One credentials
     angel_api_key: str = ""
@@ -174,6 +175,8 @@ class Settings(BaseSettings):
             raise ValueError("SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS must be positive")
         if self.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS < self.SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS:
             raise ValueError("SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS must be >= minimum")
+        if self.SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS <= 0:
+            raise ValueError("SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS must be positive")
         if self.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS <= 3.0:
             raise ValueError("SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS must be greater than the 3-second heartbeat interval")
         return self
