@@ -255,3 +255,10 @@ def test_supervisor_unsubscribe_removes_inactive_registry_descriptor(monkeypatch
     supervisor.subscribe([item])
     assert supervisor.unsubscribe([item]) == 1
     assert supervisor.registry.get(item.key) is None
+
+
+def test_register_only_does_not_start_websocket(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    supervisor.register([descriptor()])
+    supervisor.start()
+    assert supervisor._adapter.started == 0
