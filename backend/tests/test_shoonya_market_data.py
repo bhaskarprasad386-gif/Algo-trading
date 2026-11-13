@@ -891,3 +891,39 @@ def test_order_feed_is_not_subscribed_without_order_callback():
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
 
     assert sent == []
+
+
+def test_stale_socket_open_cannot_authenticate_or_send_credentials_after_reconnect():
+    sent = []
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    current_ws = SimpleNamespace(send=lambda frame: sent.append(("current", frame)), close=lambda: None)
+    stale_ws = SimpleNamespace(send=lambda frame: sent.append(("stale", frame)), close=lambda: None)
+    feed._ws = current_ws
+
+    feed._on_open(stale_ws)
+
+    assert sent == []
+    assert feed.snapshot()["connected"] is False
+    assert feed.snapshot()["authenticated"] is False
+    assert states == []
+
+
+def test_stale_auth_ack_cannot_mark_replacement_socket_live():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    current_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    stale_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws = current_ws
+
+    feed._on_message(stale_ws, json.dumps({"t": "ak", "s": "OK"}))
+
+    assert feed.snapshot()["authenticated"] is False
+    assert feed._auth_ack_received is False
+    assert states == []
