@@ -93,3 +93,18 @@ def test_empty_or_stale_snapshot_never_replaces_last_known_good():
 def test_option_identity_requires_expiry_strike_and_side():
     with pytest.raises(ValueError, match="options require"):
         CanonicalContractKey("NFO", "NFO", "NIFTY", "OPTION")
+
+
+def test_snapshot_sorting_is_stable_for_spot_and_expiring_derivative_contracts():
+    from app.market_data.provider_contracts import BrokerContractToken, ContractMapping
+
+    equity_key = CanonicalContractKey("NSE", "NSE", "RELIANCE", "EQUITY")
+    equity = ContractMapping(
+        equity_key, BrokerContractToken("ANGELONE", "NSE", "NSE", "eq-Case"),
+        "RELIANCE", 1, Decimal("0.05"),
+    )
+    option = _mapping("ANGELONE", "opt-Case")
+    registry = ProviderContractRegistry()
+    snapshot = _publish(registry, [option, equity])
+    assert len(snapshot.mappings) == 2
+    assert registry.resolve(equity_key, "ANGELONE").provider.token == "eq-Case"
