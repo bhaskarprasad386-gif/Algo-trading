@@ -323,7 +323,7 @@ class AlertCooldownStore:
         before_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return stable newest-first history, with a timestamp+ID keyset cursor."""
-        limit = max(1, min(int(limit), 100))
+        limit = max(1, min(int(limit), 101))
         if (before_observed_at_ns is None) != (before_id is None):
             raise ValueError("both cursor fields must be provided together")
         session = self.session_factory()
