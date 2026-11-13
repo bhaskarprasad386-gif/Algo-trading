@@ -187,3 +187,14 @@ Parser precision:
 - Synthetic tests cover the expected JSON/CSV layouts and atomic rollback. They are not a substitute for capturing and validating current official master files from both brokers.
 
 Do not connect this publisher to startup or periodic jobs yet. The next integration gate requires official sample files for the relevant NFO/BFO/MCX segments, explicit supported instrument-family scope, measured quarantine rates, and a dry-run report showing canonical pair coverage and every mismatch category. No scanner or broker subscription is wired to the new registry.
+
+## 10. Batch 5 dry-run coverage audit
+
+Added `backend/app/market_data/provider_master_audit.py`:
+- Compares canonical contracts present in both broker reports before publication.
+- Reports common, Angel-only and Shoonya-only contracts, one-sided coverage ratios, cross-broker lot/tick mismatches, and duplicate canonical keys within a broker report.
+- Uses deterministic canonical-key ordering. It is a read-only audit and never mutates the registry.
+
+Added tests for common/one-sided coverage, metadata mismatch and missing broker report. The audit makes incomplete broker coverage visible rather than silently implying every contract has a dual feed. One-sided contracts may remain usable from their single provider in a future design, but cannot be treated as failover-capable.
+
+Batch 5 remains **not production-ready** until real official files are supplied/collected through an approved secure workflow, the provider-specific scales and segment mapping are confirmed, and the complete dry-run audit has been reviewed. Do not relax rejection thresholds merely to make a download publish.
