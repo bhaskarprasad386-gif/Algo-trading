@@ -344,3 +344,21 @@ Expanded the focused manager regression suite to cover:
 - Constructor validation for explicit boolean opt-in and positive bounded queue capacity.
 
 The tests are committed but have not been executed in this environment. GitHub Actions currently has no workflow run associated with the checked PR head, so no CI pass is claimed. No production flag was enabled; Box Spread / IV Scanner routing and calculations remain unchanged.
+
+
+## 20. Batch 15 — shadow-only provider quote quality contract
+
+Added `provider_quote_quality.py` as a broker-neutral diagnostic primitive. It compares two independently supplied observations against the same canonical contract identity and reports only:
+- `COMPARABLE`: both observations pass quote-integrity and freshness checks;
+- `SINGLE_SOURCE_FRESH`: exactly one observation is currently fresh;
+- `BOTH_STALE`: both observations are structurally valid but stale;
+- `IDENTITY_MISMATCH`: canonical contract keys differ;
+- `NO_VALID_QUOTE`: neither observation is valid.
+
+Checks include authenticated/current connection generation, positive exchange timestamp, exchange-time age, local monotonic receive age (clock domains are never mixed), positive bid/ask and sizes, crossed market, and depth completeness. The result preserves provider-specific reasons and both age measurements.
+
+Safety boundary:
+- This is a pure, shadow-only contract; it is not wired into Angel or Shoonya callbacks, scanner subscriptions, strategy calculations, UI, or order routing.
+- It does not rank providers, nominate a primary/secondary broker, merge quote sides, or execute failover.
+- Exchange timestamps are assumed normalized to nanoseconds by the caller; no broker-specific timestamp parsing is inferred here.
+- Tests are committed but not executed in this environment. Exact-head CI is still required before integration.
