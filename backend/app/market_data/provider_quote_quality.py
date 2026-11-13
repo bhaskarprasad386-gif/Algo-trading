@@ -136,7 +136,13 @@ def assess_quote(
         reasons.append("depth_incomplete")
 
     valid = not any(reason not in {"quote_stale"} for reason in reasons)
-    fresh = valid and age_ns is not None and age_ns <= max_age_ns
+    fresh = (
+        valid
+        and age_ns is not None
+        and age_ns <= max_age_ns
+        and exchange_age_ns is not None
+        and 0 <= exchange_age_ns <= max_age_ns
+    )
     return QuoteQualityResult(
         provider=observation.provider,
         valid=valid,
