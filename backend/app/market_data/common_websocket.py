@@ -149,6 +149,7 @@ class CommonWebSocketManager:
         self._async_callback_dispatch = async_callback_dispatch
         self._callback_dispatch_capacity = callback_dispatch_capacity
         self._callback_adapters: dict[SocketGroup, tuple[int, AngelShardCallbackAdapter]] = {}
+        self._callback_dispatch_retired_faults: dict[str, dict[str, Any]] = {}
         self._resolve_exchange_type = exchange_type_resolver or self._default_exchange_type
         self._sockets: dict[SocketGroup, Any] = {}
         self._socket_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
@@ -1348,6 +1349,15 @@ class CommonWebSocketManager:
         if entry is None:
             return
         generation, adapter = entry
+        adapter_state = adapter.snapshot()
+        if adapter_state.get("integrity_fault") or adapter_state.get("delivery_status") == "DEGRADED":
+            key = f"{group.mode}:{group.shard}"
+            self._callback_dispatch_retired_faults[key] = {
+                "generation": generation,
+                **adapter_state,
+            }
+            while len(self._callback_dispatch_retired_faults) > 12:
+                self._callback_dispatch_retired_faults.pop(next(iter(self._callback_dispatch_retired_faults)))
         Thread(target=lambda: self._stop_retired_callback_adapter(adapter, group, generation),
                name=f"angel-callback-retire-{group.mode}-{group.shard}-{generation}", daemon=True).start()
 
@@ -1843,6 +1853,9 @@ class CommonWebSocketManager:
                     f"{group.mode}:{group.shard}": adapter.snapshot()
                     for group, (generation, adapter) in self._callback_adapters.items()
                     if self._socket_generation.get(group) == generation
+                },
+                "callback_dispatch_retired_faults": {
+                    key: dict(value) for key, value in self._callback_dispatch_retired_faults.items()
                 },
                 "delivery_errors": self._delivery_errors,
                 "missing_callback_routes": self._missing_callback_routes,
