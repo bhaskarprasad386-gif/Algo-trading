@@ -18,16 +18,16 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - Callback isolation, connection health counters, shutdown deadline, and stale-socket callback protection.
 - No credentials or live order-routing code.
 
-## Required environment / deployment decisions before runtime wiring
+## Runtime wiring implemented (shadow diagnostics only)
 
-The application settings now define `SHOONYA_MARKET_DATA_ENABLED=false` by default, Shoonya session fields, queue/reconnect limits, and fail-closed credential/limit validation. These settings do not yet start or select the adapter. Before adding runtime wiring, review:
-- Credentials sourced only from the deployment secret store: user id, account id, and current access token.
-- An explicit shadow/paper-only mode; no implicit fallback from Angel One.
-- A single-account ownership rule and an operator-visible ON/OFF control.
-- Startup validation that refuses to start when enabled but credentials or required instrument metadata are missing.
-- A shutdown hook that stops the adapter and reports any surviving worker.
-- Health/status endpoint fields for connected, authenticated, last frame/tick age, reconnect count, queue depth/drops, and last error.
-- A clear provider identity on every normalized record so data cannot be mistaken for Angel One.
+- `SHOONYA_MARKET_DATA_ENABLED=false` remains the default. Enabling it requires UID, account ID, and access token plus validated queue/reconnect/token limits.
+- FastAPI lifespan creates a separate `ShoonyaMarketDataSupervisor`; it owns its own `InstrumentRegistry` and `ShoonyaWebSocket`, and is stopped during application shutdown.
+- The supervisor does not open a socket merely because the application starts. A separately registered/subscribed instrument set is required before it starts the adapter.
+- `GET /api/v1/market-data/shoonya-health` exposes sanitized state, queue/freshness diagnostics, and explicit `shadow_only`, `order_routing_enabled=false`, and `strategy_fanout_enabled=false` flags. It never returns credentials.
+- Tick and order callbacks currently update bounded process-local counters only. There is no strategy fan-out, persistence, provider selection, or order action.
+- The environment toggle is the only operator enable/disable gate at this stage; changing it requires a controlled application restart. No UI control is implemented.
+
+The following remain intentionally out of scope until a separately reviewed provider integration: selecting Shoonya for an existing scanner, automatic instrument-master translation, UI ON/OFF control, and live broker session validation. Angel One and existing scanners are not modified.
 
 ## Pre-live automated validation
 
