@@ -161,7 +161,7 @@ def add_shoonya_subscriptions(
 @router.delete("/shoonya/subscriptions")
 def remove_shoonya_subscriptions(
     payload: ShoonyaSubscriptionRequest,
-    _owner_id: int = Depends(require_real_owner_access),
+    _owner_id: int = Depends(require_shoonya_owner_access),
 ):
     """Unsubscribe explicit instruments from the isolated Shoonya shadow feed."""
     supervisor = _shoonya_supervisor_provider() if callable(_shoonya_supervisor_provider) else _shoonya_supervisor_provider
