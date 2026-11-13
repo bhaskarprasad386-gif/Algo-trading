@@ -12,7 +12,7 @@ from app.market_data.provider_master_parsers import (
 
 def _angel_rows(token="A-101", tick="5"):
     return [{
-        "exch_seg": "NFO", "token": token, "symbol": "NIFTY31DEC26C25000",
+        "exch_seg": "NFO", "token": token, "symbol": "NIFTY31DEC2625000CE",
         "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "31DEC2026",
         "strike": "2500000", "lotsize": "65", "tick_size": tick,
     }]
@@ -22,7 +22,7 @@ def _shoonya_text(token="S-202", tick="0.05"):
     return (
         "Exchange|Token|LotSize|Symbol|TradingSymbol|Instrument|OptionType|"
         "StrikePrice|TickSize|Expiry\n"
-        f"NFO|{token}|65|NIFTY|NIFTY31DEC26C25000|OPTIDX|CE|25000|{tick}|31-Dec-2026\n"
+        f"NFO|{token}|65|NIFTY|NIFTY31DEC2625000CE|OPTIDX|CE|25000|{tick}|31-Dec-2026\n"
     )
 
 
@@ -43,7 +43,7 @@ def test_shoonya_pipe_master_preserves_case_sensitive_token_and_explicit_scale()
     report = ShoonyaMasterParser.parse(_shoonya_text(), delimiter="|")
     assert report.accepted_rows == 1
     item = report.mappings[0]
-    assert item.trading_symbol == "NIFTY31DEC26C25000"
+    assert item.trading_symbol == "NIFTY31DEC2625000CE"
     assert item.key.underlying == "NIFTY"
     assert item.key.strike == Decimal("25000")
     assert item.provider.token == "S-202"
@@ -61,7 +61,7 @@ def test_shoonya_strike_scale_is_explicit_and_not_guessed():
 
 def test_parser_quarantines_duplicate_provider_token_and_bad_rows():
     rows = _angel_rows()
-    rows.append({**_angel_rows()[0], "symbol": "NIFTY31DEC26P25000"})
+    rows.append({**_angel_rows()[0], "symbol": "NIFTY31DEC2625000PE"})
     rows.append({"exch_seg": "NFO", "token": "103", "symbol": "BROKEN"})
     report = AngelOneMasterParser.parse(rows)
     assert report.total_rows == 3
@@ -130,7 +130,7 @@ from app.market_data.provider_master_audit import audit_master_coverage
 def test_coverage_audit_reports_common_and_one_sided_contracts():
     angel_rows = _angel_rows()
     angel_rows.append({
-        "exch_seg": "NFO", "token": "A-102", "symbol": "NIFTY31DEC26P25000",
+        "exch_seg": "NFO", "token": "A-102", "symbol": "NIFTY31DEC2625000PE",
         "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "31DEC2026",
         "strike": "2500000", "lotsize": "65", "tick_size": "5",
     })
