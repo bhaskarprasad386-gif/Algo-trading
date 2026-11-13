@@ -98,6 +98,7 @@ class AlertCooldownStore:
                         "iv_change_points": candidate.iv_change_points,
                         "volume_ratio": candidate.volume_ratio, "reason": candidate.reason,
                         "observed_at_ns": candidate.observed_at_ns,
+                        "metadata": candidate.metadata,
                     }
                     session.add(IVEarlyEntryNotificationOutbox(
                         event_id=event_id, channel="TELEGRAM", status="PENDING",
