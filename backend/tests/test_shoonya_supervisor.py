@@ -127,3 +127,21 @@ def test_supervisor_tick_and_order_callbacks_only_update_shadow_counters(monkeyp
     assert state["order_events_observed"] == 1
     assert state["order_routing_enabled"] is False
     assert state["strategy_fanout_enabled"] is False
+
+
+
+def test_supervisor_rolls_back_registry_when_adapter_rejects_subscription(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+
+    def reject(_descriptors):
+        raise ValueError("adapter rejected subscription")
+
+    supervisor._adapter.subscribe = reject
+    try:
+        supervisor.subscribe([descriptor()])
+    except ValueError as exc:
+        assert "adapter rejected" in str(exc)
+    else:
+        raise AssertionError("adapter rejection must propagate")
+    assert supervisor.snapshot()["registry_instruments"] == 0
+    assert supervisor._adapter.started == 0
