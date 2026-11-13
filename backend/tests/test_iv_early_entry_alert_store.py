@@ -25,9 +25,9 @@ def make_store():
     return AlertCooldownStore(sessionmaker(bind=engine, expire_on_commit=False))
 
 
-def candidate(ts=1_800_000_000_000_000_000):
+def candidate(ts=1_800_000_000_000_000_000, strike=25000.0):
     return AlertCandidate(
-        "IV_VOLUME_MOMENTUM", "NIFTY", "2026-11-19", 25000.0,
+        "IV_VOLUME_MOMENTUM", "NIFTY", "2026-11-19", strike,
         "BULLISH", "CE", AlertState.EARLY_ENTRY, ts, 25001.0,
         105.0, 0.25, 3.0, "test early entry",
     )
@@ -66,9 +66,9 @@ def test_delivery_status_is_persisted():
 def test_alert_history_cursor_keeps_timestamp_and_id_order_without_duplicates():
     store = make_store()
     base = 1_800_000_000_000_000_000
-    first = store.record(candidate(base))
-    second = store.record(candidate(base + 1_000_000_000))
-    third = store.record(candidate(base + 1_000_000_001))
+    first = store.record(candidate(base, 25000.0))
+    second = store.record(candidate(base + 1_000_000_000, 25050.0))
+    third = store.record(candidate(base + 1_000_000_000, 25100.0))
     # Force equal source timestamps to verify the ID tie-breaker.
     session = store.session_factory()
     try:
