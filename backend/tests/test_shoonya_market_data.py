@@ -138,13 +138,17 @@ def test_reconnect_clears_previous_snapshot_before_new_incremental_frames():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    # The first socket has completed authentication before market frames.
+    feed._authenticated = True
     feed._on_message(fake_ws, json.dumps({"t": "tk", "e": "NFO", "tk": "12345",
         "lp": "100.00", "oi": "777", "ft": "1794551794"}))
     assert feed.snapshot()["ticks_received"] == 1
     # A previous authenticated session's stability timer must not leak into
-    # the replacement socket epoch.
+    # the replacement socket epoch. The new socket authenticates, but its
+    # incremental frame must still wait for a fresh initial tk snapshot.
     feed._connection_opened_at = 123.0
     feed._reset_feed_epoch()
+    feed._authenticated = True
     assert feed._connection_opened_at is None
     feed._on_message(fake_ws, json.dumps({"t": "tf", "e": "NFO", "tk": "12345",
         "lp": "101.00", "ft": "1794551795"}))
