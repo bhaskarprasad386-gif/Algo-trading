@@ -331,13 +331,13 @@ def test_supervisor_rejects_mismatched_unsubscribe_without_removing_live_token(m
 
 
 def test_shoonya_market_data_control_routes_require_owner_auth():
-    from app.brokers.real_owner_auth import require_real_owner_access
+    from app.market_data.shoonya_owner_auth import require_shoonya_owner_access
     from app.market_data import routes
 
     for route in routes.router.routes:
         if route.path.endswith("/shoonya/subscriptions"):
             assert any(
-                dependency.call is require_real_owner_access
+                dependency.call is require_shoonya_owner_access
                 for dependency in route.dependant.dependencies
             ), route.path
 
