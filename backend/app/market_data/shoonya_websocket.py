@@ -237,8 +237,17 @@ class ShoonyaWebSocket:
                 self._last_error = None
                 self._connection_opened_at = time.monotonic()
             self._emit_state("LIVE", None); self._send_subscriptions(ws); return
-        if kind in {"tk", "tf"}: self._handle_tick(message)
-        elif kind == "om" and self._on_order_update: self._enqueue("order", message)
+        # Do not accept market or order events until the broker has explicitly
+        # acknowledged this socket's authentication. A transport-open socket is
+        # not an authenticated feed and must never publish apparently-live data.
+        with self._lock:
+            authenticated = self._authenticated
+        if not authenticated:
+            return
+        if kind in {"tk", "tf"}:
+            self._handle_tick(message)
+        elif kind == "om" and self._on_order_update:
+            self._enqueue("order", message)
 
     def _send_subscriptions(self, ws: Any) -> None:
         # Take the latest descriptor snapshot only after acquiring the wire lock.
