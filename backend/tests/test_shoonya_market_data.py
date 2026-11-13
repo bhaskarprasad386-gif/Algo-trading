@@ -592,7 +592,7 @@ def test_shoonya_adapter_rejects_out_of_order_exchange_ticks_but_allows_same_tim
     }))
     assert feed.snapshot()["ticks_received"] == 2
     assert feed.snapshot()["out_of_order_ticks"] == 1
-    assert feed._snapshots[("NFO", "12345")]["lp"] == "99.00"  # raw diagnostic snapshot only
+    assert feed._snapshots[("NFO", "12345")]["lp"] == "100.10"
 
     feed._on_message(fake_ws, json.dumps({
         "t": "tf", "e": "NFO", "tk": "12345", "lp": "100.20", "ft": str(base + 1),
