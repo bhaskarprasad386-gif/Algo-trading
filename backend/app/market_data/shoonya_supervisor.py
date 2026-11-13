@@ -124,7 +124,7 @@ class ShoonyaMarketDataSupervisor:
             with self._lock:
                 if not self._enabled:
                     raise RuntimeError("Shoonya supervisor is stopped")
-                has_subscriptions = bool(self._descriptors)
+                has_subscriptions = bool(self._adapter.snapshot()["subscriptions"])
             if has_subscriptions:
                 self._adapter.start()
 
