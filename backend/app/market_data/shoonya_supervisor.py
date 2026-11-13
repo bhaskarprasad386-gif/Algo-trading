@@ -78,14 +78,25 @@ class ShoonyaMarketDataSupervisor:
         batch = tuple(descriptors)
         if not batch:
             return 0
-        self.register(batch)
-        # The adapter owns its own hard 500-token guard and wire serialization.
-        count = self._adapter.subscribe(batch)
+        # Keep registry ownership transactional with the adapter's own hard
+        # validation. If the adapter rejects the batch, restore the previous
+        # descriptor set so a failed subscribe cannot consume capacity.
         with self._lock:
-            should_start = self._enabled
-        if should_start:
-            self._adapter.start()
-        return count
+            if not self._enabled:
+                raise RuntimeError("Shoonya supervisor is stopped")
+            previous = dict(self._descriptors)
+        self.register(batch)
+        try:
+            count = self._adapter.subscribe(batch)
+            with self._lock:
+                should_start = self._enabled
+            if should_start:
+                self._adapter.start()
+            return count
+        except Exception:
+            with self._lock:
+                self._descriptors = previous
+            raise
 
     def unsubscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
         batch = tuple(descriptors)
