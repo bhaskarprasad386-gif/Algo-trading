@@ -78,33 +78,23 @@ class IVEarlyEntryAlertEngine:
                 elif result.reasons:
                     reasons.extend(result.reasons)
 
-        # Select the highest-OI persistent wall from completed minute observations.
+        # Select a persistent OI wall from three distinct source observations.
+        # Observations may arrive at irregular intervals; timestamps are kept
+        # for ordering/audit and are not forced into consecutive minute buckets.
         def wall_history(option_type: str):
-            # A wall must be the highest-OI eligible contract on each of the
-            # same three completed minute buckets, not merely the current
-            # highest-OI contract with an old history.
-            winners: dict[int, tuple[int, str]] = {}
-            histories: dict[str, tuple[Any, ...]] = {}
+            eligible: list[tuple[int, tuple[Any, ...]]] = []
             for token, history in token_rows.items():
                 rows = tuple(row for row in history if row.expiry == expiry
                              and row.option_type == option_type
                              and row.strike in even_strikes([row.strike])
                              and row.oi is not None)
-                histories[token] = rows
-                for row in rows:
-                    minute = row.source_timestamp_ns // 60_000_000_000
-                    current_winner = winners.get(minute)
-                    if current_winner is None or row.oi > current_winner[0]:
-                        winners[minute] = (row.oi, token)
-            minutes = sorted(winners)[-3:]
-            if len(minutes) != 3:
+                if len(rows) >= 3:
+                    recent = rows[-3:]
+                    if len({row.strike for row in recent}) == 1:
+                        eligible.append((int(recent[-1].oi or 0), recent))
+            if not eligible:
                 return ()
-            tokens = {winners[minute][1] for minute in minutes}
-            if len(tokens) != 1:
-                return ()
-            token = next(iter(tokens))
-            by_minute = {row.source_timestamp_ns // 60_000_000_000: row for row in histories[token]}
-            return tuple(by_minute[minute] for minute in minutes if minute in by_minute)
+            return max(eligible, key=lambda item: item[0])[1]
         ce_wall, pe_wall = wall_history("CE"), wall_history("PE")
         for direction in ("BULLISH", "BEARISH"):
             wall_rows = pe_wall if direction == "BULLISH" else ce_wall
