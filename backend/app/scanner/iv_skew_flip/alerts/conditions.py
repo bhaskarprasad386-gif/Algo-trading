@@ -268,6 +268,11 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
            or bar.high < max(bar.open, bar.close, bar.low) or bar.low > min(bar.open, bar.close, bar.high)
            for bar in bars) or bars[-1].timestamp_ns <= bars[-2].timestamp_ns:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_PRICE_BAR_ORDER",))
+    # Bars are completed one-minute buckets timestamped at bucket start.
+    # Reject stale price structure while allowing normal close-to-next-minute
+    # processing latency; this is a data-age guard, not a time-of-day window.
+    if now_ns - bars[-1].timestamp_ns > 120 * NS:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_PRICE_HISTORY",))
     prior, current = bars
     wall = latest.strike
     if direction == "BEARISH":
