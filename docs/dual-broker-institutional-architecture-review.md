@@ -327,7 +327,7 @@ Integrated the previously standalone per-shard callback adapter into `CommonWebS
 - Adapter queue overflow or payload-copy integrity failure is fail-closed and schedules the existing generation-scoped socket-failure/recovery path from a separate thread, never from the SDK callback thread.
 - The adapter is retired on all six manager socket-generation invalidation paths. Retirement removes it under the manager state lock but stops/joins its worker asynchronously, so no manager lock is held while waiting for callback code.
 - Manager shutdown captures and stops adapters outside the manager state lock. A stuck consumer worker is bounded by a one-second retirement budget and emits a warning; Python cannot forcibly cancel an already-running consumer callback.
-- `snapshot()` now exposes whether opt-in dispatch is enabled and per-shard queue depth, delivery status, counters and integrity fault state.
+- `snapshot()` now exposes whether opt-in dispatch is enabled and per-shard queue depth, delivery status, counters and integrity fault state. A bounded history retains the last 12 degraded/retired shard snapshots, so overflow remains visible after the failed generation is removed from the active adapter map.
 
 ### Batch 13 validation boundary
 - Added focused regression tests for synchronous default parity, opt-in worker-thread delivery, off-transport-thread overflow recovery, and non-blocking adapter retirement while the manager lock is held.
