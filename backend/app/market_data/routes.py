@@ -118,7 +118,7 @@ def add_shoonya_subscriptions(
 
     if not settings.SHOONYA_MARKET_DATA_ENABLED:
         raise HTTPException(status_code=409, detail="Shoonya market data is disabled by server configuration")
-    supervisor = _shoonya_supervisor_provider
+    supervisor = _shoonya_supervisor_provider() if callable(_shoonya_supervisor_provider) else _shoonya_supervisor_provider
     if supervisor is None:
         raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
     try:
