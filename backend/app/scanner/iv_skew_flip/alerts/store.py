@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, time as clock_time
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -250,7 +250,7 @@ class AlertCooldownStore:
         return None
 
     def expire_session_alerts(self, *, now: datetime) -> int:
-        """Expire active alerts after session close or after their option expiry."""
+        """Expire prior-session or contract-expired alerts; do not impose a clock cutoff."""
         if now.tzinfo is None:
             raise ValueError("now must be timezone-aware")
         local = now.astimezone(ZoneInfo("Asia/Kolkata"))
@@ -282,12 +282,6 @@ class AlertCooldownStore:
                 elif expiry_day < local.date():
                     row.state = AlertState.EXPIRED.value
                     row.reason = "OPTION_EXPIRY_PASSED"
-                    if self._skip_queued_notifications(session, row.id):
-                        row.delivery_status = "SKIPPED"
-                    changed += 1
-                elif local.time() > clock_time(15, 5):
-                    row.state = AlertState.EXPIRED.value
-                    row.reason = "TRADING_SESSION_CLOSED"
                     if self._skip_queued_notifications(session, row.id):
                         row.delivery_status = "SKIPPED"
                     changed += 1
