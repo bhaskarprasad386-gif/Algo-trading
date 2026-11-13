@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from time import monotonic
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,7 @@ class AngelShardCallbackAdapter:
         self._generation = 0
         self._closed = False
         self._accepted = self._overflow = self._stale = 0
+        self._discarded = self._copy_errors = 0
         self._processed = self._callback_errors = 0
         self._integrity_fault = False
         self._last_error: str | None = None
@@ -63,7 +64,21 @@ class AngelShardCallbackAdapter:
         generation: int,
         invocations: Iterable[CallbackInvocation],
     ) -> bool:
-        # Detach SDK payloads before they cross the thread boundary; consumers\n        # still receive their original payload shape, not a frozen mapping.\n        detached = tuple(\n            CallbackInvocation(item.callback, deepcopy(item.payload), item.callback_kind)\n            for item in invocations\n        )\n        batch = ShardCallbackBatch(generation, detached)\n        if not batch.invocations:
+        # Detach SDK payloads before they cross the thread boundary while
+        # preserving the payload shape expected by existing consumers.
+        try:
+            detached = tuple(
+                CallbackInvocation(item.callback, deepcopy(item.payload), item.callback_kind)
+                for item in invocations
+            )
+        except Exception as exc:
+            with self._lock:
+                self._copy_errors += 1
+                self._integrity_fault = True
+                self._last_error = f"payload_copy: {type(exc).__name__}: {exc}"[:240]
+            return False
+        batch = ShardCallbackBatch(generation, detached)
+        if not batch.invocations:
             return True
         with self._lock:
             if self._closed:
@@ -131,6 +146,7 @@ class AngelShardCallbackAdapter:
         if thread is None:
             return
         if not drain:
+            discarded = 0
             while True:
                 try:
                     self._queue.get_nowait()
@@ -138,6 +154,9 @@ class AngelShardCallbackAdapter:
                     break
                 else:
                     self._queue.task_done()
+                    discarded += 1
+            with self._lock:
+                self._discarded += discarded
             self._stop.set()
         else:
             while not self._queue.empty() and monotonic() < deadline:
@@ -161,6 +180,8 @@ class AngelShardCallbackAdapter:
                 "processed_batches": self._processed,
                 "stale_batches": self._stale,
                 "overflow_batches": self._overflow,
+                "discarded_batches": self._discarded,
+                "payload_copy_errors": self._copy_errors,
                 "callback_errors": self._callback_errors,
                 "integrity_fault": self._integrity_fault,
                 "last_error": self._last_error,
