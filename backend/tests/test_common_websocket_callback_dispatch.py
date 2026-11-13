@@ -98,6 +98,12 @@ def test_callback_queue_overflow_requests_only_current_shard_recovery_off_transp
     assert state["integrity_fault"] is True
     assert state["delivery_status"] == "DEGRADED"
     assert state["queue_depth"] == 0
+    # Retired generation diagnostics remain visible after manager recovery
+    # removes the active adapter from the current-generation map.
+    manager._retire_callback_adapter_locked(group)
+    retired = manager.snapshot()["callback_dispatch_retired_faults"]["1:0"]
+    assert retired["generation"] == 1
+    assert retired["integrity_fault"] is True
 
     release.set()
     manager.close()
