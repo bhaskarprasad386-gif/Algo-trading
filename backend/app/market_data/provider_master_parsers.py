@@ -139,7 +139,7 @@ def _mapping(
     lot_raw = _value(row, "lotsize", "lot_size", "ls")
     lot_size = _positive_int(lot_raw, "lot_size")
     tick_raw = _value(row, "tick_size", "ticksize", "ti")
-    tick_size = _decimal(tick_raw, "tick_size")
+    tick_size = _decimal(tick_raw, "tick_size", scale=tick_scale)
     key = CanonicalContractKey(
         exchange=exchange, segment=segment, underlying=underlying,
         instrument_type=kind, expiry=expiry, strike=strike,
@@ -165,7 +165,7 @@ def _parse_rows(
         try:
             if not isinstance(row, Mapping):
                 raise ValueError("row is not a mapping")
-            item = _mapping(row, broker=broker, strike_scale=strike_scale, angel=broker == "ANGELONE")
+            item = _mapping(row, broker=broker, strike_scale=strike_scale, tick_scale=tick_scale)
             if item.provider in seen_tokens:
                 raise ValueError("duplicate broker token in source master")
             seen_tokens.add(item.provider)
@@ -197,7 +197,7 @@ class AngelOneMasterParser:
             raw = repr(rows).encode("utf-8")
         if not isinstance(rows, (list, tuple)):
             raise ValueError("Angel One master must be a JSON array")
-        return _parse_rows(rows, broker="ANGELONE", raw_bytes=raw, strike_scale=Decimal("100"))
+        return _parse_rows(rows, broker="ANGELONE", raw_bytes=raw, strike_scale=Decimal("100"), tick_scale=Decimal("100"))
 
 
 class ShoonyaMasterParser:
@@ -208,7 +208,7 @@ class ShoonyaMasterParser:
         payload: bytes | str,
         *,
         delimiter: str = ",",
-        strike_scale: Decimal = Decimal("1"),
+        strike_scale: Decimal = Decimal("1"),\n        tick_scale: Decimal = Decimal("1"),
     ) -> MasterParseReport:
         raw = payload if isinstance(payload, bytes) else payload.encode("utf-8")
         text = raw.decode("utf-8-sig")
@@ -218,4 +218,4 @@ class ShoonyaMasterParser:
         if not reader.fieldnames:
             raise ValueError("Shoonya master is missing a header row")
         rows = tuple(reader)
-        return _parse_rows(rows, broker="SHOONYA", raw_bytes=raw, strike_scale=Decimal(str(strike_scale)))
+        return _parse_rows(rows, broker="SHOONYA", raw_bytes=raw, strike_scale=Decimal(str(strike_scale)), tick_scale=Decimal(str(tick_scale)))
