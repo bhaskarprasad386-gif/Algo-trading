@@ -147,8 +147,15 @@ class ShoonyaMarketDataSupervisor:
                 for item in stored:
                     self._descriptors.pop(item.key, None)
                 self.registry.unregister_many(item.key for item in stored)
-                if not self._descriptors:
+                became_idle = not self._descriptors
+            if became_idle:
+                # Release the broker socket and all adapter workers as soon as
+                # the final desired subscription is removed. Keep the supervisor
+                # enabled so a later explicit subscribe can start a fresh session.
+                self._adapter.stop()
+                with self._lock:
                     self._last_state = "IDLE_NO_SUBSCRIPTIONS"
+                    self._last_state_reason = None
             return removed
 
     def start(self) -> None:
