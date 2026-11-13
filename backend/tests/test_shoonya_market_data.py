@@ -230,3 +230,28 @@ def test_concurrent_subscribe_then_unsubscribe_preserves_wire_order():
     unsubscribe_thread.join(timeout=1)
     assert not subscribe_thread.is_alive() and not unsubscribe_thread.is_alive()
     assert [frame["t"] for frame in sent] == ["t", "u"]
+
+
+def test_stop_uses_one_shared_deadline_for_all_workers():
+    class SlowWorker:
+        def __init__(self, name):
+            self.name = name
+            self.timeouts = []
+        def is_alive(self):
+            return True
+        def join(self, timeout=None):
+            self.timeouts.append(timeout)
+
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    workers = [SlowWorker(name) for name in (
+        "supervisor", "tick-dispatch", "order-dispatch", "heartbeat"
+    )]
+    feed._thread, feed._dispatch_thread, feed._order_dispatch_thread, feed._heartbeat_thread = workers
+    feed.stop()
+    assert all(len(worker.timeouts) == 1 for worker in workers)
+    assert workers[0].timeouts[0] <= 3.0
+    assert sum(worker.timeouts[0] for worker in workers) <= 3.01
+    assert feed.snapshot()["shutdown_workers_alive"] == [
+        "supervisor", "tick-dispatch", "order-dispatch", "heartbeat"
+    ]
+    assert feed.snapshot()["last_error"].startswith("workers did not stop")
