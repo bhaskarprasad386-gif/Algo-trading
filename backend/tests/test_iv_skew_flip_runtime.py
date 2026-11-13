@@ -787,3 +787,25 @@ def test_runtime_stop_waits_for_lifecycle_transaction_lock():
 
     assert finished.is_set()
     assert results[0]["status"] == "STOPPED"
+
+
+
+def test_runtime_snapshot_requires_nonblank_telegram_credentials(monkeypatch):
+    from app.core.config import settings
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "   ")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    assert runtime.snapshot()["telegram_configured"] is False
+
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "   ")
+    assert runtime.snapshot()["telegram_configured"] is False
+
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    assert runtime.snapshot()["telegram_configured"] is True
