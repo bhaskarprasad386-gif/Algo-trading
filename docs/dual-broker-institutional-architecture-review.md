@@ -303,3 +303,16 @@ Hardened the standalone Angel shard adapter before manager integration:
 - No automatic retry/replay of rejected batches: the adapter cannot prove that replaying a market-data callback is idempotent.
 
 **Result:** Batch 11 adds delivery observability and a precise recovery contract only. CommonWebSocketManager remains on synchronous delivery; no scanner, subscription, broker session, order route, or production behavior changed. Tests have not been executed; exact-head CI availability must be checked separately.
+
+
+
+## 17. Batch 12 — fail-closed shard integrity semantics
+
+Hardened the standalone Angel per-shard callback adapter before any manager wiring:
+- Queue overflow and payload-detachment failure now retire the adapter generation immediately: publication closes, the generation fence advances, and pending queued batches are explicitly discarded and counted.
+- Subsequent publishes are rejected; the failed adapter cannot be reactivated or reported healthy. A replacement socket generation must own a fresh adapter instance and fresh counters.
+- A callback already dequeued and executing cannot be safely cancelled by Python; it may finish. All not-yet-started queued callbacks are fenced/discarded after the integrity fault.
+- Payload copying is preceded by a generation/closed check and followed by a second check under the queue lock, so a concurrent retirement cannot enqueue a batch after the generation has failed.
+- Added deterministic regression coverage for overflow retirement, queued-batch discard, rejected post-fault publication, payload-copy failure retirement, and the in-flight callback limitation.
+
+**Manager integration remains intentionally deferred:** this batch does not add adapters to CommonWebSocketManager, alter _on_data(), schedule shard recovery, or change transport health reporting. The existing synchronous Angel callback contract and all Box Spread/IV Scanner consumers remain unchanged. No Shoonya queue changes, broker session changes, order routing, merge, deployment, or live validation occurred. Tests still require execution on the exact PR head.
