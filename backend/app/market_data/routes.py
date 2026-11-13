@@ -62,6 +62,11 @@ class ShoonyaInstrumentInput(BaseModel):
             raise ValueError("unsupported Shoonya exchange")
         if instrument_type not in {"equity", "index", "future", "option", "commodity"}:
             raise ValueError("unsupported instrument_type")
+        if instrument_type == "option":
+            if self.strike is None or self.option_type is None or not self.expiry:
+                raise ValueError("option subscriptions require expiry, strike and option_type")
+        elif self.option_type is not None or self.strike is not None:
+            raise ValueError("strike and option_type are only valid for options")
         return InstrumentDescriptor(
             key=InstrumentKey(exchange, segment, self.token.strip()),
             symbol=self.symbol.strip(),
