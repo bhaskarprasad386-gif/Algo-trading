@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
 from .normalizer import AngelOneTickNormalizer
+from .angel_callback_dispatch import AngelShardCallbackAdapter, CallbackInvocation
 from .websocket import MarketDataWebSocket
 from app.core.logger import app_logger
 from app.core.diagnostics import runtime_diagnostics
@@ -135,9 +136,17 @@ class CommonWebSocketManager:
         registry: InstrumentRegistry | None = None,
         socket_factory: Callable[[], Any] = MarketDataWebSocket,
         exchange_type_resolver: Callable[[InstrumentKey], int] | None = None,
+        *,
+        async_callback_dispatch: bool = False,
+        callback_dispatch_capacity: int = 2048,
     ) -> None:
         self.registry = registry or InstrumentRegistry()
         self._socket_factory = socket_factory
+        if isinstance(callback_dispatch_capacity, bool) or not isinstance(callback_dispatch_capacity, int) or callback_dispatch_capacity < 1:
+            raise ValueError("callback_dispatch_capacity must be a positive integer")
+        self._async_callback_dispatch = bool(async_callback_dispatch)
+        self._callback_dispatch_capacity = callback_dispatch_capacity
+        self._callback_adapters: dict[SocketGroup, tuple[int, AngelShardCallbackAdapter]] = {}
         self._resolve_exchange_type = exchange_type_resolver or self._default_exchange_type
         self._sockets: dict[SocketGroup, Any] = {}
         self._socket_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
@@ -501,6 +510,7 @@ class CommonWebSocketManager:
                     self._last_raw_frame_at_by_group.pop(group, None)
                     self._last_successful_route_at.pop(group, None)
                     self._last_successful_delivery_at.pop(group, None)
+                    self._retire_callback_adapter_locked(group)
                     self._socket_generation.pop(group, None)
 
             for group, socket in zip(stale_groups, stale_sockets):
@@ -563,6 +573,7 @@ class CommonWebSocketManager:
                                 self._last_raw_frame_at_by_group.pop(group, None)
                                 self._last_successful_route_at.pop(group, None)
                                 self._last_successful_delivery_at.pop(group, None)
+                                self._retire_callback_adapter_locked(group)
                                 self._socket_generation.pop(group, None)
                                 # Retirement is also a recovery lifecycle: block a
                                 # replacement while the old transport is still closing.
@@ -623,6 +634,7 @@ class CommonWebSocketManager:
                         self._last_successful_route_at.pop(group, None)
                         self._last_data_at[group] = now
                         self._last_successful_delivery_at[group] = None
+                    self._install_callback_adapter(group, generation)
                     try:
                         self._start_socket_connect(
                             socket=socket,
@@ -742,7 +754,7 @@ class CommonWebSocketManager:
                     "mode": group.mode,
                     "subscriptions": subscriptions,
                     "correlation_id": f"common-{group.mode}-{group.shard}",
-                    "on_data": lambda message: self._on_data(group, message, generation),
+                    "on_data": lambda message: self._dispatch_transport_data(group, socket, message, generation),
                     "on_failure": lambda reason: self._handle_socket_failure(group, socket, generation, reason),
                 }
                 if isinstance(socket, MarketDataWebSocket):
@@ -842,6 +854,7 @@ class CommonWebSocketManager:
                         self._last_raw_frame_at_by_group.pop(group, None)
                         self._last_successful_route_at.pop(group, None)
                         self._last_successful_delivery_at.pop(group, None)
+                        self._retire_callback_adapter_locked(group)
                         self._socket_generation.pop(group, None)
                     self._connect_failures += 1
                     self._last_connect_failure = {
@@ -927,6 +940,7 @@ class CommonWebSocketManager:
                 self._last_raw_frame_at_by_group.pop(group, None)
                 self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
+                self._retire_callback_adapter_locked(group)
                 self._socket_generation.pop(group, None)
                 self._socket_failure_events += 1
                 self._last_socket_failure = {
@@ -1047,6 +1061,7 @@ class CommonWebSocketManager:
                 self._last_raw_frame_at_by_group.pop(group, None)
                 self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
+                self._retire_callback_adapter_locked(group)
                 self._socket_generation.pop(group, None)
 
         if is_current:
@@ -1253,6 +1268,7 @@ class CommonWebSocketManager:
                 self._last_raw_frame_at_by_group.pop(group, None)
                 self._last_successful_route_at.pop(group, None)
                 self._last_successful_delivery_at.pop(group, None)
+                self._retire_callback_adapter_locked(group)
                 self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
             return 0
@@ -1301,6 +1317,70 @@ class CommonWebSocketManager:
     @classmethod
     def _unsubscribe_pairs(cls, socket: Any, mode: int, pairs: set[tuple[int, str]]) -> None:
         socket.unsubscribe_groups(cls._by_exchange(pairs))
+
+    def _install_callback_adapter(self, group: SocketGroup, generation: int) -> None:
+        """Create one worker/queue for the exact socket generation when opted in."""
+        if not self._async_callback_dispatch:
+            return
+        adapter = AngelShardCallbackAdapter(capacity=self._callback_dispatch_capacity)
+        adapter.activate_generation(generation)
+        adapter.start()
+        with self._lock:
+            if self._closed or self._socket_generation.get(group) != generation or group not in self._sockets:
+                retire, previous = True, None
+            else:
+                previous = self._callback_adapters.get(group)
+                self._callback_adapters[group] = (generation, adapter)
+                retire = False
+        if retire:
+            Thread(target=lambda: adapter.stop(timeout=1.0, drain=False),
+                   name=f"angel-callback-retire-{group.mode}-{group.shard}", daemon=True).start()
+        elif previous is not None:
+            old_generation, old_adapter = previous
+            Thread(target=lambda: self._stop_retired_callback_adapter(old_adapter, group, old_generation),
+                   name=f"angel-callback-replace-{group.mode}-{group.shard}-{old_generation}", daemon=True).start()
+
+    def _retire_callback_adapter_locked(self, group: SocketGroup) -> None:
+        """Remove an adapter while holding the manager lock; never join its worker here."""
+        entry = self._callback_adapters.pop(group, None)
+        if entry is None:
+            return
+        generation, adapter = entry
+        Thread(target=lambda: self._stop_retired_callback_adapter(adapter, group, generation),
+               name=f"angel-callback-retire-{group.mode}-{group.shard}-{generation}", daemon=True).start()
+
+    @staticmethod
+    def _stop_retired_callback_adapter(adapter: AngelShardCallbackAdapter, group: SocketGroup, generation: int) -> None:
+        try:
+            adapter.stop(timeout=1.0, drain=False)
+        except TimeoutError:
+            app_logger.warning("Angel callback worker did not stop within retirement budget group=%s generation=%s",
+                               f"{group.mode}:{group.shard}", generation)
+
+    def _dispatch_transport_data(self, group: SocketGroup, socket: Any, message: Any, generation: int) -> None:
+        """Keep SDK callback work bounded; optional adapter runs routing/consumers off-thread."""
+        if not self._async_callback_dispatch:
+            self._on_data(group, message, generation)
+            return
+        with self._lock:
+            entry = self._callback_adapters.get(group)
+            current = (not self._closed and self._sockets.get(group) is socket
+                       and self._socket_generation.get(group) == generation
+                       and entry is not None and entry[0] == generation)
+        if not current:
+            return
+        adapter = entry[1]
+        accepted = adapter.publish(
+            generation=generation,
+            invocations=(CallbackInvocation(
+                callback=lambda payload: self._on_data(group, payload, generation),
+                payload=message, callback_kind="market_data",
+            ),),
+        )
+        if not accepted and adapter.snapshot().get("integrity_fault"):
+            Thread(target=lambda: self._handle_socket_failure(
+                group, socket, generation, "callback_dispatch_integrity_fault"
+            ), name=f"angel-callback-fault-{group.mode}-{group.shard}-{generation}", daemon=True).start()
 
     def _on_data(self, group: SocketGroup, message: Any, generation: int | None = None) -> None:
         with self._lock:
@@ -1756,6 +1836,12 @@ class CommonWebSocketManager:
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
                 "socket_health_by_group": socket_health_by_group,
+                "async_callback_dispatch": self._async_callback_dispatch,
+                "callback_dispatch_by_group": {
+                    f"{group.mode}:{group.shard}": adapter.snapshot()
+                    for group, (generation, adapter) in self._callback_adapters.items()
+                    if self._socket_generation.get(group) == generation
+                },
                 "delivery_errors": self._delivery_errors,
                 "missing_callback_routes": self._missing_callback_routes,
                 "missing_descriptor_records": self._missing_descriptor_records,
@@ -1876,6 +1962,8 @@ class CommonWebSocketManager:
                 recovery_thread = self._recovery_thread
                 self._recovery_thread = None
                 sockets = list(self._sockets.values())
+                callback_adapters = list(self._callback_adapters.items())
+                self._callback_adapters.clear()
                 self._sockets.clear()
                 self._socket_tokens.clear()
                 self._socket_created_at.clear()
@@ -1885,6 +1973,8 @@ class CommonWebSocketManager:
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
+            for group, (generation, adapter) in callback_adapters:
+                self._stop_retired_callback_adapter(adapter, group, generation)
             for socket in sockets:
                 self._close_socket_bounded(socket, reason="manager_shutdown")
         if recovery_thread is not None and recovery_thread is not current_thread():
