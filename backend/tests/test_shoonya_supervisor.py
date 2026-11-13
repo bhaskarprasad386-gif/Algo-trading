@@ -25,6 +25,7 @@ class FakeAdapter:
         self.descriptors = {}
         self.started = 0
         self.stopped = 0
+        self.last_error = None
 
     def subscribe(self, descriptors):
         for item in descriptors:
