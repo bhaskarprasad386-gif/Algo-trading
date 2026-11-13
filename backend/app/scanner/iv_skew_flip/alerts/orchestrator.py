@@ -49,6 +49,14 @@ class IVEarlyEntryAlertEngine:
             for token in self.aggregator.option_tokens()
         }
         current = {str(row.token): row for row in samples}
+        # The same current broker sample is also present in the retained event
+        # history. Exclude that exact source observation from the baseline so
+        # the evaluator compares prior changes against the current live change.
+        for token, live in current.items():
+            token_rows[token] = tuple(
+                row for row in token_rows.get(token, ())
+                if row.source_timestamp_ns < int(getattr(live, "source_timestamp_ns", 0) or 0)
+            )
         by_strike: dict[float, dict[str, str]] = {}
         for token, row in current.items():
             if row.underlying.upper() != "NIFTY" or row.expiry != expiry:
