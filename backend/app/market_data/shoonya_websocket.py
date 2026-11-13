@@ -26,6 +26,7 @@ class ShoonyaWebSocket:
         if max_dispatch_queue < 1 or reconnect_min_seconds <= 0 or reconnect_max_seconds < reconnect_min_seconds:
             raise ValueError("invalid queue or reconnect configuration")
         self._uid, self._actid, self._access_token = str(uid).strip(), str(actid).strip(), str(access_token).strip()
+        self._secret_values = tuple(value for value in (self._uid, self._actid, self._access_token) if value)
         self._source = str(source).strip().upper()
         if self._source not in {"API", "WEB", "MOB"}:
             raise ValueError("source must be API, WEB or MOB")
@@ -334,13 +335,22 @@ class ShoonyaWebSocket:
                 try: ws.close()
                 except Exception: pass
 
+    def _safe_error_text(self, value: Any) -> str:
+        safe = str(value)
+        for secret in self._secret_values:
+            safe = safe.replace(secret, "[REDACTED]")
+        return safe[:240]
+
     def _on_error(self, ws: Any, error: Any) -> None:
+        safe_error = f"{type(error).__name__}: {self._safe_error_text(error)}"
         with self._lock:
-            self._last_error = f"{type(error).__name__}: {error}"
+            self._last_error = safe_error
             self._connected = self._authenticated = False
-        self._emit_state("ERROR", self._last_error)
-        app_logger.warning("Shoonya WebSocket error: %s", self._last_error)
+        self._emit_state("ERROR", safe_error)
+        app_logger.warning("Shoonya WebSocket error: %s", safe_error)
 
     def _on_close(self, ws: Any, status_code: Any, message: Any) -> None:
         with self._lock: self._connected = self._authenticated = False
-        if not self._stop.is_set(): self._emit_state("DISCONNECTED", str(message or status_code or "socket closed"))
+        if not self._stop.is_set():
+            reason = self._safe_error_text(message or status_code or "socket closed")
+            self._emit_state("DISCONNECTED", reason)
