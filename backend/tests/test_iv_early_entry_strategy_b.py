@@ -131,3 +131,26 @@ def test_strategy_b_rejects_stale_oi_in_earlier_wall_observation():
     )
     assert result.state == AlertState.WATCH
     assert "STALE_WALL_OBSERVATION" in result.reasons
+
+
+
+def test_strategy_b_rejects_stale_completed_price_bars():
+    from dataclasses import replace
+
+    now = 1_800_000_000 * NS
+    wall = [wall_observation(token="PE25000", option_type="PE", ts=now-(2-i)*60*NS,
+        strike=25000, iv=[12.0, 11.95, 11.80][i], oi=[10000, 10100, 10300][i]) for i in range(3)]
+    bars = [
+        SpotBar(now-240*NS, 24990, 25002, 24980, 24995),
+        SpotBar(now-180*NS, 24990, 25010, 24988, 25005),
+    ]
+    entry = wall_observation(token="CE25000", option_type="CE", ts=now,
+        strike=25000, iv=12.1, oi=9000)
+    entry = replace(entry, bid=99.0, ask=101.0, ltp=100.0)
+    result = evaluate_strategy_b(
+        now_ns=now, expiry="2026-11-19", spot_bars=bars,
+        ce_wall_history=[], pe_wall_history=wall,
+        entry_quote=entry, direction="BULLISH",
+    )
+    assert result.state == AlertState.WATCH
+    assert "STALE_PRICE_HISTORY" in result.reasons
