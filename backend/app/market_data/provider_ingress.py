@@ -252,8 +252,9 @@ class ProviderIngressWorker:
     def stop(self, *, timeout: float = 3.0, drain: bool = True) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
-        # Close publication first, then either drain accepted work or stop
-        # promptly. Already-queued current-generation work remains consumable.
+        deadline = monotonic() + timeout
+        # Close publication first. A draining worker can still consume frames
+        # already accepted before close; a non-draining stop accounts for them.
         self.ingress.close()
         if not drain:
             self.ingress.discard_pending()
@@ -263,15 +264,15 @@ class ProviderIngressWorker:
         if thread is None:
             return
         if drain:
-            deadline = monotonic() + timeout
-            while self.ingress.snapshot()["queue_depth"] and monotonic() < deadline:
+            while self.ingress.snapshot()["queue_depth"] > 0 and monotonic() < deadline:
                 if not thread.is_alive():
                     break
                 thread.join(timeout=min(self.poll_seconds, max(0.0, deadline - monotonic())))
             self._stop.set()
-        thread.join(timeout=max(0.0, timeout))
+        remaining = max(0.0, deadline - monotonic())
+        thread.join(timeout=remaining)
         if thread.is_alive():
-            raise TimeoutError("provider ingress worker did not stop before timeout")
+            raise TimeoutError("provider ingress worker did not stop within its shutdown budget")
         with self._lock:
             self._thread = None
 
