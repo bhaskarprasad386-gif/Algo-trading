@@ -142,9 +142,11 @@ class CommonWebSocketManager:
     ) -> None:
         self.registry = registry or InstrumentRegistry()
         self._socket_factory = socket_factory
+        if not isinstance(async_callback_dispatch, bool):
+            raise TypeError("async_callback_dispatch must be a bool")
         if isinstance(callback_dispatch_capacity, bool) or not isinstance(callback_dispatch_capacity, int) or callback_dispatch_capacity < 1:
             raise ValueError("callback_dispatch_capacity must be a positive integer")
-        self._async_callback_dispatch = bool(async_callback_dispatch)
+        self._async_callback_dispatch = async_callback_dispatch
         self._callback_dispatch_capacity = callback_dispatch_capacity
         self._callback_adapters: dict[SocketGroup, tuple[int, AngelShardCallbackAdapter]] = {}
         self._resolve_exchange_type = exchange_type_resolver or self._default_exchange_type
