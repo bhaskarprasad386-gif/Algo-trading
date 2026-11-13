@@ -158,7 +158,8 @@ class ShoonyaWebSocket:
                             "source": self._source, "accesstoken": self._access_token}, separators=(",", ":")))
         with self._lock:
             self._connected, self._authenticated = True, False
-            self._connection_opened_at = time.monotonic()
+            # A TCP/WebSocket open is not a healthy broker session until auth succeeds.
+            self._connection_opened_at = None
         self._emit_state("AUTHENTICATING", None)
 
     def _on_message(self, ws: Any, raw: str) -> None:
@@ -177,7 +178,10 @@ class ShoonyaWebSocket:
             if str(message.get("s") or "").strip().lower() != "ok":
                 with self._lock: self._authenticated = False; self._last_error = "Shoonya authentication rejected"
                 self._emit_state("AUTH_FAILED", self._last_error); ws.close(); return
-            with self._lock: self._authenticated = True; self._last_error = None
+            with self._lock:
+                self._authenticated = True
+                self._last_error = None
+                self._connection_opened_at = time.monotonic()
             self._emit_state("LIVE", None); self._send_subscriptions(ws); return
         if kind in {"tk", "tf"}: self._handle_tick(message)
         elif kind == "om" and self._on_order_update: self._enqueue("order", message)
