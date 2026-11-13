@@ -37,7 +37,7 @@ def observation_from_market_data_record(
         raise TypeError("record must be a MarketDataRecord")
     expiry = None
     if record.expiry:
-        if isinstance(record.expiry, date):
+        if type(record.expiry) is date:
             expiry = record.expiry
         elif isinstance(record.expiry, str):
             expiry = date.fromisoformat(record.expiry)
