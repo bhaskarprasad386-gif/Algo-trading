@@ -40,11 +40,12 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
                          target: Sequence[OptionObservation], direction: str,
                          live_ce: OptionObservation, live_pe: OptionObservation,
                          live_target: OptionObservation) -> StrategyEvaluation:
-    """Evaluate completed-minute history against a separately validated live quote.
+    """Evaluate independent source-event history against current live observations.
 
-    CE/PE use two completed minute observations plus the current live sample.
-    Target volume uses four completed observations (three baseline increments)
-    plus the current live cumulative volume increment.
+    CE/PE use two prior source observations. Target volume uses four prior
+    observations (three baseline increments) plus the current cumulative
+    volume increment. Event timestamps are retained; no cadence or age limit
+    participates in signal eligibility.
     """
     direction = direction.upper()
     if direction not in {"BULLISH", "BEARISH"}:
@@ -79,8 +80,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
             or pe3[-1].expiry != expiry or tgt[-1].expiry != expiry
             or ce3[-1].strike != tgt[-1].strike):
         return StrategyEvaluation(AlertState.WATCH, reasons=("PAIR_NOT_SAME_STRIKE_EXPIRY",))
-    # Reject malformed observations before cadence checks so a corrupt
-    # source/OI timestamp is never hidden behind a secondary alignment error.
+    # Reject malformed observations before event-order checks so corrupt
+    # source/OI timestamps cannot be hidden by a secondary validation result.
     for series in (ce3, pe3, tgt):
         if any(_structurally_valid(row) for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
@@ -101,16 +102,16 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
                 or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_LIVE_TIMESTAMP",))
         # A recently sampled snapshot may still contain the exact last quote
-        # from the completed minute. Freshness alone does not prove a new
-        # exchange observation; require every live leg to advance its source
-        # timestamp beyond its own completed-minute history.
+        # from the prior captured event. Require each live leg to advance its
+        # source-event key; this prevents reusing an unchanged snapshot without
+        # imposing any maximum age or synchronization interval.
         live_event = (row.source_timestamp_ns, int(row.oi_timestamp_ns or 0))
         prior_event = (history[-1].source_timestamp_ns, int(history[-1].oi_timestamp_ns or 0))
         if live_event <= prior_event:
             return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_OBSERVATION_NOT_ADVANCED",))
     # A quote refresh does not prove that OI itself was refreshed. The target
-    # leg must carry a strictly newer broker OI timestamp than the completed
-    # minute close before an OI-decrease condition can authorize an alert.
+    # leg must carry a strictly newer broker OI observation than its prior
+    # event before an OI-decrease condition can authorize an alert.
     if live_target.oi_timestamp_ns <= (tgt[-1].oi_timestamp_ns or 0):
         return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_OI_NOT_UPDATED",))
     if (abs(live_ce.spot_price-live_pe.spot_price) > 5
@@ -144,7 +145,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         "CE" if direction == "BULLISH" else "PE", AlertState.EARLY_ENTRY, now_ns,
         live_target.spot_price, float(premium_now), iv_jump,
         current_increment/baseline,
-        "IV expansion, live-minute volume surge, rising premium and falling OI before confirmed breakout",
+        "IV expansion, observed-interval volume surge, rising premium and falling OI before confirmed breakout",
         {
             "checks": {
                 "spot_bars_minimum": {"threshold": 15, "actual": len(last_bars), "passed": len(last_bars) >= 15},
@@ -192,7 +193,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     """Early OI-wall rejection trigger, before a full reversal is confirmed.
 
     For BULLISH, the PE-OI support wall must persist across three distinct
-    one-minute observations; spot must probe within 15 points and print an
+    source observations; spot must probe within 15 points and print an
     initial bullish rejection candle. BEARISH mirrors this at the CE wall.
     The function deliberately emits an early alert on the first completed
     rejection candle; it does not wait for a second candle confirmation.
