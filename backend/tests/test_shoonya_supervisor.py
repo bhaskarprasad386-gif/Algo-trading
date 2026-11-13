@@ -328,3 +328,32 @@ def test_supervisor_rejects_mismatched_unsubscribe_without_removing_live_token(m
         raise AssertionError("mismatched unsubscribe descriptor must be rejected")
     assert supervisor._adapter.descriptors[("NFO", original.key.token)] == original
     assert supervisor.snapshot()["registry_instruments"] == 1
+
+
+def test_shoonya_market_data_control_routes_require_owner_auth():
+    from app.brokers.real_owner_auth import require_real_owner_access
+    from app.market_data import routes
+
+    for route in routes.router.routes:
+        if route.path.endswith("/shoonya/subscriptions"):
+            assert any(
+                dependency.call is require_real_owner_access
+                for dependency in route.dependant.dependencies
+            ), route.path
+
+
+def test_shoonya_subscription_request_rejects_duplicate_broker_tokens():
+    from app.market_data.routes import ShoonyaSubscriptionRequest, _shoonyadescriptors
+
+    instrument = {
+        "exchange": "NFO", "segment": "NFO", "token": "12345",
+        "symbol": "NIFTY26NOV25000CE", "instrument_type": "option",
+        "expiry": "2026-11-26", "strike": 25000, "option_type": "CE",
+    }
+    payload = ShoonyaSubscriptionRequest(instruments=[instrument, instrument])
+    try:
+        _shoonyadescriptors(payload)
+    except ValueError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("duplicate broker tokens must be rejected before mutation")
