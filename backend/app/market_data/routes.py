@@ -86,6 +86,21 @@ class ShoonyaSubscriptionRequest(BaseModel):
     instruments: list[ShoonyaInstrumentInput] = Field(min_length=1, max_length=500)
 
 
+def _shoonyadescriptors(payload: ShoonyaSubscriptionRequest) -> list[InstrumentDescriptor]:
+    """Convert a batch and reject duplicate broker-token identities before mutation."""
+    descriptors = [item.to_descriptor() for item in payload.instruments]
+    seen: dict[tuple[str, str], InstrumentDescriptor] = {}
+    for descriptor in descriptors:
+        adapter_key = (descriptor.key.exchange.strip().upper(), descriptor.key.token.strip())
+        previous = seen.get(adapter_key)
+        if previous is not None:
+            if previous == descriptor:
+                raise ValueError(f"duplicate Shoonya instrument in request: {adapter_key}")
+            raise ValueError(f"conflicting Shoonya token descriptors in request: {adapter_key}")
+        seen[adapter_key] = descriptor
+    return descriptors
+
+
 @router.get("/shoonya-health")
 def get_shoonya_health():
     """Expose sanitized Shoonya shadow-feed state without credentials or control actions."""
@@ -127,7 +142,7 @@ def add_shoonya_subscriptions(
     if supervisor is None:
         raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
     try:
-        descriptors = [item.to_descriptor() for item in payload.instruments]
+        descriptors = _shoonyadescriptors(payload)
         count = supervisor.subscribe(descriptors)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -147,7 +162,7 @@ def remove_shoonya_subscriptions(
     if supervisor is None:
         raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
     try:
-        descriptors = [item.to_descriptor() for item in payload.instruments]
+        descriptors = _shoonyadescriptors(payload)
         count = supervisor.unsubscribe(descriptors)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
