@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import Any, Callable
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select, update
 
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
@@ -52,57 +52,114 @@ class TelegramOutboxWorker:
         claim_token = None
         try:
             with session.begin():
-                row = (session.query(IVEarlyEntryNotificationOutbox)
-                       .filter(
-                           IVEarlyEntryNotificationOutbox.status.in_(("PENDING", "RETRY", "WAITING_CONFIG", "IN_FLIGHT")),
-                           IVEarlyEntryNotificationOutbox.next_attempt_ns <= now_ns,
-                           or_(IVEarlyEntryNotificationOutbox.lease_until_ns.is_(None),
-                               IVEarlyEntryNotificationOutbox.lease_until_ns <= now_ns),
-                       )
-                       .order_by(IVEarlyEntryNotificationOutbox.next_attempt_ns.asc(),
-                                 IVEarlyEntryNotificationOutbox.id.asc())
-                       .with_for_update(skip_locked=True).first())
-                if row is None:
+                outbox = IVEarlyEntryNotificationOutbox
+
+                # Recover expired IN_FLIGHT sends first. This is a single
+                # conditional UPDATE with a scalar subquery, so the state
+                # transition is atomic even on SQLite (where FOR UPDATE is
+                # ignored). A send whose outcome is unknown is never replayed.
+                stale_id = (
+                    select(outbox.id)
+                    .where(
+                        outbox.status == "IN_FLIGHT",
+                        outbox.next_attempt_ns <= now_ns,
+                        outbox.lease_until_ns.is_not(None),
+                        outbox.lease_until_ns <= now_ns,
+                    )
+                    .order_by(outbox.next_attempt_ns.asc(), outbox.id.asc())
+                    .limit(1)
+                    .scalar_subquery()
+                )
+                stale_result = session.execute(
+                    update(outbox)
+                    .where(
+                        outbox.id == stale_id,
+                        outbox.status == "IN_FLIGHT",
+                        outbox.lease_until_ns <= now_ns,
+                    )
+                    .values(
+                        status="UNCERTAIN",
+                        lease_until_ns=None,
+                        lease_token=None,
+                        last_error="DELIVERY_OUTCOME_UNKNOWN_AFTER_EXPIRED_LEASE",
+                    )
+                    .returning(outbox.id, outbox.event_id)
+                ).first()
+                if stale_result is not None:
+                    stale_event = session.get(IVEarlyEntryAlertEvent, stale_result.event_id)
+                    if stale_event is not None:
+                        stale_event.delivery_status = "UNCERTAIN"
+                    return {
+                        "processed": True, "status": "UNCERTAIN",
+                        "outbox_id": stale_result.id,
+                    }
+
+                # Claim exactly one due row with one database-side UPDATE.
+                # Two workers may evaluate this statement concurrently, but
+                # only one can change the selected row from a due state to
+                # IN_FLIGHT and receive its ID from RETURNING.
+                claim_token = uuid.uuid4().hex
+                candidate_id = (
+                    select(outbox.id)
+                    .where(
+                        outbox.status.in_(("PENDING", "RETRY", "WAITING_CONFIG")),
+                        outbox.next_attempt_ns <= now_ns,
+                        or_(
+                            outbox.lease_until_ns.is_(None),
+                            outbox.lease_until_ns <= now_ns,
+                        ),
+                    )
+                    .order_by(outbox.next_attempt_ns.asc(), outbox.id.asc())
+                    .limit(1)
+                    .scalar_subquery()
+                )
+                claimed_id = session.execute(
+                    update(outbox)
+                    .where(
+                        outbox.id == candidate_id,
+                        outbox.status.in_(("PENDING", "RETRY", "WAITING_CONFIG")),
+                        outbox.next_attempt_ns <= now_ns,
+                        or_(
+                            outbox.lease_until_ns.is_(None),
+                            outbox.lease_until_ns <= now_ns,
+                        ),
+                    )
+                    .values(
+                        status="IN_FLIGHT",
+                        lease_until_ns=now_ns + self.lease_ns,
+                        lease_token=claim_token,
+                        attempts=outbox.attempts + 1,
+                    )
+                    .returning(outbox.id)
+                ).scalar_one_or_none()
+
+                if claimed_id is None:
                     return {"processed": False, "reason": "NO_DUE_NOTIFICATION"}
+
+                row = session.get(IVEarlyEntryNotificationOutbox, claimed_id)
                 event = session.get(IVEarlyEntryAlertEvent, row.event_id)
-                if row.status == "IN_FLIGHT":
-                    # The previous worker may have reached Telegram before it
-                    # crashed, so blindly retrying can send a duplicate. Telegram
-                    # sendMessage has no client idempotency key: surface the
-                    # ambiguous outcome for manual reconciliation instead.
-                    row.status = "UNCERTAIN"
-                    row.lease_until_ns = None
-                    row.lease_token = None
-                    row.last_error = "DELIVERY_OUTCOME_UNKNOWN_AFTER_EXPIRED_LEASE"
-                    if event is not None:
-                        event.delivery_status = "UNCERTAIN"
-                    return {"processed": True, "status": "UNCERTAIN", "outbox_id": row.id}
                 if event is None or event.state != "EARLY_ENTRY":
-                    # Do not send a queued alert after it has been invalidated,
-                    # expired, or otherwise transitioned out of the active state.
                     row.status = "SKIPPED"
                     row.lease_until_ns = None
                     row.lease_token = None
                     row.last_error = "ALERT_NO_LONGER_ACTIVE"
                     if event is not None:
                         event.delivery_status = "SKIPPED"
-                    return {"processed": True, "status": "SKIPPED", "outbox_id": row.id}
+                    return {
+                        "processed": True, "status": "SKIPPED",
+                        "outbox_id": row.id,
+                    }
                 if not configured or sender is None:
                     row.status = "WAITING_CONFIG"
                     row.lease_until_ns = None
                     row.lease_token = None
                     row.next_attempt_ns = now_ns + self.config_retry_ns
                     row.last_error = "TELEGRAM_CONFIGURATION_MISSING"
-                    event = session.get(IVEarlyEntryAlertEvent, row.event_id)
-                    if event is not None:
-                        event.delivery_status = "WAITING_CONFIG"
-                    return {"processed": True, "status": "WAITING_CONFIG", "outbox_id": row.id}
-                row.status = "IN_FLIGHT"
-                row.lease_until_ns = now_ns + self.lease_ns
-                claim_token = uuid.uuid4().hex
-                row.lease_token = claim_token
-                row.attempts += 1
-                claimed_id = row.id
+                    event.delivery_status = "WAITING_CONFIG"
+                    return {
+                        "processed": True, "status": "WAITING_CONFIG",
+                        "outbox_id": row.id,
+                    }
                 payload = json.loads(row.payload_json)
         finally:
             session.close()
