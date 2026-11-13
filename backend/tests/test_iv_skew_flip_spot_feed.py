@@ -552,9 +552,10 @@ def test_repeated_old_source_timestamp_never_refreshes_market_freshness():
     snapshot = adapter.snapshot(now_ns=now[0])
 
     assert snapshot["record_validation"]["callbacks_received"] == 2
-    assert snapshot["record_validation"]["accepted_records"] == 2
+    assert snapshot["record_validation"]["accepted_records"] == 1
     assert snapshot["record_validation"]["duplicate_source_timestamps"] == 1
-    assert snapshot["spot"]["NIFTY"]["age_ms"] == 0.0
+    # The duplicate frame must not refresh receive-time freshness.
+    assert snapshot["spot"]["NIFTY"]["age_ms"] == 1000.0
     assert snapshot["spot"]["NIFTY"]["source_age_ms"] == 101000.0
     assert snapshot["spot"]["NIFTY"]["fresh"] is False
     assert snapshot["spot"]["NIFTY"]["quote_status"] == "LAST_KNOWN_STALE"
