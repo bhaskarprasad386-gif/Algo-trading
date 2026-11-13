@@ -6,6 +6,7 @@ instance owns one shard's FIFO and invokes its callbacks on one worker thread.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
@@ -62,8 +63,7 @@ class AngelShardCallbackAdapter:
         generation: int,
         invocations: Iterable[CallbackInvocation],
     ) -> bool:
-        batch = ShardCallbackBatch(generation, tuple(invocations))
-        if not batch.invocations:
+        # Detach SDK payloads before they cross the thread boundary; consumers\n        # still receive their original payload shape, not a frozen mapping.\n        detached = tuple(\n            CallbackInvocation(item.callback, deepcopy(item.payload), item.callback_kind)\n            for item in invocations\n        )\n        batch = ShardCallbackBatch(generation, detached)\n        if not batch.invocations:
             return True
         with self._lock:
             if self._closed:
