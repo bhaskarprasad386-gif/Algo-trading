@@ -127,12 +127,18 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         times = [row.source_timestamp_ns for row in series]
         if any(b <= a or not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
-    for row in live_rows:
+    for row, history in ((live_ce, ce3), (live_pe, pe3), (live_target, tgt)):
         if _structurally_valid(row):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_LIVE_OBSERVATION",))
         errors = _fresh(row, now_ns)
         if errors:
             return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+        # A recently sampled snapshot may still contain the exact last quote
+        # from the completed minute. Freshness alone does not prove a new
+        # exchange observation; require every live leg to advance its source
+        # timestamp beyond its own completed-minute history.
+        if row.source_timestamp_ns <= history[-1].source_timestamp_ns:
+            return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_QUOTE_NOT_ADVANCED",))
     # A quote refresh does not prove that OI itself was refreshed. The target
     # leg must carry a strictly newer broker OI timestamp than the completed
     # minute close before an OI-decrease condition can authorize an alert.
