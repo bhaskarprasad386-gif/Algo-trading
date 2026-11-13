@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
 from .provider_contracts import (
-    BrokerContractToken, ContractMapping, ProviderContractRegistry,
+    BrokerContractToken, CanonicalContractKey, ContractMapping, ProviderContractRegistry,
 )
 
 
@@ -144,7 +144,7 @@ def _mapping(
 
     lot_size = _positive_int(_value(row, "lotsize", "lot_size", "ls"), "lot_size")
     tick_size = _decimal(_value(row, "tick_size", "ticksize", "ti"), "tick_size", tick_scale)
-    key = __import__("app.market_data.provider_contracts", fromlist=["CanonicalContractKey"]).CanonicalContractKey(
+    key = CanonicalContractKey(
         exchange=exchange, segment=segment, underlying=underlying,
         instrument_type=kind, expiry=expiry, strike=strike, option_type=option_type,
     )
