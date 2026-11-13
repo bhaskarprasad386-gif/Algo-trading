@@ -207,7 +207,7 @@ class AngelShardCallbackAdapter:
                 "callback_successes": self._callback_successes,
                 "callback_errors": self._callback_errors,
                 "integrity_fault": self._integrity_fault,
-                "delivery_status": "DEGRADED" if self._integrity_fault else "HEALTHY",
+                "delivery_status": "DEGRADED" if self._integrity_fault or self._callback_errors else "HEALTHY",
                 "last_error": self._last_error,
                 "running": bool(self._thread and self._thread.is_alive()),
                 "closed": self._closed,
