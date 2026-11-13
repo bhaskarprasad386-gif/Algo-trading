@@ -137,10 +137,8 @@ def test_reconnect_clears_previous_snapshot_before_new_incremental_frames():
     feed._on_message(fake_ws, json.dumps({"t": "tk", "e": "NFO", "tk": "12345",
         "lp": "100.00", "oi": "777", "ft": "1794551794"}))
     assert feed.snapshot()["ticks_received"] == 1
-    # This is the same reset performed before each new socket connection.
-    with feed._lock:
-        feed._snapshots.clear()
-        feed._initialized.clear()
+    # Exercise the production reconnect-epoch reset path.
+    feed._reset_feed_epoch()
     feed._on_message(fake_ws, json.dumps({"t": "tf", "e": "NFO", "tk": "12345",
         "lp": "101.00", "ft": "1794551795"}))
     assert feed.snapshot()["ticks_received"] == 1
