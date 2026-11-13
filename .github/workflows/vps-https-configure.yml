@@ -31,7 +31,7 @@ jobs:
 
           path = Path(".github/workflows/vps-https-configure.yml")
           lines = path.read_text(encoding="utf-8").splitlines()
-          start = next((i for i, line in enumerate(lines) if "ssh -i /tmp/vps_key" in line and "<<'REMOTE'" in line), None)
+          start = next((i for i, line in enumerate(lines) if line.lstrip().startswith("ssh -i /tmp/vps_key") and "<<'REMOTE'" in line), None)
           if start is None:
               raise SystemExit("REMOTE_SCRIPT_START_NOT_FOUND")
           end = next((i for i in range(start + 1, len(lines)) if lines[i].strip() == "REMOTE"), None)
