@@ -297,12 +297,10 @@ class ShoonyaWebSocket:
         with self._lock:
             descriptor = self._descriptors.get(key)
             if descriptor is None: return
-            if str(message.get("t") or "").lower() == "tf" and key not in self._initialized:
+            is_snapshot = str(message.get("t") or "").lower() == "tk"
+            if not is_snapshot and key not in self._initialized:
                 return
             merged = {**self._snapshots.get(key, {}), **message}
-            self._snapshots[key] = merged
-            if str(message.get("t") or "").lower() == "tk":
-                self._initialized.add(key)
         try: record = self._normalizer.normalize(descriptor, merged)
         except (TypeError, ValueError) as exc:
             with self._lock: self._last_error = f"tick normalization: {exc}"
@@ -315,6 +313,11 @@ class ShoonyaWebSocket:
             if record.timestamp_ns < previous_timestamp:
                 self._out_of_order_ticks += 1
                 return
+            # Commit the merged snapshot only after normalization and ordering
+            # checks; a delayed frame must not poison later incremental updates.
+            self._snapshots[key] = merged
+            if is_snapshot:
+                self._initialized.add(key)
             self._last_exchange_timestamp_ns[key] = record.timestamp_ns
             self._ticks_received += 1
             self._last_tick_at = time.time()
