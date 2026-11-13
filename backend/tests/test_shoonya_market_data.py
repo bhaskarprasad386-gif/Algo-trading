@@ -599,3 +599,58 @@ def test_shoonya_adapter_rejects_out_of_order_exchange_ticks_but_allows_same_tim
     }))
     assert feed.snapshot()["ticks_received"] == 3
     assert feed.snapshot()["out_of_order_ticks"] == 1
+
+
+def test_authenticated_reconnect_replays_desired_subscription_set():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    instruments = [descriptor()]
+    feed.subscribe(instruments)
+
+    old_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws = old_ws
+    feed._authenticated = True
+    feed._reset_feed_epoch()
+
+    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = new_ws
+    feed._on_message(new_ws, json.dumps({"t": "ak", "s": "OK"}))
+
+    assert feed.snapshot()["authenticated"] is True
+    assert feed.snapshot()["subscriptions"] == 1
+    assert [json.loads(frame) for frame in sent] == [
+        {"t": "t", "k": "NFO|12345"},
+    ]
+
+
+def test_tick_queue_overflow_is_counted_without_blocking_feed_thread():
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token", max_dispatch_queue=1,
+    )
+    feed._queue.put_nowait(("tick", {"symbol": "FIRST"}))
+    feed._enqueue("tick", {"symbol": "SECOND"})
+
+    snapshot = feed.snapshot()
+    assert snapshot["dispatch_queue_depth"] == 1
+    assert snapshot["dispatch_drops"] == 1
+    assert feed._queue.get_nowait()[1]["symbol"] == "FIRST"
+
+
+def test_order_queue_overflow_faults_feed_and_closes_socket():
+    states = []
+    closed = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    fake_ws = SimpleNamespace(close=lambda: closed.append(True))
+    feed._ws = fake_ws
+    for index in range(feed._order_queue.maxsize):
+        feed._order_queue.put_nowait(("order", {"sequence": index}))
+
+    feed._enqueue("order", {"sequence": "overflow"})
+    snapshot = feed.snapshot()
+    assert snapshot["order_update_drops"] == 1
+    assert closed == [True]
+    assert states[-1][0] == "ORDER_FEED_OVERFLOW"
+    assert "reconcile broker order book" in states[-1][1]
