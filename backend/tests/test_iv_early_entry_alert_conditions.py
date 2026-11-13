@@ -76,7 +76,7 @@ def test_strategy_a_rejects_live_leg_that_reuses_last_completed_quote():
         live_ce=repeated_live_ce, live_pe=pe[-1], live_target=ce[-1],
     )
     assert result.state == AlertState.WATCH
-    assert "LIVE_QUOTE_NOT_ADVANCED" in result.reasons
+    assert "LIVE_OBSERVATION_NOT_ADVANCED" in result.reasons
 
 
 def test_even_strikes_includes_full_nifty_50_point_grid():
