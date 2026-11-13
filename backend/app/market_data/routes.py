@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.core.exceptions import TradingAppException
 from app.core.logger import app_logger
-from app.brokers.real_owner_auth import require_real_owner_access
+from .shoonya_owner_auth import ShoonyaOwnerLogin, login_shoonya_owner, require_shoonya_owner_access
 from .registry import InstrumentDescriptor
 from .contracts import InstrumentKey
 
@@ -101,6 +101,12 @@ def _shoonyadescriptors(payload: ShoonyaSubscriptionRequest) -> list[InstrumentD
     return descriptors
 
 
+@router.post("/shoonya/owner-auth/login")
+def shoonya_owner_login(payload: ShoonyaOwnerLogin, request=None):
+    """Issue a short-lived token scoped only to Shoonya shadow-feed controls."""
+    return login_shoonya_owner(payload, request)
+
+
 @router.get("/shoonya-health")
 def get_shoonya_health():
     """Expose sanitized Shoonya shadow-feed state without credentials or control actions."""
@@ -131,7 +137,7 @@ def get_shoonya_health():
 @router.post("/shoonya/subscriptions")
 def add_shoonya_subscriptions(
     payload: ShoonyaSubscriptionRequest,
-    _owner_id: int = Depends(require_real_owner_access),
+    _owner_id: int = Depends(require_shoonya_owner_access),
 ):
     """Subscribe explicit instruments on the isolated Shoonya shadow feed."""
     from app.core.config import settings
