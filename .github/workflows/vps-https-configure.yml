@@ -42,6 +42,39 @@ jobs:
           NGINX_SITE="/etc/nginx/sites-available/algo-trading"
           NGINX_LINK="/etc/nginx/sites-enabled/algo-trading"
 
+          # Preserve the exact pre-existing Nginx site and enabled entry. If any
+          # later step fails, restore them and reload the previously valid config.
+          BACKUP_DIR="$(mktemp -d /var/backups/algo-trading-tls.XXXXXX)"
+          CONFIG_COMMITTED=0
+          if [ -e "$NGINX_SITE" ] || [ -L "$NGINX_SITE" ]; then
+            cp -a "$NGINX_SITE" "$BACKUP_DIR/nginx-site"
+            touch "$BACKUP_DIR/had-nginx-site"
+          fi
+          if [ -e "$NGINX_LINK" ] || [ -L "$NGINX_LINK" ]; then
+            cp -a "$NGINX_LINK" "$BACKUP_DIR/nginx-enabled"
+            touch "$BACKUP_DIR/had-nginx-enabled"
+          fi
+          rollback_nginx_config() {
+            if [ "$CONFIG_COMMITTED" -ne 1 ]; then
+              echo "TLS_CONFIGURATION_FAILED_RESTORING_PREVIOUS_NGINX_CONFIG"
+              rm -f "$NGINX_SITE" "$NGINX_LINK"
+              if [ -e "$BACKUP_DIR/had-nginx-site" ]; then
+                cp -a "$BACKUP_DIR/nginx-site" "$NGINX_SITE"
+              fi
+              if [ -e "$BACKUP_DIR/had-nginx-enabled" ]; then
+                cp -a "$BACKUP_DIR/nginx-enabled" "$NGINX_LINK"
+              fi
+              if nginx -t; then
+                systemctl reload nginx || true
+                echo "PREVIOUS_NGINX_CONFIG_RESTORED"
+              else
+                echo "WARNING_PREVIOUS_NGINX_CONFIG_VALIDATION_FAILED"
+              fi
+            fi
+            rm -rf "$BACKUP_DIR"
+          }
+          trap rollback_nginx_config EXIT
+
           echo "== PRECHECK =="
           SERVICE_STATE="$(systemctl is-active algo-trading.service || true)"
           echo "SERVICE_STATE=$SERVICE_STATE"
@@ -294,5 +327,7 @@ jobs:
               raise SystemExit("WSS_HANDSHAKE_FAILED")
           print("WSS_HANDSHAKE_OK_WITH_TRUSTED_CERTIFICATE")
           PY
+          CONFIG_COMMITTED=1
+          echo "TLS_NGINX_CONFIGURATION_COMMITTED"
           REMOTE
 
