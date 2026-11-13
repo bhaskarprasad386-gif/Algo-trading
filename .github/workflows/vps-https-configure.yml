@@ -2,11 +2,53 @@ name: VPS HTTPS + Nginx Configure
 # Endpoint repair run: keep Vercel HTTPS/WSS connectivity aligned with VPS.
 
 # Production VPS changes must be started manually after explicit approval.
+# Pull requests run static validation only; they never touch the VPS.
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/vps-https-configure.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@v4
+      - name: Parse workflow YAML
+        run: |
+          ruby -e 'require "yaml"; YAML.parse_file(ARGV.fetch(0)); puts "WORKFLOW_YAML_PARSE_OK"' .github/workflows/vps-https-configure.yml
+      - name: Validate embedded remote Bash syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import tempfile
+
+          path = Path(".github/workflows/vps-https-configure.yml")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          start = next((i for i, line in enumerate(lines) if "ssh -i /tmp/vps_key" in line and "<<'REMOTE'" in line), None)
+          if start is None:
+              raise SystemExit("REMOTE_SCRIPT_START_NOT_FOUND")
+          end = next((i for i in range(start + 1, len(lines)) if lines[i].strip() == "REMOTE"), None)
+          if end is None:
+              raise SystemExit("REMOTE_SCRIPT_END_NOT_FOUND")
+          body = []
+          for line in lines[start + 1:end]:
+              if line and not line.startswith("          "):
+                  raise SystemExit("REMOTE_SCRIPT_INDENTATION_INVALID")
+              body.append(line[10:] if line else "")
+          with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh") as script:
+              script.write("\\n".join(body) + "\\n")
+              script.flush()
+              subprocess.run(["bash", "-n", script.name], check=True)
+          print("REMOTE_BASH_SYNTAX_OK")
   configure:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Configure HTTPS endpoint on VPS
