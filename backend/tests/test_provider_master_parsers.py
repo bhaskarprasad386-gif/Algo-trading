@@ -123,3 +123,37 @@ def test_dual_publish_rejects_lot_tick_disagreement_without_swap():
             fetched_at=datetime.now(timezone.utc),
         )
     assert registry.snapshot() is None
+
+from app.market_data.provider_master_audit import audit_master_coverage
+
+
+def test_coverage_audit_reports_common_and_one_sided_contracts():
+    angel_rows = _angel_rows()
+    angel_rows.append({
+        "exch_seg": "NFO", "token": "A-102", "symbol": "NIFTY31DEC26P25000",
+        "name": "NIFTY", "instrumenttype": "OPTIDX", "expiry": "31DEC2026",
+        "strike": "2500000", "lotsize": "65", "tick_size": "5",
+    })
+    shoonya_text = _shoonya_text()
+    angel = AngelOneMasterParser.parse(angel_rows)
+    shoonya = ShoonyaMasterParser.parse(shoonya_text, delimiter="|")
+    audit = audit_master_coverage([angel, shoonya])
+    assert audit.angel_contracts == 2
+    assert audit.shoonya_contracts == 1
+    assert audit.common_contracts == 1
+    assert len(audit.angel_only) == 1
+    assert not audit.metadata_mismatches
+
+
+def test_coverage_audit_surfaces_lot_and_tick_metadata_mismatch():
+    angel = AngelOneMasterParser.parse(_angel_rows())
+    shoonya = ShoonyaMasterParser.parse(
+        _shoonya_text(tick="0.10"), delimiter="|"
+    )
+    audit = audit_master_coverage([angel, shoonya])
+    assert audit.metadata_mismatches == (angel.mappings[0].key,)
+
+
+def test_coverage_audit_requires_both_brokers():
+    with pytest.raises(ValueError, match="one Angel One and one Shoonya"):
+        audit_master_coverage([AngelOneMasterParser.parse(_angel_rows())])
