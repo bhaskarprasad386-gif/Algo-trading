@@ -106,3 +106,38 @@ def test_adapter_detaches_mutable_payload_before_worker_delivery():
     adapter.start()
     adapter.stop(timeout=2.0, drain=True)
     assert seen[0]["depth"]["bids"][0]["price"] == 100
+
+
+
+def test_non_draining_stop_counts_discarded_batches():
+    adapter = AngelShardCallbackAdapter(capacity=3)
+    adapter.activate_generation(1)
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 1, "raw"),),
+    )
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 2, "raw"),),
+    )
+    adapter.start()
+    adapter.stop(timeout=2.0, drain=False)
+    assert adapter.snapshot()["discarded_batches"] == 2
+
+
+def test_payload_copy_failure_is_reported_as_integrity_fault():
+    class Uncopyable:
+        def __deepcopy__(self, memo):
+            raise TypeError("cannot detach payload")
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    accepted = adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, Uncopyable(), "raw"),),
+    )
+    state = adapter.snapshot()
+    assert accepted is False
+    assert state["payload_copy_errors"] == 1
+    assert state["integrity_fault"] is True
+    assert "payload_copy: TypeError" in state["last_error"]
