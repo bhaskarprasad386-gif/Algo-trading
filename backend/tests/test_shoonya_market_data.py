@@ -554,3 +554,20 @@ def test_shoonya_timestamp_normalizer_supports_epoch_units():
     assert ShoonyaTickNormalizer._timestamp_ns({"ft": str(expected_ns)}) == expected_ns
     assert ShoonyaTickNormalizer._timestamp_ns({"ft": "not-a-timestamp"}) == 0
     assert ShoonyaTickNormalizer._timestamp_ns({"ft": "0"}) == 0
+
+
+def test_shoonya_normalized_record_exposes_canonical_exchange_timestamp():
+    from app.market_data.shoonya_normalizer import ShoonyaTickNormalizer
+
+    exchange_seconds = 1_794_551_794
+    expected_ns = exchange_seconds * 1_000_000_000
+    record = ShoonyaTickNormalizer().normalize(
+        descriptor(),
+        {
+            "t": "tk", "e": "NFO", "tk": "12345",
+            "lp": "100.00", "ft": str(exchange_seconds),
+        },
+    )
+    assert record.timestamp_ns == expected_ns
+    assert record.payload["exchange_timestamp_ns"] == expected_ns
+    assert record.payload["source_timestamp_ns"] == expected_ns
