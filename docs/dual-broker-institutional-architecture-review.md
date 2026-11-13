@@ -269,3 +269,18 @@ Reviewed the current Angel One CommonWebSocketManager._on_data() path and Shoony
 - This documents an unavoidable Python thread limitation: a running handler cannot be forcibly cancelled safely. Shutdown remains bounded from the caller's perspective and reports the timeout explicitly.
 
 **Result:** Batch 8 review is complete as an architecture/safety gate only. No broker callback, subscription, Box Spread/IV Scanner consumer, order route, or production setting changed. No tests are claimed as executed or passing.
+
+## 15. Batch 9 — opt-in Angel per-shard callback adapter foundation
+
+Added backend/app/market_data/angel_callback_dispatch.py as a standalone adapter, deliberately not instantiated by CommonWebSocketManager:
+- One adapter instance represents one socket shard and owns one bounded FIFO queue and one consumer worker.
+- Each queued batch preserves callback order within that shard; raw and normalized callback payload shapes are passed through unchanged.
+- Payloads are deep-copied before crossing the thread boundary so later SDK mutation cannot rewrite queued data.
+- Generation fencing rejects stale publishes and drops already-queued retired-generation batches at dispatch time.
+- Queue overflow increments a counter and latches an integrity fault; callers must not report the shard as healthy after overflow.
+- Callback exceptions are isolated and counted; remaining callbacks in the batch continue in order.
+- Graceful stop closes publication and drains accepted batches within one deadline; timeout is surfaced explicitly.
+
+Added backend/tests/test_angel_callback_dispatch.py for FIFO ordering, stale-generation rejection, overflow integrity fault, callback exception isolation, shutdown behavior and mutable payload detachment.
+
+**Integration remains disabled:** CommonWebSocketManager._on_data() still invokes callbacks synchronously. This adapter has not been connected to socket lifecycle, manager health, or scanner consumers. Before opt-in wiring, the manager must own one adapter per SocketGroup, activate it with the exact socket generation, close/drain it before replacing a shard, and propagate adapter overflow into that shard's health state. No Box Spread or IV Scanner behavior changed. Tests have not been executed in this environment.
