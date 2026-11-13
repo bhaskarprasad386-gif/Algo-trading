@@ -91,3 +91,18 @@ def test_per_shard_adapter_stop_rejects_new_publish_and_drains():
         invocations=(CallbackInvocation(seen.append, 2, "raw"),),
     )
     assert adapter.snapshot()["closed"] is True
+
+
+def test_adapter_detaches_mutable_payload_before_worker_delivery():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    payload = {"depth": {"bids": [{"price": 100}]}}
+    seen = []
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, payload, "raw"),),
+    )
+    payload["depth"]["bids"][0]["price"] = 1
+    adapter.start()
+    adapter.stop(timeout=2.0, drain=True)
+    assert seen[0]["depth"]["bids"][0]["price"] == 100
