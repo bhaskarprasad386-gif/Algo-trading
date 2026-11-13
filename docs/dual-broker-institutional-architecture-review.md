@@ -284,3 +284,22 @@ Added backend/app/market_data/angel_callback_dispatch.py as a standalone adapter
 Added backend/tests/test_angel_callback_dispatch.py for FIFO ordering, stale-generation rejection, overflow integrity fault, callback exception isolation, shutdown behavior and mutable payload detachment.
 
 **Integration remains disabled:** CommonWebSocketManager._on_data() still invokes callbacks synchronously. This adapter has not been connected to socket lifecycle, manager health, or scanner consumers. Before opt-in wiring, the manager must own one adapter per SocketGroup, activate it with the exact socket generation, close/drain it before replacing a shard, and propagate adapter overflow into that shard's health state. No Box Spread or IV Scanner behavior changed. Tests have not been executed in this environment.
+
+
+## 16. Batch 11 — per-shard delivery accounting and overflow health contract
+
+Hardened the standalone Angel shard adapter before manager integration:
+- Tracks callback attempts, successful callbacks, callback exceptions, processed batches, stale batches, queue overflow, payload-copy failures, and discarded batches independently.
+- Snapshot exposes a shard-local `delivery_status`: `DEGRADED` when the queue-integrity fault is latched or any callback failed; otherwise `HEALTHY`.
+- A payload-copy failure rejects the whole batch before enqueue and latches the integrity fault. It cannot escape into the broker callback boundary as an uncaught exception.
+- Non-draining shutdown counts discarded queued batches. Graceful stop when no worker was started also accounts for accepted-but-undeliverable batches rather than leaving them hidden in the queue.
+- Added deterministic tests for attempt/success/error accounting, overflow degradation, and graceful stop without a worker.
+
+### Recovery contract
+- The integrity fault is intentionally sticky for the lifetime of an adapter. Do not clear it and resume the same queue as healthy.
+- The manager integration must treat overflow or payload-copy failure as a shard-local fault, stop accepting callbacks for that generation, fence its queued work, and request the existing controlled shard replacement path.
+- Callback exceptions are visible as delivery degradation but must not be confused with transport disconnect or automatically trigger broker reconnect unless an explicit reviewed policy says so.
+- A replacement generation must receive a fresh adapter and fresh counters. Other shards must continue independently.
+- No automatic retry/replay of rejected batches: the adapter cannot prove that replaying a market-data callback is idempotent.
+
+**Result:** Batch 11 adds delivery observability and a precise recovery contract only. CommonWebSocketManager remains on synchronous delivery; no scanner, subscription, broker session, order route, or production behavior changed. Tests have not been executed; exact-head CI availability must be checked separately.
