@@ -47,6 +47,9 @@ class ShoonyaWebSocket:
         self._descriptors: dict[tuple[str, str], InstrumentDescriptor] = {}
         self._snapshots: dict[tuple[str, str], dict[str, Any]] = {}
         self._initialized: set[tuple[str, str]] = set()
+        # Exchange timestamps are tracked per instrument to reject replayed/out-of-order ticks.
+        self._last_exchange_timestamp_ns: dict[tuple[str, str], int] = {}
+        self._out_of_order_ticks = 0
         self._connected = self._authenticated = False
         self._last_error = None
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
@@ -89,6 +92,7 @@ class ShoonyaWebSocket:
                         self._descriptors.pop(key)
                         self._snapshots.pop(key, None)
                         self._initialized.discard(key)
+                        self._last_exchange_timestamp_ns.pop(key, None)
                 ws, ready = self._ws, self._authenticated
             if removed and ready and ws is not None:
                 try:
@@ -160,7 +164,8 @@ class ShoonyaWebSocket:
                     "ticks_dispatched": self._ticks_dispatched, "dispatch_queue_depth": self._queue.qsize(),
                     "dispatch_queue_capacity": self._queue.maxsize, "dispatch_drops": self._dispatch_drops,
                     "order_queue_depth": self._order_queue.qsize(), "order_update_drops": self._order_update_drops,
-                    "reconnect_count": self._reconnect_count, "last_error": self._last_error,
+                    "reconnect_count": self._reconnect_count, "out_of_order_ticks": self._out_of_order_ticks,
+                    "last_error": self._last_error,
                     "shutdown_workers_alive": list(self._shutdown_workers_alive),
                     "last_frame_at": self._last_frame_at, "last_frame_age_seconds": max(0.0, time.time() - self._last_frame_at) if self._last_frame_at else None,
                     "frame_timeout_seconds": self._frame_timeout_seconds,
@@ -213,6 +218,7 @@ class ShoonyaWebSocket:
             self._feed_epoch += 1
             self._snapshots.clear()
             self._initialized.clear()
+            self._last_exchange_timestamp_ns.clear()
 
     def _guard_callback(self, callback: Callable[..., None], epoch: int) -> Callable[..., None]:
         """Ignore late callbacks emitted by a superseded WebSocket instance."""
@@ -302,7 +308,16 @@ class ShoonyaWebSocket:
             with self._lock: self._last_error = f"tick normalization: {exc}"
             return
         if record.timestamp_ns <= 0: return
-        with self._lock: self._ticks_received += 1; self._last_tick_at = time.time()
+        with self._lock:
+            previous_timestamp = self._last_exchange_timestamp_ns.get(key, 0)
+            # Equal-second frames can carry legitimate quote changes; reject only
+            # strictly older exchange timestamps, not equal timestamps.
+            if record.timestamp_ns < previous_timestamp:
+                self._out_of_order_ticks += 1
+                return
+            self._last_exchange_timestamp_ns[key] = record.timestamp_ns
+            self._ticks_received += 1
+            self._last_tick_at = time.time()
         self._enqueue("tick", record.as_dict())
 
     def _enqueue(self, kind: str, payload: dict[str, Any]) -> None:
