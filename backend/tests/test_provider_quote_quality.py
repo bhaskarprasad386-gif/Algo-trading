@@ -63,7 +63,7 @@ def test_contract_mismatch_is_explicit_even_when_both_quotes_are_fresh():
     result = compare_provider_quotes(
         _quote("angel"),
         _quote("shoonya", contract=_contract("22100")),
-        now_monotonic_ns=NOW, max_age_ns=MAX_AGE,
+        now_monotonic_ns=NOW, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=MAX_AGE,
     )
     assert result.state is QuoteQualityState.IDENTITY_MISMATCH
     assert result.identity_match is False
@@ -119,6 +119,7 @@ def test_future_local_receive_time_is_not_mistaken_for_freshness():
     result = assess_quote(
         _quote("angel", received=NOW + 1),
         now_monotonic_ns=NOW,
+        now_exchange_timestamp_ns=EXCHANGE_NOW,
         max_age_ns=MAX_AGE,
     )
     assert result.valid is False
@@ -133,6 +134,7 @@ def test_age_uses_monotonic_receive_clock_not_exchange_epoch_timestamp():
     )
     assert result.fresh is True
     assert result.age_ns == 1_000_000_000
+    assert result.exchange_age_ns == 2_000_000_000
 
 
 def test_invalid_clock_limits_are_rejected():
