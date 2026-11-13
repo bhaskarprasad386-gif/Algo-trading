@@ -140,8 +140,11 @@ def test_reconnect_clears_previous_snapshot_before_new_incremental_frames():
     feed._on_message(fake_ws, json.dumps({"t": "tk", "e": "NFO", "tk": "12345",
         "lp": "100.00", "oi": "777", "ft": "1794551794"}))
     assert feed.snapshot()["ticks_received"] == 1
-    # Exercise the production reconnect-epoch reset path.
+    # A previous authenticated session's stability timer must not leak into
+    # the replacement socket epoch.
+    feed._connection_opened_at = 123.0
     feed._reset_feed_epoch()
+    assert feed._connection_opened_at is None
     feed._on_message(fake_ws, json.dumps({"t": "tf", "e": "NFO", "tk": "12345",
         "lp": "101.00", "ft": "1794551795"}))
     assert feed.snapshot()["ticks_received"] == 1
