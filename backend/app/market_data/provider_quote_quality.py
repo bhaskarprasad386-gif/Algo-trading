@@ -87,9 +87,13 @@ def assess_quote(
         reasons.append("provider_missing")
     if isinstance(observation.generation, bool) or not isinstance(observation.generation, int) or observation.generation <= 0:
         reasons.append("invalid_generation")
-    if not observation.authenticated:
+    if type(observation.authenticated) is not bool:
+        reasons.append("invalid_authentication_flag")
+    elif not observation.authenticated:
         reasons.append("session_not_authenticated")
-    if not observation.connection_current:
+    if type(observation.connection_current) is not bool:
+        reasons.append("invalid_connection_current_flag")
+    elif not observation.connection_current:
         reasons.append("connection_generation_not_current")
 
     received_at = observation.received_monotonic_ns
