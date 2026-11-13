@@ -99,8 +99,10 @@ def test_authentication_ack_is_required_before_market_subscription():
     feed._on_open(fake_ws)
     assert json.loads(sent[-1])["t"] == "a"
     assert not feed.snapshot()["authenticated"]
+    assert feed._connection_opened_at is None
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
     assert feed.snapshot()["authenticated"]
+    assert feed._connection_opened_at is not None
     assert json.loads(sent[-1]) == {"t": "t", "k": "NFO|12345"}
 
 
@@ -112,6 +114,7 @@ def test_rejected_authentication_never_subscribes():
     feed._on_open(fake_ws)
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "Not_Ok"}))
     assert not feed.snapshot()["authenticated"]
+    assert feed._connection_opened_at is None
     assert feed.snapshot()["last_error"] == "Shoonya authentication rejected"
     assert closed
     assert all(json.loads(frame)["t"] != "t" for frame in sent)
