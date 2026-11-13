@@ -144,3 +144,34 @@ def test_invalid_clock_limits_are_rejected():
         assess_quote(quote, now_monotonic_ns=-1, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=MAX_AGE)
     with pytest.raises(ValueError, match="max_age_ns"):
         assess_quote(quote, now_monotonic_ns=NOW, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=0)
+
+def test_exchange_timestamp_age_is_checked_separately_from_local_receive_age():
+    stale = assess_quote(
+        _quote("angel", exchange_timestamp_ns=EXCHANGE_NOW - MAX_AGE - 1),
+        now_monotonic_ns=NOW,
+        now_exchange_timestamp_ns=EXCHANGE_NOW,
+        max_age_ns=MAX_AGE,
+    )
+    assert stale.valid is True
+    assert stale.fresh is False
+    assert "quote_stale" in stale.reasons
+
+    future = assess_quote(
+        _quote("angel", exchange_timestamp_ns=EXCHANGE_NOW + 1),
+        now_monotonic_ns=NOW,
+        now_exchange_timestamp_ns=EXCHANGE_NOW,
+        max_age_ns=MAX_AGE,
+    )
+    assert future.valid is False
+    assert "exchange_timestamp_in_future" in future.reasons
+
+
+def test_incomplete_depth_is_not_reported_as_fully_valid_quote():
+    result = assess_quote(
+        _quote("angel", depth_complete=False),
+        now_monotonic_ns=NOW,
+        now_exchange_timestamp_ns=EXCHANGE_NOW,
+        max_age_ns=MAX_AGE,
+    )
+    assert result.valid is False
+    assert "depth_incomplete" in result.reasons
