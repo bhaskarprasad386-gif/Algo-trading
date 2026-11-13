@@ -53,6 +53,7 @@ class ShoonyaWebSocket:
         self._last_exchange_timestamp_ns: dict[tuple[str, str], int] = {}
         self._out_of_order_ticks = 0
         self._connected = self._authenticated = False
+        self._auth_ack_received = False
         self._last_error = None
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
         self._last_frame_at = self._last_tick_at = None
@@ -224,6 +225,7 @@ class ShoonyaWebSocket:
         """Discard per-connection tick state before opening a replacement socket."""
         with self._lock:
             self._connected = self._authenticated = False
+            self._auth_ack_received = False
             self._connection_opened_at = None
             self._auth_started_at = None
             self._last_frame_at = None
@@ -265,6 +267,13 @@ class ShoonyaWebSocket:
             except Exception as exc: self._on_error(ws, exc)
             return
         if kind == "ak":
+            # Noren auth acknowledgement is a one-shot transition per socket.
+            # Ignore duplicate acknowledgements so subscriptions are never
+            # replayed twice on the same connection.
+            with self._lock:
+                if self._auth_ack_received:
+                    return
+                self._auth_ack_received = True
             if str(message.get("s") or "").strip().lower() != "ok":
                 with self._lock: self._authenticated = False; self._last_error = "Shoonya authentication rejected"
                 self._emit_state("AUTH_FAILED", self._last_error); ws.close(); return
