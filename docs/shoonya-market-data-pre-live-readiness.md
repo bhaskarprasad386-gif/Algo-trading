@@ -20,7 +20,7 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 
 ## Runtime wiring implemented (shadow diagnostics only)
 
-- `SHOONYA_MARKET_DATA_ENABLED=false` remains the default. Enabling it requires UID, account ID, and access token plus validated queue/reconnect/token limits.
+- `SHOONYA_MARKET_DATA_ENABLED=false` remains the default. Enabling it requires UID, account ID, access token, and validated queue/reconnect/token limits. Subscription control additionally requires a separate `SHOONYA_MARKET_DATA_OWNER_PASSWORD` of at least 16 characters; it is checked at login time and is never used as a broker credential.
 - FastAPI lifespan creates a separate `ShoonyaMarketDataSupervisor`; it owns its own `InstrumentRegistry` and `ShoonyaWebSocket`, and is stopped during application shutdown.
 - The supervisor does not open a socket merely because the application starts. A separately registered/subscribed instrument set is required before it starts the adapter.
 - `GET /api/v1/market-data/shoonya-health` exposes sanitized state, queue/freshness diagnostics, and explicit `shadow_only`, `order_routing_enabled=false`, and `strategy_fanout_enabled=false` flags. It never returns credentials.
