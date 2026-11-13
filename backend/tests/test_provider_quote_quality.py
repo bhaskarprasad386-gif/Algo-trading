@@ -73,7 +73,7 @@ def test_single_fresh_provider_is_reported_without_promoting_it_to_primary():
     result = compare_provider_quotes(
         _quote("angel"),
         _quote("shoonya", received=NOW - MAX_AGE - 1),
-        now_monotonic_ns=NOW, max_age_ns=MAX_AGE,
+        now_monotonic_ns=NOW, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=MAX_AGE,
     )
     assert result.state is QuoteQualityState.SINGLE_SOURCE_FRESH
     assert result.left.fresh is True
@@ -130,6 +130,7 @@ def test_age_uses_monotonic_receive_clock_not_exchange_epoch_timestamp():
     result = assess_quote(
         _quote("angel", exchange_timestamp_ns=EXCHANGE_NOW - 2_000_000_000),
         now_monotonic_ns=NOW,
+        now_exchange_timestamp_ns=EXCHANGE_NOW,
         max_age_ns=MAX_AGE,
     )
     assert result.fresh is True
