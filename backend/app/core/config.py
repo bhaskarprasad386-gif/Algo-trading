@@ -26,6 +26,19 @@ class Settings(BaseSettings):
     MAX_POSITION_QUANTITY: int = 5000
     MAX_LOSS: float = 10000.0
 
+    # Shoonya market-data adapter is opt-in and remains shadow/paper only.
+    # Credentials are supplied only through the deployment secret store.
+    SHOONYA_MARKET_DATA_ENABLED: bool = False
+    SHOONYA_UID: str = ""
+    SHOONYA_ACTID: str = ""
+    SHOONYA_ACCESS_TOKEN: str = ""
+    SHOONYA_MARKET_DATA_MAX_TOKENS: int = 500
+    SHOONYA_MARKET_DATA_DISPATCH_QUEUE_MAX: int = 10000
+    SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS: float = 1.0
+    SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS: float = 30.0
+    SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS: float = 30.0
+    SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS: float = 15.0
+
     # Angel One credentials
     angel_api_key: str = ""
     angel_client_id: str = ""
@@ -144,6 +157,28 @@ class Settings(BaseSettings):
         if self.environment.strip().lower() != "development":
             if len(self.SECRET_KEY) < 32:
                 raise ValueError("SECRET_KEY must be set and at least 32 characters in non-development environments")
+        if self.SHOONYA_MARKET_DATA_ENABLED:
+            missing = [
+                name for name, value in (
+                    ("SHOONYA_UID", self.SHOONYA_UID),
+                    ("SHOONYA_ACTID", self.SHOONYA_ACTID),
+                    ("SHOONYA_ACCESS_TOKEN", self.SHOONYA_ACCESS_TOKEN),
+                ) if not str(value or "").strip()
+            ]
+            if missing:
+                raise ValueError("Shoonya market data enabled but credentials are missing: " + ", ".join(missing))
+        if not 1 <= self.SHOONYA_MARKET_DATA_MAX_TOKENS <= 500:
+            raise ValueError("SHOONYA_MARKET_DATA_MAX_TOKENS must be between 1 and 500")
+        if self.SHOONYA_MARKET_DATA_DISPATCH_QUEUE_MAX < 1:
+            raise ValueError("SHOONYA_MARKET_DATA_DISPATCH_QUEUE_MAX must be positive")
+        if self.SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS <= 0:
+            raise ValueError("SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS must be positive")
+        if self.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS < self.SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS:
+            raise ValueError("SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS must be >= minimum")
+        if self.SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS <= 0:
+            raise ValueError("SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS must be positive")
+        if self.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS <= 3.0:
+            raise ValueError("SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS must be greater than the 3-second heartbeat interval")
         return self
 
     model_config = ConfigDict(
