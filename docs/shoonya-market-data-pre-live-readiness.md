@@ -16,7 +16,7 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - Health diagnostics expose an out-of-order tick counter for shadow validation.
 - 500-token hard cap with atomic batch validation.
 - Serialized subscription/unsubscription writes.
-- Independent bounded tick and order-event queues; when an order callback is configured, send the account order-feed subscription (`t: o`, `actid`) only after positive auth and replay it after reconnect. Either queue overflow is treated as a feed-integrity fault, counted, surfaced in health state, and forces socket closure/reconnect. Order-event overflow additionally requires broker order-book reconciliation.
+- Independent bounded tick and order-event queues. Shoonya delivers account order lifecycle events automatically after the authenticated connection handshake; no separate order-subscription frame is sent. The adapter accepts `om` events only after positive authentication and dispatches them on the isolated order queue when an order callback is configured. Either queue overflow is treated as a feed-integrity fault, counted, surfaced in health state, and forces socket closure/reconnect. Order-event overflow additionally requires broker order-book reconciliation.
 - Desired subscriptions survive reconnect epochs and are replayed only after the replacement socket receives a positive authentication acknowledgement.
 - Callback isolation, connection health counters, shutdown deadline, and stale-socket callback protection.
 - Authentication-handshake watchdog: configurable `SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS` (default 15 seconds); a transport-open socket without a positive `ak` acknowledgement is closed and reported as `AUTH_TIMEOUT`, then uses the existing bounded reconnect path.

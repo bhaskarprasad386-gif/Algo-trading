@@ -284,7 +284,6 @@ class ShoonyaWebSocket:
                 self._auth_started_at = None
             self._emit_state("LIVE", None)
             self._send_subscriptions(ws)
-            self._send_order_subscription(ws)
             return
         # Do not accept market or order events until the broker has explicitly
         # acknowledged this socket's authentication. A transport-open socket is
@@ -297,22 +296,6 @@ class ShoonyaWebSocket:
             self._handle_tick(message)
         elif kind == "om" and self._on_order_update:
             self._enqueue("order", message)
-
-    def _send_order_subscription(self, ws: Any) -> None:
-        """Subscribe to this account's order lifecycle feed after auth, if requested."""
-        if self._on_order_update is None:
-            return
-        with self._lock:
-            if ws is not self._ws or not self._authenticated:
-                return
-        try:
-            ws.send(json.dumps({"t": "o", "actid": self._actid}, separators=(",", ":")))
-        except Exception as exc:
-            self._on_error(ws, exc)
-            try:
-                ws.close()
-            except Exception:
-                pass
 
     def _send_subscriptions(self, ws: Any) -> None:
         with self._subscription_send_lock:
