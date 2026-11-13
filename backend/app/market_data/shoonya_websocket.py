@@ -244,14 +244,28 @@ class ShoonyaWebSocket:
         return guarded
 
     def _on_open(self, ws: Any) -> None:
-        ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
-                            "source": self._source, "accesstoken": self._access_token}, separators=(",", ":")))
-        with self._lock:
-            self._connected, self._authenticated = True, False
-            self._last_error = None
-            # A TCP/WebSocket open is not a healthy broker session until auth succeeds.
-            self._connection_opened_at = None
-            self._auth_started_at = time.monotonic()
+        # Keep socket identity validation and the auth write atomic with epoch
+        # replacement. A delayed open callback from an old socket must not
+        # authenticate or otherwise mutate the replacement connection.
+        try:
+            with self._lock:
+                if ws is not self._ws or self._stop.is_set():
+                    return
+                ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
+                                    "source": self._source, "accesstoken": self._access_token},
+                                   separators=(",", ":")))
+                self._connected, self._authenticated = True, False
+                self._last_error = None
+                # A TCP/WebSocket open is not a healthy broker session until auth succeeds.
+                self._connection_opened_at = None
+                self._auth_started_at = time.monotonic()
+        except Exception as exc:
+            self._on_error(ws, exc)
+            try:
+                ws.close()
+            except Exception:
+                pass
+            return
         self._emit_state("AUTHENTICATING", None)
 
     def _on_message(self, ws: Any, raw: str) -> None:
@@ -271,6 +285,11 @@ class ShoonyaWebSocket:
             # Ignore duplicate acknowledgements so subscriptions are never
             # replayed twice on the same connection.
             with self._lock:
+                # The callback may have passed its outer epoch guard just
+                # before reconnect began. Re-check identity at the state
+                # transition so an obsolete socket cannot mark the new feed LIVE.
+                if ws is not self._ws or self._stop.is_set():
+                    return
                 if self._auth_ack_received:
                     return
                 self._auth_ack_received = True
