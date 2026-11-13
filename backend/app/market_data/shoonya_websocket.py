@@ -302,11 +302,13 @@ class ShoonyaWebSocket:
         """Subscribe to this account's order lifecycle feed after auth, if requested."""
         if self._on_order_update is None:
             return
-        with self._lock:
-            if ws is not self._ws or not self._authenticated:
-                return
         try:
-            ws.send(json.dumps({"t": "o", "actid": self._actid}, separators=(",", ":")))
+            # Keep the identity/auth check and send atomic with respect to
+            # connection-epoch replacement; never send an auth frame to a stale socket.
+            with self._lock:
+                if ws is not self._ws or not self._authenticated:
+                    return
+                ws.send(json.dumps({"t": "o", "actid": self._actid}, separators=(",", ":")))
         except Exception as exc:
             self._on_error(ws, exc)
             try:
@@ -319,14 +321,18 @@ class ShoonyaWebSocket:
             self._send_subscriptions_locked(ws)
 
     def _send_subscriptions_locked(self, ws: Any) -> None:
-        """Send the current desired set while the subscription lock is held."""
-        with self._lock:
-            instruments = tuple(self._descriptors)
-        if not instruments:
-            return
-        keys = "#".join(f"{e}|{t}" for e, t in instruments)
+        """Send desired subscriptions only to the currently authenticated socket."""
         try:
-            ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
+            # The lock prevents reconnect epoch replacement between validation
+            # and the actual wire write.
+            with self._lock:
+                if ws is not self._ws or not self._authenticated:
+                    return
+                instruments = tuple(self._descriptors)
+                if not instruments:
+                    return
+                keys = "#".join(f"{e}|{t}" for e, t in instruments)
+                ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
         except Exception as exc:
             self._on_error(ws, exc)
             try: ws.close()
@@ -452,6 +458,22 @@ class ShoonyaWebSocket:
             app_logger.warning("Shoonya auth-timeout socket close failed: {}", self._safe_error_text(exc))
         return True
 
+    def _send_heartbeat(self, ws: Any) -> bool:
+        """Send heartbeat only while this socket remains the authenticated owner."""
+        try:
+            with self._lock:
+                if ws is not self._ws or not self._authenticated:
+                    return False
+                ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+            return True
+        except Exception as exc:
+            self._on_error(ws, exc)
+            try:
+                ws.close()
+            except Exception:
+                pass
+            return False
+
     def _heartbeat_loop(self) -> None:
         next_heartbeat = time.monotonic() + 3.0
         while not self._stop.wait(1.0):
@@ -466,13 +488,8 @@ class ShoonyaWebSocket:
                 continue
             if time.monotonic() < next_heartbeat:
                 continue
-            try:
-                ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+            if self._send_heartbeat(ws):
                 next_heartbeat = time.monotonic() + 3.0
-            except Exception as exc:
-                self._on_error(ws, exc)
-                try: ws.close()
-                except Exception: pass
 
     def _safe_error_text(self, value: Any) -> str:
         safe = str(value)
