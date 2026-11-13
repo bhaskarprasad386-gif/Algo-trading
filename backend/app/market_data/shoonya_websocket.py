@@ -209,6 +209,7 @@ class ShoonyaWebSocket:
         with self._lock:
             self._connected = self._authenticated = False
             self._connection_opened_at = None
+            self._last_frame_at = None
             self._feed_epoch += 1
             self._snapshots.clear()
             self._initialized.clear()
@@ -227,6 +228,7 @@ class ShoonyaWebSocket:
                             "source": self._source, "accesstoken": self._access_token}, separators=(",", ":")))
         with self._lock:
             self._connected, self._authenticated = True, False
+            self._last_error = None
             # A TCP/WebSocket open is not a healthy broker session until auth succeeds.
             self._connection_opened_at = None
         self._emit_state("AUTHENTICATING", None)
