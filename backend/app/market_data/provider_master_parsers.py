@@ -112,10 +112,10 @@ def _mapping(
     exchange = _required(row, "exch_seg", "exchange", "exch").upper()
     segment = _required(row, "segment", "exch_seg", "exchange", "exch").upper()
     token = _required(row, "token", "tk")
-    symbol = _required(row, "symbol", "tsym", "tradingsymbol", "trading_symbol")
+    symbol = _required(row, "tradingsymbol", "trading_symbol", "tsym", "symbol")
     raw_type = _required(row, "instrumenttype", "instrument", "instname", "instrument_type")
     kind, provider_type = _instrument_type(raw_type)
-    underlying = str(_value(row, "name", "underlying", "root", "dname") or "").strip().upper()
+    underlying = str(_value(row, "name", "underlying", "root", "dname", "symbol") or "").strip().upper()
     if not underlying:
         # A conservative fallback for cash/index instruments only. Derivatives
         # require explicit underlying/root metadata to avoid symbol guessing.
@@ -212,7 +212,7 @@ class ShoonyaMasterParser:
     ) -> MasterParseReport:
         raw = payload if isinstance(payload, bytes) else payload.encode("utf-8")
         text = raw.decode("utf-8-sig")
-        if delimiter not in {",", "|", "\\t"}:
+        if delimiter not in {",", "|", "\t"}:
             raise ValueError("delimiter must be comma, pipe or tab")
         reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
         if not reader.fieldnames:
