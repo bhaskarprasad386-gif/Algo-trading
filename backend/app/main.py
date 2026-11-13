@@ -1931,6 +1931,8 @@ def iv_early_entry_latest_alert(
             status_code=422,
             detail="before_observed_at_ns and before_id must be provided together",
         )
+    if before_observed_at_ns is not None and (before_observed_at_ns <= 0 or before_id is None or before_id <= 0):
+        raise HTTPException(status_code=422, detail="alert history cursor values must be positive")
     page_size = max(1, min(int(limit), 100))
     store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
     with _iv_skew_flip_runtime_lock:
