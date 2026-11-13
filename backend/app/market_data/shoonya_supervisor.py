@@ -66,11 +66,20 @@ class ShoonyaMarketDataSupervisor:
                 if not self._enabled:
                     raise RuntimeError("Shoonya supervisor is stopped")
                 staged = dict(self._descriptors)
+                adapter_keys = {
+                    (value.key.exchange.strip().upper(), value.key.token.strip()): value
+                    for value in staged.values()
+                }
                 for item in batch:
+                    adapter_key = (item.key.exchange.strip().upper(), item.key.token.strip())
+                    adapter_previous = adapter_keys.get(adapter_key)
+                    if adapter_previous is not None and adapter_previous != item:
+                        raise ValueError(f"conflicting Shoonya adapter token descriptor: {adapter_key}")
                     previous = staged.get(item.key)
                     if previous is not None and previous != item:
                         raise ValueError(f"conflicting Shoonya instrument descriptor: {item.key.value}")
                     staged[item.key] = item
+                    adapter_keys[adapter_key] = item
                 if len(staged) > self._max_tokens:
                     raise ValueError(f"Shoonya subscription cap exceeded ({self._max_tokens})")
                 self.registry.register_many(batch)
@@ -113,11 +122,26 @@ class ShoonyaMarketDataSupervisor:
         if not batch:
             return 0
         with self._operation_lock:
-            removed = self._adapter.unsubscribe(batch)
             with self._lock:
+                stored: list[InstrumentDescriptor] = []
                 for item in batch:
+                    existing = self._descriptors.get(item.key)
+                    if existing is None:
+                        adapter_key = (item.key.exchange.strip().upper(), item.key.token.strip())
+                        if any((value.key.exchange.strip().upper(), value.key.token.strip()) == adapter_key
+                               for value in self._descriptors.values()):
+                            raise ValueError(f"conflicting Shoonya unsubscribe descriptor: {adapter_key}")
+                        continue
+                    if existing != item:
+                        raise ValueError(f"conflicting Shoonya unsubscribe descriptor: {item.key.value}")
+                    stored.append(existing)
+            if not stored:
+                return 0
+            removed = self._adapter.unsubscribe(stored)
+            with self._lock:
+                for item in stored:
                     self._descriptors.pop(item.key, None)
-                self.registry.unregister_many(item.key for item in batch)
+                self.registry.unregister_many(item.key for item in stored)
                 if not self._descriptors:
                     self._last_state = "IDLE_NO_SUBSCRIPTIONS"
             return removed
