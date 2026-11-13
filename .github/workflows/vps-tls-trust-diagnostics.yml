@@ -1,0 +1,143 @@
+name: VPS TLS Trust Diagnostics (Read Only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-tls-trust-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify trusted HTTPS and WSS from VPS
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VPS_KEY:?VPS_SSH_KEY secret is required}"
+          : "${VPS_HOST:?VPS_HOST secret is required}"
+          : "${VPS_USER:?VPS_USER secret is required}"
+
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$VPS_KEY" | base64 --decode > "$key_file"
+          chmod 600 "$key_file"
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          ssh-keyscan -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          ssh -i "$key_file" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -uo pipefail
+          IP="82.41.67.22"
+          failures=0
+
+          echo "== READ-ONLY SERVICE CHECK =="
+          if systemctl is-active --quiet algo-trading.service; then
+            echo "SERVICE_ACTIVE=yes"
+          else
+            echo "SERVICE_ACTIVE=no"
+            systemctl --no-pager --full status algo-trading.service || true
+            failures=$((failures + 1))
+          fi
+
+          echo "== LOCAL API CHECK =="
+          if curl --fail --silent --show-error --max-time 10 \
+            http://127.0.0.1:8000/health >/dev/null; then
+            echo "LOCAL_API=PASS"
+          else
+            echo "LOCAL_API=FAIL"
+            failures=$((failures + 1))
+          fi
+
+          echo "== PUBLIC HTTPS: STRICT CERTIFICATE AND IP SAN VERIFICATION =="
+          if curl --fail --silent --show-error --verbose --max-time 15 \
+            "https://$IP/health" -o /tmp/vps-tls-health-body; then
+            echo "HTTPS_TRUST=PASS"
+            head -c 500 /tmp/vps-tls-health-body || true
+            echo
+          else
+            echo "HTTPS_TRUST=FAIL (curl uses system CA trust and verifies the IP SAN; no -k/--insecure)"
+            failures=$((failures + 1))
+          fi
+
+          echo "== OPENSSL CERTIFICATE VERIFICATION =="
+          if timeout 15 openssl s_client \
+            -connect "$IP:443" \
+            -servername "$IP" \
+            -verify_ip "$IP" \
+            -verify_return_error \
+            -CApath /etc/ssl/certs </dev/null 2>&1 | \
+            tee /tmp/vps-tls-openssl.log | grep -E 'Verify return code: 0|Verification: OK' >/dev/null; then
+            echo "OPENSSL_TRUST=PASS"
+          else
+            echo "OPENSSL_TRUST=FAIL"
+            tail -n 35 /tmp/vps-tls-openssl.log || true
+            failures=$((failures + 1))
+          fi
+
+          echo "== WSS HANDSHAKE WITH VERIFIED TLS =="
+          if python3 - "$IP" <<'PY'
+          import base64
+          import os
+          import socket
+          import ssl
+          import sys
+
+          host = sys.argv[1]
+          context = ssl.create_default_context()
+          key = base64.b64encode(os.urandom(16)).decode("ascii")
+          request = (
+              "GET /ws/dashboard HTTP/1.1\r\n"
+              f"Host: {host}\r\n"
+              "Upgrade: websocket\r\n"
+              "Connection: Upgrade\r\n"
+              f"Sec-WebSocket-Key: {key}\r\n"
+              "Sec-WebSocket-Version: 13\r\n"
+              "\r\n"
+          )
+          with socket.create_connection((host, 443), timeout=10) as raw:
+              with context.wrap_socket(raw, server_hostname=host) as tls:
+                  tls.settimeout(10)
+                  tls.sendall(request.encode("ascii"))
+                  response = b""
+                  while b"\r\n\r\n" not in response and len(response) < 16384:
+                      chunk = tls.recv(4096)
+                      if not chunk:
+                          break
+                      response += chunk
+          status = response.split(b"\r\n", 1)[0].decode("latin1", "replace")
+          print(f"WSS_STATUS_LINE={status}")
+          if not status.startswith("HTTP/1.1 101 "):
+              raise SystemExit("WSS upgrade did not return HTTP 101")
+          print("WSS_TRUST_AND_UPGRADE=PASS")
+          PY
+          then
+            echo "WSS_CHECK=PASS"
+          else
+            echo "WSS_CHECK=FAIL (includes certificate trust, hostname/IP SAN and HTTP 101 upgrade)"
+            failures=$((failures + 1))
+          fi
+
+          rm -f /tmp/vps-tls-health-body /tmp/vps-tls-openssl.log
+          echo "TLS_DIAGNOSTIC_FAILURES=$failures"
+          if [ "$failures" -ne 0 ]; then
+            exit 1
+          fi
+          echo "ALL_READ_ONLY_TLS_CHECKS_PASSED"
+          REMOTE
