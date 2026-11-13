@@ -26,17 +26,7 @@ def _structurally_valid(row: OptionObservation) -> tuple[str, ...]:
             or isinstance(row.oi_timestamp_ns, bool)
             or not isinstance(row.oi_timestamp_ns, int) or row.oi_timestamp_ns <= 0):
         errors.append("INVALID_OI")
-    elif row.oi_timestamp_ns > row.source_timestamp_ns:
-        errors.append("OI_TIMESTAMP_AFTER_QUOTE")
     if row.volume is None or row.volume < 0: errors.append("INVALID_VOLUME")
-    return tuple(errors)
-
-
-def _fresh(row: OptionObservation, now_ns: int) -> tuple[str, ...]:
-    errors: list[str] = []
-    if row.source_timestamp_ns > now_ns or now_ns-row.source_timestamp_ns > 5*NS: errors.append("STALE_OPTION_QUOTE")
-    if row.spot_timestamp_ns > now_ns or now_ns-row.spot_timestamp_ns > 5*NS: errors.append("STALE_SPOT")
-    if row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns or now_ns-row.oi_timestamp_ns > 300*NS: errors.append("STALE_OI")
     return tuple(errors)
 
 
@@ -68,13 +58,6 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     stamps = [b.timestamp_ns for b in last_bars]
     if any(b.timestamp_ns <= 0 for b in last_bars) or any(b <= a for a, b in zip(stamps, stamps[1:])):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BUCKET_ORDER",))
-    if any(not 30*NS <= b-a <= 90*NS for a, b in zip(stamps, stamps[1:])):
-        return StrategyEvaluation(AlertState.WATCH, reasons=("MISSING_SPOT_BUCKET",))
-    # Bars are timestamped at the start of their source minute. The newest
-    # completed bar should therefore be no more than two minutes old; otherwise
-    # a stale consolidation window could authorize a fresh live-option signal.
-    if last_bars[-1].timestamp_ns > now_ns or now_ns-last_bars[-1].timestamp_ns > 120*NS:
-        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_SPOT_HISTORY",))
     if any(not (_positive(b.open) and _positive(b.high) and _positive(b.low) and _positive(b.close))
            or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high)
            for b in last_bars):
@@ -104,35 +87,18 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         if any(_structurally_valid(row) for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
 
-    # Compare IV/volume changes over the same exchange-minute windows.
-    # Per-contract cadence alone is insufficient if CE and PE buckets drift.
-    ce_minutes = tuple(row.source_timestamp_ns // (60*NS) for row in ce3)
-    pe_minutes = tuple(row.source_timestamp_ns // (60*NS) for row in pe3)
-    target_minutes = tuple(row.source_timestamp_ns // (60*NS) for row in tgt)
-    if ce_minutes != pe_minutes[-2:] or ce_minutes != target_minutes[-2:]:
-        return StrategyEvaluation(AlertState.WATCH, reasons=("UNALIGNED_OPTION_HISTORY",))
-
+    # Each feed is asynchronous. Compare ordered changes from each source;
+    # do not require CE, PE, target and spot to share a minute or cadence.
     for series in (ce3, pe3, tgt):
-        # Historical quote freshness is intentionally wider than the live
-        # option/spot gate, but its OI timestamp must still be a real, recent
-        # observation. A refreshed price quote cannot make carried-forward OI
-        # fresh, even when the source-minute bucket itself is recent.
-        if any(
-            row.oi_timestamp_ns is None
-            or row.oi_timestamp_ns > now_ns
-            or now_ns - row.oi_timestamp_ns > 300 * NS
-            for row in series
-        ):
-            return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_HISTORICAL_OI",))
         times = [row.source_timestamp_ns for row in series]
-        if any(b <= a or not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
-            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_CADENCE",))
+        if any(b <= a for a, b in zip(times, times[1:])):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_ORDER",))
     for row, history in ((live_ce, ce3), (live_pe, pe3), (live_target, tgt)):
         if _structurally_valid(row):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_LIVE_OBSERVATION",))
-        errors = _fresh(row, now_ns)
-        if errors:
-            return StrategyEvaluation(AlertState.WATCH, reasons=errors)
+        if (row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
+                or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_LIVE_TIMESTAMP",))
         # A recently sampled snapshot may still contain the exact last quote
         # from the completed minute. Freshness alone does not prove a new
         # exchange observation; require every live leg to advance its source
@@ -181,9 +147,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
                 "spot_bars_minimum": {"threshold": 15, "actual": len(last_bars), "passed": len(last_bars) >= 15},
                 "spot_range_points": {"threshold_max": 55, "actual": max(b.high for b in last_bars)-min(b.low for b in last_bars), "passed": max(b.high for b in last_bars)-min(b.low for b in last_bars) <= 55},
                 "option_history": {"threshold": "CE/PE 2 each; target 4", "actual": {"ce": len(ce3), "pe": len(pe3), "target": len(tgt)}, "passed": True},
-                "quote_freshness_seconds": {"threshold_max": 5, "actual": {row.option_type: max(0, (now_ns-row.source_timestamp_ns)/NS) for row in live_rows}, "passed": True},
-                "spot_freshness_seconds": {"threshold_max": 5, "actual": {row.option_type: max(0, (now_ns-row.spot_timestamp_ns)/NS) for row in live_rows}, "passed": True},
-                "oi_freshness_seconds": {"threshold_max": 300, "actual": {row.option_type: max(0, (now_ns-row.oi_timestamp_ns)/NS) for row in live_rows}, "passed": True},
+                "change_timestamps_ns": {"ce_quote": live_ce.source_timestamp_ns, "pe_quote": live_pe.source_timestamp_ns, "target_quote": live_target.source_timestamp_ns, "ce_spot": live_ce.spot_timestamp_ns, "pe_spot": live_pe.spot_timestamp_ns, "target_spot": live_target.spot_timestamp_ns, "target_oi": live_target.oi_timestamp_ns},
                 "iv_change_points": {"threshold_min": threshold, "actual": iv_jump, "opposite_max": 0.05, "opposite_actual": opposite_jump, "passed": iv_jump >= threshold and opposite_jump <= 0.05},
                 "volume_expansion": {"threshold_min_ratio": 2.5, "baseline_increment": baseline, "live_increment": current_increment, "actual_ratio": current_increment/baseline, "passed": current_increment >= 2.5*baseline},
                 "premium_rising": {"previous_ask": premium_prev, "live_ask": premium_now, "passed": premium_now > premium_prev},
@@ -239,27 +203,15 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
         if _structurally_valid(row):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_OBSERVATION",))
     times = [row.source_timestamp_ns for row in wall_rows]
-    if any(b <= a or not 30*NS <= b-a <= 90*NS for a, b in zip(times, times[1:])):
-        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_CADENCE",))
+    if any(b <= a for a, b in zip(times, times[1:])):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_OBSERVATION_ORDER",))
     if len({row.strike for row in wall_rows}) != 1:
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_NOT_PERSISTENT",))
     latest = wall_rows[-1]
-    # Wall rows are completed-minute observations, not live quotes. Requiring
-    # the latest completed bucket to be <=5s old suppresses almost every valid
-    # signal after the first seconds of a new minute. Bound it to one minute
-    # plus a small source-time tolerance; the separate entry quote remains <=5s.
-    wall_max_age_ns = 90 * NS
-    if (latest.source_timestamp_ns > now_ns
-            or now_ns - latest.source_timestamp_ns > wall_max_age_ns
-            or latest.spot_timestamp_ns > now_ns
-            or now_ns - latest.spot_timestamp_ns > wall_max_age_ns
-            or any(
-                row.oi_timestamp_ns is None
-                or row.oi_timestamp_ns > now_ns
-                or now_ns - row.oi_timestamp_ns > 300 * NS
-                for row in wall_rows
-            )):
-        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_WALL_OBSERVATION",))
+    # No age gate: timestamps are for ordering and audit, not signal eligibility.
+    if (latest.source_timestamp_ns > now_ns or latest.spot_timestamp_ns > now_ns
+            or any(row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns for row in wall_rows)):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_TIMESTAMP",))
     wall_oi_timestamps = [row.oi_timestamp_ns for row in wall_rows]
     if any(
         current is None or previous is None or current <= previous
@@ -272,9 +224,9 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
         return StrategyEvaluation(AlertState.WATCH, reasons=("ENTRY_CONTRACT_MISMATCH",))
     if _structurally_valid(entry_quote):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_ENTRY_OBSERVATION",))
-    entry_errors = _fresh(entry_quote, now_ns)
-    if entry_errors:
-        return StrategyEvaluation(AlertState.WATCH, reasons=entry_errors)
+    if (entry_quote.source_timestamp_ns > now_ns or entry_quote.spot_timestamp_ns > now_ns
+            or entry_quote.oi_timestamp_ns is None or entry_quote.oi_timestamp_ns > now_ns):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_ENTRY_TIMESTAMP",))
     if abs(entry_quote.spot_price-latest.spot_price) > 5:
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_ENTRY_SPOT",))
     if any(row.oi is None for row in wall_rows) or not (wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi):
@@ -283,10 +235,10 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if iv_change > -0.10:
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_IV_NOT_COOLING",))
     bars = tuple(spot_bars[-2:])
-    if any(bar.timestamp_ns <= 0 or now_ns < bar.timestamp_ns or now_ns-bar.timestamp_ns > 120*NS
+    if any(bar.timestamp_ns <= 0 or now_ns < bar.timestamp_ns
            or not (_positive(bar.open) and _positive(bar.high) and _positive(bar.low) and _positive(bar.close))
            or bar.high < max(bar.open, bar.close, bar.low) or bar.low > min(bar.open, bar.close, bar.high)
-           for bar in bars) or not 30*NS <= bars[-1].timestamp_ns-bars[-2].timestamp_ns <= 90*NS:
+           for bar in bars) or bars[-1].timestamp_ns <= bars[-2].timestamp_ns:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_PRICE_BAR_ORDER",))
     prior, current = bars
     wall = latest.strike
@@ -319,8 +271,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
                 "wall_iv_cooling": {"threshold_max_change_points": -0.10, "actual_change_points": iv_change, "previous_iv": wall_rows[-2].iv, "live_iv": latest.iv, "passed": iv_change <= -0.10},
                 "spot_distance_to_wall": {"threshold_max_points": 15, "actual_points": (wall-current.low) if direction == "BULLISH" else (current.high-wall), "wall_strike": wall, "passed": near_wall},
                 "initial_rejection_candle": {"open": current.open, "high": current.high, "low": current.low, "close": current.close, "previous_close": prior.close, "passed": rejection},
-                "wall_observation_age_seconds": {"threshold_max": 90, "actual": max(0, (now_ns-latest.source_timestamp_ns)/NS), "passed": True},
-                "oi_freshness_seconds": {"threshold_max": 300, "actual": max(0, (now_ns-latest.oi_timestamp_ns)/NS), "passed": True},
+                "change_timestamps_ns": {"wall_source": latest.source_timestamp_ns, "wall_oi": latest.oi_timestamp_ns, "wall_spot": latest.spot_timestamp_ns, "entry_quote": entry_quote.source_timestamp_ns, "entry_spot": entry_quote.spot_timestamp_ns, "entry_oi": entry_quote.oi_timestamp_ns, "rejection_candle": current.timestamp_ns},
                 "same_expiry_contract": {"expiry": expiry, "strike": wall, "option_type": option_type, "passed": True},
             },
             "evaluated_at_ns": now_ns,
