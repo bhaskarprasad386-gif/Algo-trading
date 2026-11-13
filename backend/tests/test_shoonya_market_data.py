@@ -71,3 +71,21 @@ def test_order_updates_have_independent_queue():
 def test_shoonya_feed_implements_broker_neutral_live_feed_contract():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     assert isinstance(feed, LiveMarketDataFeed)
+
+
+def test_subscription_limit_is_500_and_atomic():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    descriptors = [
+        InstrumentDescriptor(key=InstrumentKey("NFO", "NFO", str(i)),
+            symbol=f"OPT{i}", instrument_type="option", exchange="NFO", segment="NFO",
+            expiry="2026-11-26", strike=25000+i, option_type="CE", lot_size=65,
+            tick_size=0.05, underlying="NIFTY")
+        for i in range(501)
+    ]
+    try:
+        feed.subscribe(descriptors)
+    except ValueError as exc:
+        assert "500" in str(exc)
+    else:
+        raise AssertionError("501 subscriptions must be rejected")
+    assert feed.snapshot()["subscriptions"] == 0
