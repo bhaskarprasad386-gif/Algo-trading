@@ -5,7 +5,7 @@ import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
 type Row = Record<string, unknown>;
-type EarlyAlert = { id: number; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
+type EarlyAlert = { id: number; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
 type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; expiry_selection?: Row; error?: string | null; signals?: Row };
 type BasketEntry = {
   status?: string;
@@ -49,6 +49,13 @@ const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
 const delta = (v: unknown, suffix = "", digits = 2) => n(v) === null ? "—" : `${Number(v) > 0 ? "+" : ""}${fmt(v, digits)}${suffix}`;
 const age = (v: unknown) => n(v) === null ? "—" : n(v)! < 1000 ? `${Math.round(n(v)!)} ms` : `${(n(v)! / 1000).toFixed(1)} s`;
+const compareAlertTime = (a: EarlyAlert,b: EarlyAlert) => {
+  const left=String(a.observed_at_ns_text??a.observed_at_ns);
+  const right=String(b.observed_at_ns_text??b.observed_at_ns);
+  if(left.length!==right.length)return right.length-left.length;
+  if(left!==right)return left>right?-1:1;
+  return b.id-a.id;
+};
 const sampleTime = (value: unknown) => {
   const ns = n(value);
   if (ns === null || ns <= 0) return "Time unavailable";
@@ -413,7 +420,7 @@ export default function IVSkewFlipPage() {
         setEarlyAlerts(current=>{
           const merged=new Map<number,EarlyAlert>();
           [...newest,...current].forEach(row=>merged.set(row.id,row));
-          return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id);
+          return [...merged.values()].sort(compareAlertTime);
         });
         if(!loadedOlderAlerts.current){
           setHasMoreAlerts(body.has_more===true);
