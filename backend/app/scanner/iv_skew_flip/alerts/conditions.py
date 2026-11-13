@@ -271,7 +271,9 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     # Bars are completed one-minute buckets timestamped at bucket start.
     # Reject stale price structure while allowing normal close-to-next-minute
     # processing latency; this is a data-age guard, not a time-of-day window.
-    if now_ns - bars[-1].timestamp_ns > 120 * NS:
+    if (now_ns - bars[-1].timestamp_ns > 120 * NS
+            or now_ns - bars[-2].timestamp_ns > 180 * NS
+            or bars[-1].timestamp_ns - bars[-2].timestamp_ns > 120 * NS):
         return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_PRICE_HISTORY",))
     prior, current = bars
     wall = latest.strike
