@@ -7,7 +7,7 @@ This module is intentionally not wired into either live broker or scanner yet.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from queue import Empty, Full, Queue
+from queue import Full, Queue
 from threading import Lock
 from time import monotonic_ns, time_ns
 from types import MappingProxyType
