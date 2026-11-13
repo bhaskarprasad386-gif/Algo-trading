@@ -85,7 +85,7 @@ def test_both_stale_valid_quotes_are_distinguished_from_invalid_quotes():
     result = compare_provider_quotes(
         _quote("angel", received=NOW - MAX_AGE - 1),
         _quote("shoonya", received=NOW - MAX_AGE - 2),
-        now_monotonic_ns=NOW, max_age_ns=MAX_AGE,
+        now_monotonic_ns=NOW, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=MAX_AGE,
     )
     assert result.state is QuoteQualityState.BOTH_STALE
     assert result.left.valid and result.right.valid
