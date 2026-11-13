@@ -927,3 +927,56 @@ def test_stale_auth_ack_cannot_mark_replacement_socket_live():
     assert feed.snapshot()["authenticated"] is False
     assert feed._auth_ack_received is False
     assert states == []
+
+
+def test_repeated_start_is_idempotent_and_restart_creates_one_new_worker_generation():
+    created = []
+    opened = []
+    class BlockingSocket:
+        def __init__(self, **callbacks):
+            self.callbacks = callbacks
+            self.closed = threading.Event()
+            self.opened = threading.Event()
+        def run_forever(self, **kwargs):
+            self.opened.set()
+            opened.append(self)
+            self.closed.wait(timeout=3)
+        def close(self):
+            self.closed.set()
+
+    def factory(url, **callbacks):
+        socket = BlockingSocket(**callbacks)
+        created.append(socket)
+        return socket
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        websocket_factory=factory,
+        reconnect_min_seconds=0.01,
+        reconnect_max_seconds=0.02,
+    )
+
+    feed.start()
+    assert created[0].opened.wait(timeout=1)
+    first_supervisor = feed._thread
+    first_dispatcher = feed._dispatch_thread
+    feed.start()
+    assert feed._thread is first_supervisor
+    assert feed._dispatch_thread is first_dispatcher
+    assert len(created) == 1
+
+    feed.stop()
+    assert not feed.snapshot()["shutdown_workers_alive"]
+
+    feed.start()
+    assert len(created) == 2 or (len(created) == 1 and created[0].opened.wait(timeout=0.1))
+    if len(created) == 1:
+        # The first fake socket has been closed; the second run loop may not
+        # have entered its factory yet when the thread-start assertion occurs.
+        deadline = __import__("time").monotonic() + 1
+        while len(created) < 2 and __import__("time").monotonic() < deadline:
+            threading.Event().wait(0.01)
+    assert len(created) == 2
+    assert created[1].opened.wait(timeout=1)
+    feed.stop()
+    assert not feed.snapshot()["shutdown_workers_alive"]
