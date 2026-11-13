@@ -142,6 +142,41 @@ def test_supervisor_keeps_adapter_running_when_other_subscriptions_remain(monkey
     assert supervisor.snapshot()["registry_instruments"] == 1
 
 
+def test_supervisor_can_restart_after_final_unsubscribe(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    first, second = descriptor("12345"), descriptor("67890")
+
+    supervisor.subscribe([first])
+    assert supervisor.unsubscribe([first]) == 1
+    assert supervisor._adapter.stopped == 1
+
+    assert supervisor.subscribe([second]) == 1
+    assert supervisor._adapter.started == 2
+    assert supervisor.snapshot()["registry_instruments"] == 1
+    assert supervisor.snapshot()["adapter"]["subscriptions"] == 1
+
+
+def test_supervisor_stops_partial_workers_when_adapter_start_raises(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    item = descriptor()
+
+    def fail_start():
+        raise RuntimeError("worker startup failed")
+
+    supervisor._adapter.start = fail_start
+    try:
+        supervisor.subscribe([item])
+    except RuntimeError as exc:
+        assert "worker startup failed" in str(exc)
+    else:
+        raise AssertionError("adapter startup failure must propagate")
+
+    assert supervisor._adapter.stopped == 1
+    assert supervisor.snapshot()["registry_instruments"] == 0
+    assert supervisor.registry.get(item.key) is None
+    assert supervisor._adapter.descriptors == {}
+
+
 def test_supervisor_tick_and_order_callbacks_only_update_shadow_counters(monkeypatch):
     supervisor = build_supervisor(monkeypatch)
     supervisor._observe_tick({"symbol": "NIFTY", "ltp": 100})
