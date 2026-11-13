@@ -58,6 +58,27 @@ def test_strategy_a_rejects_stale_live_quote():
     assert "STALE_OPTION_QUOTE" in result.reasons
 
 
+def test_strategy_a_rejects_live_leg_that_reuses_last_completed_quote():
+    now, bars, ce, pe = setup()
+    # Simulate the first seconds after a minute boundary: the latest completed
+    # CE observation is still within the five-second freshness window, but the
+    # sampler has not received a newer exchange quote for that leg.
+    ce_history = (
+        replace(ce[-3], source_timestamp_ns=now-62*NS),
+        replace(ce[-2], source_timestamp_ns=now-2*NS, oi_timestamp_ns=now-2*NS),
+    )
+    repeated_live_ce = replace(
+        ce[-2], source_timestamp_ns=now-2*NS, oi_timestamp_ns=now-2*NS,
+    )
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-19", bars=bars,
+        ce=ce_history, pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
+        live_ce=repeated_live_ce, live_pe=pe[-1], live_target=ce[-1],
+    )
+    assert result.state == AlertState.WATCH
+    assert "LIVE_QUOTE_NOT_ADVANCED" in result.reasons
+
+
 def test_even_strikes_includes_full_nifty_50_point_grid():
     assert even_strikes([24950, 25000, 25050, 25100, 25100, 25125]) == (
         24950.0, 25000.0, 25050.0, 25100.0,
