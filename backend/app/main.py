@@ -388,6 +388,7 @@ async def lifespan(app: FastAPI):
             max_dispatch_queue=settings.SHOONYA_MARKET_DATA_DISPATCH_QUEUE_MAX,
             reconnect_min_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS,
             reconnect_max_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS,
+            frame_timeout_seconds=settings.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS,
         )
         configure_shoonya_snapshot(shoonya_market_data_supervisor.snapshot)
         configure_shoonya_supervisor(lambda: shoonya_market_data_supervisor)
