@@ -2,10 +2,14 @@ from datetime import date, datetime, time, timedelta
 from threading import Lock
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
+from pydantic import BaseModel, Field
 
 from app.core.exceptions import TradingAppException
 from app.core.logger import app_logger
+from app.brokers.real_owner_auth import require_real_owner_access
+from .registry import InstrumentDescriptor
+from .contracts import InstrumentKey
 
 router = APIRouter(
     prefix="/api/v1/market-data",
@@ -16,6 +20,7 @@ _CLOSED_OVERVIEW_CACHE: dict[str, dict] = {}
 _CLOSED_OVERVIEW_CACHE_LOCK = Lock()
 _live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
+_shoonya_supervisor_provider = None
 
 
 def configure_live_cash_future_runner_snapshot(provider) -> None:
@@ -28,6 +33,52 @@ def configure_shoonya_snapshot(provider) -> None:
     """Configure the isolated Shoonya shadow-feed diagnostics provider."""
     global _shoonya_snapshot_provider
     _shoonya_snapshot_provider = provider
+
+
+def configure_shoonya_supervisor(provider) -> None:
+    """Configure the process-local Shoonya supervisor control reference."""
+    global _shoonya_supervisor_provider
+    _shoonya_supervisor_provider = provider
+
+
+class ShoonyaInstrumentInput(BaseModel):
+    exchange: str = Field(min_length=1, max_length=16)
+    segment: str = Field(min_length=1, max_length=16)
+    token: str = Field(min_length=1, max_length=64)
+    symbol: str = Field(min_length=1, max_length=128)
+    instrument_type: str = Field(min_length=1, max_length=16)
+    expiry: str | None = Field(default=None, max_length=32)
+    strike: float | None = Field(default=None, gt=0)
+    option_type: str | None = Field(default=None, pattern="^(CE|PE)$")
+    lot_size: int | None = Field(default=None, gt=0)
+    tick_size: float | None = Field(default=None, gt=0)
+    underlying: str | None = Field(default=None, max_length=64)
+
+    def to_descriptor(self) -> InstrumentDescriptor:
+        exchange = self.exchange.strip().upper()
+        segment = self.segment.strip().upper()
+        instrument_type = self.instrument_type.strip().lower()
+        if exchange not in {"NSE", "NFO", "BSE", "BFO", "MCX", "NCDEX"}:
+            raise ValueError("unsupported Shoonya exchange")
+        if instrument_type not in {"equity", "index", "future", "option", "commodity"}:
+            raise ValueError("unsupported instrument_type")
+        return InstrumentDescriptor(
+            key=InstrumentKey(exchange, segment, self.token.strip()),
+            symbol=self.symbol.strip(),
+            instrument_type=instrument_type,
+            exchange=exchange,
+            segment=segment,
+            expiry=self.expiry,
+            strike=self.strike,
+            option_type=self.option_type,
+            lot_size=self.lot_size,
+            tick_size=self.tick_size,
+            underlying=self.underlying.strip().upper() if self.underlying else None,
+        )
+
+
+class ShoonyaSubscriptionRequest(BaseModel):
+    instruments: list[ShoonyaInstrumentInput] = Field(min_length=1, max_length=500)
 
 
 @router.get("/shoonya-health")
@@ -55,6 +106,48 @@ def get_shoonya_health():
             "strategy_fanout_enabled": False,
         }
     return provider()
+
+
+@router.post("/shoonya/subscriptions")
+def add_shoonya_subscriptions(
+    payload: ShoonyaSubscriptionRequest,
+    _owner_id: int = Depends(require_real_owner_access),
+):
+    """Subscribe explicit instruments on the isolated Shoonya shadow feed."""
+    from app.core.config import settings
+
+    if not settings.SHOONYA_MARKET_DATA_ENABLED:
+        raise HTTPException(status_code=409, detail="Shoonya market data is disabled by server configuration")
+    supervisor = _shoonya_supervisor_provider
+    if supervisor is None:
+        raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
+    try:
+        descriptors = [item.to_descriptor() for item in payload.instruments]
+        count = supervisor.subscribe(descriptors)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Shoonya supervisor is not available") from exc
+    return {"broker": "shoonya", "mode": "shadow_only", "subscribed": count,
+            "order_routing_enabled": False, "strategy_fanout_enabled": False}
+
+
+@router.delete("/shoonya/subscriptions")
+def remove_shoonya_subscriptions(
+    payload: ShoonyaSubscriptionRequest,
+    _owner_id: int = Depends(require_real_owner_access),
+):
+    """Unsubscribe explicit instruments from the isolated Shoonya shadow feed."""
+    supervisor = _shoonya_supervisor_provider
+    if supervisor is None:
+        raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
+    try:
+        descriptors = [item.to_descriptor() for item in payload.instruments]
+        count = supervisor.unsubscribe(descriptors)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"broker": "shoonya", "mode": "shadow_only", "unsubscribed": count,
+            "order_routing_enabled": False, "strategy_fanout_enabled": False}
 
 
 
