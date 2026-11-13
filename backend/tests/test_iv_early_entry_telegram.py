@@ -58,8 +58,8 @@ def test_telegram_sender_posts_html_message_without_exposing_token(monkeypatch):
     assert "&lt;confirmed&gt;" in captured["body"]["text"]
     assert "no order placed" in captured["body"]["text"]
     assert "Change times (IST)" in captured["body"]["text"]
-    assert "CE 10:00:00" in captured["body"]["text"]
-    assert "CE history 09:58:20" in captured["body"]["text"]
+    assert "CE 02:50:00" in captured["body"]["text"]
+    assert "CE history 02:48:20" in captured["body"]["text"]
 
 
 def test_telegram_sender_fails_closed_without_credentials(monkeypatch):
