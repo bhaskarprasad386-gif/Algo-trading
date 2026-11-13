@@ -36,11 +36,13 @@ class ShoonyaWebSocket:
         self._lock = threading.RLock()
         self._ws = self._thread = self._dispatch_thread = None
         self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=max_dispatch_queue)
+        # Order lifecycle events are isolated from high-volume market ticks.
+        self._order_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=2048)
         self._descriptors: dict[tuple[str, str], InstrumentDescriptor] = {}
         self._snapshots: dict[tuple[str, str], dict[str, Any]] = {}
         self._connected = self._authenticated = False
         self._last_error = None
-        self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = 0
+        self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
         self._last_frame_at = self._last_tick_at = None
         self._normalizer = ShoonyaTickNormalizer()
 
@@ -53,6 +55,9 @@ class ShoonyaWebSocket:
                 if key in self._descriptors and self._descriptors[key] != d:
                     raise ValueError(f"conflicting Shoonya instrument descriptor: {key}")
                 self._descriptors[key] = d
+                if len(self._descriptors) > 500:
+                    self._descriptors.pop(key, None)
+                    raise ValueError("Shoonya supports at most 500 subscribed instruments per WebSocket connection")
             ws, ready = self._ws, self._authenticated
         if ready and ws is not None: self._send_subscriptions(ws)
         return len(batch)
@@ -95,6 +100,7 @@ class ShoonyaWebSocket:
                     "subscriptions": len(self._descriptors), "ticks_received": self._ticks_received,
                     "ticks_dispatched": self._ticks_dispatched, "dispatch_queue_depth": self._queue.qsize(),
                     "dispatch_queue_capacity": self._queue.maxsize, "dispatch_drops": self._dispatch_drops,
+                    "order_queue_depth": self._order_queue.qsize(), "order_update_drops": self._order_update_drops,
                     "reconnect_count": self._reconnect_count, "last_error": self._last_error,
                     "last_frame_at": self._last_frame_at, "last_tick_at": self._last_tick_at}
 
@@ -167,21 +173,40 @@ class ShoonyaWebSocket:
         self._enqueue("tick", record.as_dict())
 
     def _enqueue(self, kind: str, payload: dict[str, Any]) -> None:
-        try: self._queue.put_nowait((kind, payload))
+        target = self._order_queue if kind == "order" else self._queue
+        try:
+            target.put_nowait((kind, payload))
         except queue.Full:
-            with self._lock: self._dispatch_drops += 1
+            if kind == "order":
+                with self._lock:
+                    self._order_update_drops += 1
+                    ws = self._ws
+                # Never silently continue after losing an order lifecycle event.
+                self._emit_state("ORDER_FEED_OVERFLOW", "order update queue full; reconcile broker order book")
+                if ws is not None:
+                    try: ws.close()
+                    except Exception: pass
+            else:
+                with self._lock: self._dispatch_drops += 1
 
     def _dispatch_loop(self) -> None:
-        while not self._stop.is_set() or not self._queue.empty():
-            try: kind, payload = self._queue.get(timeout=0.2)
-            except queue.Empty: continue
+        while not self._stop.is_set() or not self._queue.empty() or not self._order_queue.empty():
+            try:
+                kind, payload = self._order_queue.get_nowait()
+                source_queue = self._order_queue
+            except queue.Empty:
+                try:
+                    kind, payload = self._queue.get(timeout=0.2)
+                    source_queue = self._queue
+                except queue.Empty:
+                    continue
             try:
                 callback = self._on_tick if kind == "tick" else self._on_order_update
                 if callback: callback(payload)
                 if kind == "tick":
                     with self._lock: self._ticks_dispatched += 1
             except Exception: app_logger.exception("Shoonya dispatch callback failed")
-            finally: self._queue.task_done()
+            finally: source_queue.task_done()
 
     def _on_error(self, ws: Any, error: Any) -> None:
         with self._lock:
