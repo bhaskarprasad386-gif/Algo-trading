@@ -102,12 +102,21 @@ class ShoonyaMarketDataSupervisor:
             added_descriptors = tuple(item for item in batch if item.key not in previous)
             self.register(batch)
             adapter_subscribed = False
+            start_attempted = False
             try:
                 count = self._adapter.subscribe(batch)
                 adapter_subscribed = True
+                start_attempted = True
                 self._adapter.start()
                 return count
             except Exception:
+                # A thread may have started before a later Thread.start() fails.
+                # Stop any partially-created workers before rolling back state.
+                if start_attempted:
+                    try:
+                        self._adapter.stop()
+                    except Exception as cleanup_error:
+                        app_logger.error("Shoonya start-failure stop cleanup failed: {}", self._safe_reason(str(cleanup_error)))
                 # Roll back only instruments introduced by this operation.
                 # The request may mix existing subscriptions with new ones;
                 # removing the full batch here would silently drop valid feeds.
