@@ -1750,7 +1750,15 @@ def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
             (group, 2): now_ns - 60_000_000_000,
             (group, 5): now_ns,
         })
-        manager._last_raw_frame_at_by_group[group] = time.monotonic()
+        # Model per-exchange transport silence explicitly: the shared shard
+        # still receives MCX frames, while its NSE/NFO subscriptions are silent.
+        now = time.monotonic()
+        manager._last_raw_frame_at_by_exchange_type.update({
+            (group, 1): now - 60.0,
+            (group, 2): now - 60.0,
+            (group, 5): now,
+        })
+        manager._last_raw_frame_at_by_group[group] = now
         manager._socket_created_at[group] -= 60.0
         snapshot = manager.snapshot()
         ages = snapshot["last_exchange_tick_age_seconds_by_exchange_type"]
