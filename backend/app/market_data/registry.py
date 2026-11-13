@@ -87,6 +87,17 @@ class InstrumentRegistry:
             self._instruments = staged
         return len(batch)
 
+    def unregister_many(self, keys: Iterable[InstrumentKey]) -> int:
+        """Remove unconsumed descriptors; active consumer registrations are retained."""
+        removed = 0
+        with self._lock:
+            for key in tuple(keys):
+                if key in self._consumers:
+                    continue
+                if self._instruments.pop(key, None) is not None:
+                    removed += 1
+        return removed
+
     def subscribe(self, consumer: str, key: InstrumentKey, mode: int = 1) -> Subscription:
         consumer = self._normalize_consumer(consumer)
         mode = self._validate_mode(mode)
