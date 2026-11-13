@@ -1,11 +1,9 @@
 name: VPS HTTPS + Nginx Configure
 # Endpoint repair run: keep Vercel HTTPS/WSS connectivity aligned with VPS.
 
+# Production VPS changes must be started manually after explicit approval.
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - frontend/lib/config.ts
 
 jobs:
   configure:
