@@ -14,6 +14,7 @@ from app.market_data.provider_quote_quality import (
 
 NOW = 50_000_000_000
 MAX_AGE = 5_000_000_000
+EXCHANGE_NOW = 1_800_000_000_000_000_000
 
 
 def _contract(strike="22000"):
@@ -36,7 +37,7 @@ def _quote(provider, *, contract=None, received=NOW - 1_000_000_000, **overrides
         "authenticated": True,
         "connection_current": True,
         # Epoch timestamp intentionally differs from monotonic receive clock.
-        "exchange_timestamp_ns": 1_800_000_000_000_000_000,
+        "exchange_timestamp_ns": EXCHANGE_NOW - 1_000_000_000,
         "received_monotonic_ns": received,
         "bid": "100.00",
         "ask": "100.05",
@@ -51,7 +52,7 @@ def _quote(provider, *, contract=None, received=NOW - 1_000_000_000, **overrides
 def test_fresh_same_contract_quotes_are_comparable_without_source_selection():
     result = compare_provider_quotes(
         _quote("angel"), _quote("shoonya"),
-        now_monotonic_ns=NOW, max_age_ns=MAX_AGE,
+        now_monotonic_ns=NOW, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=MAX_AGE,
     )
     assert result.state is QuoteQualityState.COMPARABLE
     assert result.left.fresh and result.right.fresh
@@ -107,6 +108,7 @@ def test_invalid_quote_fields_are_reported(override, reason):
     result = assess_quote(
         _quote("angel", **override),
         now_monotonic_ns=NOW,
+        now_exchange_timestamp_ns=EXCHANGE_NOW,
         max_age_ns=MAX_AGE,
     )
     assert result.valid is False
@@ -125,7 +127,7 @@ def test_future_local_receive_time_is_not_mistaken_for_freshness():
 
 def test_age_uses_monotonic_receive_clock_not_exchange_epoch_timestamp():
     result = assess_quote(
-        _quote("angel", exchange_timestamp_ns=1),
+        _quote("angel", exchange_timestamp_ns=EXCHANGE_NOW - 2_000_000_000),
         now_monotonic_ns=NOW,
         max_age_ns=MAX_AGE,
     )
@@ -136,6 +138,6 @@ def test_age_uses_monotonic_receive_clock_not_exchange_epoch_timestamp():
 def test_invalid_clock_limits_are_rejected():
     quote = _quote("angel")
     with pytest.raises(ValueError, match="now_monotonic_ns"):
-        assess_quote(quote, now_monotonic_ns=-1, max_age_ns=MAX_AGE)
+        assess_quote(quote, now_monotonic_ns=-1, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=MAX_AGE)
     with pytest.raises(ValueError, match="max_age_ns"):
-        assess_quote(quote, now_monotonic_ns=NOW, max_age_ns=0)
+        assess_quote(quote, now_monotonic_ns=NOW, now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=0)
