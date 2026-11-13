@@ -57,6 +57,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     if (any(b.timestamp_ns <= 0 or b.timestamp_ns > now_ns for b in last_bars)
             or any(b <= a for a, b in zip(stamps, stamps[1:]))):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BUCKET_ORDER",))
+    if now_ns-last_bars[-1].timestamp_ns > 120*1_000_000_000:
+        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_SPOT_HISTORY",))
     if any(not (_positive(b.open) and _positive(b.high) and _positive(b.low) and _positive(b.close))
            or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high)
            for b in last_bars):
@@ -88,6 +90,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         if any(row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
                or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_TIMESTAMP",))
+        if any(now_ns-row.oi_timestamp_ns > 300*1_000_000_000 for row in series):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_HISTORICAL_OI",))
 
     # Each feed is asynchronous. Compare ordered changes from each source;
     # do not require CE, PE, target and spot to share a minute or cadence.
@@ -101,6 +105,10 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         if (row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
                 or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_LIVE_TIMESTAMP",))
+        if now_ns-row.source_timestamp_ns > 5*1_000_000_000:
+            return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_OPTION_QUOTE",))
+        if now_ns-row.spot_timestamp_ns > 5*1_000_000_000:
+            return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_SPOT",))
         # A recently sampled snapshot may still contain the exact last quote
         # from the prior captured event. Require each live leg to advance its
         # source-event key; this prevents reusing an unchanged snapshot without
@@ -237,6 +245,9 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if (entry_quote.source_timestamp_ns > now_ns or entry_quote.spot_timestamp_ns > now_ns
             or entry_quote.oi_timestamp_ns is None or entry_quote.oi_timestamp_ns > now_ns):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_ENTRY_TIMESTAMP",))
+    if (now_ns-entry_quote.source_timestamp_ns > 5*1_000_000_000
+            or now_ns-entry_quote.spot_timestamp_ns > 5*1_000_000_000):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_ENTRY_QUOTE",))
     if abs(entry_quote.spot_price-latest.spot_price) > 5:
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_ENTRY_SPOT",))
     if any(row.oi is None for row in wall_rows) or not (wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi):
