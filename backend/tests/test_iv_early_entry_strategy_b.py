@@ -25,8 +25,7 @@ def test_strategy_b_early_support_bounce_before_second_candle_confirmation():
     result = evaluate_strategy_b(now_ns=now, expiry="2026-11-19",
         spot_bars=bars, ce_wall_history=[], pe_wall_history=wall,
         entry_quote=entry, direction="BULLISH")
-    assert result.state == AlertState.WATCH
-    assert "STALE_WALL_OBSERVATION" in result.reasons
+    assert result.state == AlertState.EARLY_ENTRY
     assert result.candidate is not None
     assert result.candidate.option_type == "CE"
     assert result.candidate.premium == 101.0
@@ -109,13 +108,13 @@ def test_strategy_b_rejects_stale_oi_in_earlier_wall_observation():
     now = 1_800_000_000 * NS
     wall = [wall_observation(token="PE25000", option_type="PE", ts=now-(2-i)*60*NS,
         strike=25000, iv=[12.0, 11.95, 11.80][i], oi=[10000, 10100, 10300][i]) for i in range(3)]
-    # All wall observations are more than five minutes old, including the
-    # newest wall sample. Age is not a signal gate; event ordering and the
-    # OI pattern remain mandatory.
+    # Keep wall quote/spot events recent and ordered, but make the historical
+    # OI snapshots older than five minutes. OI freshness is independent of
+    # quote freshness and must prevent a stale wall from authorizing an alert.
     wall = [
-        replace(row, source_timestamp_ns=now-(7-i)*60*NS,
-                spot_timestamp_ns=now-(7-i)*60*NS,
-                oi_timestamp_ns=now-(7-i)*60*NS)
+        replace(row, source_timestamp_ns=now-(60-15*i)*NS,
+                spot_timestamp_ns=now-(60-15*i)*NS,
+                oi_timestamp_ns=now-(600-10*i)*NS)
         for i, row in enumerate(wall)
     ]
     bars = [
@@ -130,4 +129,5 @@ def test_strategy_b_rejects_stale_oi_in_earlier_wall_observation():
         ce_wall_history=[], pe_wall_history=wall,
         entry_quote=entry, direction="BULLISH",
     )
-    assert result.state == AlertState.EARLY_ENTRY
+    assert result.state == AlertState.WATCH
+    assert "STALE_WALL_OBSERVATION" in result.reasons
