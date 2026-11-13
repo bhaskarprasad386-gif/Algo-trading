@@ -2,7 +2,7 @@ from datetime import date, datetime, time, timedelta
 from threading import Lock
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Query, HTTPException, Depends
+from fastapi import APIRouter, Query, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
 from app.core.exceptions import TradingAppException
@@ -102,7 +102,7 @@ def _shoonyadescriptors(payload: ShoonyaSubscriptionRequest) -> list[InstrumentD
 
 
 @router.post("/shoonya/owner-auth/login")
-def shoonya_owner_login(payload: ShoonyaOwnerLogin, request=None):
+def shoonya_owner_login(payload: ShoonyaOwnerLogin, request: Request):
     """Issue a short-lived token scoped only to Shoonya shadow-feed controls."""
     return login_shoonya_owner(payload, request)
 
