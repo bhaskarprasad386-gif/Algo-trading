@@ -88,6 +88,13 @@ def assess_quote(
     if not observation.connection_current:
         reasons.append("connection_generation_not_current")
 
+    received_at = observation.received_monotonic_ns
+    if isinstance(received_at, bool) or not isinstance(received_at, int) or received_at < 0:
+        reasons.append("invalid_receive_timestamp")
+        age_ns = None
+    else:
+        age_ns = None
+
     timestamp = observation.exchange_timestamp_ns
     if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0:
         reasons.append("exchange_timestamp_missing")
@@ -95,7 +102,7 @@ def assess_quote(
     else:
         # Exchange time is epoch-based; freshness uses the local monotonic
         # receive clock and must never compare those different clock domains.
-        age_ns = now_monotonic_ns - observation.received_monotonic_ns
+        age_ns = now_monotonic_ns - received_at if not any(r == "invalid_receive_timestamp" for r in reasons) else None
         if age_ns < 0:
             reasons.append("receive_time_in_future")
             age_ns = None
@@ -116,6 +123,8 @@ def assess_quote(
         reasons.append("invalid_bid_size")
     if ask_size is None:
         reasons.append("invalid_ask_size")
+    if observation.depth_complete is not True:
+        reasons.append("depth_incomplete")
 
     valid = not any(reason not in {"quote_stale"} for reason in reasons)
     fresh = valid and age_ns is not None and age_ns <= max_age_ns
@@ -149,7 +158,7 @@ def compare_provider_quotes(
         state = QuoteQualityState.COMPARABLE
     elif left_result.fresh or right_result.fresh:
         state = QuoteQualityState.SINGLE_SOURCE_FRESH
-    elif left_result.valid or right_result.valid:
+    elif left_result.valid and right_result.valid:
         state = QuoteQualityState.BOTH_STALE
     else:
         state = QuoteQualityState.NO_VALID_QUOTE
