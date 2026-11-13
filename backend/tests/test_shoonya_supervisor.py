@@ -284,3 +284,47 @@ def test_adapter_rejection_does_not_unsubscribe_existing_adapter_token(monkeypat
         raise AssertionError("adapter token conflict must be rejected")
     assert supervisor._adapter.descriptors[("NFO", existing.key.token)] == existing
     assert supervisor.snapshot()["registry_instruments"] == 1
+
+
+def test_supervisor_rejects_same_adapter_token_with_different_segment(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    original = descriptor()
+    supervisor.subscribe([original])
+    conflicting = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "OTHER", original.key.token),
+        symbol=original.symbol, instrument_type=original.instrument_type,
+        exchange="NFO", segment="OTHER", expiry=original.expiry,
+        strike=original.strike, option_type=original.option_type,
+        lot_size=original.lot_size, tick_size=original.tick_size,
+        underlying=original.underlying,
+    )
+    try:
+        supervisor.subscribe([conflicting])
+    except ValueError as exc:
+        assert "adapter token" in str(exc)
+    else:
+        raise AssertionError("same broker token cannot have multiple segment descriptors")
+    assert supervisor._adapter.descriptors[("NFO", original.key.token)] == original
+    assert supervisor.snapshot()["registry_instruments"] == 1
+
+
+def test_supervisor_rejects_mismatched_unsubscribe_without_removing_live_token(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    original = descriptor()
+    supervisor.subscribe([original])
+    wrong = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "OTHER", original.key.token),
+        symbol=original.symbol, instrument_type=original.instrument_type,
+        exchange="NFO", segment="OTHER", expiry=original.expiry,
+        strike=original.strike, option_type=original.option_type,
+        lot_size=original.lot_size, tick_size=original.tick_size,
+        underlying=original.underlying,
+    )
+    try:
+        supervisor.unsubscribe([wrong])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("mismatched unsubscribe descriptor must be rejected")
+    assert supervisor._adapter.descriptors[("NFO", original.key.token)] == original
+    assert supervisor.snapshot()["registry_instruments"] == 1
