@@ -45,6 +45,7 @@ class AngelShardCallbackAdapter:
         self._accepted = self._overflow = self._stale = 0
         self._discarded = self._copy_errors = 0
         self._processed = self._callback_errors = 0
+        self._callback_attempts = self._callback_successes = 0
         self._integrity_fault = False
         self._last_error: str | None = None
 
@@ -122,6 +123,8 @@ class AngelShardCallbackAdapter:
                         self._stale += 1
                 if current:
                     for invocation in batch.invocations:
+                        with self._lock:
+                            self._callback_attempts += 1
                         try:
                             invocation.callback(invocation.payload)
                         except Exception as exc:
@@ -131,6 +134,9 @@ class AngelShardCallbackAdapter:
                                     f"{invocation.callback_kind}: "
                                     f"{type(exc).__name__}: {exc}"
                                 )[:240]
+                        else:
+                            with self._lock:
+                                self._callback_successes += 1
                     with self._lock:
                         self._processed += 1
             finally:
@@ -197,8 +203,11 @@ class AngelShardCallbackAdapter:
                 "overflow_batches": self._overflow,
                 "discarded_batches": self._discarded,
                 "payload_copy_errors": self._copy_errors,
+                "callback_attempts": self._callback_attempts,
+                "callback_successes": self._callback_successes,
                 "callback_errors": self._callback_errors,
                 "integrity_fault": self._integrity_fault,
+                "delivery_status": "DEGRADED" if self._integrity_fault else "HEALTHY",
                 "last_error": self._last_error,
                 "running": bool(self._thread and self._thread.is_alive()),
                 "closed": self._closed,
