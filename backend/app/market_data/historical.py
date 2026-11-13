@@ -8,6 +8,19 @@ from app.core.logger import app_logger
 
 
 class HistoricalDataClient:
+    @staticmethod
+    def _is_rate_limit_error(error: Any) -> bool:
+        """Recognize provider throttling so retries do not amplify the limit."""
+        message = str(error).strip().lower()
+        return any(marker in message for marker in (
+            "exceeding access rate",
+            "access rate exceeded",
+            "rate limit",
+            "too many requests",
+            "http 429",
+            "status code 429",
+        ))
+
     """Wrapper for Angel One historical candle data with bounded retry/backoff."""
 
     def __init__(
@@ -81,18 +94,21 @@ class HistoricalDataClient:
                 )
             except TradingAppException as exc:
                 last_error = exc
-                # API-level failures may be rate limits/transient gateway errors.
+                if self._is_rate_limit_error(exc):
+                    app_logger.warning("Angel One historical endpoint rate-limited; skipping retries")
+                    raise TradingAppException("HistoricalDataRateLimited", str(exc), 429) from exc
                 if attempt >= self.max_retries:
                     raise
             except Exception as exc:
                 last_error = exc
+                if self._is_rate_limit_error(exc):
+                    app_logger.warning("Angel One historical endpoint rate-limited; skipping retries")
+                    raise TradingAppException("HistoricalDataRateLimited", str(exc), 429) from exc
                 if attempt >= self.max_retries:
                     app_logger.error(f"Historical data request failed: {str(exc)}")
                     raise TradingAppException(
-                        "HistoricalDataRequestError",
-                        str(exc),
-                        502,
-                    )
+                        "HistoricalDataRequestError", str(exc), 502
+                    ) from exc
 
             delay = self.backoff_seconds * (2**attempt)
             if delay:
