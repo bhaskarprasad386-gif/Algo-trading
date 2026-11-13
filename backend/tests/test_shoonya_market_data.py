@@ -223,17 +223,17 @@ def test_concurrent_subscribe_then_unsubscribe_preserves_wire_order():
 
     unsubscribe_thread = threading.Thread(target=feed.unsubscribe, args=([instrument],))
     unsubscribe_thread.start()
-    # unsubscribe removes local state before waiting for the serialized wire send
-    for _ in range(100):
-        if feed.snapshot()["subscriptions"] == 0:
-            break
-        threading.Event().wait(0.01)
-    assert feed.snapshot()["subscriptions"] == 0
+    # The shared lock protects desired state as well as wire writes: while
+    # subscribe is sending, unsubscribe must not publish a premature local
+    # removal that could diverge from the broker's eventual wire state.
+    assert feed.snapshot()["subscriptions"] == 1
+    assert unsubscribe_thread.is_alive()
 
     release_send.set()
     subscribe_thread.join(timeout=1)
     unsubscribe_thread.join(timeout=1)
     assert not subscribe_thread.is_alive() and not unsubscribe_thread.is_alive()
+    assert feed.snapshot()["subscriptions"] == 0
     assert [frame["t"] for frame in sent] == ["t", "u"]
 
 
