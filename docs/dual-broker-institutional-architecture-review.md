@@ -169,3 +169,21 @@ Important operational boundary:
 - The report separates accepted and quarantined rows; a later publisher must apply a reviewed per-source completeness threshold. Never publish a partial master merely because some rows parsed.
 - Angel One and Shoonya schemas vary by instrument family and file revision. Current tests are synthetic fixtures, not evidence that every live provider row family is covered.
 - Parser output is not wired to `InstrumentRegistry`, Box Spread, IV Scanner, or broker subscriptions. Existing live behavior is unchanged.
+
+## 9. Batch 5 expanded implementation — dual-master gate
+
+The parser layer now includes a guarded dual-source publication function:
+- Requires exactly one Angel One report and one Shoonya report.
+- Rejects empty reports and reports with no accepted rows.
+- Applies a configurable maximum row rejection ratio (default 2%); the caller must tune this only after measuring the exact official master schema and scope.
+- Combines both original source-file SHA-256 values into a deterministic snapshot digest.
+- Calls the registry's single atomic replacement only after both source reports pass. A broker missing, rejected source, stale timestamp, duplicate mapping, or cross-broker lot/tick mismatch leaves the previous snapshot intact.
+- Keeps provider tokens opaque and case-sensitive. Broker, exchange and segment are normalized separately.
+
+Parser precision:
+- Angel One option strike and tick size are divided by 100 based on the published integer-scaled master representation; this assumption is encoded in the parser and fixtures, not dynamically guessed.
+- Shoonya strike and tick scales are explicit call parameters (default 1). Confirm the official file's exact header, segment, strike and tick representation before setting production values.
+- Angel CE/PE may be obtained from an explicit option-right field or the exact trading-symbol suffix. No substring heuristics are used.
+- Synthetic tests cover the expected JSON/CSV layouts and atomic rollback. They are not a substitute for capturing and validating current official master files from both brokers.
+
+Do not connect this publisher to startup or periodic jobs yet. The next integration gate requires official sample files for the relevant NFO/BFO/MCX segments, explicit supported instrument-family scope, measured quarantine rates, and a dry-run report showing canonical pair coverage and every mismatch category. No scanner or broker subscription is wired to the new registry.
