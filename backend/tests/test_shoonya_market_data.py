@@ -143,3 +143,27 @@ def test_reconnect_clears_previous_snapshot_before_new_incremental_frames():
         "lp": "101.00", "ft": "1794551795"}))
     assert feed.snapshot()["ticks_received"] == 1
     assert ("NFO", "12345") not in feed._snapshots
+
+
+def test_subscription_send_failure_marks_error_and_closes_socket():
+    closed = []
+    def fail_send(_frame):
+        raise OSError("socket unavailable")
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    fake_ws = SimpleNamespace(send=fail_send, close=lambda: closed.append(True))
+    feed.subscribe([descriptor()])
+    feed._send_subscriptions(fake_ws)
+    assert closed
+    assert "socket unavailable" in feed.snapshot()["last_error"]
+
+
+def test_unsubscribe_send_failure_marks_error_and_closes_socket():
+    closed = []
+    def fail_send(_frame):
+        raise OSError("socket unavailable")
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    feed._ws, feed._authenticated = SimpleNamespace(send=fail_send, close=lambda: closed.append(True)), True
+    assert feed.unsubscribe([descriptor()]) == 1
+    assert closed
+    assert "socket unavailable" in feed.snapshot()["last_error"]
