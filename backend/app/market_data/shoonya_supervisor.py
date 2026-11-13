@@ -87,17 +87,21 @@ class ShoonyaMarketDataSupervisor:
                     raise RuntimeError("Shoonya supervisor is stopped")
                 previous = dict(self._descriptors)
             self.register(batch)
+            adapter_subscribed = False
             try:
                 count = self._adapter.subscribe(batch)
+                adapter_subscribed = True
                 self._adapter.start()
                 return count
             except Exception:
-                # Best-effort adapter cleanup is required if start fails after
-                # subscribe has already mutated the adapter's descriptor set.
-                try:
-                    self._adapter.unsubscribe(batch)
-                except Exception as cleanup_error:
-                    app_logger.error("Shoonya subscription rollback cleanup failed: %s", self._safe_reason(str(cleanup_error)))
+                # Only undo adapter state if subscribe completed. An adapter
+                # rejection may refer to a pre-existing token with a different
+                # segment descriptor; blindly unsubscribing would remove it.
+                if adapter_subscribed:
+                    try:
+                        self._adapter.unsubscribe(batch)
+                    except Exception as cleanup_error:
+                        app_logger.error("Shoonya subscription rollback cleanup failed: %s", self._safe_reason(str(cleanup_error)))
                 with self._lock:
                     added_keys = set(self._descriptors) - set(previous)
                     self._descriptors = previous
