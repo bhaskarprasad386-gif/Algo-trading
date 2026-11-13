@@ -449,8 +449,10 @@ class ShoonyaWebSocket:
     def _on_close(self, ws: Any, status_code: Any, message: Any) -> None:
         with self._lock:
             self._connected = self._authenticated = False
-            timed_out = bool(self._last_error and self._last_error.startswith("broker frame timeout:"))
-            timeout_reason = self._last_error if timed_out else None
+            frame_timed_out = bool(self._last_error and self._last_error.startswith("broker frame timeout:"))
+            auth_timed_out = bool(self._last_error and self._last_error.startswith("authentication acknowledgement timeout:"))
+            timeout_reason = self._last_error if frame_timed_out or auth_timed_out else None
         if not self._stop.is_set():
             reason = self._safe_error_text(timeout_reason or message or status_code or "socket closed")
-            self._emit_state("DEGRADED" if timed_out else "DISCONNECTED", reason)
+            state = "AUTH_TIMEOUT" if auth_timed_out else ("DEGRADED" if frame_timed_out else "DISCONNECTED")
+            self._emit_state(state, reason)
