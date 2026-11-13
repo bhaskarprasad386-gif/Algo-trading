@@ -34,6 +34,7 @@ class ShoonyaMarketDataSupervisor:
             raise ValueError("max_tokens must be between 1 and 500")
         self.registry = InstrumentRegistry()
         self._lock = RLock()
+        self._operation_lock = RLock()
         self._enabled = True
         self._max_tokens = int(max_tokens)
         self._descriptors: dict[Any, InstrumentDescriptor] = {}
@@ -60,72 +61,80 @@ class ShoonyaMarketDataSupervisor:
         batch = tuple(descriptors)
         if not batch:
             return 0
-        with self._lock:
-            if not self._enabled:
-                raise RuntimeError("Shoonya supervisor is stopped")
-            staged = dict(self._descriptors)
-            for item in batch:
-                previous = staged.get(item.key)
-                if previous is not None and previous != item:
-                    raise ValueError(f"conflicting Shoonya instrument descriptor: {item.key.value}")
-                staged[item.key] = item
-            if len(staged) > self._max_tokens:
-                raise ValueError(f"Shoonya subscription cap exceeded ({self._max_tokens})")
-            self.registry.register_many(batch)
-            self._descriptors = staged
-            return len(batch)
+        with self._operation_lock:
+            with self._lock:
+                if not self._enabled:
+                    raise RuntimeError("Shoonya supervisor is stopped")
+                staged = dict(self._descriptors)
+                for item in batch:
+                    previous = staged.get(item.key)
+                    if previous is not None and previous != item:
+                        raise ValueError(f"conflicting Shoonya instrument descriptor: {item.key.value}")
+                    staged[item.key] = item
+                if len(staged) > self._max_tokens:
+                    raise ValueError(f"Shoonya subscription cap exceeded ({self._max_tokens})")
+                self.registry.register_many(batch)
+                self._descriptors = staged
+                return len(batch)
 
     def subscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
         batch = tuple(descriptors)
         if not batch:
             return 0
-        # Keep registry ownership transactional with the adapter's own hard
-        # validation. If the adapter rejects the batch, restore the previous
-        # descriptor set so a failed subscribe cannot consume capacity.
-        with self._lock:
-            if not self._enabled:
-                raise RuntimeError("Shoonya supervisor is stopped")
-            previous = dict(self._descriptors)
-        self.register(batch)
-        try:
-            count = self._adapter.subscribe(batch)
+        with self._operation_lock:
             with self._lock:
-                should_start = self._enabled
-            if should_start:
+                if not self._enabled:
+                    raise RuntimeError("Shoonya supervisor is stopped")
+                previous = dict(self._descriptors)
+            self.register(batch)
+            try:
+                count = self._adapter.subscribe(batch)
                 self._adapter.start()
-            return count
-        except Exception:
-            with self._lock:
-                self._descriptors = previous
-            raise
+                return count
+            except Exception:
+                # Best-effort adapter cleanup is required if start fails after
+                # subscribe has already mutated the adapter's descriptor set.
+                try:
+                    self._adapter.unsubscribe(batch)
+                except Exception as cleanup_error:
+                    app_logger.error("Shoonya subscription rollback cleanup failed: %s", self._safe_reason(str(cleanup_error)))
+                with self._lock:
+                    added_keys = set(self._descriptors) - set(previous)
+                    self._descriptors = previous
+                    self.registry.unregister_many(added_keys)
+                raise
 
     def unsubscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
         batch = tuple(descriptors)
         if not batch:
             return 0
-        removed = self._adapter.unsubscribe(batch)
-        with self._lock:
-            for item in batch:
-                self._descriptors.pop(item.key, None)
-            if not self._descriptors:
-                self._last_state = "IDLE_NO_SUBSCRIPTIONS"
-        return removed
+        with self._operation_lock:
+            removed = self._adapter.unsubscribe(batch)
+            with self._lock:
+                for item in batch:
+                    self._descriptors.pop(item.key, None)
+                self.registry.unregister_many(item.key for item in batch)
+                if not self._descriptors:
+                    self._last_state = "IDLE_NO_SUBSCRIPTIONS"
+            return removed
 
     def start(self) -> None:
         """Start only when an explicit subscription set has been registered."""
-        with self._lock:
-            if not self._enabled:
-                raise RuntimeError("Shoonya supervisor is stopped")
-            has_subscriptions = bool(self._adapter.snapshot()["subscriptions"])
-        if has_subscriptions:
-            self._adapter.start()
+        with self._operation_lock:
+            with self._lock:
+                if not self._enabled:
+                    raise RuntimeError("Shoonya supervisor is stopped")
+                has_subscriptions = bool(self._descriptors)
+            if has_subscriptions:
+                self._adapter.start()
 
     def stop(self) -> None:
-        with self._lock:
-            if not self._enabled:
-                return
-            self._enabled = False
-        self._adapter.stop()
+        with self._operation_lock:
+            with self._lock:
+                if not self._enabled:
+                    return
+                self._enabled = False
+            self._adapter.stop()
 
     def _observe_tick(self, record: dict[str, Any]) -> None:
         # Shadow-only telemetry: intentionally no strategy, persistence, or order side effect.
