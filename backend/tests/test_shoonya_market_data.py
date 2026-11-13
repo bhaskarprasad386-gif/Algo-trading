@@ -108,6 +108,24 @@ def test_authentication_ack_is_required_before_market_subscription():
     assert json.loads(sent[-1]) == {"t": "t", "k": "NFO|12345"}
 
 
+def test_duplicate_auth_ack_does_not_duplicate_market_or_order_subscriptions():
+    sent = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_order_update=lambda event: None,
+    )
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._on_open(fake_ws)
+    ack = json.dumps({"t": "ak", "s": "OK"})
+    feed._on_message(fake_ws, ack)
+    feed._on_message(fake_ws, ack)
+
+    frame_types = [json.loads(frame)["t"] for frame in sent]
+    assert frame_types == ["a", "t", "o"]
+    assert feed.snapshot()["authenticated"]
+
+
 def test_rejected_authentication_never_subscribes_and_state_survives_close():
     sent, closed, states = [], [], []
     feed = ShoonyaWebSocket(
