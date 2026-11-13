@@ -123,7 +123,7 @@ def test_duplicate_auth_ack_does_not_duplicate_market_or_order_subscriptions():
     feed._on_message(fake_ws, ack)
 
     frame_types = [json.loads(frame)["t"] for frame in sent]
-    assert frame_types == ["a", "t", "o"]
+    assert frame_types == ["a", "t"]
     assert feed.snapshot()["authenticated"]
 
 
@@ -782,26 +782,30 @@ def test_reconnect_backoff_uses_bounded_jitter(monkeypatch):
     assert bounds[-1] == (24.0, 30.0)
 
 
-def test_authenticated_session_subscribes_order_feed_when_callback_configured():
+def test_order_updates_arrive_after_auth_without_separate_subscription_frame():
+    received = []
     sent = []
     feed = ShoonyaWebSocket(
         uid="U1", actid="ACT123", access_token="token",
-        on_order_update=lambda event: None,
+        on_order_update=received.append,
     )
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
     feed._ws = fake_ws
 
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
+    feed._on_message(fake_ws, json.dumps({
+        "t": "om", "actid": "ACT123", "norenordno": "ORDER-1",
+        "status": "COMPLETE", "reporttype": "Fill",
+    }))
 
     frames = [json.loads(frame) for frame in sent]
-    assert frames == [
-        {"t": "t", "k": "NFO|12345"},
-        {"t": "o", "actid": "ACT123"},
-    ]
+    assert frames == [{"t": "t", "k": "NFO|12345"}]
+    assert feed.snapshot()["order_queue_depth"] == 1
+    assert feed.snapshot()["authenticated"]
 
 
-def test_order_feed_subscription_is_replayed_after_authenticated_reconnect():
+def test_order_updates_continue_to_use_independent_queue_after_reconnect():
     sent = []
     feed = ShoonyaWebSocket(
         uid="U1", actid="ACT123", access_token="token",
@@ -816,20 +820,28 @@ def test_order_feed_subscription_is_replayed_after_authenticated_reconnect():
     feed._ws = new_ws
 
     feed._on_message(new_ws, json.dumps({"t": "ak", "s": "OK"}))
+    feed._on_message(new_ws, json.dumps({
+        "t": "om", "actid": "ACT123", "norenordno": "ORDER-2",
+        "status": "REJECTED", "reporttype": "Rejected",
+    }))
 
     frames = [json.loads(frame) for frame in sent]
-    assert frames == [
-        {"t": "t", "k": "NFO|12345"},
-        {"t": "o", "actid": "ACT123"},
-    ]
+    assert frames == [{"t": "t", "k": "NFO|12345"}]
+    assert feed.snapshot()["order_queue_depth"] == 1
+    assert feed.snapshot()["authenticated"]
 
 
-def test_order_feed_is_not_subscribed_without_order_callback():
+def test_order_updates_are_ignored_when_no_order_callback_is_configured():
     sent = []
     feed = ShoonyaWebSocket(uid="U1", actid="ACT123", access_token="token")
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
     feed._ws = fake_ws
 
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
+    feed._on_message(fake_ws, json.dumps({
+        "t": "om", "actid": "ACT123", "norenordno": "ORDER-3",
+        "status": "COMPLETE", "reporttype": "Fill",
+    }))
 
     assert sent == []
+    assert feed.snapshot()["order_queue_depth"] == 0
