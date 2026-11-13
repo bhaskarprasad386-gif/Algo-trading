@@ -210,3 +210,18 @@ Additional validation refinements:
 **Not yet verified:** GitHub Actions has not produced a workflow run for the latest head. The current status check visible on the commit is Vercel; its failure is a deployment-rate-limit status, not a backend test result. Synthetic fixtures do not establish that current live Angel/Shoonya master headers and numeric scales are correct for every supported segment.
 
 **No integration activation:** no scheduled fetch, broker authentication, database persistence, Redis, scanner fan-out, WebSocket subscription change, source failover, order routing, VPS deployment or merge has been performed.
+
+
+## 12. Batch 6 — bounded provider ingress primitives
+
+Added `backend/app/market_data/provider_ingress.py` as an additive, currently unwired transport boundary:
+- Immutable provider envelope carries provider, connection generation, exchange/token, event type, provider timestamp, wall-clock receive time and monotonic receive time.
+- Payloads are detached from the callback's original object and recursively frozen so nested quote/depth structures cannot be mutated after enqueue.
+- Independent bounded FIFO lanes are configured separately for market ticks and order lifecycle events. No coalescing or silent tick overwrite is implemented.
+- Publish is non-blocking. A full queue increments overflow and latches an explicit integrity fault; the caller must degrade the affected provider/shard rather than continue claiming healthy data.
+- Generation fencing rejects late callbacks from retired connections. The consumer-side `get_current()` also discards already-queued frames from older generations after reconnect.
+- Snapshot exposes capacity, depth, accepted, wrong-provider, stale-generation, stale-dequeued, overflow and integrity-fault counters.
+
+Regression tests cover queue overflow, stale callbacks, queued stale frames, provider mismatch, close behavior, generation monotonicity, independent market/order lanes, and nested payload immutability.
+
+**Integration intentionally deferred:** Neither Angel nor Shoonya socket callbacks are wired to this queue yet. No scanner receives these envelopes, no subscription behavior changes, and no production runtime setting changes. The next integration step must add transport-generation ownership at each broker callback boundary, preserve existing callback consumers during migration, and test shutdown/drain behavior before any live connection is switched over.
