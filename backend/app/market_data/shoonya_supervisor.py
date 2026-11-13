@@ -95,6 +95,7 @@ class ShoonyaMarketDataSupervisor:
                 if not self._enabled:
                     raise RuntimeError("Shoonya supervisor is stopped")
                 previous = dict(self._descriptors)
+            added_descriptors = tuple(item for item in batch if item.key not in previous)
             self.register(batch)
             adapter_subscribed = False
             try:
@@ -103,12 +104,12 @@ class ShoonyaMarketDataSupervisor:
                 self._adapter.start()
                 return count
             except Exception:
-                # Only undo adapter state if subscribe completed. An adapter
-                # rejection may refer to a pre-existing token with a different
-                # segment descriptor; blindly unsubscribing would remove it.
-                if adapter_subscribed:
+                # Roll back only instruments introduced by this operation.
+                # The request may mix existing subscriptions with new ones;
+                # removing the full batch here would silently drop valid feeds.
+                if adapter_subscribed and added_descriptors:
                     try:
-                        self._adapter.unsubscribe(batch)
+                        self._adapter.unsubscribe(added_descriptors)
                     except Exception as cleanup_error:
                         app_logger.error("Shoonya subscription rollback cleanup failed: %s", self._safe_reason(str(cleanup_error)))
                 with self._lock:
