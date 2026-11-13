@@ -55,7 +55,7 @@ from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_L
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
-from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot
+from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
@@ -390,8 +390,10 @@ async def lifespan(app: FastAPI):
             reconnect_max_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS,
         )
         configure_shoonya_snapshot(shoonya_market_data_supervisor.snapshot)
+        configure_shoonya_supervisor(lambda: shoonya_market_data_supervisor)
     elif not settings.SHOONYA_MARKET_DATA_ENABLED:
         configure_shoonya_snapshot(None)
+        configure_shoonya_supervisor(None)
     # Restore the opt-in IV Scanner asynchronously after lifespan startup.
     # The API must become available even while Angel One's static master host
     # is timing out; the recovery task below owns retries and cache validation.
@@ -422,6 +424,7 @@ async def lifespan(app: FastAPI):
             shoonya_market_data_supervisor.stop()
             shoonya_market_data_supervisor = None
             configure_shoonya_snapshot(None)
+            configure_shoonya_supervisor(None)
         # IV scanner is opt-in and owns only its named shared-feed consumers.
         if iv_skew_flip_runtime is not None:
             iv_skew_flip_runtime.stop()
