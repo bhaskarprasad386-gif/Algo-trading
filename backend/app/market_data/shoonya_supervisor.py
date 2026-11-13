@@ -36,6 +36,7 @@ class ShoonyaMarketDataSupervisor:
         self._lock = RLock()
         self._enabled = True
         self._max_tokens = int(max_tokens)
+        self._descriptors: dict[Any, InstrumentDescriptor] = {}
         self._last_tick_at: float | None = None
         self._ticks_observed = 0
         self._order_events_observed = 0
@@ -61,12 +62,16 @@ class ShoonyaMarketDataSupervisor:
         with self._lock:
             if not self._enabled:
                 raise RuntimeError("Shoonya supervisor is stopped")
-            current = len(self.registry.active_keys())
-            known = {key for key in self.registry.active_keys()}
-            new_keys = {item.key for item in batch} - known
-            if current + len(new_keys) > self._max_tokens:
+            staged = dict(self._descriptors)
+            for item in batch:
+                previous = staged.get(item.key)
+                if previous is not None and previous != item:
+                    raise ValueError(f"conflicting Shoonya instrument descriptor: {item.key.value}")
+                staged[item.key] = item
+            if len(staged) > self._max_tokens:
                 raise ValueError(f"Shoonya subscription cap exceeded ({self._max_tokens})")
             self.registry.register_many(batch)
+            self._descriptors = staged
             return len(batch)
 
     def subscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
@@ -88,8 +93,9 @@ class ShoonyaMarketDataSupervisor:
             return 0
         removed = self._adapter.unsubscribe(batch)
         with self._lock:
-            active = {key for key in self._adapter._descriptors}
-            if not active:
+            for item in batch:
+                self._descriptors.pop(item.key, None)
+            if not self._descriptors:
                 self._last_state = "IDLE_NO_SUBSCRIPTIONS"
         return removed
 
@@ -136,7 +142,7 @@ class ShoonyaMarketDataSupervisor:
                 "enabled": self._enabled,
                 "state": self._last_state,
                 "state_reason": self._last_state_reason,
-                "registry_instruments": len(self.registry.active_keys()),
+                "registry_instruments": len(self._descriptors),
                 "ticks_observed": self._ticks_observed,
                 "order_events_observed": self._order_events_observed,
                 "last_tick_at": self._last_tick_at,
