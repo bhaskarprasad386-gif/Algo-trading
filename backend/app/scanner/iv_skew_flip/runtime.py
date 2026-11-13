@@ -878,6 +878,36 @@ class IVSkewFlipRuntime:
         observed = datetime.fromtimestamp(observed_ns / 1_000_000_000, tz=IST).strftime("%d-%b-%Y %H:%M:%S IST") if observed_ns else "—"
         direction = str(payload.get("direction") or "—").upper()
         emoji = "🟢" if direction == "BULLISH" else "🔴" if direction == "BEARISH" else "⚠️"
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        checks = metadata.get("checks") if isinstance(metadata.get("checks"), dict) else {}
+        change_times = checks.get("change_timestamps_ns") if isinstance(checks.get("change_timestamps_ns"), dict) else {}
+        history_times = checks.get("history_timestamps_ns") if isinstance(checks.get("history_timestamps_ns"), dict) else {}
+        wall_history_times = checks.get("wall_history_timestamps_ns")
+        def format_change_time(value: Any) -> str:
+            try:
+                stamp = int(value)
+                return datetime.fromtimestamp(stamp / 1_000_000_000, tz=IST).strftime("%H:%M:%S")
+            except (TypeError, ValueError, OverflowError, OSError):
+                return "—"
+        time_labels = {
+            "ce_quote": "CE", "pe_quote": "PE", "target_quote": "Target",
+            "target_oi": "Target OI", "wall_source": "Wall", "wall_oi": "Wall OI",
+            "entry_quote": "Entry", "entry_oi": "Entry OI",
+            "rejection_candle": "Rejection",
+        }
+        change_time_text = " • ".join(
+            f"{label} {format_change_time(change_times[key])}"
+            for key, label in time_labels.items() if key in change_times
+        )
+        if isinstance(history_times, dict):
+            for key in ("ce", "pe", "target"):
+                values = history_times.get(key)
+                if isinstance(values, list) and values:
+                    stamps = [format_change_time(item.get("quote")) for item in values if isinstance(item, dict)]
+                    change_time_text += f" • {key.upper()} history " + ",".join(stamps)
+        if isinstance(wall_history_times, list) and wall_history_times:
+            stamps = [format_change_time(item.get("quote")) for item in wall_history_times if isinstance(item, dict)]
+            change_time_text += " • Wall history " + ",".join(stamps)
         lines = [
             f"{emoji} <b>NIFTY WEEKLY IV EARLY ENTRY</b>",
             f"<b>Strategy:</b> {escape(str(payload.get('strategy') or '—'))}",
@@ -885,7 +915,8 @@ class IVSkewFlipRuntime:
             f"<b>Contract:</b> {escape(str(payload.get('strike') or '—'))} • Expiry {escape(str(payload.get('expiry') or '—'))}",
             f"<b>Spot:</b> {escape(str(payload.get('spot') or '—'))} • Premium: {escape(str(payload.get('premium') or '—'))}",
             f"<b>IV Δ:</b> {escape(str(payload.get('iv_change_points') if payload.get('iv_change_points') is not None else '—'))} pt • Volume: {escape(str(payload.get('volume_ratio') if payload.get('volume_ratio') is not None else '—'))}x",
-            f"<b>Time:</b> {escape(observed)}",
+            f"<b>Alert time:</b> {escape(observed)}",
+            f"<b>Change times (IST):</b> {escape(change_time_text or 'Source timestamps saved in alert history')}",
             f"<b>Reason:</b> {escape(str(payload.get('reason') or 'Conditions satisfied'))}",
             f"<b>Alert ID:</b> {int(payload.get('event_id') or 0)} • Alert only; no order placed",
         ]
