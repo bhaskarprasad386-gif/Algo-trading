@@ -380,6 +380,8 @@ export default function IVSkewFlipPage() {
   const [earlyAlerts,setEarlyAlerts]=useState<EarlyAlert[]>([]);
   const [hasMoreAlerts,setHasMoreAlerts]=useState(false);
   const [loadingMoreAlerts,setLoadingMoreAlerts]=useState(false);
+  const [alertCursor,setAlertCursor]=useState<{before_observed_at_ns:string;before_id:number}|null>(null);
+  const loadedOlderAlerts=useRef(false);
   const [earlyAlertLive,setEarlyAlertLive]=useState<Row|null>(null);
   const [alertAudioEnabled,setAlertAudioEnabled]=useState(false);
   const [alertFetchError,setAlertFetchError]=useState("");
@@ -411,9 +413,15 @@ export default function IVSkewFlipPage() {
         setEarlyAlerts(current=>{
           const merged=new Map<number,EarlyAlert>();
           [...newest,...current].forEach(row=>merged.set(row.id,row));
-          return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id).slice(0,1000);
+          return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id);
         });
-        setHasMoreAlerts(body.has_more===true);
+        if(!loadedOlderAlerts.current){
+          setHasMoreAlerts(body.has_more===true);
+          setAlertCursor(body.next_cursor&&typeof body.next_cursor==="object"?{
+            before_observed_at_ns:String((body.next_cursor as Row).before_observed_at_ns),
+            before_id:Number((body.next_cursor as Row).before_id),
+          }:null);
+        }
         setEarlyAlertLive(body.live&&typeof body.live==="object"?body.live as Row:null);
         setAlertFetchError("");
         if(alertAudioEnabled&&fresh.length){
@@ -482,12 +490,11 @@ export default function IVSkewFlipPage() {
     return()=>{active=false;window.clearInterval(timer);};
   },[base,requestedExpiry,activeWeeklyExpiry]);
   const loadMoreAlerts=async()=>{
-    if(loadingMoreAlerts||!hasMoreAlerts||earlyAlerts.length===0)return;
-    const oldest=earlyAlerts[earlyAlerts.length-1];
+    if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
     const query=new URLSearchParams({
       limit:"30",
-      before_observed_at_ns:String(oldest.observed_at_ns),
-      before_id:String(oldest.id),
+      before_observed_at_ns:alertCursor.before_observed_at_ns,
+      before_id:String(alertCursor.before_id),
     });
     setLoadingMoreAlerts(true);
     try{
@@ -495,12 +502,17 @@ export default function IVSkewFlipPage() {
       const body=await response.json();
       if(!response.ok)throw new Error(apiError(body,"Could not load older alert history"));
       const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
+      loadedOlderAlerts.current=true;
       setEarlyAlerts(current=>{
         const merged=new Map<number,EarlyAlert>();
         [...current,...rows].forEach(row=>merged.set(row.id,row));
-        return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id).slice(0,1000);
+        return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id);
       });
       setHasMoreAlerts(body.has_more===true);
+      setAlertCursor(body.next_cursor&&typeof body.next_cursor==="object"?{
+        before_observed_at_ns:String((body.next_cursor as Row).before_observed_at_ns),
+        before_id:Number((body.next_cursor as Row).before_id),
+      }:null);
       setAlertFetchError("");
     }catch(e){
       setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
