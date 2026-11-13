@@ -108,3 +108,10 @@ def test_snapshot_sorting_is_stable_for_spot_and_expiring_derivative_contracts()
     snapshot = _publish(registry, [option, equity])
     assert len(snapshot.mappings) == 2
     assert registry.resolve(equity_key, "ANGELONE").provider.token == "eq-Case"
+
+def test_futures_canonical_identity_requires_expiry():
+    with pytest.raises(ValueError, match="futures require expiry"):
+        CanonicalContractKey(
+            exchange="NFO", segment="NFO", underlying="NIFTY",
+            instrument_type="FUTURE",
+        )
