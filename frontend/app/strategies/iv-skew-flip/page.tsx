@@ -513,7 +513,7 @@ export default function IVSkewFlipPage() {
       setEarlyAlerts(current=>{
         const merged=new Map<number,EarlyAlert>();
         [...current,...rows].forEach(row=>merged.set(row.id,row));
-        return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id);
+        return [...merged.values()].sort(compareAlertTime);
       });
       setHasMoreAlerts(body.has_more===true);
       setAlertCursor(body.next_cursor&&typeof body.next_cursor==="object"?{
