@@ -345,7 +345,7 @@ class AlertCooldownStore:
                 "id": row.id, "strategy": row.strategy, "underlying": row.underlying,
                 "expiry": row.expiry, "strike": row.strike, "direction": row.direction,
                 "option_type": row.option_type, "state": row.state,
-                "observed_at_ns": row.observed_at_ns, "spot": row.spot,
+                "observed_at_ns": row.observed_at_ns, "observed_at_ns_text": str(row.observed_at_ns), "spot": row.spot,
                 "premium": row.premium, "iv_change_points": row.iv_change_points,
                 "volume_ratio": row.volume_ratio, "reason": row.reason,
                 "metadata": json.loads(row.metadata_json or "{}"),
