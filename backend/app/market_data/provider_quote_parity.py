@@ -3,6 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from collections import deque
+from threading import RLock
+from typing import Mapping
+
+from .provider_contracts import CanonicalContractKey
 
 from .provider_quote_quality import (
     ProviderQuoteObservation, QuoteParityResult, compare_provider_quotes, _positive_decimal,
@@ -11,6 +16,7 @@ from .provider_quote_quality import (
 
 @dataclass(frozen=True)
 class QuoteParityMetrics:
+    contract: CanonicalContractKey
     quality: QuoteParityResult
     bid_abs_diff: Decimal | None
     ask_abs_diff: Decimal | None
@@ -56,7 +62,7 @@ def analyze_quote_parity(
         now_exchange_timestamp_ns=now_exchange_timestamp_ns, max_age_ns=max_age_ns,
     )
     if not quality.identity_match:
-        return QuoteParityMetrics(quality, None, None, None, None, None, None, None, None, None)
+        return QuoteParityMetrics(left.contract, quality, None, None, None, None, None, None, None, None, None)
 
     left_bid, right_bid = _positive_decimal(left.bid), _positive_decimal(right.bid)
     left_ask, right_ask = _positive_decimal(left.ask), _positive_decimal(right.ask)
@@ -67,6 +73,7 @@ def analyze_quote_parity(
     left_ts, right_ts = left.exchange_timestamp_ns, right.exchange_timestamp_ns
     skew = abs(left_ts - right_ts) if left_ts and right_ts else None
     return QuoteParityMetrics(
+        contract=left.contract,
         quality=quality,
         bid_abs_diff=_absolute_difference(left_bid, right_bid),
         ask_abs_diff=_absolute_difference(left_ask, right_ask),
@@ -78,3 +85,36 @@ def analyze_quote_parity(
         mid_relative_diff_bps=_relative_bps(left_mid, right_mid),
         exchange_timestamp_skew_ns=skew,
     )
+
+
+class QuoteParityHistory:
+    """Thread-safe bounded in-memory diagnostics; never used for execution."""
+
+    def __init__(self, *, max_observations_per_contract: int = 300) -> None:
+        if isinstance(max_observations_per_contract, bool) or not isinstance(max_observations_per_contract, int) or max_observations_per_contract <= 0:
+            raise ValueError("max_observations_per_contract must be a positive integer")
+        self._capacity = max_observations_per_contract
+        self._lock = RLock()
+        self._samples: dict[CanonicalContractKey, deque[tuple[int, QuoteParityMetrics]]] = {}
+
+    def record(self, metrics: QuoteParityMetrics, *, observed_monotonic_ns: int) -> int:
+        if not isinstance(metrics, QuoteParityMetrics):
+            raise TypeError("metrics must be QuoteParityMetrics")
+        if isinstance(observed_monotonic_ns, bool) or not isinstance(observed_monotonic_ns, int) or observed_monotonic_ns < 0:
+            raise ValueError("observed_monotonic_ns must be a non-negative integer")
+        with self._lock:
+            samples = self._samples.setdefault(metrics.contract, deque(maxlen=self._capacity))
+            if samples and observed_monotonic_ns < samples[-1][0]:
+                raise ValueError("history timestamps must be monotonic per contract")
+            samples.append((observed_monotonic_ns, metrics))
+            return len(samples)
+
+    def snapshot(self) -> Mapping[CanonicalContractKey, tuple[tuple[int, QuoteParityMetrics], ...]]:
+        with self._lock:
+            return {key: tuple(values) for key, values in self._samples.items()}
+
+    def clear(self) -> int:
+        with self._lock:
+            count = sum(len(values) for values in self._samples.values())
+            self._samples.clear()
+            return count
