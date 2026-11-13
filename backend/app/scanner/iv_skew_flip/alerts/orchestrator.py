@@ -22,9 +22,14 @@ class IVEarlyEntryAlertEngine:
         self.store.expire_session_alerts(now=now)
         live_spot_stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
         live_spot_price = float(getattr(spot, "price", 0) or 0)
-        if (0 < live_spot_stamp <= now_ns and live_spot_price > 0):
+        # Lifecycle invalidation is driven only by a genuinely live spot
+        # tick. A stale cached price must never invalidate an otherwise active
+        # wall alert merely because it sits beyond the recorded strike.
+        if (0 < live_spot_stamp <= now_ns
+                and now_ns - live_spot_stamp <= 5_000_000_000
+                and live_spot_price > 0):
             self.store.invalidate_breached_oi_walls(
-                spot=live_spot_price, observed_at_ns=now_ns,
+                spot=live_spot_price, observed_at_ns=live_spot_stamp,
             )
         if not expiry:
             return {"state": "WATCH", "reason": "WAITING_FOR_WEEKLY_EXPIRY", "signals_allowed": False}
