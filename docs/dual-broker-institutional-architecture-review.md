@@ -240,3 +240,32 @@ Added a single-owner `ProviderIngressWorker` for the Batch 6 bounded lane:
 Tests cover FIFO drain, handler exception isolation, non-draining discard accounting and the previously added queue/generation invariants.
 
 **Still deliberately not wired:** The Angel manager's synchronous callback contract and Shoonya's existing authenticated normalization/dispatch path remain unchanged. This worker is a testable integration primitive only. Before connecting it to a broker, a separate migration must prove per-shard ordering, queue capacity under observed peak rates, overflow degradation/recovery, and callback compatibility. No Box/IV consumer or trading route has been switched.
+
+## 14. Batch 8 — callback-boundary integration review (no live-path switch)
+
+Reviewed the current Angel One CommonWebSocketManager._on_data() path and Shoonya ShoonyaWebSocket dispatch lifecycle before attempting ingress integration.
+
+### Angel One findings
+- _on_data() rejects callbacks whose socket generation is no longer current, then parses/routes the frame under the manager lock.
+- It invokes registered raw callbacks and normalized record callbacks inline on the transport callback thread after releasing the lock.
+- This is a real head-of-line blocking surface: a slow consumer can delay processing of later frames on that socket callback thread.
+- Existing consumers and tests may rely on synchronous callback delivery. Replacing it globally with a worker would silently change ordering/timing and exception visibility; therefore this batch does not change the default delivery contract.
+
+### Shoonya findings
+- Shoonya already has a per-connection feed epoch and callback guard to suppress retired-socket callbacks.
+- Market ticks and order updates already use separate bounded queues and dedicated dispatch loops.
+- Queue overflow is surfaced as a feed/order integrity fault and initiates controlled socket recovery.
+- Adding BoundedProviderIngress as a second queue in front of these queues would duplicate buffering, complicate shutdown accounting, and increase latency without a demonstrated need. No second queue was added.
+
+### Batch 8 safety decision
+- Keep Angel synchronous delivery and Shoonya's existing dispatch queues unchanged by default.
+- Do not route either scanner through the new provider ingress worker yet.
+- Any Angel migration must be explicitly opt-in and per-shard, preserve FIFO order for a shard, preserve callback payload shape, expose queue overflow as degraded health, and support a shadow comparison before consumer cutover.
+- Any Shoonya migration must first prove that the existing queues can be adapted without double buffering; otherwise retain the current dispatch design and instrument it directly.
+- Before any live-path switch, add compatibility tests for raw and normalized callbacks, per-shard ordering, stale-generation rejection, overflow recovery, consumer exceptions, and stop/restart lifecycle. Compare callback latency and downstream output parity under replay.
+
+### Additional worker lifecycle regression
+- Added a deterministic test where a handler remains in-flight beyond the shutdown deadline. stop() must raise TimeoutError rather than claim success; after the handler is released, a subsequent stop call must reap the worker cleanly.
+- This documents an unavoidable Python thread limitation: a running handler cannot be forcibly cancelled safely. Shutdown remains bounded from the caller's perspective and reports the timeout explicitly.
+
+**Result:** Batch 8 review is complete as an architecture/safety gate only. No broker callback, subscription, Box Spread/IV Scanner consumer, order route, or production setting changed. No tests are claimed as executed or passing.
