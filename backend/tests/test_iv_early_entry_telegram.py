@@ -39,6 +39,15 @@ def test_telegram_sender_posts_html_message_without_exposing_token(monkeypatch):
         "iv_change_points": 0.25, "volume_ratio": 3.0,
         "reason": "IV + volume <confirmed>",
         "observed_at_ns": 1_794_000_000_000_000_000,
+        "metadata": {"checks": {
+            "change_timestamps_ns": {
+                "ce_quote": 1_794_000_000_000_000_000,
+                "target_oi": 1_794_000_001_000_000_000,
+            },
+            "history_timestamps_ns": {
+                "ce": [{"quote": 1_793_999_900_000_000_000}],
+            },
+        }},
     })
 
     assert captured["url"].endswith("/sendMessage")
@@ -48,6 +57,9 @@ def test_telegram_sender_posts_html_message_without_exposing_token(monkeypatch):
     assert captured["body"]["parse_mode"] == "HTML"
     assert "&lt;confirmed&gt;" in captured["body"]["text"]
     assert "no order placed" in captured["body"]["text"]
+    assert "Change times (IST)" in captured["body"]["text"]
+    assert "CE 10:00:00" in captured["body"]["text"]
+    assert "CE history 09:58:20" in captured["body"]["text"]
 
 
 def test_telegram_sender_fails_closed_without_credentials(monkeypatch):
