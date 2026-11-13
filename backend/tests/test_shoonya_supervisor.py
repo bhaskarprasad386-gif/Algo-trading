@@ -201,3 +201,28 @@ def test_shoonya_subscription_route_fails_closed_when_disabled(monkeypatch):
         assert exc.status_code == 409
     else:
         raise AssertionError("disabled Shoonya subscriptions must fail closed")
+
+
+def test_supervisor_redacts_credentials_from_public_diagnostics(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    supervisor._observe_state("AUTH_FAILED", "auth failed for token")
+    state = supervisor.snapshot()
+    assert "token" not in (state["state_reason"] or "")
+    supervisor._adapter.last_error = "transport failed token"
+    state = supervisor.snapshot()
+    assert "token" not in (state["adapter"]["last_error"] or "")
+
+
+def test_shoonya_option_subscription_requires_complete_contract_metadata():
+    from app.market_data.routes import ShoonyaInstrumentInput
+
+    incomplete = ShoonyaInstrumentInput(
+        exchange="NFO", segment="NFO", token="12345",
+        symbol="NIFTY26NOV25000CE", instrument_type="option",
+    )
+    try:
+        incomplete.to_descriptor()
+    except ValueError as exc:
+        assert "expiry, strike and option_type" in str(exc)
+    else:
+        raise AssertionError("incomplete option metadata must be rejected")
