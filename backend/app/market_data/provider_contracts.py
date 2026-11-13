@@ -32,7 +32,7 @@ def _positive_decimal(value: object, name: str) -> Decimal:
     return result.normalize()
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True)
 class CanonicalContractKey:
     """Contract identity independent of a broker's token and display symbol."""
     exchange: str
@@ -111,9 +111,15 @@ class ProviderContractRegistry:
         self._snapshot: ContractMasterSnapshot | None = None
 
     @staticmethod
-    def _fingerprint(mappings: tuple[ContractMapping, ...]) -> str:
+    def _sort_key(key: CanonicalContractKey) -> tuple[str, ...]:
+        return (key.exchange, key.segment, key.underlying, key.instrument_type,
+                key.expiry.isoformat() if key.expiry else "",
+                str(key.strike) if key.strike is not None else "", key.option_type or "")
+
+    @classmethod
+    def _fingerprint(cls, mappings: tuple[ContractMapping, ...]) -> str:
         rows = []
-        for item in sorted(mappings, key=lambda m: (m.key, m.provider.broker, m.provider.token)):
+        for item in sorted(mappings, key=lambda m: (cls._sort_key(m.key), m.provider.broker, m.provider.token)):
             key = item.key
             rows.append({
                 "exchange": key.exchange, "segment": key.segment,
@@ -172,7 +178,7 @@ class ProviderContractRegistry:
                 raise ValueError(f"duplicate broker mapping for {key}")
 
         staged = ContractMasterSnapshot(version, digest, now, tuple(sorted(
-            candidate, key=lambda m: (m.key, m.provider.broker, m.provider.token)
+            candidate, key=lambda m: (self._sort_key(m.key), m.provider.broker, m.provider.token)
         )))
         with self._lock:
             current = self._snapshot
