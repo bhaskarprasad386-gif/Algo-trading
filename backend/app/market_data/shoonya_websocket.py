@@ -34,12 +34,13 @@ class ShoonyaWebSocket:
         self._backoff_min, self._backoff_max = reconnect_min_seconds, reconnect_max_seconds
         self._stop = threading.Event()
         self._lock = threading.RLock()
-        self._ws = self._thread = self._dispatch_thread = None
+        self._ws = self._thread = self._dispatch_thread = self._order_dispatch_thread = self._heartbeat_thread = None
         self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=max_dispatch_queue)
         # Order lifecycle events are isolated from high-volume market ticks.
         self._order_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=2048)
         self._descriptors: dict[tuple[str, str], InstrumentDescriptor] = {}
         self._snapshots: dict[tuple[str, str], dict[str, Any]] = {}
+        self._initialized: set[tuple[str, str]] = set()
         self._connected = self._authenticated = False
         self._last_error = None
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
@@ -55,9 +56,6 @@ class ShoonyaWebSocket:
                 if key in self._descriptors and self._descriptors[key] != d:
                     raise ValueError(f"conflicting Shoonya instrument descriptor: {key}")
                 self._descriptors[key] = d
-                if len(self._descriptors) > 500:
-                    self._descriptors.pop(key, None)
-                    raise ValueError("Shoonya supports at most 500 subscribed instruments per WebSocket connection")
             ws, ready = self._ws, self._authenticated
         if ready and ws is not None: self._send_subscriptions(ws)
         return len(batch)
@@ -68,7 +66,7 @@ class ShoonyaWebSocket:
             for d in tuple(descriptors):
                 key = (d.key.exchange.upper(), d.key.token)
                 if key in self._descriptors:
-                    removed.append(key); self._descriptors.pop(key); self._snapshots.pop(key, None)
+                    removed.append(key); self._descriptors.pop(key); self._snapshots.pop(key, None); self._initialized.discard(key)
             ws, ready = self._ws, self._authenticated
         if removed and ready and ws is not None:
             ws.send(json.dumps({"t": "u", "k": "#".join(f"{e}|{t}" for e, t in removed)}, separators=(",", ":")))
@@ -79,7 +77,11 @@ class ShoonyaWebSocket:
             if self._thread and self._thread.is_alive(): return
             self._stop.clear()
             self._dispatch_thread = threading.Thread(target=self._dispatch_loop, name="shoonya-tick-dispatch", daemon=True)
+            self._order_dispatch_thread = threading.Thread(target=self._order_dispatch_loop, name="shoonya-order-dispatch", daemon=True)
+            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="shoonya-heartbeat", daemon=True)
             self._dispatch_thread.start()
+            self._order_dispatch_thread.start()
+            self._heartbeat_thread.start()
             self._thread = threading.Thread(target=self._run_loop, name="shoonya-ws-supervisor", daemon=True)
             self._thread.start()
 
@@ -89,7 +91,7 @@ class ShoonyaWebSocket:
         if ws is not None:
             try: ws.close()
             except Exception: pass
-        for thread in (self._thread, self._dispatch_thread):
+        for thread in (self._thread, self._dispatch_thread, self._order_dispatch_thread, self._heartbeat_thread):
             if thread and thread is not threading.current_thread(): thread.join(timeout=3.0)
         with self._lock: self._connected = self._authenticated = False; self._ws = None
         self._emit_state("STOPPED", None)
@@ -140,6 +142,10 @@ class ShoonyaWebSocket:
         if not isinstance(message, dict): return
         with self._lock: self._last_frame_at = time.time()
         kind = str(message.get("t") or "").lower()
+        if kind == "h":
+            try: ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+            except Exception as exc: self._on_error(ws, exc)
+            return
         if kind == "ak":
             if str(message.get("s") or "").strip().lower() != "ok":
                 with self._lock: self._authenticated = False; self._last_error = "Shoonya authentication rejected"
@@ -162,8 +168,12 @@ class ShoonyaWebSocket:
         with self._lock:
             descriptor = self._descriptors.get(key)
             if descriptor is None: return
+            if message.get("t") == "tf" and key not in self._initialized:
+                return
             merged = {**self._snapshots.get(key, {}), **message}
             self._snapshots[key] = merged
+            if message.get("t") == "tk":
+                self._initialized.add(key)
         try: record = self._normalizer.normalize(descriptor, merged)
         except (TypeError, ValueError) as exc:
             with self._lock: self._last_error = f"tick normalization: {exc}"
@@ -190,23 +200,36 @@ class ShoonyaWebSocket:
                 with self._lock: self._dispatch_drops += 1
 
     def _dispatch_loop(self) -> None:
-        while not self._stop.is_set() or not self._queue.empty() or not self._order_queue.empty():
+        while not self._stop.is_set() or not self._queue.empty():
+            try: _, payload = self._queue.get(timeout=0.2)
+            except queue.Empty: continue
             try:
-                kind, payload = self._order_queue.get_nowait()
-                source_queue = self._order_queue
-            except queue.Empty:
-                try:
-                    kind, payload = self._queue.get(timeout=0.2)
-                    source_queue = self._queue
-                except queue.Empty:
-                    continue
+                if self._on_tick: self._on_tick(payload)
+                with self._lock: self._ticks_dispatched += 1
+            except Exception: app_logger.exception("Shoonya tick callback failed")
+            finally: self._queue.task_done()
+
+    def _order_dispatch_loop(self) -> None:
+        while not self._stop.is_set() or not self._order_queue.empty():
+            try: _, payload = self._order_queue.get(timeout=0.2)
+            except queue.Empty: continue
             try:
-                callback = self._on_tick if kind == "tick" else self._on_order_update
-                if callback: callback(payload)
-                if kind == "tick":
-                    with self._lock: self._ticks_dispatched += 1
-            except Exception: app_logger.exception("Shoonya dispatch callback failed")
-            finally: source_queue.task_done()
+                if self._on_order_update: self._on_order_update(payload)
+            except Exception: app_logger.exception("Shoonya order callback failed")
+            finally: self._order_queue.task_done()
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stop.wait(3.0):
+            with self._lock:
+                ws, ready = self._ws, self._authenticated
+            if not ready or ws is None:
+                continue
+            try:
+                ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+            except Exception as exc:
+                self._on_error(ws, exc)
+                try: ws.close()
+                except Exception: pass
 
     def _on_error(self, ws: Any, error: Any) -> None:
         with self._lock:
