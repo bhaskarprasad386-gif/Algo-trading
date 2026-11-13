@@ -6,7 +6,7 @@ from typing import Any
 from .aggregation import SourceMinuteAggregator
 from .data_adapter import option_observation
 from .conditions import evaluate_strategy_a, evaluate_strategy_b, even_strikes
-from .models import AlertState, StrategyEvaluation
+
 
 class IVEarlyEntryAlertEngine:
     """Consumes existing sampler data; never creates feeds or sends orders."""
@@ -69,7 +69,6 @@ class IVEarlyEntryAlertEngine:
             ce = token_rows.get(pair["CE"], ())
             pe = token_rows.get(pair["PE"], ())
             for direction, target_type in (("BULLISH", "CE"), ("BEARISH", "PE")):
-                strategy = "IV_VOLUME_MOMENTUM"
                 live_ce = option_observation(current[pair["CE"]])
                 live_pe = option_observation(current[pair["PE"]])
                 live_target = option_observation(current[pair[target_type]])
