@@ -120,7 +120,6 @@ def test_non_draining_stop_counts_discarded_batches():
         generation=1,
         invocations=(CallbackInvocation(lambda _: None, 2, "raw"),),
     )
-    adapter.start()
     adapter.stop(timeout=2.0, drain=False)
     assert adapter.snapshot()["discarded_batches"] == 2
 
