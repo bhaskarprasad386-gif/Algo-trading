@@ -20,8 +20,7 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 
 ## Required environment / deployment decisions before runtime wiring
 
-The production application does not yet select Shoonya from configuration. Before adding that wiring, define and review:
-- An explicit `SHOONYA_MARKET_DATA_ENABLED=false` default.
+The application settings now define `SHOONYA_MARKET_DATA_ENABLED=false` by default, Shoonya session fields, queue/reconnect limits, and fail-closed credential/limit validation. These settings do not yet start or select the adapter. Before adding runtime wiring, review:
 - Credentials sourced only from the deployment secret store: user id, account id, and current access token.
 - An explicit shadow/paper-only mode; no implicit fallback from Angel One.
 - A single-account ownership rule and an operator-visible ON/OFF control.
