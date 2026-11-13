@@ -335,17 +335,24 @@ class ShoonyaWebSocket:
         try:
             target.put_nowait((kind, payload))
         except queue.Full:
-            if kind == "order":
-                with self._lock:
+            with self._lock:
+                ws = self._ws
+                self._connected = self._authenticated = False
+                if kind == "order":
                     self._order_update_drops += 1
-                    ws = self._ws
-                # Never silently continue after losing an order lifecycle event.
-                self._emit_state("ORDER_FEED_OVERFLOW", "order update queue full; reconcile broker order book")
-                if ws is not None:
-                    try: ws.close()
-                    except Exception: pass
-            else:
-                with self._lock: self._dispatch_drops += 1
+                    state = "ORDER_FEED_OVERFLOW"
+                    reason = "order update queue full; reconcile broker order book"
+                else:
+                    self._dispatch_drops += 1
+                    state = "DEGRADED"
+                    reason = "tick dispatch queue full; reconnecting to avoid silently stale market data"
+                self._last_error = reason
+            # Queue loss is a feed-integrity fault. Force the existing reconnect
+            # path instead of claiming LIVE while market/order events are lost.
+            self._emit_state(state, reason)
+            if ws is not None:
+                try: ws.close()
+                except Exception: pass
 
     def _dispatch_loop(self) -> None:
         while not self._stop.is_set() or not self._queue.empty():
@@ -449,10 +456,19 @@ class ShoonyaWebSocket:
     def _on_close(self, ws: Any, status_code: Any, message: Any) -> None:
         with self._lock:
             self._connected = self._authenticated = False
-            frame_timed_out = bool(self._last_error and self._last_error.startswith("broker frame timeout:"))
-            auth_timed_out = bool(self._last_error and self._last_error.startswith("authentication acknowledgement timeout:"))
-            timeout_reason = self._last_error if frame_timed_out or auth_timed_out else None
+            preserved_faults = (
+                ("broker frame timeout:", "DEGRADED"),
+                ("authentication acknowledgement timeout:", "AUTH_TIMEOUT"),
+                ("tick dispatch queue full:", "DEGRADED"),
+                ("order update queue full;", "ORDER_FEED_OVERFLOW"),
+            )
+            preserved = next(
+                ((prefix, state) for prefix, state in preserved_faults
+                 if self._last_error and self._last_error.startswith(prefix)),
+                None,
+            )
+            fault_reason = self._last_error if preserved else None
+            fault_state = preserved[1] if preserved else "DISCONNECTED"
         if not self._stop.is_set():
-            reason = self._safe_error_text(timeout_reason or message or status_code or "socket closed")
-            state = "AUTH_TIMEOUT" if auth_timed_out else ("DEGRADED" if frame_timed_out else "DISCONNECTED")
-            self._emit_state(state, reason)
+            reason = self._safe_error_text(fault_reason or message or status_code or "socket closed")
+            self._emit_state(fault_state, reason)
