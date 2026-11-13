@@ -362,3 +362,21 @@ Safety boundary:
 - It does not rank providers, nominate a primary/secondary broker, merge quote sides, or execute failover.
 - Exchange timestamps are assumed normalized to nanoseconds by the caller; no broker-specific timestamp parsing is inferred here.
 - Tests are committed but not executed in this environment. Exact-head CI is still required before integration.
+
+
+## 21. Batch 16 — read-only normalized quote adapter
+
+Added a narrow adapter from the existing broker-normalized MarketDataRecord into the Batch 15 quote-quality observation. It maps only canonical contract identity, normalized exchange timestamp, local monotonic receive time, bid/ask, and top-of-book sizes.
+
+Validation fixtures now exercise both existing normalizers with synthetic provider-native shapes:
+- Angel One SmartAPI: scaled prices, exchange timestamp in milliseconds, token identity, and buy/sell depth arrays.
+- Shoonya Noren: touchline fields (lp/bp1/sp1/bq1/sq1), exchange timestamp in seconds, and token/exchange identity.
+
+The fixtures verify that different broker tokens and display symbols still resolve to the same NIFTY option contract, with matching normalized bid/ask values. They also cover strike mismatch, missing timestamp, malformed expiry, unsupported provider, and incomplete-depth rejection.
+
+Safety boundary:
+- This adapter is a pure read-only conversion function. It is not registered with either WebSocket, ingress queue, manager, scanner, persistence layer, or UI.
+- Generation/authentication/current-connection status and local monotonic receive time must be supplied by the caller; no status is inferred from a normalized tick.
+- Depth completeness defaults to false. A top-of-book record is not silently promoted to complete market depth; caller must provide separately verified evidence.
+- No quote source is selected, no broker-side mixing occurs, and no orders can be produced by this module.
+- Seven focused adapter tests are committed but have not been executed here. Exact-head CI and backend regression remain outstanding.
