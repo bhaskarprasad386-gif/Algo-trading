@@ -83,11 +83,15 @@ class IVSkewFlipRuntime:
         equity_pressure_unavailable_reason: str | None = None,
         future_feed: IVIndexFutureFeedAdapter | None = None,
         feed_manager: Any | None = None,
+        close_feed_manager: bool = True,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
         self.instrument_master = instrument_master
         self.feed_manager = feed_manager
+        # A manager injected by the application may be shared with other
+        # scanners. Only close managers whose lifecycle this runtime owns.
+        self.close_feed_manager = bool(close_feed_manager)
         # Production injects a dedicated manager. All IV consumers use mode 3
         # on that one manager so spot, equity and option quotes share exactly
         # one IV-owned broker socket without joining the strategy shared feed.
@@ -1174,11 +1178,11 @@ class IVSkewFlipRuntime:
         if equity_feed is not None:
             stop_resource("equity_feed", equity_feed)
 
-        if not cleanup_errors and self.feed_manager is not None:
+        if not cleanup_errors and self.feed_manager is not None and self.close_feed_manager:
             try:
                 self.feed_manager.close()
             except Exception as exc:
-                cleanup_errors["dedicated_feed_manager"] = f"{type(exc).__name__}: {exc}"
+                cleanup_errors["owned_feed_manager"] = f"{type(exc).__name__}: {exc}"
 
         if cleanup_errors:
             with self._lock:
