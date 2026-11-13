@@ -4,6 +4,7 @@ from typing import Any, Mapping
 from .contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
 from .registry import InstrumentDescriptor
 
+
 class ShoonyaTickNormalizer:
     _TYPE_MAP = {"equity": InstrumentType.EQUITY, "index": InstrumentType.INDEX,
                  "future": InstrumentType.FUTURE, "option": InstrumentType.OPTION,
@@ -26,6 +27,7 @@ class ShoonyaTickNormalizer:
 
     @staticmethod
     def _timestamp_ns(payload: Mapping[str, Any]) -> int:
+        """Convert epoch seconds, milliseconds, microseconds, or nanoseconds to ns."""
         raw = payload.get("ft")
         if raw is None:
             return 0
@@ -35,11 +37,13 @@ class ShoonyaTickNormalizer:
             return 0
         if value <= 0:
             return 0
-        if value >= 10**16:
+        if value >= 10**17:  # nanoseconds
             return value
-        if value >= 10**11:
+        if value >= 10**14:  # microseconds
+            return value * 1_000
+        if value >= 10**11:  # milliseconds
             return value * 1_000_000
-        return value * 1_000_000_000
+        return value * 1_000_000_000  # seconds
 
     def normalize(self, descriptor: InstrumentDescriptor, payload: Mapping[str, Any]) -> MarketDataRecord:
         if not isinstance(descriptor, InstrumentDescriptor) or not isinstance(payload, Mapping):
