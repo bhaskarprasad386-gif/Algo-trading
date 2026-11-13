@@ -128,3 +128,20 @@ def test_uppercase_tick_frame_type_is_normalized():
         "lp": "101.00", "ft": "1794551795"}))
     assert feed._snapshots[("NFO", "12345")]["lp"] == "101.00"
     assert feed.snapshot()["ticks_received"] == 2
+
+
+def test_reconnect_clears_previous_snapshot_before_new_incremental_frames():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._on_message(fake_ws, json.dumps({"t": "tk", "e": "NFO", "tk": "12345",
+        "lp": "100.00", "oi": "777", "ft": "1794551794"}))
+    assert feed.snapshot()["ticks_received"] == 1
+    # This is the same reset performed before each new socket connection.
+    with feed._lock:
+        feed._snapshots.clear()
+        feed._initialized.clear()
+    feed._on_message(fake_ws, json.dumps({"t": "tf", "e": "NFO", "tk": "12345",
+        "lp": "101.00", "ft": "1794551795"}))
+    assert feed.snapshot()["ticks_received"] == 1
+    assert ("NFO", "12345") not in feed._snapshots
