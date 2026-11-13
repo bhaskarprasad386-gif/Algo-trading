@@ -16,11 +16,13 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - Serialized subscription/unsubscription writes.
 - Independent bounded tick and order-event queues; order-event overflow is surfaced as a feed fault and forces socket closure for reconciliation.
 - Callback isolation, connection health counters, shutdown deadline, and stale-socket callback protection.
+- Authenticated silent-frame watchdog: configurable `SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS` (default 30 seconds), one-second freshness checks, explicit `DEGRADED` state, and forced socket close to enter the existing bounded reconnect path. The independent three-second application heartbeat remains unchanged.
+- Health diagnostics expose last inbound frame age, configured timeout, and a stale-frame flag; a new connection epoch resets frame freshness before re-authentication.
 - No credentials or live order-routing code.
 
 ## Runtime wiring implemented (shadow diagnostics only)
 
-- `SHOONYA_MARKET_DATA_ENABLED=false` remains the default. Enabling it requires UID, account ID, access token, and validated queue/reconnect/token limits. Subscription control additionally requires a separate `SHOONYA_MARKET_DATA_OWNER_PASSWORD` of at least 16 characters; it is checked at login time and is never used as a broker credential.
+- `SHOONYA_MARKET_DATA_ENABLED=false` remains the default. Enabling it requires UID, account ID, access token, and validated queue/reconnect/token/frame-timeout limits. Subscription control additionally requires a separate `SHOONYA_MARKET_DATA_OWNER_PASSWORD` of at least 16 characters; it is checked at login time and is never used as a broker credential.
 - FastAPI lifespan creates a separate `ShoonyaMarketDataSupervisor`; it owns its own `InstrumentRegistry` and `ShoonyaWebSocket`, and is stopped during application shutdown.
 - The supervisor does not open a socket merely because the application starts. A separately registered/subscribed instrument set is required before it starts the adapter.
 - `GET /api/v1/market-data/shoonya-health` exposes sanitized state, queue/freshness diagnostics, and explicit `shadow_only`, `order_routing_enabled=false`, and `strategy_fanout_enabled=false` flags. It never returns credentials.
@@ -36,7 +38,7 @@ The following remain intentionally out of scope until a separately reviewed prov
 ## Pre-live automated validation
 
 - Backend and integration CI green on the exact PR head.
-- Unit tests cover auth success/rejection, pre-auth event rejection, tick merge, invalid identity/timestamps, queue overflow, subscription cap/atomicity, concurrent subscribe/unsubscribe, reconnect epochs, stale callbacks, shutdown timeout, and worker restart safety.
+- Unit tests cover auth success/rejection, pre-auth event rejection, tick merge, invalid identity/timestamps, queue overflow, subscription cap/atomicity, concurrent subscribe/unsubscribe, reconnect epochs, stale callbacks, silent-frame watchdog timeout/recovery, shutdown timeout, and worker restart safety.
 - Static review confirms no existing provider/scanner/order path is changed.
 - Verify logs redact credentials and access tokens.
 - Verify no test depends on a live broker, wall-clock sleeps, or network credentials.
