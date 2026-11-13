@@ -178,14 +178,19 @@ class IVSpotFeedAdapter:
                 self._reject_record("out_of_order_source_timestamp")
                 return
             if previous is not None and timestamp_ns == previous.timestamp_ns:
+                # Repeated transport frames are not new exchange observations.
+                # Count them for diagnostics, but do not refresh the accepted
+                # quote's receive time, overwrite its price, or persist another
+                # observation. This prevents stale provider timestamps from
+                # appearing live merely because the socket repeats old frames.
                 self._duplicate_source_timestamps += 1
+                self._last_source_timestamp_fields = source_fields
+                self._last_normalized_timestamp_ns = timestamp_ns
+                return
             self._last_source_timestamp_fields = source_fields
             self._last_normalized_timestamp_ns = timestamp_ns
-            # Exchange timestamps describe the source observation; receive time
-            # describes whether the transport is delivering current frames.
-            # Keep both clocks separate: brokers may repeat an index timestamp
-            # across quote frames, which must refresh feed health without
-            # fabricating a new exchange observation.
+            # A quote is accepted only when its provider timestamp advances.
+            # Receive time and exchange time remain separate freshness checks.
             snapshot = SpotSnapshot(float(price), timestamp_ns, received_at_ns)
             self._latest[symbol] = snapshot
             self._accepted_records += 1
