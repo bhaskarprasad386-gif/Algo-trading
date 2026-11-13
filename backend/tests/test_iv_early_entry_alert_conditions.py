@@ -43,7 +43,7 @@ def test_strategy_a_uses_fresh_live_quote_not_stale_completed_minute_close():
     assert result.state == AlertState.EARLY_ENTRY
 
 
-def test_strategy_a_accepts_live_observation_without_fixed_age_limit():
+def test_strategy_a_rejects_stale_live_observation():
     now, bars, ce, pe = setup()
     stale_live = observation(
         token="CE1", option_type="CE", ts=now-6*NS,
@@ -54,7 +54,8 @@ def test_strategy_a_accepts_live_observation_without_fixed_age_limit():
         ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
         live_ce=stale_live, live_pe=pe[-1], live_target=stale_live,
     )
-    assert result.state == AlertState.EARLY_ENTRY
+    assert result.state == AlertState.WATCH
+    assert "STALE_OPTION_QUOTE" in result.reasons
 
 
 def test_strategy_a_rejects_live_leg_that_reuses_last_completed_quote():
@@ -97,7 +98,7 @@ def test_strategy_a_rejects_oi_decline_without_a_new_broker_oi_observation():
     assert "LIVE_OI_NOT_UPDATED" in result.reasons
 
 
-def test_strategy_a_accepts_spot_history_without_fixed_age_limit():
+def test_strategy_a_rejects_stale_completed_spot_history():
     now, bars, ce, pe = setup()
     stale_bars = [
         replace(bar, timestamp_ns=bar.timestamp_ns-3*60*NS)
@@ -108,7 +109,8 @@ def test_strategy_a_accepts_spot_history_without_fixed_age_limit():
         ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
         live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
     )
-    assert result.state == AlertState.EARLY_ENTRY
+    assert result.state == AlertState.WATCH
+    assert "STALE_SPOT_HISTORY" in result.reasons
 
 
 def test_strategy_a_accepts_asynchronous_ce_pe_observations():
@@ -130,7 +132,7 @@ def test_strategy_a_accepts_asynchronous_ce_pe_observations():
 
 
 
-def test_strategy_a_keeps_historical_oi_change_timestamps_without_age_gate():
+def test_strategy_a_rejects_stale_historical_oi():
     now, bars, ce, pe = setup()
     stale_target = [
         replace(row, oi_timestamp_ns=now-301*NS)
@@ -142,7 +144,8 @@ def test_strategy_a_keeps_historical_oi_change_timestamps_without_age_gate():
         direction="BULLISH", live_ce=ce[-1], live_pe=pe[-1],
         live_target=ce[-1],
     )
-    assert result.state == AlertState.EARLY_ENTRY
+    assert result.state == AlertState.WATCH
+    assert "STALE_HISTORICAL_OI" in result.reasons
 
 
 def test_strategy_a_records_independent_oi_timestamp_without_quote_time_alignment():
