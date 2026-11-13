@@ -11,7 +11,9 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - Noren WebSocket authentication handshake; subscriptions are sent only after a positive `ak` acknowledgement.
 - TLS certificate verification, bounded exponential reconnect, and reconnect stability reset only after an authenticated stable session.
 - `tk` initial snapshots and `tf` incremental updates merged per instrument and per connection epoch.
-- Canonical market-data normalization with exchange/token identity checks and timestamp validation.
+- Canonical market-data normalization with exchange/token identity checks and epoch seconds/milliseconds/microseconds/nanoseconds conversion.
+- Per-instrument exchange-time ordering guard: strictly older ticks are rejected, equal-second quote updates remain valid, and rejected frames cannot mutate the accepted snapshot.
+- Health diagnostics expose an out-of-order tick counter for shadow validation.
 - 500-token hard cap with atomic batch validation.
 - Serialized subscription/unsubscription writes.
 - Independent bounded tick and order-event queues; order-event overflow is surfaced as a feed fault and forces socket closure for reconciliation.
@@ -38,7 +40,7 @@ The following remain intentionally out of scope until a separately reviewed prov
 ## Pre-live automated validation
 
 - Backend and integration CI green on the exact PR head.
-- Unit tests cover auth success/rejection, pre-auth event rejection, tick merge, invalid identity/timestamps, queue overflow, subscription cap/atomicity, concurrent subscribe/unsubscribe, reconnect epochs, stale callbacks, silent-frame watchdog timeout/recovery, shutdown timeout, and worker restart safety.
+- Unit tests cover auth success/rejection, pre-auth event rejection, tick merge, invalid identity/timestamps, epoch-unit conversion, canonical exchange timestamp propagation, out-of-order replay rejection and snapshot integrity, queue overflow, subscription cap/atomicity, concurrent subscribe/unsubscribe, reconnect epochs, stale callbacks, silent-frame watchdog timeout/recovery, shutdown timeout, and worker restart safety.
 - Static review confirms no existing provider/scanner/order path is changed.
 - Verify logs redact credentials and access tokens.
 - Verify no test depends on a live broker, wall-clock sleeps, or network credentials.
