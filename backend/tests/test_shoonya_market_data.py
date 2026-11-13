@@ -192,3 +192,41 @@ def test_start_refuses_duplicate_workers_after_prior_shutdown_timeout():
         release.set()
         worker.join(timeout=1)
     assert not worker.is_alive()
+
+
+def test_concurrent_subscribe_then_unsubscribe_preserves_wire_order():
+    entered_send = threading.Event()
+    release_send = threading.Event()
+    sent = []
+
+    def send(frame):
+        parsed = json.loads(frame)
+        sent.append(parsed)
+        if parsed["t"] == "t":
+            entered_send.set()
+            assert release_send.wait(timeout=2)
+
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    instrument = descriptor()
+    feed.subscribe([instrument])
+    fake_ws = SimpleNamespace(send=send, close=lambda: None)
+    feed._ws, feed._authenticated = fake_ws, True
+
+    subscribe_thread = threading.Thread(target=feed._send_subscriptions, args=(fake_ws,))
+    subscribe_thread.start()
+    assert entered_send.wait(timeout=1)
+
+    unsubscribe_thread = threading.Thread(target=feed.unsubscribe, args=([instrument],))
+    unsubscribe_thread.start()
+    # unsubscribe removes local state before waiting for the serialized wire send
+    for _ in range(100):
+        if feed.snapshot()["subscriptions"] == 0:
+            break
+        threading.Event().wait(0.01)
+    assert feed.snapshot()["subscriptions"] == 0
+
+    release_send.set()
+    subscribe_thread.join(timeout=1)
+    unsubscribe_thread.join(timeout=1)
+    assert not subscribe_thread.is_alive() and not unsubscribe_thread.is_alive()
+    assert [frame["t"] for frame in sent] == ["t", "u"]
