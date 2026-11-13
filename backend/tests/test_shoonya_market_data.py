@@ -441,3 +441,37 @@ def test_supervisor_start_failure_rolls_back_only_new_batch_members(monkeypatch)
     assert supervisor._adapter._descriptors[(existing.key.exchange, existing.key.token)] == existing
     assert (added.key.exchange, added.key.token) not in supervisor._adapter._descriptors
 
+def test_concurrent_unsubscribe_then_resubscribe_preserves_final_wire_state():
+    entered_send = threading.Event()
+    release_send = threading.Event()
+    sent = []
+
+    def send(frame):
+        parsed = json.loads(frame)
+        sent.append(parsed)
+        if parsed["t"] == "u":
+            entered_send.set()
+            assert release_send.wait(timeout=2)
+
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    instrument = descriptor()
+    feed.subscribe([instrument])
+    fake_ws = SimpleNamespace(send=send, close=lambda: None)
+    feed._ws, feed._authenticated = fake_ws, True
+
+    unsubscribe_thread = threading.Thread(target=feed.unsubscribe, args=([instrument],))
+    unsubscribe_thread.start()
+    assert entered_send.wait(timeout=1)
+
+    subscribe_thread = threading.Thread(target=feed.subscribe, args=([instrument],))
+    subscribe_thread.start()
+    # The subscribe must wait before mutating local desired state.
+    assert feed.snapshot()["subscriptions"] == 0
+
+    release_send.set()
+    unsubscribe_thread.join(timeout=1)
+    subscribe_thread.join(timeout=1)
+    assert not unsubscribe_thread.is_alive() and not subscribe_thread.is_alive()
+    assert [frame["t"] for frame in sent] == ["u", "t"]
+    assert feed.snapshot()["subscriptions"] == 1
+
