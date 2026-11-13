@@ -34,6 +34,8 @@ class ShoonyaWebSocket:
         self._backoff_min, self._backoff_max = reconnect_min_seconds, reconnect_max_seconds
         self._stop = threading.Event()
         self._lock = threading.RLock()
+        # Preserve subscribe/unsubscribe wire ordering across caller threads.
+        self._subscription_send_lock = threading.Lock()
         self._ws = self._thread = self._dispatch_thread = self._order_dispatch_thread = self._heartbeat_thread = None
         self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=max_dispatch_queue)
         # Order lifecycle events are isolated from high-volume market ticks.
@@ -76,7 +78,9 @@ class ShoonyaWebSocket:
             ws, ready = self._ws, self._authenticated
         if removed and ready and ws is not None:
             try:
-                ws.send(json.dumps({"t": "u", "k": "#".join(f"{e}|{t}" for e, t in removed)}, separators=(",", ":")))
+                frame = json.dumps({"t": "u", "k": "#".join(f"{e}|{t}" for e, t in removed)}, separators=(",", ":"))
+                with self._subscription_send_lock:
+                    ws.send(frame)
             except Exception as exc:
                 self._on_error(ws, exc)
                 try: ws.close()
@@ -209,8 +213,12 @@ class ShoonyaWebSocket:
         elif kind == "om" and self._on_order_update: self._enqueue("order", message)
 
     def _send_subscriptions(self, ws: Any) -> None:
-        with self._lock: instruments = tuple(self._descriptors)
-        if instruments:
+        # Take the latest descriptor snapshot only after acquiring the wire lock.
+        # This prevents a delayed subscribe from overtaking a concurrent unsubscribe.
+        with self._subscription_send_lock:
+            with self._lock: instruments = tuple(self._descriptors)
+            if not instruments:
+                return
             keys = "#".join(f"{e}|{t}" for e, t in instruments)
             try:
                 ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
