@@ -333,3 +333,14 @@ Integrated the previously standalone per-shard callback adapter into `CommonWebS
 - Added focused regression tests for synchronous default parity, opt-in worker-thread delivery, off-transport-thread overflow recovery, and non-blocking adapter retirement while the manager lock is held.
 - The feature remains opt-in and has not been enabled in production. No existing Box Spread / IV Scanner subscriptions, scanner calculations, signal rules, or order routes were changed.
 - This commit does not claim full end-to-end broker parity or production readiness. Exact-head CI and the complete backend regression suite must pass before considering activation.
+
+
+## 19. Batch 14 — callback fault isolation and lifecycle regression coverage
+
+Expanded the focused manager regression suite to cover:
+- The manager's generation-checked failure/recovery boundary after an adapter integrity fault, with the recovery scheduling hook observed off the SDK callback thread.
+- Rejection of late callbacks from a retired socket/generation after a replacement socket and fresh adapter have been installed.
+- Isolation between two independent shard adapters: a failed shard requests its own recovery while the other shard continues delivering.
+- Constructor validation for explicit boolean opt-in and positive bounded queue capacity.
+
+The tests are committed but have not been executed in this environment. GitHub Actions currently has no workflow run associated with the checked PR head, so no CI pass is claimed. No production flag was enabled; Box Spread / IV Scanner routing and calculations remain unchanged.
