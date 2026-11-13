@@ -225,3 +225,18 @@ Added `backend/app/market_data/provider_ingress.py` as an additive, currently un
 Regression tests cover queue overflow, stale callbacks, queued stale frames, provider mismatch, close behavior, generation monotonicity, independent market/order lanes, and nested payload immutability.
 
 **Integration intentionally deferred:** Neither Angel nor Shoonya socket callbacks are wired to this queue yet. No scanner receives these envelopes, no subscription behavior changes, and no production runtime setting changes. The next integration step must add transport-generation ownership at each broker callback boundary, preserve existing callback consumers during migration, and test shutdown/drain behavior before any live connection is switched over.
+
+
+## 13. Batch 7 — ingress worker lifecycle foundation
+
+Added a single-owner `ProviderIngressWorker` for the Batch 6 bounded lane:
+- Worker invokes a supplied downstream handler outside the transport callback.
+- Handler exceptions are counted and isolated; one bad consumer event does not kill the worker loop.
+- Graceful shutdown closes publication first and drains already-accepted current-generation frames.
+- Explicit non-draining shutdown discards pending frames and increments a separate counter; no silent discard.
+- A single monotonic shutdown deadline bounds the full stop operation, rather than multiplying timeout across sequential joins.
+- Dequeue generation checks remain active during drain, so reconnect-retired frames are discarded and counted.
+
+Tests cover FIFO drain, handler exception isolation, non-draining discard accounting and the previously added queue/generation invariants.
+
+**Still deliberately not wired:** The Angel manager's synchronous callback contract and Shoonya's existing authenticated normalization/dispatch path remain unchanged. This worker is a testable integration primitive only. Before connecting it to a broker, a separate migration must prove per-shard ordering, queue capacity under observed peak rates, overflow degradation/recovery, and callback compatibility. No Box/IV consumer or trading route has been switched.
