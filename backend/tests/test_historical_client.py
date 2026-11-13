@@ -78,3 +78,27 @@ def test_historical_client_rejects_wrong_date_format_without_provider_call():
 
     assert exc.value.name == "InvalidDateFormat"
     assert api.calls == 0
+
+
+def test_historical_client_does_not_retry_provider_rate_limit_exception():
+    api = FakeSmartApi([RuntimeError("Access denied because of exceeding access rate")])
+    sleeps = []
+    client = HistoricalDataClient(FakeMarketClient(api), max_retries=3, backoff_seconds=1, sleep_fn=sleeps.append)
+    with pytest.raises(TradingAppException) as exc:
+        client.get_candles("NSE", "2885", "ONE_MINUTE", "2026-01-02 09:15", "2026-01-02 09:16")
+    assert exc.value.name == "HistoricalDataRateLimited"
+    assert exc.value.status_code == 429
+    assert api.calls == 1
+    assert sleeps == []
+
+
+def test_historical_client_does_not_retry_api_rate_limit_response():
+    api = FakeSmartApi([{"status": False, "message": "Access denied because of exceeding access rate"}])
+    sleeps = []
+    client = HistoricalDataClient(FakeMarketClient(api), max_retries=3, backoff_seconds=1, sleep_fn=sleeps.append)
+    with pytest.raises(TradingAppException) as exc:
+        client.get_candles("NSE", "2885", "ONE_MINUTE", "2026-01-02 09:15", "2026-01-02 09:16")
+    assert exc.value.name == "HistoricalDataRateLimited"
+    assert exc.value.status_code == 429
+    assert api.calls == 1
+    assert sleeps == []
