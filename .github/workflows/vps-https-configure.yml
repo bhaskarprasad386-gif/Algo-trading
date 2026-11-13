@@ -43,7 +43,7 @@ jobs:
                   raise SystemExit("REMOTE_SCRIPT_INDENTATION_INVALID")
               body.append(line[10:] if line else "")
           with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh") as script:
-              script.write("\\n".join(body) + "\\n")
+              script.write("\n".join(body) + "\n")
               script.flush()
               subprocess.run(["bash", "-n", script.name], check=True)
           print("REMOTE_BASH_SYNTAX_OK")
