@@ -1,4 +1,5 @@
 import json
+import threading
 from types import SimpleNamespace
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor
@@ -173,3 +174,21 @@ def test_unsubscribe_send_failure_marks_error_and_closes_socket():
     assert feed.unsubscribe([descriptor()]) == 1
     assert closed
     assert "socket unavailable" in feed.snapshot()["last_error"]
+
+
+def test_start_refuses_duplicate_workers_after_prior_shutdown_timeout():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait, name="blocked-old-dispatcher", daemon=True)
+    worker.start()
+    feed._dispatch_thread = worker
+    try:
+        feed.start()
+    except RuntimeError as exc:
+        assert "blocked-old-dispatcher" in str(exc)
+    else:
+        raise AssertionError("must not start duplicate workers while old dispatcher is alive")
+    finally:
+        release.set()
+        worker.join(timeout=1)
+    assert not worker.is_alive()
