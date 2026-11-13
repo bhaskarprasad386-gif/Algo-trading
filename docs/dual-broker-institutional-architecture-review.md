@@ -133,3 +133,20 @@ Promotion gates:
 - Angel callback fan-out is still synchronous in CommonWebSocketManager._on_data(); this is the first concrete acquisition-side gap for Batch 6.
 - Do not add Redis, NumPy rewrites, primary/secondary selection, cross-broker scanner failover or separate systemd units in one change.
 - No live broker validation, VPS deployment or production promotion is claimed by this design document.
+
+## 7. Batch 5 implementation progress (code added; CI pending)
+
+Added `backend/app/market_data/provider_contracts.py` as an additive provider-neutral mapping layer. It deliberately does not replace `InstrumentRegistry`, alter `InstrumentKey`, or subscribe either broker.
+
+Implemented safeguards:
+- Canonical contract key is independent of broker token and normalizes exchange, segment, underlying, instrument type, expiry, Decimal strike and CE/PE.
+- Each broker retains its own exchange/segment/token tuple; the same canonical contract can resolve to different Angel One and Shoonya tokens.
+- One broker token cannot map to multiple canonical contracts; duplicate mappings from the same broker are rejected.
+- Cross-broker lot-size and tick-size disagreement rejects the candidate snapshot.
+- Inactive contracts are retained as metadata but excluded from tradable resolution by default.
+- Candidate rows and metadata are validated before one lock-protected snapshot pointer swap; empty/invalid/stale candidates leave the last-known-good snapshot untouched.
+- Snapshot stores source version, SHA-256 digest and timezone-aware fetch time. When source bytes are available, callers should pass the source-file digest; otherwise the registry computes a deterministic mapping fingerprint.
+
+Added `backend/tests/test_provider_contracts.py` for dual-token identity, strike precision, duplicate provider keys, token collision, lot/tick mismatch, inactive mapping, empty/stale rollback and incomplete option identity.
+
+This is a foundation, not yet connected to broker master downloaders. No production mapping is loaded, no scanner consumes it, and no live subscriptions or provider selection change in this batch. Next Batch 5 step is to add provider-specific parsers and integrity gates using actual Angel/Shoonya master schemas, then validate representative real master fixtures before wiring the atomic snapshot publisher.
