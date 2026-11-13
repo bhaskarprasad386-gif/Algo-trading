@@ -262,3 +262,25 @@ def test_register_only_does_not_start_websocket(monkeypatch):
     supervisor.register([descriptor()])
     supervisor.start()
     assert supervisor._adapter.started == 0
+
+
+def test_adapter_rejection_does_not_unsubscribe_existing_adapter_token(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    existing = descriptor()
+    supervisor.subscribe([existing])
+    # Simulate an adapter-level conflict not represented by the supervisor's
+    # InstrumentKey (e.g. same exchange/token but different segment identity).
+    conflicting = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "OTHER", existing.key.token),
+        symbol="CONFLICT", instrument_type="option", exchange="NFO",
+        segment="OTHER", expiry="2026-11-26", strike=25000,
+        option_type="CE", lot_size=65, tick_size=0.05, underlying="NIFTY",
+    )
+    try:
+        supervisor.subscribe([conflicting])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("adapter token conflict must be rejected")
+    assert supervisor._adapter.descriptors[("NFO", existing.key.token)] == existing
+    assert supervisor.snapshot()["registry_instruments"] == 1
