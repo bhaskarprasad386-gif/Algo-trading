@@ -43,7 +43,7 @@ def test_strategy_a_uses_fresh_live_quote_not_stale_completed_minute_close():
     assert result.state == AlertState.EARLY_ENTRY
 
 
-def test_strategy_a_rejects_stale_live_quote():
+def test_strategy_a_accepts_live_observation_without_fixed_age_limit():
     now, bars, ce, pe = setup()
     stale_live = observation(
         token="CE1", option_type="CE", ts=now-6*NS,
@@ -54,15 +54,13 @@ def test_strategy_a_rejects_stale_live_quote():
         ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
         live_ce=stale_live, live_pe=pe[-1], live_target=stale_live,
     )
-    assert result.state == AlertState.WATCH
-    assert "STALE_OPTION_QUOTE" in result.reasons
+    assert result.state == AlertState.EARLY_ENTRY
 
 
 def test_strategy_a_rejects_live_leg_that_reuses_last_completed_quote():
     now, bars, ce, pe = setup()
-    # Simulate the first seconds after a minute boundary: the latest completed
-    # CE observation is still within the five-second freshness window, but the
-    # sampler has not received a newer exchange quote for that leg.
+    # A repeated source observation is not a new change, even though no age
+    # threshold is imposed. The source timestamp must advance to count as change.
     ce_history = (
         replace(ce[-3], source_timestamp_ns=now-62*NS),
         replace(ce[-2], source_timestamp_ns=now-2*NS, spot_timestamp_ns=now,
@@ -99,7 +97,7 @@ def test_strategy_a_rejects_oi_decline_without_a_new_broker_oi_observation():
     assert "LIVE_OI_NOT_UPDATED" in result.reasons
 
 
-def test_strategy_a_rejects_stale_completed_spot_history():
+def test_strategy_a_accepts_spot_history_without_fixed_age_limit():
     now, bars, ce, pe = setup()
     stale_bars = [
         replace(bar, timestamp_ns=bar.timestamp_ns-3*60*NS)
@@ -110,11 +108,10 @@ def test_strategy_a_rejects_stale_completed_spot_history():
         ce=ce[-3:-1], pe=pe[-3:-1], target=ce[:4], direction="BULLISH",
         live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
     )
-    assert result.state == AlertState.WATCH
-    assert "STALE_SPOT_HISTORY" in result.reasons
+    assert result.state == AlertState.EARLY_ENTRY
 
 
-def test_strategy_a_rejects_ce_pe_history_from_different_minutes():
+def test_strategy_a_accepts_asynchronous_ce_pe_observations():
     now, bars, ce, pe = setup()
     shifted_pe = [
         replace(
@@ -129,12 +126,11 @@ def test_strategy_a_rejects_ce_pe_history_from_different_minutes():
         ce=ce[-3:-1], pe=shifted_pe, target=ce[:4], direction="BULLISH",
         live_ce=ce[-1], live_pe=pe[-1], live_target=ce[-1],
     )
-    assert result.state == AlertState.WATCH
-    assert "UNALIGNED_OPTION_HISTORY" in result.reasons
+    assert result.state == AlertState.EARLY_ENTRY
 
 
 
-def test_strategy_a_rejects_stale_historical_oi_even_when_quote_minutes_are_aligned():
+def test_strategy_a_keeps_historical_oi_change_timestamps_without_age_gate():
     now, bars, ce, pe = setup()
     stale_target = [
         replace(row, oi_timestamp_ns=now-301*NS)
@@ -146,15 +142,13 @@ def test_strategy_a_rejects_stale_historical_oi_even_when_quote_minutes_are_alig
         direction="BULLISH", live_ce=ce[-1], live_pe=pe[-1],
         live_target=ce[-1],
     )
-    assert result.state == AlertState.WATCH
-    assert "STALE_HISTORICAL_OI" in result.reasons
+    assert result.state == AlertState.EARLY_ENTRY
 
 
-def test_strategy_a_rejects_oi_timestamp_after_its_quote_timestamp():
+def test_strategy_a_records_independent_oi_timestamp_without_quote_time_alignment():
     now, bars, ce, pe = setup()
-    # Keep CE/PE/target source-minute buckets aligned so the evaluator
-    # reaches structural timestamp validation instead of returning the earlier
-    # UNALIGNED_OPTION_HISTORY guard.
+    # OI is an independently timestamped market field; it need not share
+    # the option quote's exact source timestamp.
     future_oi = replace(ce[2], oi_timestamp_ns=ce[2].source_timestamp_ns+1)
     result = evaluate_strategy_a(
         now_ns=now, expiry="2026-11-19", bars=bars,
@@ -162,5 +156,4 @@ def test_strategy_a_rejects_oi_timestamp_after_its_quote_timestamp():
         direction="BULLISH", live_ce=ce[-1], live_pe=pe[-1],
         live_target=ce[-1],
     )
-    assert result.state == AlertState.WATCH
-    assert "INVALID_HISTORICAL_OBSERVATION" in result.reasons
+    assert result.state == AlertState.EARLY_ENTRY
