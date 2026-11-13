@@ -281,6 +281,9 @@ def test_runtime_does_not_close_application_owned_shared_feed_manager():
         def close(self):
             self.close_calls += 1
 
+        def snapshot(self):
+            return {"status": "LIVE", "socket_count": 1}
+
     manager = SharedManager()
     runtime = IVSkewFlipRuntime(
         instrument_master=FakeMaster([]),
