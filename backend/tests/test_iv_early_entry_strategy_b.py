@@ -29,9 +29,9 @@ def test_strategy_b_early_support_bounce_before_second_candle_confirmation():
     assert result.candidate is not None
     assert result.candidate.option_type == "CE"
     assert result.candidate.premium == 101.0
-    wall_age = result.candidate.metadata["checks"]["wall_observation_age_seconds"]
-    assert wall_age["threshold_max"] == 90
-    assert wall_age["actual"] == 0
+    change_times = result.candidate.metadata["checks"]["change_timestamps_ns"]
+    assert change_times["wall_source"] == wall[-1].source_timestamp_ns
+    assert change_times["entry_quote"] == entry.source_timestamp_ns
 
 
 def test_strategy_b_rejects_wall_that_shifts_strike():
@@ -102,14 +102,14 @@ def test_strategy_b_accepts_fresh_completed_wall_bucket_older_than_live_quote_wi
 
 
 
-def test_strategy_b_rejects_stale_oi_in_earlier_wall_observation():
+def test_strategy_b_accepts_oi_observations_without_fixed_age_limit():
     from dataclasses import replace
 
     now = 1_800_000_000 * NS
     wall = [wall_observation(token="PE25000", option_type="PE", ts=now-(2-i)*60*NS,
         strike=25000, iv=[12.0, 11.95, 11.80][i], oi=[10000, 10100, 10300][i]) for i in range(3)]
-    # The newest wall OI is fresh and all OI timestamps advance, but the
-    # earliest observation is older than the five-minute OI validity window.
+    # The earliest observation is more than five minutes old. Age is not
+    # a signal gate; source ordering and the OI pattern remain mandatory.
     wall[0] = replace(wall[0], oi_timestamp_ns=now-301*NS)
     bars = [
         SpotBar(now-60*NS, 24990, 25002, 24980, 24995),
@@ -123,5 +123,4 @@ def test_strategy_b_rejects_stale_oi_in_earlier_wall_observation():
         ce_wall_history=[], pe_wall_history=wall,
         entry_quote=entry, direction="BULLISH",
     )
-    assert result.state == AlertState.WATCH
-    assert "STALE_WALL_OBSERVATION" in result.reasons
+    assert result.state == AlertState.EARLY_ENTRY
