@@ -48,6 +48,7 @@ class ShoonyaWebSocket:
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
         self._last_frame_at = self._last_tick_at = None
         self._connection_opened_at = None
+        self._feed_epoch = 0
         self._shutdown_workers_alive: list[str] = []
         self._normalizer = ShoonyaTickNormalizer()
 
@@ -162,8 +163,15 @@ class ShoonyaWebSocket:
         while not self._stop.is_set():
             try:
                 self._reset_feed_epoch()
-                ws = self._factory(self.URL, on_open=self._on_open, on_message=self._on_message,
-                                   on_error=self._on_error, on_close=self._on_close)
+                with self._lock:
+                    epoch = self._feed_epoch
+                ws = self._factory(
+                    self.URL,
+                    on_open=self._guard_callback(self._on_open, epoch),
+                    on_message=self._guard_callback(self._on_message, epoch),
+                    on_error=self._guard_callback(self._on_error, epoch),
+                    on_close=self._guard_callback(self._on_close, epoch),
+                )
                 with self._lock: self._ws = ws
                 ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED}, ping_interval=20, ping_timeout=10)
                 with self._lock:
@@ -186,8 +194,18 @@ class ShoonyaWebSocket:
         with self._lock:
             self._connected = self._authenticated = False
             self._connection_opened_at = None
+            self._feed_epoch += 1
             self._snapshots.clear()
             self._initialized.clear()
+
+    def _guard_callback(self, callback: Callable[..., None], epoch: int) -> Callable[..., None]:
+        """Ignore late callbacks emitted by a superseded WebSocket instance."""
+        def guarded(ws: Any, *args: Any) -> None:
+            with self._lock:
+                if self._stop.is_set() or epoch != self._feed_epoch or ws is not self._ws:
+                    return
+            callback(ws, *args)
+        return guarded
 
     def _on_open(self, ws: Any) -> None:
         ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
