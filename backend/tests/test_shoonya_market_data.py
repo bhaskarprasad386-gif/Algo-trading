@@ -116,6 +116,7 @@ def test_duplicate_auth_ack_does_not_duplicate_market_or_order_subscriptions():
     )
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = fake_ws
     feed._on_open(fake_ws)
     ack = json.dumps({"t": "ak", "s": "OK"})
     feed._on_message(fake_ws, ack)
