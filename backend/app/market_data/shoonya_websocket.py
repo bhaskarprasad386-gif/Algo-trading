@@ -108,20 +108,30 @@ class ShoonyaWebSocket:
 
     def stop(self) -> None:
         self._stop.set()
-        with self._lock: ws = self._ws
+        with self._lock:
+            ws = self._ws
+            workers = (self._thread, self._dispatch_thread, self._order_dispatch_thread, self._heartbeat_thread)
         if ws is not None:
             try: ws.close()
             except Exception: pass
-        for thread in (self._thread, self._dispatch_thread, self._order_dispatch_thread, self._heartbeat_thread):
-            if thread and thread is not threading.current_thread(): thread.join(timeout=3.0)
+        # Use one shared shutdown budget; four sequential 3s joins could block
+        # an API shutdown for 12 seconds when several callbacks are stuck.
+        deadline = time.monotonic() + 3.0
+        for thread in workers:
+            if thread and thread is not threading.current_thread():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                thread.join(timeout=remaining)
         with self._lock:
             self._connected = self._authenticated = False
-            self._ws = None
             self._shutdown_workers_alive = [
-                thread.name for thread in (self._thread, self._dispatch_thread,
-                    self._order_dispatch_thread, self._heartbeat_thread)
-                if thread and thread.is_alive()
+                thread.name for thread in workers if thread and thread.is_alive()
             ]
+            # Retain the socket reference while its supervisor is still alive:
+            # late callbacks must not look like callbacks from an unowned socket.
+            if not (self._thread and self._thread.is_alive()):
+                self._ws = None
             alive = tuple(self._shutdown_workers_alive)
         if alive:
             reason = "workers did not stop before timeout: " + ", ".join(alive)
