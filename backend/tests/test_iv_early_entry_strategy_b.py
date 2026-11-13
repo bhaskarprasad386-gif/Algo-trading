@@ -108,9 +108,15 @@ def test_strategy_b_accepts_oi_observations_without_fixed_age_limit():
     now = 1_800_000_000 * NS
     wall = [wall_observation(token="PE25000", option_type="PE", ts=now-(2-i)*60*NS,
         strike=25000, iv=[12.0, 11.95, 11.80][i], oi=[10000, 10100, 10300][i]) for i in range(3)]
-    # The earliest observation is more than five minutes old. Age is not
-    # a signal gate; source ordering and the OI pattern remain mandatory.
-    wall[0] = replace(wall[0], oi_timestamp_ns=now-301*NS)
+    # All wall observations are more than five minutes old, including the
+    # newest wall sample. Age is not a signal gate; event ordering and the
+    # OI pattern remain mandatory.
+    wall = [
+        replace(row, source_timestamp_ns=now-(7-i)*60*NS,
+                spot_timestamp_ns=now-(7-i)*60*NS,
+                oi_timestamp_ns=now-(7-i)*60*NS)
+        for i, row in enumerate(wall)
+    ]
     bars = [
         SpotBar(now-60*NS, 24990, 25002, 24980, 24995),
         SpotBar(now, 24990, 25010, 24988, 25005),
