@@ -318,3 +318,33 @@ def test_market_and_order_events_are_ignored_before_authentication_ack():
     assert feed.snapshot()["order_queue_depth"] == 0
     assert order_events == []
     assert not feed.snapshot()["authenticated"]
+
+
+def test_shoonya_configuration_is_default_off_and_fail_closed():
+    from pydantic import ValidationError
+    from app.core.config import Settings
+
+    defaults = Settings(_env_file=None)
+    assert defaults.SHOONYA_MARKET_DATA_ENABLED is False
+    assert defaults.SHOONYA_MARKET_DATA_MAX_TOKENS == 500
+
+    try:
+        Settings(_env_file=None, SHOONYA_MARKET_DATA_ENABLED=True)
+    except ValidationError as exc:
+        assert "SHOONYA_UID" in str(exc)
+        assert "SHOONYA_ACTID" in str(exc)
+        assert "SHOONYA_ACCESS_TOKEN" in str(exc)
+    else:
+        raise AssertionError("enabled Shoonya feed must require all session credentials")
+
+
+def test_shoonya_configuration_rejects_unsafe_limits():
+    from pydantic import ValidationError
+    from app.core.config import Settings
+
+    try:
+        Settings(_env_file=None, SHOONYA_MARKET_DATA_MAX_TOKENS=501)
+    except ValidationError as exc:
+        assert "SHOONYA_MARKET_DATA_MAX_TOKENS" in str(exc)
+    else:
+        raise AssertionError("Shoonya token limit must never exceed 500")
