@@ -457,6 +457,7 @@ class ShoonyaWebSocket:
         with self._lock:
             self._connected = self._authenticated = False
             preserved_faults = (
+                ("Shoonya authentication rejected", "AUTH_FAILED"),
                 ("broker frame timeout:", "DEGRADED"),
                 ("authentication acknowledgement timeout:", "AUTH_TIMEOUT"),
                 ("tick dispatch queue full:", "DEGRADED"),
