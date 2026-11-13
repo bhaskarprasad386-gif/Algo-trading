@@ -27,7 +27,7 @@ jobs:
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
           ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
