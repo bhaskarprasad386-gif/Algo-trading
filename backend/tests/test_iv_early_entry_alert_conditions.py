@@ -65,10 +65,12 @@ def test_strategy_a_rejects_live_leg_that_reuses_last_completed_quote():
     # sampler has not received a newer exchange quote for that leg.
     ce_history = (
         replace(ce[-3], source_timestamp_ns=now-62*NS),
-        replace(ce[-2], source_timestamp_ns=now-2*NS, oi_timestamp_ns=now-2*NS),
+        replace(ce[-2], source_timestamp_ns=now-2*NS, spot_timestamp_ns=now,
+                oi_timestamp_ns=now-2*NS),
     )
     repeated_live_ce = replace(
-        ce[-2], source_timestamp_ns=now-2*NS, oi_timestamp_ns=now-2*NS,
+        ce[-2], source_timestamp_ns=now-2*NS, spot_timestamp_ns=now,
+        oi_timestamp_ns=now-2*NS,
     )
     result = evaluate_strategy_a(
         now_ns=now, expiry="2026-11-19", bars=bars,
