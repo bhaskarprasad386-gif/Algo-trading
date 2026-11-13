@@ -26,7 +26,6 @@ def test_ingress_requires_activation_and_accepts_current_generation():
     ingress.activate_generation(1)
     item = envelope()
     assert ingress.publish(item) is True
-    assert ingress.get_nowait if False else True
     assert ingress.get(timeout=0.01) is item
     ingress.task_done()
     assert ingress.snapshot()["accepted"] == 1
@@ -157,3 +156,31 @@ def test_non_draining_shutdown_reports_discarded_pending_frames():
     worker.stop(timeout=1.0, drain=False)
     assert ingress.snapshot()["shutdown_discarded"] == 1
     assert ingress.snapshot()["queue_depth"] == 0
+
+
+def test_worker_shutdown_timeout_is_reported_and_can_be_reaped():
+    from threading import Event
+
+    ingress = BoundedProviderIngress(provider="angelone", capacity=2)
+    ingress.activate_generation(1)
+    assert ingress.publish(envelope(token="blocked")) is True
+    entered = Event()
+    release = Event()
+
+    def blocked_handler(item):
+        entered.set()
+        release.wait(timeout=2.0)
+
+    worker = ProviderIngressWorker(ingress, blocked_handler, poll_seconds=0.01)
+    worker.start()
+    assert entered.wait(timeout=1.0)
+
+    with pytest.raises(TimeoutError):
+        worker.stop(timeout=0.05, drain=True)
+
+    # The worker cannot cancel an in-flight Python handler. Once it returns,
+    # a second stop call must reap the thread instead of claiming early success.
+    release.set()
+    worker.stop(timeout=1.0, drain=True)
+    assert worker.snapshot()["running"] is False
+    assert worker.snapshot()["processed"] == 1
