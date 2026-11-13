@@ -30,7 +30,7 @@ class SourceMinuteAggregator:
         if retention_minutes < 15:
             raise ValueError("retention_minutes must be at least 15")
         self.retention_ns = retention_minutes * NS_PER_MINUTE
-        self._options: dict[str, dict[int, OptionObservation]] = defaultdict(dict)
+        self._options: dict[str, dict[tuple[int, int], OptionObservation]] = defaultdict(dict)
         self._spots: dict[int, _SpotBucket] = {}
         self._last_spot_source_ns = 0
 
@@ -49,7 +49,8 @@ class SourceMinuteAggregator:
             # Preserve every distinct exchange observation, not one sample per
             # minute. This captures asynchronous IV/OI/volume changes at their
             # own source timestamps without imposing a sampling cadence.
-            self._options[row.token][row.source_timestamp_ns] = row
+            event_key = (row.source_timestamp_ns, int(row.oi_timestamp_ns or 0))
+            self._options[row.token][event_key] = row
 
         if spot is not None:
             stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
@@ -69,7 +70,7 @@ class SourceMinuteAggregator:
         for token in tuple(self._options):
             self._options[token] = {
                 stamp: row for stamp, row in self._options[token].items()
-                if stamp >= cutoff
+                if stamp[0] >= cutoff
             }
             if not self._options[token]:
                 del self._options[token]
@@ -82,7 +83,7 @@ class SourceMinuteAggregator:
         this layer never discards an observation based on age or minute boundary.
         """
         rows = self._options.get(str(token), {})
-        return tuple(rows[key] for key in sorted(rows) if key <= now_ns)
+        return tuple(rows[key] for key in sorted(rows) if key[0] <= now_ns)
 
     def spot_bars(self, *, now_ns: int) -> tuple[SpotBar, ...]:
         current_minute = self._minute(now_ns)
