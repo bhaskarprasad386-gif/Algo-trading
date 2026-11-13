@@ -26,7 +26,7 @@ class _SpotBucket:
 
 
 class SourceMinuteAggregator:
-    def __init__(self, *, retention_minutes: int = 30) -> None:
+    def __init__(self, *, retention_minutes: int = 390) -> None:
         if retention_minutes < 15:
             raise ValueError("retention_minutes must be at least 15")
         self.retention_ns = retention_minutes * NS_PER_MINUTE
@@ -46,10 +46,10 @@ class SourceMinuteAggregator:
                 continue
             if row.source_timestamp_ns < cutoff:
                 continue
-            bucket = self._minute(row.source_timestamp_ns)
-            prior = self._options[row.token].get(bucket)
-            if prior is None or row.source_timestamp_ns > prior.source_timestamp_ns:
-                self._options[row.token][bucket] = row
+            # Preserve every distinct exchange observation, not one sample per
+            # minute. This captures asynchronous IV/OI/volume changes at their
+            # own source timestamps without imposing a sampling cadence.
+            self._options[row.token][row.source_timestamp_ns] = row
 
         if spot is not None:
             stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
@@ -76,10 +76,15 @@ class SourceMinuteAggregator:
         self._spots = {stamp: row for stamp, row in self._spots.items() if stamp >= cutoff}
 
     def option_history(self, token: str, *, now_ns: int) -> tuple[OptionObservation, ...]:
-        """Return completed minute closes only; never expose the current partial bucket."""
-        current_minute = self._minute(now_ns)
+        """Return ordered source observations except the latest live sample.
+
+        The latest source observation is supplied separately as the live quote;
+        every earlier distinct exchange update remains available as history.
+        No age, minute-alignment, or cadence cutoff is applied here.
+        """
         rows = self._options.get(str(token), {})
-        return tuple(rows[key] for key in sorted(rows) if key < current_minute)
+        ordered = tuple(rows[key] for key in sorted(rows) if key <= now_ns)
+        return ordered[:-1] if len(ordered) > 1 else ()
 
     def spot_bars(self, *, now_ns: int) -> tuple[SpotBar, ...]:
         current_minute = self._minute(now_ns)
