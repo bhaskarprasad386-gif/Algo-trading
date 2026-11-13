@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event, Lock
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -805,3 +806,72 @@ def test_telegram_outbox_payload_carries_source_change_timestamps():
     assert result["status"] == "SENT"
     assert delivered[0]["metadata"] == metadata
     assert store.latest()[0]["metadata"] == metadata
+
+def test_two_workers_atomically_claim_one_outbox_row(tmp_path):
+    database = tmp_path / "concurrent-outbox.sqlite"
+    engine_a = create_engine(
+        f"sqlite:///{database}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine_a, tables=[
+        IVEarlyEntryAlertEvent.__table__, IVEarlyEntryCooldown.__table__,
+        IVEarlyEntryNotificationOutbox.__table__,
+    ])
+    engine_b = create_engine(
+        f"sqlite:///{database}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    factory_a = sessionmaker(bind=engine_a, expire_on_commit=False)
+    factory_b = sessionmaker(bind=engine_b, expire_on_commit=False)
+    store = AlertCooldownStore(factory_a)
+    store.record(candidate())
+
+    start_together = Barrier(2)
+    sender_entered = Event()
+    release_sender = Event()
+    delivered = []
+    delivered_lock = Lock()
+
+    def sender(payload):
+        with delivered_lock:
+            delivered.append(payload["event_id"])
+        sender_entered.set()
+        # Hold the winning worker in its network phase while the other worker
+        # attempts to claim. The lease must make the second claim a no-op.
+        release_sender.wait(timeout=2)
+
+    def run(factory):
+        worker = TelegramOutboxWorker(factory)
+        start_together.wait(timeout=2)
+        return worker.process_one(
+            now_ns=candidate().observed_at_ns,
+            sender=sender,
+            configured=True,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(run, factory_a)
+            second = pool.submit(run, factory_b)
+            assert sender_entered.wait(timeout=2)
+            outcomes = [first.result(timeout=5), second.result(timeout=5)]
+            release_sender.set()
+
+        assert sum(result.get("status") == "SENT" for result in outcomes) == 1
+        assert sum(result.get("reason") == "NO_DUE_NOTIFICATION" for result in outcomes) == 1
+        assert len(delivered) == 1
+
+        session = factory_a()
+        try:
+            row = session.query(IVEarlyEntryNotificationOutbox).one()
+            assert row.status == "SENT"
+            assert row.attempts == 1
+            assert row.lease_token is None
+            assert row.lease_until_ns is None
+        finally:
+            session.close()
+    finally:
+        release_sender.set()
+        engine_a.dispose()
+        engine_b.dispose()
+
