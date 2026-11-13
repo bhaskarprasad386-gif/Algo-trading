@@ -50,7 +50,9 @@ class IVEarlyEntryAlertEngine:
         for token, live in current.items():
             token_rows[token] = tuple(
                 row for row in token_rows.get(token, ())
-                if row.source_timestamp_ns < int(getattr(live, "source_timestamp_ns", 0) or 0)
+                if (row.source_timestamp_ns, int(row.oi_timestamp_ns or 0))
+                < (int(getattr(live, "source_timestamp_ns", 0) or 0),
+                   int(getattr(live, "oi_timestamp_ns", 0) or 0))
             )
         by_strike: dict[float, dict[str, str]] = {}
         for token, row in current.items():
