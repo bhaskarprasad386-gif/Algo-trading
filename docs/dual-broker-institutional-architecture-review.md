@@ -380,3 +380,23 @@ Safety boundary:
 - Depth completeness defaults to false. A top-of-book record is not silently promoted to complete market depth; caller must provide separately verified evidence.
 - No quote source is selected, no broker-side mixing occurs, and no orders can be produced by this module.
 - Seven focused adapter tests are committed but have not been executed here. Exact-head CI and backend regression remain outstanding.
+
+
+## 22. Batch 17 — instrument-wise quote parity metrics and bounded history
+
+Added a pure diagnostic analyzer that computes, only for matching canonical contract keys:
+- absolute and relative-basis-point bid difference;
+- absolute and relative-basis-point ask difference;
+- bid-size and ask-size absolute differences;
+- midpoint absolute and relative-basis-point difference;
+- exchange timestamp skew in nanoseconds.
+
+On canonical identity mismatch every price/size/time parity metric is suppressed. For stale but structurally valid quotes, divergence metrics may remain visible for diagnostics while the quality state remains stale; this must never be interpreted as an executable quote.
+
+Added a thread-safe bounded in-memory history keyed by canonical contract. Capacity is configurable per contract (default 300), snapshots are immutable tuples, out-of-order local observation times are rejected, and clear reports the number of retained observations removed.
+
+Safety and limitations:
+- The history is process-memory only: it is not durable across restarts and is not wired to a broker callback, persistence store, API, UI, scanner, or strategy.
+- This batch measures quote parity; it does not decide which broker is better or eligible to execute.
+- No cross-broker bid/ask mixing, source promotion, failover, or order routing.
+- Seven focused parity/history test functions are committed but have not been executed here. Exact-head CI and full backend regression remain required.
