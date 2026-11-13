@@ -29,7 +29,7 @@ class ShoonyaTickNormalizer:
     def _timestamp_ns(payload: Mapping[str, Any]) -> int:
         raw = payload.get("ft")
         if raw is None:
-            return time_ns()
+            return 0
         try:
             value = int(str(raw).strip())
         except (TypeError, ValueError, OverflowError):
