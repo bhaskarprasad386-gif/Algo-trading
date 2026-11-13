@@ -46,6 +46,7 @@ class ShoonyaWebSocket:
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
         self._last_frame_at = self._last_tick_at = None
         self._connection_opened_at = None
+        self._shutdown_workers_alive: list[str] = []
         self._normalizer = ShoonyaTickNormalizer()
 
     def subscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
@@ -84,8 +85,14 @@ class ShoonyaWebSocket:
 
     def start(self) -> None:
         with self._lock:
-            if self._thread and self._thread.is_alive(): return
+            workers = (self._thread, self._dispatch_thread, self._order_dispatch_thread, self._heartbeat_thread)
+            alive = [thread.name for thread in workers if thread and thread.is_alive()]
+            if alive:
+                if self._thread and self._thread.is_alive() and not self._stop.is_set():
+                    return
+                raise RuntimeError(f"previous Shoonya workers are still active: {', '.join(alive)}")
             self._stop.clear()
+            self._shutdown_workers_alive = []
             self._dispatch_thread = threading.Thread(target=self._dispatch_loop, name="shoonya-tick-dispatch", daemon=True)
             self._order_dispatch_thread = threading.Thread(target=self._order_dispatch_loop, name="shoonya-order-dispatch", daemon=True)
             self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="shoonya-heartbeat", daemon=True)
@@ -103,8 +110,21 @@ class ShoonyaWebSocket:
             except Exception: pass
         for thread in (self._thread, self._dispatch_thread, self._order_dispatch_thread, self._heartbeat_thread):
             if thread and thread is not threading.current_thread(): thread.join(timeout=3.0)
-        with self._lock: self._connected = self._authenticated = False; self._ws = None
-        self._emit_state("STOPPED", None)
+        with self._lock:
+            self._connected = self._authenticated = False
+            self._ws = None
+            self._shutdown_workers_alive = [
+                thread.name for thread in (self._thread, self._dispatch_thread,
+                    self._order_dispatch_thread, self._heartbeat_thread)
+                if thread and thread.is_alive()
+            ]
+            alive = tuple(self._shutdown_workers_alive)
+        if alive:
+            reason = "workers did not stop before timeout: " + ", ".join(alive)
+            with self._lock: self._last_error = reason
+            self._emit_state("STOP_TIMEOUT", reason)
+        else:
+            self._emit_state("STOPPED", None)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -114,6 +134,7 @@ class ShoonyaWebSocket:
                     "dispatch_queue_capacity": self._queue.maxsize, "dispatch_drops": self._dispatch_drops,
                     "order_queue_depth": self._order_queue.qsize(), "order_update_drops": self._order_update_drops,
                     "reconnect_count": self._reconnect_count, "last_error": self._last_error,
+                    "shutdown_workers_alive": list(self._shutdown_workers_alive),
                     "last_frame_at": self._last_frame_at, "last_tick_at": self._last_tick_at,
                     "last_tick_age_seconds": max(0.0, time.time() - self._last_tick_at) if self._last_tick_at else None}
 
