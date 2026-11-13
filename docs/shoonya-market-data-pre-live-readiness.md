@@ -9,7 +9,7 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 ## Implemented in this PR
 
 - Noren WebSocket authentication handshake; subscriptions are sent only after a positive `ak` acknowledgement.
-- TLS certificate verification, bounded exponential reconnect, and reconnect stability reset only after an authenticated stable session.
+- TLS certificate verification, bounded exponential reconnect with per-attempt jitter to prevent synchronized reconnect storms, and reconnect stability reset only after an authenticated stable session.
 - `tk` initial snapshots and `tf` incremental updates merged per instrument and per connection epoch.
 - Canonical market-data normalization with exchange/token identity checks and epoch seconds/milliseconds/microseconds/nanoseconds conversion.
 - Per-instrument exchange-time ordering guard: strictly older ticks are rejected, equal-second quote updates remain valid, and rejected frames cannot mutate the accepted snapshot.
