@@ -140,3 +140,57 @@ def test_payload_copy_failure_is_reported_as_integrity_fault():
     assert state["payload_copy_errors"] == 1
     assert state["integrity_fault"] is True
     assert "payload_copy: TypeError" in state["last_error"]
+
+
+
+def test_delivery_counters_distinguish_attempts_successes_and_errors():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+
+    def fail(_):
+        raise RuntimeError("consumer unavailable")
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(lambda _: None, "ok", "raw"),
+            CallbackInvocation(fail, "bad", "record"),
+        ),
+    )
+    adapter.stop(timeout=2.0, drain=True)
+    state = adapter.snapshot()
+    assert state["callback_attempts"] == 2
+    assert state["callback_successes"] == 1
+    assert state["callback_errors"] == 1
+    assert state["delivery_status"] == "DEGRADED"
+
+
+def test_overflow_marks_delivery_status_degraded():
+    adapter = AngelShardCallbackAdapter(capacity=1)
+    adapter.activate_generation(1)
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 1, "raw"),),
+    )
+    accepted = adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 2, "raw"),),
+    )
+    assert accepted is False
+    state = adapter.snapshot()
+    assert state["delivery_status"] == "DEGRADED"
+    assert state["integrity_fault"] is True
+
+
+def test_graceful_stop_without_worker_counts_unprocessed_batches():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 1, "raw"),),
+    )
+    adapter.stop(timeout=2.0, drain=True)
+    state = adapter.snapshot()
+    assert state["discarded_batches"] == 1
+    assert state["queue_depth"] == 0
