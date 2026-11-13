@@ -143,8 +143,6 @@ class AngelShardCallbackAdapter:
         with self._lock:
             self._closed = True
             thread = self._thread
-        if thread is None:
-            return
         if not drain:
             discarded = 0
             while True:
@@ -158,6 +156,23 @@ class AngelShardCallbackAdapter:
             with self._lock:
                 self._discarded += discarded
             self._stop.set()
+            if thread is None:
+                return
+        elif thread is None:
+            # No worker was started, so there is nobody available to drain
+            # accepted work. Account for it rather than silently retaining it.
+            discarded = 0
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except Empty:
+                    break
+                else:
+                    self._queue.task_done()
+                    discarded += 1
+            with self._lock:
+                self._discarded += discarded
+            return
         else:
             while not self._queue.empty() and monotonic() < deadline:
                 if not thread.is_alive():
