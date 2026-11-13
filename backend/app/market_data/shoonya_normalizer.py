@@ -59,10 +59,11 @@ class ShoonyaTickNormalizer:
         bid, ask = self._number(payload.get("bp1")), self._number(payload.get("sp1"))
         if bid is not None and ask is not None and bid > ask:
             bid = ask = None
+        timestamp_ns = self._timestamp_ns(payload)
         return MarketDataRecord(
             instrument=InstrumentKey(descriptor.key.exchange, descriptor.key.segment, token),
             symbol=str(payload.get("ts") or descriptor.symbol), instrument_type=kind,
-            timestamp_ns=self._timestamp_ns(payload), timeframe="1s",
+            timestamp_ns=timestamp_ns, timeframe="1s",
             ltp=self._number(payload.get("lp")), bid=bid, ask=ask,
             bid_qty=self._number(payload.get("bq1")), ask_qty=self._number(payload.get("sq1")),
             volume=self._integer(payload.get("v")), oi=self._integer(payload.get("oi")),
@@ -72,5 +73,6 @@ class ShoonyaTickNormalizer:
             strike=descriptor.strike, option_type=option_type,
             lot_size=self._integer(payload.get("ls")) or descriptor.lot_size,
             tick_size=self._number(payload.get("ti")) or descriptor.tick_size,
-            payload={**dict(payload), "broker": "shoonya", "price_precision": payload.get("pp")},
+            payload={**dict(payload), "broker": "shoonya", "price_precision": payload.get("pp"),
+                     "exchange_timestamp_ns": timestamp_ns, "source_timestamp_ns": timestamp_ns},
         )
