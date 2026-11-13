@@ -138,7 +138,7 @@ def remove_shoonya_subscriptions(
     _owner_id: int = Depends(require_real_owner_access),
 ):
     """Unsubscribe explicit instruments from the isolated Shoonya shadow feed."""
-    supervisor = _shoonya_supervisor_provider
+    supervisor = _shoonya_supervisor_provider() if callable(_shoonya_supervisor_provider) else _shoonya_supervisor_provider
     if supervisor is None:
         raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
     try:
