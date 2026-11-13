@@ -52,6 +52,13 @@ def test_per_shard_adapter_overflow_latches_integrity_fault():
     state = adapter.snapshot()
     assert state["overflow_batches"] == 1
     assert state["integrity_fault"] is True
+    assert state["closed"] is True
+    assert state["queue_depth"] == 0
+    assert state["discarded_batches"] == 1
+    assert not adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, None, "raw"),),
+    )
 
 
 def test_per_shard_adapter_isolates_callback_exception():
@@ -139,6 +146,8 @@ def test_payload_copy_failure_is_reported_as_integrity_fault():
     assert accepted is False
     assert state["payload_copy_errors"] == 1
     assert state["integrity_fault"] is True
+    assert state["closed"] is True
+    assert state["queue_depth"] == 0
     assert "payload_copy: TypeError" in state["last_error"]
 
 
