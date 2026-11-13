@@ -347,7 +347,7 @@ class ShoonyaWebSocket:
             self._last_error = safe_error
             self._connected = self._authenticated = False
         self._emit_state("ERROR", safe_error)
-        app_logger.warning("Shoonya WebSocket error: %s", safe_error)
+        app_logger.warning("Shoonya WebSocket error: {}", safe_error)
 
     def _on_close(self, ws: Any, status_code: Any, message: Any) -> None:
         with self._lock: self._connected = self._authenticated = False
