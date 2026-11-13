@@ -16,12 +16,16 @@ jobs:
           VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          : "${VPS_KNOWN_HOSTS:?VPS_KNOWN_HOSTS must contain a pre-verified SSH known_hosts entry}"
           printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          printf '%s\\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
           ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
@@ -215,10 +219,35 @@ jobs:
           HOOK
           chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 
-          echo "== FINAL CHECK =="
+          # Certbot was installed in a Python venv, so do not assume the OS
+          # package installed a renewal timer. Run renewal twice daily with jitter.
+          cat > /etc/systemd/system/certbot-ip-renew.service <<'UNIT'
+          [Unit]
+          Description=Renew Let's Encrypt short-lived IP certificate
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/certbot renew --quiet --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+          UNIT
+
+          cat > /etc/systemd/system/certbot-ip-renew.timer <<'UNIT'
+          [Unit]
+          Description=Check Let's Encrypt IP certificate renewal twice daily
+          [Timer]
+          OnCalendar=*-*-* 00,12:00:00
+          RandomizedDelaySec=1h
+          Persistent=true
+          Unit=certbot-ip-renew.service
+          [Install]
+          WantedBy=timers.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable --now certbot-ip-renew.timer
+          systemctl list-timers certbot-ip-renew.timer --no-pager
+
+          echo "== FINAL CHECK: STRICT TRUST VERIFICATION =="
           echo "SERVICE=$(systemctl is-active algo-trading.service)"
           echo "HTTP=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json || true)"
-          echo "HTTPS=$(curl -k -sS -o /dev/null -w '%{http_code}' https://127.0.0.1/openapi.json || true)"
+          echo "HTTPS=$(curl --fail --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' https://$IP/health)"
           echo "CERT_SUBJECT=$(openssl x509 -in "/etc/letsencrypt/live/$IP/cert.pem" -noout -subject | sed 's/^subject=//')"
           echo "CERT_EXPIRES=$(openssl x509 -in "/etc/letsencrypt/live/$IP/cert.pem" -noout -enddate | sed 's/^notAfter=//')"
           echo "PORTS"
@@ -241,7 +270,7 @@ jobs:
               "Sec-WebSocket-Version: 13\r\n"
               "\r\n"
           )
-          context = ssl._create_unverified_context()
+          context = ssl.create_default_context()
           with socket.create_connection((host, 443), timeout=10) as raw:
               with context.wrap_socket(raw, server_hostname=host) as sock:
                   sock.sendall(request.encode())
@@ -255,7 +284,7 @@ jobs:
           print(f"WSS_STATUS_LINE={status_line}")
           if not status_line.startswith("HTTP/1.1 101 "):
               raise SystemExit("WSS_HANDSHAKE_FAILED")
-          print("WSS_HANDSHAKE_OK")
+          print("WSS_HANDSHAKE_OK_WITH_TRUSTED_CERTIFICATE")
           PY
           REMOTE
 
