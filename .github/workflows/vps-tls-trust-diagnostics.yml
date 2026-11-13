@@ -20,12 +20,14 @@ jobs:
           VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         shell: bash
         run: |
           set -euo pipefail
           : "${VPS_KEY:?VPS_SSH_KEY secret is required}"
           : "${VPS_HOST:?VPS_HOST secret is required}"
           : "${VPS_USER:?VPS_USER secret is required}"
+          : "${VPS_KNOWN_HOSTS:?VPS_KNOWN_HOSTS must contain the pre-verified SSH known_hosts entry}"
 
           key_file="$(mktemp)"
           trap 'rm -f "$key_file"' EXIT
@@ -34,7 +36,7 @@ jobs:
 
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          ssh-keyscan -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
           ssh -i "$key_file" \
