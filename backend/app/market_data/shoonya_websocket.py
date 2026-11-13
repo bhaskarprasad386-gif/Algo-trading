@@ -483,6 +483,11 @@ class ShoonyaWebSocket:
     def _on_error(self, ws: Any, error: Any) -> None:
         safe_error = f"{type(error).__name__}: {self._safe_error_text(error)}"
         with self._lock:
+            # Internal send/watchdog paths can race a reconnect even though
+            # transport callbacks are epoch-guarded. An error from an obsolete
+            # socket must never mark the replacement session unhealthy.
+            if ws is not None and ws is not self._ws:
+                return
             self._last_error = safe_error
             self._connected = self._authenticated = False
         self._emit_state("ERROR", safe_error)
