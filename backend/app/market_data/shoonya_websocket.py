@@ -120,12 +120,7 @@ class ShoonyaWebSocket:
         delay = self._backoff_min
         while not self._stop.is_set():
             try:
-                # A reconnect starts a new feed epoch. Never merge incremental
-                # frames into a snapshot from the previous socket session.
-                with self._lock:
-                    self._connected = self._authenticated = False
-                    self._snapshots.clear()
-                    self._initialized.clear()
+                self._reset_feed_epoch()
                 ws = self._factory(self.URL, on_open=self._on_open, on_message=self._on_message,
                                    on_error=self._on_error, on_close=self._on_close)
                 with self._lock: self._ws = ws
@@ -138,6 +133,13 @@ class ShoonyaWebSocket:
             self._emit_state("RECONNECTING", self._last_error)
             self._stop.wait(delay)
             delay = min(self._backoff_max, delay * 2)
+
+    def _reset_feed_epoch(self) -> None:
+        """Discard per-connection tick state before opening a replacement socket."""
+        with self._lock:
+            self._connected = self._authenticated = False
+            self._snapshots.clear()
+            self._initialized.clear()
 
     def _on_open(self, ws: Any) -> None:
         ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
