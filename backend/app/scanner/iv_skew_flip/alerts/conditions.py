@@ -90,8 +90,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     # Each feed is asynchronous. Compare ordered changes from each source;
     # do not require CE, PE, target and spot to share a minute or cadence.
     for series in (ce3, pe3, tgt):
-        times = [row.source_timestamp_ns for row in series]
-        if any(b <= a for a, b in zip(times, times[1:])):
+        event_keys = [(row.source_timestamp_ns, int(row.oi_timestamp_ns or 0)) for row in series]
+        if any(b <= a for a, b in zip(event_keys, event_keys[1:])):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_ORDER",))
     for row, history in ((live_ce, ce3), (live_pe, pe3), (live_target, tgt)):
         if _structurally_valid(row):
@@ -103,8 +103,10 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         # from the completed minute. Freshness alone does not prove a new
         # exchange observation; require every live leg to advance its source
         # timestamp beyond its own completed-minute history.
-        if row.source_timestamp_ns <= history[-1].source_timestamp_ns:
-            return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_QUOTE_NOT_ADVANCED",))
+        live_event = (row.source_timestamp_ns, int(row.oi_timestamp_ns or 0))
+        prior_event = (history[-1].source_timestamp_ns, int(history[-1].oi_timestamp_ns or 0))
+        if live_event <= prior_event:
+            return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_OBSERVATION_NOT_ADVANCED",))
     # A quote refresh does not prove that OI itself was refreshed. The target
     # leg must carry a strictly newer broker OI timestamp than the completed
     # minute close before an OI-decrease condition can authorize an alert.
@@ -202,8 +204,8 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     for row in wall_rows:
         if _structurally_valid(row):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_OBSERVATION",))
-    times = [row.source_timestamp_ns for row in wall_rows]
-    if any(b <= a for a, b in zip(times, times[1:])):
+    event_keys = [(row.source_timestamp_ns, int(row.oi_timestamp_ns or 0)) for row in wall_rows]
+    if any(b <= a for a, b in zip(event_keys, event_keys[1:])):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_OBSERVATION_ORDER",))
     if len({row.strike for row in wall_rows}) != 1:
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_NOT_PERSISTENT",))
