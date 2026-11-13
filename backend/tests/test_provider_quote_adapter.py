@@ -1,4 +1,4 @@
-from datetime import date
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -65,9 +65,7 @@ def test_angel_and_shoonya_records_map_to_same_contract_despite_different_tokens
 
 def test_different_expiry_or_strike_never_compares_as_same_contract():
     changed = _record("shoonya")
-    changed = MarketDataRecord(
-        **{**changed.__dict__, "strike": 22100.0}
-    )
+    changed = replace(changed, strike=22100.0)
     result = compare_provider_quotes(
         _observation("angel_one"), _observation("shoonya", record=changed),
         now_monotonic_ns=NOW_MONOTONIC,
@@ -91,7 +89,7 @@ def test_top_of_book_does_not_claim_full_depth_by_default():
 
 def test_missing_normalized_exchange_timestamp_is_rejected():
     record = _record("angel_one")
-    record = MarketDataRecord(**{**record.__dict__, "timestamp_ns": 0})
+    record = replace(record, timestamp_ns=0)
     observation = _observation("angel_one", record=record)
     result = assess_quote(
         observation,
