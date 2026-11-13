@@ -13,7 +13,7 @@ class HistoricalDataClient:
     @staticmethod
     def _is_rate_limit_error(error: Any) -> bool:
         """Recognize provider throttling so retries do not amplify the limit."""
-        message = str(error).strip().lower()
+        message = str(getattr(error, "message", None) or error).strip().lower()
         return any(marker in message for marker in (
             "exceeding access rate",
             "access rate exceeded",
