@@ -51,11 +51,15 @@ class ShoonyaWebSocket:
         batch = tuple(descriptors)
         if not batch: return 0
         with self._lock:
+            staged = dict(self._descriptors)
             for d in batch:
                 key = (d.key.exchange.upper(), d.key.token)
-                if key in self._descriptors and self._descriptors[key] != d:
+                if key in staged and staged[key] != d:
                     raise ValueError(f"conflicting Shoonya instrument descriptor: {key}")
-                self._descriptors[key] = d
+                staged[key] = d
+            if len(staged) > 500:
+                raise ValueError("Shoonya allows at most 500 subscribed tokens per WebSocket connection")
+            self._descriptors = staged
             ws, ready = self._ws, self._authenticated
         if ready and ws is not None: self._send_subscriptions(ws)
         return len(batch)
@@ -104,7 +108,8 @@ class ShoonyaWebSocket:
                     "dispatch_queue_capacity": self._queue.maxsize, "dispatch_drops": self._dispatch_drops,
                     "order_queue_depth": self._order_queue.qsize(), "order_update_drops": self._order_update_drops,
                     "reconnect_count": self._reconnect_count, "last_error": self._last_error,
-                    "last_frame_at": self._last_frame_at, "last_tick_at": self._last_tick_at}
+                    "last_frame_at": self._last_frame_at, "last_tick_at": self._last_tick_at,
+                    "last_tick_age_seconds": max(0.0, time.time() - self._last_tick_at) if self._last_tick_at else None}
 
     def _emit_state(self, state: str, reason: str | None) -> None:
         if self._on_state:
