@@ -1,11 +1,11 @@
-"""Source-time minute bucket aggregation for the NIFTY IV early-entry engine.
+"""Source-event option history and completed-minute spot bars for IV alerts.
 
-Only distinct exchange source timestamps contribute. Repeated sampler/UI reads
-cannot manufacture volume, OI, IV or spot observations.
+Every distinct exchange quote/OI event is retained with its source timestamps.
+Spot is separately aggregated into completed one-minute OHLC bars.
 """
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
@@ -79,7 +79,7 @@ class SourceMinuteAggregator:
     def option_history(self, token: str, *, now_ns: int) -> tuple[OptionObservation, ...]:
         """Return every ordered source observation in the retained session.
 
-        The orchestrator removes the current live sample by its source timestamp;
+        The orchestrator removes the current live event by its source-event key;
         this layer never discards an observation based on age or minute boundary.
         """
         rows = self._options.get(str(token), {})
