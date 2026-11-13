@@ -29,6 +29,7 @@ class ShoonyaMarketDataSupervisor:
         reconnect_min_seconds: float = 1.0,
         reconnect_max_seconds: float = 30.0,
         frame_timeout_seconds: float = 30.0,
+        auth_timeout_seconds: float = 15.0,
         websocket_factory: Any | None = None,
     ) -> None:
         if not 1 <= int(max_tokens) <= 500:
@@ -57,6 +58,7 @@ class ShoonyaMarketDataSupervisor:
             reconnect_min_seconds=reconnect_min_seconds,
             reconnect_max_seconds=reconnect_max_seconds,
             frame_timeout_seconds=frame_timeout_seconds,
+            auth_timeout_seconds=auth_timeout_seconds,
         )
 
     def register(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
