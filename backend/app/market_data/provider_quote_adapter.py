@@ -40,7 +40,7 @@ def observation_from_market_data_record(
         if isinstance(record.expiry, date):
             expiry = record.expiry
         elif isinstance(record.expiry, str):
-            expiry = date.fromisoformat(record.expiry[:10])
+            expiry = date.fromisoformat(record.expiry)
         else:
             raise TypeError("record expiry must be an ISO date string or date")
 
