@@ -175,3 +175,21 @@ def test_incomplete_depth_is_not_reported_as_fully_valid_quote():
     )
     assert result.valid is False
     assert "depth_incomplete" in result.reasons
+
+
+@pytest.mark.parametrize(
+    ("override", "reason"),
+    [
+        ({"authenticated": "false"}, "invalid_authentication_flag"),
+        ({"connection_current": "false"}, "invalid_connection_current_flag"),
+    ],
+)
+def test_non_boolean_session_flags_fail_closed(override, reason):
+    result = assess_quote(
+        _quote("angel", **override),
+        now_monotonic_ns=NOW,
+        now_exchange_timestamp_ns=EXCHANGE_NOW,
+        max_age_ns=MAX_AGE,
+    )
+    assert result.valid is False
+    assert reason in result.reasons
