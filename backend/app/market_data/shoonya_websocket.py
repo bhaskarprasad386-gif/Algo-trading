@@ -120,6 +120,12 @@ class ShoonyaWebSocket:
         delay = self._backoff_min
         while not self._stop.is_set():
             try:
+                # A reconnect starts a new feed epoch. Never merge incremental
+                # frames into a snapshot from the previous socket session.
+                with self._lock:
+                    self._connected = self._authenticated = False
+                    self._snapshots.clear()
+                    self._initialized.clear()
                 ws = self._factory(self.URL, on_open=self._on_open, on_message=self._on_message,
                                    on_error=self._on_error, on_close=self._on_close)
                 with self._lock: self._ws = ws
