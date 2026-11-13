@@ -1,14 +1,54 @@
 name: VPS HTTPS + Nginx Configure
 # Endpoint repair run: keep Vercel HTTPS/WSS connectivity aligned with VPS.
 
+# Production VPS changes must be started manually after explicit approval.
+# Pull requests run static validation only; they never touch the VPS.
 on:
-  workflow_dispatch:
-  push:
+  pull_request:
     paths:
-      - frontend/lib/config.ts
+      - ".github/workflows/vps-https-configure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@v4
+      - name: Parse workflow YAML
+        run: |
+          ruby -e 'require "yaml"; YAML.parse_file(ARGV.fetch(0)); puts "WORKFLOW_YAML_PARSE_OK"' .github/workflows/vps-https-configure.yml
+      - name: Validate embedded remote Bash syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import tempfile
+
+          path = Path(".github/workflows/vps-https-configure.yml")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          start = next((i for i, line in enumerate(lines) if line.lstrip().startswith("ssh -i /tmp/vps_key") and "<<'REMOTE'" in line), None)
+          if start is None:
+              raise SystemExit("REMOTE_SCRIPT_START_NOT_FOUND")
+          end = next((i for i in range(start + 1, len(lines)) if lines[i].strip() == "REMOTE"), None)
+          if end is None:
+              raise SystemExit("REMOTE_SCRIPT_END_NOT_FOUND")
+          body = []
+          for line in lines[start + 1:end]:
+              if line and not line.startswith("          "):
+                  raise SystemExit("REMOTE_SCRIPT_INDENTATION_INVALID")
+              body.append(line[10:] if line else "")
+          with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh") as script:
+              script.write("\n".join(body) + "\n")
+              script.flush()
+              subprocess.run(["bash", "-n", script.name], check=True)
+          print("REMOTE_BASH_SYNTAX_OK")
   configure:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Configure HTTPS endpoint on VPS
@@ -16,21 +56,66 @@ jobs:
           VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          : "${VPS_KEY:?VPS_SSH_KEY secret is required}"
+          : "${VPS_HOST:?VPS_HOST secret is required}"
+          : "${VPS_USER:?VPS_USER secret is required}"
+          : "${VPS_KNOWN_HOSTS:?VPS_KNOWN_HOSTS must contain a pre-verified SSH known_hosts entry}"
           printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
+          trap 'rm -f /tmp/vps_key' EXIT
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
-          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
+          if [ "$(id -u)" -ne 0 ]; then
+            echo "VPS_SSH_USER_MUST_HAVE_ROOT_PRIVILEGES"
+            exit 1
+          fi
 
           IP="82.41.67.22"
           APP_ROOT="/opt/Algo-trading/backend"
           ACME_ROOT="/var/www/acme"
           NGINX_SITE="/etc/nginx/sites-available/algo-trading"
           NGINX_LINK="/etc/nginx/sites-enabled/algo-trading"
+
+          # Preserve the exact pre-existing Nginx site and enabled entry. If any
+          # later step fails, restore them and reload the previously valid config.
+          BACKUP_DIR="$(mktemp -d /var/backups/algo-trading-tls.XXXXXX)"
+          CONFIG_COMMITTED=0
+          if [ -e "$NGINX_SITE" ] || [ -L "$NGINX_SITE" ]; then
+            cp -a "$NGINX_SITE" "$BACKUP_DIR/nginx-site"
+            touch "$BACKUP_DIR/had-nginx-site"
+          fi
+          if [ -e "$NGINX_LINK" ] || [ -L "$NGINX_LINK" ]; then
+            cp -a "$NGINX_LINK" "$BACKUP_DIR/nginx-enabled"
+            touch "$BACKUP_DIR/had-nginx-enabled"
+          fi
+          rollback_nginx_config() {
+            if [ "$CONFIG_COMMITTED" -ne 1 ]; then
+              echo "TLS_CONFIGURATION_FAILED_RESTORING_PREVIOUS_NGINX_CONFIG"
+              rm -f "$NGINX_SITE" "$NGINX_LINK"
+              if [ -e "$BACKUP_DIR/had-nginx-site" ]; then
+                cp -a "$BACKUP_DIR/nginx-site" "$NGINX_SITE"
+              fi
+              if [ -e "$BACKUP_DIR/had-nginx-enabled" ]; then
+                cp -a "$BACKUP_DIR/nginx-enabled" "$NGINX_LINK"
+              fi
+              if nginx -t; then
+                systemctl reload nginx || true
+                echo "PREVIOUS_NGINX_CONFIG_RESTORED"
+              else
+                echo "WARNING_PREVIOUS_NGINX_CONFIG_VALIDATION_FAILED"
+              fi
+            fi
+            rm -rf "$BACKUP_DIR"
+          }
+          trap rollback_nginx_config EXIT
 
           echo "== PRECHECK =="
           SERVICE_STATE="$(systemctl is-active algo-trading.service || true)"
@@ -215,10 +300,37 @@ jobs:
           HOOK
           chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 
-          echo "== FINAL CHECK =="
+          # Certbot was installed in a Python venv, so do not assume the OS
+          # package installed a renewal timer. Run renewal twice daily with jitter.
+          CERTBOT_BIN="$(command -v certbot)"
+          test -x "$CERTBOT_BIN"
+          cat > /etc/systemd/system/certbot-ip-renew.service <<UNIT
+          [Unit]
+          Description=Renew Let's Encrypt short-lived IP certificate
+          [Service]
+          Type=oneshot
+          ExecStart=$CERTBOT_BIN renew --quiet --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+          UNIT
+
+          cat > /etc/systemd/system/certbot-ip-renew.timer <<'UNIT'
+          [Unit]
+          Description=Check Let's Encrypt IP certificate renewal twice daily
+          [Timer]
+          OnCalendar=*-*-* 00,12:00:00
+          RandomizedDelaySec=1h
+          Persistent=true
+          Unit=certbot-ip-renew.service
+          [Install]
+          WantedBy=timers.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable --now certbot-ip-renew.timer
+          systemctl list-timers certbot-ip-renew.timer --no-pager
+
+          echo "== FINAL CHECK: STRICT TRUST VERIFICATION =="
           echo "SERVICE=$(systemctl is-active algo-trading.service)"
           echo "HTTP=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json || true)"
-          echo "HTTPS=$(curl -k -sS -o /dev/null -w '%{http_code}' https://127.0.0.1/openapi.json || true)"
+          echo "HTTPS=$(curl --fail --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' https://$IP/health)"
           echo "CERT_SUBJECT=$(openssl x509 -in "/etc/letsencrypt/live/$IP/cert.pem" -noout -subject | sed 's/^subject=//')"
           echo "CERT_EXPIRES=$(openssl x509 -in "/etc/letsencrypt/live/$IP/cert.pem" -noout -enddate | sed 's/^notAfter=//')"
           echo "PORTS"
@@ -241,7 +353,7 @@ jobs:
               "Sec-WebSocket-Version: 13\r\n"
               "\r\n"
           )
-          context = ssl._create_unverified_context()
+          context = ssl.create_default_context()
           with socket.create_connection((host, 443), timeout=10) as raw:
               with context.wrap_socket(raw, server_hostname=host) as sock:
                   sock.sendall(request.encode())
@@ -255,8 +367,9 @@ jobs:
           print(f"WSS_STATUS_LINE={status_line}")
           if not status_line.startswith("HTTP/1.1 101 "):
               raise SystemExit("WSS_HANDSHAKE_FAILED")
-          print("WSS_HANDSHAKE_OK")
+          print("WSS_HANDSHAKE_OK_WITH_TRUSTED_CERTIFICATE")
           PY
+          CONFIG_COMMITTED=1
+          echo "TLS_NGINX_CONFIGURATION_COMMITTED"
           REMOTE
 
-          rm -f /tmp/vps_key
