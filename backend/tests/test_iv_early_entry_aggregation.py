@@ -30,13 +30,15 @@ class Spot:
     timestamp_ns: int
 
 
-def test_only_distinct_source_ticks_contribute_and_partial_minute_is_hidden():
+def test_source_observations_are_retained_even_while_spot_minute_is_partial():
     agg = SourceMinuteAggregator()
     base = 1_800_000_000_000_000_000
     sample = Sample(sampled_at_ns=base, source_timestamp_ns=base+1,
                     spot_timestamp_ns=base+1, oi_timestamp_ns=base+1)
     agg.ingest([sample, sample], Spot(25000, base+1), now_ns=base+30_000_000_000)
-    assert agg.option_history("123", now_ns=base+30_000_000_000) == ()
+    rows = agg.option_history("123", now_ns=base+30_000_000_000)
+    assert len(rows) == 1
+    assert rows[0].source_timestamp_ns == base+1
     assert agg.spot_bars(now_ns=base+30_000_000_000) == ()
 
 
@@ -60,3 +62,19 @@ def test_repeated_spot_source_timestamp_does_not_change_bar():
     agg.ingest([], Spot(25100, base+1), now_ns=base+20_000_000_000)
     # Still a partial bucket; no completed bar can be emitted.
     assert agg.spot_bars(now_ns=base+30_000_000_000) == ()
+
+
+def test_distinct_option_changes_in_same_minute_are_both_preserved():
+    agg = SourceMinuteAggregator()
+    base = 1_800_000_000_000_000_000
+    first = Sample(sampled_at_ns=base, source_timestamp_ns=base+1,
+                   spot_timestamp_ns=base+1, oi_timestamp_ns=base+1, iv=12.0)
+    second = Sample(sampled_at_ns=base+10_000_000_000,
+                    source_timestamp_ns=base+10_000_000_000,
+                    spot_timestamp_ns=base+10_000_000_000,
+                    oi_timestamp_ns=base+10_000_000_000, iv=12.4)
+    agg.ingest([first], Spot(25000, base+1), now_ns=base+11_000_000_000)
+    agg.ingest([second], Spot(25001, base+10_000_000_000), now_ns=base+12_000_000_000)
+    rows = agg.option_history("123", now_ns=base+12_000_000_000)
+    assert [row.iv for row in rows] == [12.0, 12.4]
+    assert [row.source_timestamp_ns for row in rows] == [base+1, base+10_000_000_000]
