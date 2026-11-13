@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import queue
+import random
 import ssl
 import threading
 import time
@@ -210,8 +211,14 @@ class ShoonyaWebSocket:
                 self._connected = self._authenticated = False
                 self._reconnect_count += 1
             self._emit_state("RECONNECTING", self._last_error)
-            self._stop.wait(delay)
+            self._stop.wait(self._jittered_backoff_delay(delay))
             delay = min(self._backoff_max, delay * 2)
+
+    def _jittered_backoff_delay(self, delay: float) -> float:
+        """Add bounded jitter so many clients do not reconnect in lockstep."""
+        lower = min(self._backoff_max, max(self._backoff_min, delay * 0.8))
+        upper = min(self._backoff_max, max(lower, delay * 1.2))
+        return random.uniform(lower, upper)
 
     def _reset_feed_epoch(self) -> None:
         """Discard per-connection tick state before opening a replacement socket."""
