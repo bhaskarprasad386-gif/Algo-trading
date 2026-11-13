@@ -123,3 +123,11 @@ def test_retiring_adapter_does_not_join_worker_while_manager_lock_is_held():
         sleep(0.01)
     assert adapter.snapshot()["closed"] is True
     manager.close()
+
+def test_callback_dispatch_configuration_rejects_truthy_non_boolean_values():
+    import pytest
+
+    with pytest.raises(TypeError, match="async_callback_dispatch must be a bool"):
+        CommonWebSocketManager(async_callback_dispatch="false")
+    with pytest.raises(ValueError, match="callback_dispatch_capacity"):
+        CommonWebSocketManager(callback_dispatch_capacity=0)
