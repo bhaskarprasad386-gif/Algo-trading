@@ -166,7 +166,7 @@ def test_authenticated_subscription_routes_use_supervisor_provider(monkeypatch):
 
     supervisor = RouteSupervisor()
     monkeypatch.setattr(settings, "SHOONYA_MARKET_DATA_ENABLED", True)
-    routes.configure_shoonya_supervisor(lambda: supervisor)
+    monkeypatch.setattr(routes, "_shoonya_supervisor_provider", lambda: supervisor)
     payload = routes.ShoonyaSubscriptionRequest(instruments=[{
         "exchange": "NFO", "segment": "NFO", "token": "12345",
         "symbol": "NIFTY26NOV25000CE", "instrument_type": "option",
@@ -189,6 +189,7 @@ def test_shoonya_subscription_route_fails_closed_when_disabled(monkeypatch):
     from app.market_data import routes
 
     monkeypatch.setattr(settings, "SHOONYA_MARKET_DATA_ENABLED", False)
+    monkeypatch.setattr(routes, "_shoonya_supervisor_provider", None)
     payload = routes.ShoonyaSubscriptionRequest(instruments=[{
         "exchange": "NFO", "segment": "NFO", "token": "12345",
         "symbol": "NIFTY26NOV25000CE", "instrument_type": "option",
