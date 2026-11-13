@@ -19,8 +19,9 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - Independent bounded tick and order-event queues; tick queue overflow is counted without blocking the feed thread, while order-event overflow is surfaced as a feed fault and forces socket closure for reconciliation.
 - Desired subscriptions survive reconnect epochs and are replayed only after the replacement socket receives a positive authentication acknowledgement.
 - Callback isolation, connection health counters, shutdown deadline, and stale-socket callback protection.
+- Authentication-handshake watchdog: configurable `SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS` (default 15 seconds); a transport-open socket without a positive `ak` acknowledgement is closed and reported as `AUTH_TIMEOUT`, then uses the existing bounded reconnect path.
 - Authenticated silent-frame watchdog: configurable `SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS` (default 30 seconds), one-second freshness checks, explicit `DEGRADED` state, and forced socket close to enter the existing bounded reconnect path. The independent three-second application heartbeat remains unchanged.
-- Health diagnostics expose last inbound frame age, configured timeout, and a stale-frame flag; a new connection epoch resets frame freshness before re-authentication.
+- Health diagnostics expose last inbound frame age, configured frame/auth timeouts, auth age, and a stale-frame flag; a new connection epoch resets both auth and frame freshness before re-authentication.
 - No credentials or live order-routing code.
 
 ## Runtime wiring implemented (shadow diagnostics only)
@@ -41,7 +42,7 @@ The following remain intentionally out of scope until a separately reviewed prov
 ## Pre-live automated validation
 
 - Backend and integration CI green on the exact PR head.
-- Unit tests cover auth success/rejection, pre-auth event rejection, tick merge, invalid identity/timestamps, epoch-unit conversion, canonical exchange timestamp propagation, out-of-order replay rejection and snapshot integrity, reconnect subscription replay after auth, tick queue overflow accounting, order queue overflow fault/close behavior, subscription cap/atomicity, concurrent subscribe/unsubscribe, reconnect epochs, stale callbacks, silent-frame watchdog timeout/recovery, shutdown timeout, and worker restart safety.
+- Unit tests cover auth success/rejection, pre-auth event rejection, tick merge, invalid identity/timestamps, epoch-unit conversion, canonical exchange timestamp propagation, out-of-order replay rejection and snapshot integrity, reconnect subscription replay after auth, tick queue overflow accounting, order queue overflow fault/close behavior, subscription cap/atomicity, concurrent subscribe/unsubscribe, reconnect epochs, stale callbacks, authentication-ack timeout, silent-frame watchdog timeout/recovery, shutdown timeout, and worker restart safety.
 - Static review confirms no existing provider/scanner/order path is changed.
 - Verify logs redact credentials and access tokens.
 - Verify no test depends on a live broker, wall-clock sleeps, or network credentials.
