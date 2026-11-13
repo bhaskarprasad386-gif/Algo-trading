@@ -92,9 +92,9 @@ class IVSkewFlipRuntime:
         # A manager injected by the application may be shared with other
         # scanners. Only close managers whose lifecycle this runtime owns.
         self.close_feed_manager = bool(close_feed_manager)
-        # Production injects a dedicated manager. All IV consumers use mode 3
-        # on that one manager so spot, equity and option quotes share exactly
-        # one IV-owned broker socket without joining the strategy shared feed.
+        # Production injects the process-wide manager shared with Box Spread.
+        # All IV consumers use mode 3; socket admission and the three-socket
+        # budget are enforced globally by that manager.
         self.spot_feed = spot_feed or IVSpotFeedAdapter(
             feed=CommonStrategyMarketFeed(
                 "iv-skew-flip-spot", manager=feed_manager, mode=3,
