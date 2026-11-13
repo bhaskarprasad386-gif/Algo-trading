@@ -345,7 +345,7 @@ class ShoonyaWebSocket:
                 else:
                     self._dispatch_drops += 1
                     state = "DEGRADED"
-                    reason = "tick dispatch queue full; reconnecting to avoid silently stale market data"
+                    reason = "tick dispatch queue full: reconnecting to avoid silently stale market data"
                 self._last_error = reason
             # Queue loss is a feed-integrity fault. Force the existing reconnect
             # path instead of claiming LIVE while market/order events are lost.
