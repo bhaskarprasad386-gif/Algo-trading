@@ -112,3 +112,9 @@ def test_adapter_rejects_unknown_provider_and_invalid_record_type():
             "angel_one", {}, generation=1, authenticated=True,
             connection_current=True, received_monotonic_ns=NOW_MONOTONIC,
         )
+
+
+def test_adapter_rejects_malformed_option_expiry_instead_of_truncating_it():
+    record = replace(_record("angel_one"), expiry="2026-11-19-not-a-date")
+    with pytest.raises(ValueError):
+        _observation("angel_one", record=record)
