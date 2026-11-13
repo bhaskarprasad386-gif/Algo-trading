@@ -695,3 +695,16 @@ def test_authentication_watchdog_ignores_authenticated_or_replaced_socket():
     feed._authenticated = True
     assert feed._check_authentication_freshness(current_ws) is False
     assert feed.snapshot()["authenticated"] is True
+
+
+def test_authentication_timeout_state_survives_socket_close_callback():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    feed._last_error = "authentication acknowledgement timeout: no Shoonya ak frame for 16s (limit 15s)"
+    feed._on_close(SimpleNamespace(), 1000, "closed by client")
+
+    assert states[-1][0] == "AUTH_TIMEOUT"
+    assert "authentication acknowledgement timeout" in states[-1][1]
