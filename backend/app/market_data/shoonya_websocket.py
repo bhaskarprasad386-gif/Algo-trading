@@ -45,6 +45,7 @@ class ShoonyaWebSocket:
         self._last_error = None
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
         self._last_frame_at = self._last_tick_at = None
+        self._connection_opened_at = None
         self._normalizer = ShoonyaTickNormalizer()
 
     def subscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
@@ -73,7 +74,12 @@ class ShoonyaWebSocket:
                     removed.append(key); self._descriptors.pop(key); self._snapshots.pop(key, None); self._initialized.discard(key)
             ws, ready = self._ws, self._authenticated
         if removed and ready and ws is not None:
-            ws.send(json.dumps({"t": "u", "k": "#".join(f"{e}|{t}" for e, t in removed)}, separators=(",", ":")))
+            try:
+                ws.send(json.dumps({"t": "u", "k": "#".join(f"{e}|{t}" for e, t in removed)}, separators=(",", ":")))
+            except Exception as exc:
+                self._on_error(ws, exc)
+                try: ws.close()
+                except Exception: pass
         return len(removed)
 
     def start(self) -> None:
@@ -125,6 +131,12 @@ class ShoonyaWebSocket:
                                    on_error=self._on_error, on_close=self._on_close)
                 with self._lock: self._ws = ws
                 ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED}, ping_interval=20, ping_timeout=10)
+                with self._lock:
+                    opened_at = self._connection_opened_at
+                    self._connection_opened_at = None
+                # Reset exponential backoff only after a genuinely stable session.
+                if opened_at is not None and time.monotonic() - opened_at >= 30.0:
+                    delay = self._backoff_min
             except Exception as exc: self._on_error(None, exc)
             if self._stop.is_set(): break
             with self._lock:
@@ -144,7 +156,9 @@ class ShoonyaWebSocket:
     def _on_open(self, ws: Any) -> None:
         ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
                             "source": self._source, "accesstoken": self._access_token}, separators=(",", ":")))
-        with self._lock: self._connected, self._authenticated = True, False
+        with self._lock:
+            self._connected, self._authenticated = True, False
+            self._connection_opened_at = time.monotonic()
         self._emit_state("AUTHENTICATING", None)
 
     def _on_message(self, ws: Any, raw: str) -> None:
@@ -172,7 +186,12 @@ class ShoonyaWebSocket:
         with self._lock: instruments = tuple(self._descriptors)
         if instruments:
             keys = "#".join(f"{e}|{t}" for e, t in instruments)
-            ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
+            try:
+                ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
+            except Exception as exc:
+                self._on_error(ws, exc)
+                try: ws.close()
+                except Exception: pass
 
     def _handle_tick(self, message: dict[str, Any]) -> None:
         exchange, token = str(message.get("e") or "").upper(), str(message.get("tk") or "")
