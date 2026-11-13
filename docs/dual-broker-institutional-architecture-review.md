@@ -198,3 +198,15 @@ Added `backend/app/market_data/provider_master_audit.py`:
 Added tests for common/one-sided coverage, metadata mismatch and missing broker report. The audit makes incomplete broker coverage visible rather than silently implying every contract has a dual feed. One-sided contracts may remain usable from their single provider in a future design, but cannot be treated as failover-capable.
 
 Batch 5 remains **not production-ready** until real official files are supplied/collected through an approved secure workflow, the provider-specific scales and segment mapping are confirmed, and the complete dry-run audit has been reviewed. Do not relax rejection thresholds merely to make a download publish.
+
+## 11. Final Batch 5 integrity review and remaining blockers
+
+Additional validation refinements:
+- Angel One fixtures now use the documented integer-scaled strike/tick convention and CE/PE trading-symbol suffixes; Shoonya token case is preserved exactly.
+- Canonical futures identities now require expiry, just as option identities require expiry, strike and option right.
+- A separate coverage audit identifies common versus one-sided contracts and lot/tick mismatches before the atomic publisher is called.
+- Tests include last-known-good rollback when a broker report is absent, a report exceeds the configured quarantine ratio, or cross-broker metadata conflicts.
+
+**Not yet verified:** GitHub Actions has not produced a workflow run for the latest head. The current status check visible on the commit is Vercel; its failure is a deployment-rate-limit status, not a backend test result. Synthetic fixtures do not establish that current live Angel/Shoonya master headers and numeric scales are correct for every supported segment.
+
+**No integration activation:** no scheduled fetch, broker authentication, database persistence, Redis, scanner fan-out, WebSocket subscription change, source failover, order routing, VPS deployment or merge has been performed.
