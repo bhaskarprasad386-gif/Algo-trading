@@ -42,3 +42,26 @@ def test_shoonya_credentials_are_required():
     try: ShoonyaWebSocket(uid="", actid="U1", access_token="token")
     except ValueError as exc: assert "uid" in str(exc)
     else: raise AssertionError("empty uid must fail closed")
+
+def test_tf_before_initial_snapshot_is_ignored():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._on_message(fake_ws, json.dumps({"t":"tf","e":"NFO","tk":"12345","lp":"101.00","ft":"1794551795"}))
+    assert feed.snapshot()["ticks_received"] == 0
+    assert ("NFO","12345") not in feed._snapshots
+
+
+def test_application_heartbeat_is_answered():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._on_message(fake_ws, json.dumps({"t":"h"}))
+    assert json.loads(sent[0]) == {"t":"h"}
+
+
+def test_order_updates_have_independent_queue():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token", on_order_update=lambda event: None)
+    feed._enqueue("order", {"t":"om","status":"COMPLETE"})
+    assert feed.snapshot()["order_queue_depth"] == 1
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
