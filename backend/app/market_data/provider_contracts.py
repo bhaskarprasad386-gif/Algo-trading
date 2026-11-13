@@ -70,7 +70,7 @@ class BrokerContractToken:
 
     def __post_init__(self) -> None:
         for name in ("broker", "exchange", "segment", "token"):
-            object.__setattr__(self, name, _text(getattr(self, name), name).upper() if name != "token" else _text(self.token, name))
+            object.__setattr__(self, name, _text(getattr(self, name), name).upper() if name in {"broker", "exchange", "segment"} else _text(self.token, name))
 
 
 @dataclass(frozen=True)
