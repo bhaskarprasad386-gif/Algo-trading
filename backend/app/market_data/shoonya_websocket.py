@@ -173,11 +173,11 @@ class ShoonyaWebSocket:
         with self._lock:
             descriptor = self._descriptors.get(key)
             if descriptor is None: return
-            if message.get("t") == "tf" and key not in self._initialized:
+            if str(message.get("t") or "").lower() == "tf" and key not in self._initialized:
                 return
             merged = {**self._snapshots.get(key, {}), **message}
             self._snapshots[key] = merged
-            if message.get("t") == "tk":
+            if str(message.get("t") or "").lower() == "tk":
                 self._initialized.add(key)
         try: record = self._normalizer.normalize(descriptor, merged)
         except (TypeError, ValueError) as exc:
