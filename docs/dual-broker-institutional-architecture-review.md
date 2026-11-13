@@ -316,3 +316,20 @@ Hardened the standalone Angel per-shard callback adapter before any manager wiri
 - Added deterministic regression coverage for overflow retirement, queued-batch discard, rejected post-fault publication, payload-copy failure retirement, and the in-flight callback limitation.
 
 **Manager integration remains intentionally deferred:** this batch does not add adapters to CommonWebSocketManager, alter _on_data(), schedule shard recovery, or change transport health reporting. The existing synchronous Angel callback contract and all Box Spread/IV Scanner consumers remain unchanged. No Shoonya queue changes, broker session changes, order routing, merge, deployment, or live validation occurred. Tests still require execution on the exact PR head.
+
+
+## 18. Batch 13 — opt-in Angel manager callback-dispatch integration
+
+Integrated the previously standalone per-shard callback adapter into `CommonWebSocketManager` behind an explicit opt-in constructor flag:
+- `async_callback_dispatch=False` remains the default. Existing Box Spread / IV Scanner consumers therefore retain the synchronous callback contract unless an operator explicitly enables the new path.
+- When enabled, each current `SocketGroup` and socket generation receives its own bounded `AngelShardCallbackAdapter`; the SDK callback only validates the current manager/adapter identity, detaches the raw message into the bounded queue, and returns.
+- The existing manager routing, normalization, freshness accounting and consumer fan-out execute on that shard's worker. This isolates the full manager callback path, not only the final consumer callback.
+- Adapter queue overflow or payload-copy integrity failure is fail-closed and schedules the existing generation-scoped socket-failure/recovery path from a separate thread, never from the SDK callback thread.
+- The adapter is retired on all six manager socket-generation invalidation paths. Retirement removes it under the manager state lock but stops/joins its worker asynchronously, so no manager lock is held while waiting for callback code.
+- Manager shutdown captures and stops adapters outside the manager state lock. A stuck consumer worker is bounded by a one-second retirement budget and emits a warning; Python cannot forcibly cancel an already-running consumer callback.
+- `snapshot()` now exposes whether opt-in dispatch is enabled and per-shard queue depth, delivery status, counters and integrity fault state.
+
+### Batch 13 validation boundary
+- Added focused regression tests for synchronous default parity, opt-in worker-thread delivery, off-transport-thread overflow recovery, and non-blocking adapter retirement while the manager lock is held.
+- The feature remains opt-in and has not been enabled in production. No existing Box Spread / IV Scanner subscriptions, scanner calculations, signal rules, or order routes were changed.
+- This commit does not claim full end-to-end broker parity or production readiness. Exact-head CI and the complete backend regression suite must pass before considering activation.
