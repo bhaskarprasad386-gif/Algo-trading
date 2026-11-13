@@ -1075,7 +1075,7 @@ class IVSkewFlipRuntime:
             "early_move": early_move,
             "early_entry_alerts": self._early_entry_alerts.snapshot(),
             "telegram_delivery": dict(self._telegram_delivery),
-            "telegram_configured": bool(settings.TELEGRAM_ENABLED and settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
+            "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and str(settings.TELEGRAM_CHAT_ID or "").strip()),
             "equity_pressure": {
                 **equity_pressure,
                 "enabled": self.equity_pressure_enabled,
