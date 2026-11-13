@@ -6,6 +6,8 @@ from math import isfinite
 
 from .models import AlertCandidate, AlertState, OptionObservation, SpotBar, StrategyEvaluation
 
+NS = 1_000_000_000
+
 def _positive(value: float | int | None) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0
 
@@ -44,8 +46,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
 
     CE/PE use two prior source observations. Target volume uses four prior
     observations (three baseline increments) plus the current cumulative
-    volume increment. Event timestamps are retained; no cadence or age limit
-    participates in signal eligibility.
+    volume increment. No trading-time window or fixed observation cadence is
+    imposed; live quote/spot and historical OI freshness remain safety gates.
     """
     direction = direction.upper()
     if direction not in {"BULLISH", "BEARISH"}:
@@ -226,10 +228,15 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if len({row.strike for row in wall_rows}) != 1:
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_NOT_PERSISTENT",))
     latest = wall_rows[-1]
-    # No age gate: timestamps are for ordering and audit, not signal eligibility.
     if any(row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
            or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns for row in wall_rows):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_TIMESTAMP",))
+    # No clock-time entry window: only the newest wall quote/spot must be
+    # recent enough to represent the live wall. OI has its own 5-minute age.
+    if (now_ns-latest.source_timestamp_ns > 90*NS
+            or now_ns-latest.spot_timestamp_ns > 90*NS
+            or any(now_ns-int(row.oi_timestamp_ns) > 300*NS for row in wall_rows)):
+        return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_WALL_OBSERVATION",))
     wall_oi_timestamps = [row.oi_timestamp_ns for row in wall_rows]
     if any(
         current is None or previous is None or current <= previous
