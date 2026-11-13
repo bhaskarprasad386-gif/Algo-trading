@@ -1946,7 +1946,7 @@ def iv_early_entry_latest_alert(
     next_cursor = None
     if has_more and alerts:
         next_cursor = {
-            "before_observed_at_ns": alerts[-1]["observed_at_ns"],
+            "before_observed_at_ns": str(alerts[-1]["observed_at_ns"]),
             "before_id": alerts[-1]["id"],
         }
     return {
