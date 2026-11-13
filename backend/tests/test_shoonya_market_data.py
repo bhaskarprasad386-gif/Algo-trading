@@ -408,3 +408,36 @@ def test_shoonya_owner_auth_fails_closed_without_dedicated_password(monkeypatch)
     with pytest.raises(HTTPException) as raised:
         auth.require_shoonya_owner_access("Bearer anything")
     assert raised.value.status_code == 503
+
+def test_supervisor_start_failure_rolls_back_only_new_batch_members(monkeypatch):
+    from app.market_data.shoonya_supervisor import ShoonyaMarketDataSupervisor
+
+    existing = descriptor()
+    added = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", "67890"),
+        symbol="NIFTY26NOV25100CE", instrument_type="option", exchange="NFO",
+        segment="NFO", expiry="2026-11-26", strike=25100, option_type="CE",
+        lot_size=65, tick_size=0.05, underlying="NIFTY",
+    )
+    supervisor = ShoonyaMarketDataSupervisor(
+        uid="U1", actid="U1", access_token="token",
+    )
+    monkeypatch.setattr(supervisor._adapter, "start", lambda: None)
+    assert supervisor.subscribe([existing]) == 1
+
+    def fail_start():
+        raise RuntimeError("simulated worker startup failure")
+
+    monkeypatch.setattr(supervisor._adapter, "start", fail_start)
+    try:
+        supervisor.subscribe([existing, added])
+    except RuntimeError as exc:
+        assert "startup failure" in str(exc)
+    else:
+        raise AssertionError("simulated startup failure must propagate")
+
+    assert supervisor.snapshot()["registry_instruments"] == 1
+    assert supervisor._adapter.snapshot()["subscriptions"] == 1
+    assert supervisor._adapter._descriptors[(existing.key.exchange, existing.key.token)] == existing
+    assert (added.key.exchange, added.key.token) not in supervisor._adapter._descriptors
+
