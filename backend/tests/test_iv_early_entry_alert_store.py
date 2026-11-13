@@ -791,3 +791,30 @@ def test_telegram_rate_limit_retry_after_is_honored_and_not_sent_early():
     )
     assert retried["status"] == "SENT"
     assert len(sent) == 1
+
+
+def test_telegram_outbox_payload_carries_source_change_timestamps():
+    store = make_store()
+    base = candidate()
+    metadata = {
+        "checks": {
+            "change_timestamps_ns": {"ce_quote": base.observed_at_ns - 2_000_000_000},
+            "history_timestamps_ns": {"ce": [{"quote": base.observed_at_ns - 60_000_000_000}]},
+        }
+    }
+    with_metadata = AlertCandidate(
+        base.strategy, base.underlying, base.expiry, base.strike,
+        base.direction, base.option_type, base.state, base.observed_at_ns,
+        base.spot, base.premium, base.iv_change_points, base.volume_ratio,
+        base.reason, metadata,
+    )
+    store.record(with_metadata)
+    delivered = []
+    worker = TelegramOutboxWorker(store.session_factory)
+    result = worker.process_one(
+        now_ns=base.observed_at_ns, sender=lambda payload: delivered.append(payload),
+        configured=True,
+    )
+    assert result["status"] == "SENT"
+    assert delivered[0]["metadata"] == metadata
+    assert store.latest()[0]["metadata"] == metadata
