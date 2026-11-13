@@ -150,3 +150,22 @@ Implemented safeguards:
 Added `backend/tests/test_provider_contracts.py` for dual-token identity, strike precision, duplicate provider keys, token collision, lot/tick mismatch, inactive mapping, empty/stale rollback and incomplete option identity.
 
 This is a foundation, not yet connected to broker master downloaders. No production mapping is loaded, no scanner consumes it, and no live subscriptions or provider selection change in this batch. Next Batch 5 step is to add provider-specific parsers and integrity gates using actual Angel/Shoonya master schemas, then validate representative real master fixtures before wiring the atomic snapshot publisher.
+
+## 8. Batch 5 — parser implementation addendum
+
+Added:
+- `backend/app/market_data/provider_master_parsers.py`
+  - Angel One OpenAPIScripMaster JSON parser; documented Angel option strike normalization divides the published strike integer by 100.
+  - Shoonya CSV/pipe-delimited parser; strike scaling is an explicit caller argument and is never guessed from magnitude.
+  - Alias normalization for provider column headers, ISO/common Indian expiry formats, CE/PE validation, positive integer lot sizes, positive finite Decimal tick/strike values, tradability flags, and SHA-256 of original source bytes.
+  - Row-level quarantine report with source row number and reason. Duplicate provider token rows are quarantined.
+- `backend/tests/test_provider_master_parsers.py`
+  - Angel scaled strike, Shoonya pipe schema with case-sensitive token, explicit scale failure, malformed/duplicate row quarantine, invalid payload/delimiter tests.
+- `BrokerContractToken` now preserves token case. Broker, exchange and segment remain normalized uppercase; token identifiers are treated as opaque provider values.
+
+Important operational boundary:
+- No downloader, login, secrets, cron, or live master refresh is invoked by these parsers.
+- Shoonya strike scale and delimiter must be confirmed against a captured official master file for the account/segment before production use. The parser deliberately does not infer scale.
+- The report separates accepted and quarantined rows; a later publisher must apply a reviewed per-source completeness threshold. Never publish a partial master merely because some rows parsed.
+- Angel One and Shoonya schemas vary by instrument family and file revision. Current tests are synthetic fixtures, not evidence that every live provider row family is covered.
+- Parser output is not wired to `InstrumentRegistry`, Box Spread, IV Scanner, or broker subscriptions. Existing live behavior is unchanged.
