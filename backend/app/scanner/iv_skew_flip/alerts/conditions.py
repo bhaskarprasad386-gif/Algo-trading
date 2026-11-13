@@ -6,9 +6,6 @@ from math import isfinite
 
 from .models import AlertCandidate, AlertState, OptionObservation, SpotBar, StrategyEvaluation
 
-NS = 1_000_000_000
-
-
 def _positive(value: float | int | None) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0
 
@@ -56,7 +53,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         return StrategyEvaluation(AlertState.WATCH, reasons=("INSUFFICIENT_SPOT_BUCKETS",))
     last_bars = tuple(bars[-15:])
     stamps = [b.timestamp_ns for b in last_bars]
-    if any(b.timestamp_ns <= 0 for b in last_bars) or any(b <= a for a, b in zip(stamps, stamps[1:])):
+    if (any(b.timestamp_ns <= 0 or b.timestamp_ns > now_ns for b in last_bars)
+            or any(b <= a for a, b in zip(stamps, stamps[1:]))):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BUCKET_ORDER",))
     if any(not (_positive(b.open) and _positive(b.high) and _positive(b.low) and _positive(b.close))
            or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high)
@@ -86,6 +84,9 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     for series in (ce3, pe3, tgt):
         if any(_structurally_valid(row) for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
+        if any(row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
+               or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns for row in series):
+            return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_TIMESTAMP",))
 
     # Each feed is asynchronous. Compare ordered changes from each source;
     # do not require CE, PE, target and spot to share a minute or cadence.
@@ -150,6 +151,12 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
                 "spot_range_points": {"threshold_max": 55, "actual": max(b.high for b in last_bars)-min(b.low for b in last_bars), "passed": max(b.high for b in last_bars)-min(b.low for b in last_bars) <= 55},
                 "option_history": {"threshold": "CE/PE 2 each; target 4", "actual": {"ce": len(ce3), "pe": len(pe3), "target": len(tgt)}, "passed": True},
                 "change_timestamps_ns": {"ce_quote": live_ce.source_timestamp_ns, "pe_quote": live_pe.source_timestamp_ns, "target_quote": live_target.source_timestamp_ns, "ce_spot": live_ce.spot_timestamp_ns, "pe_spot": live_pe.spot_timestamp_ns, "target_spot": live_target.spot_timestamp_ns, "target_oi": live_target.oi_timestamp_ns},
+                "history_timestamps_ns": {
+                    "ce": [{"quote": row.source_timestamp_ns, "oi": row.oi_timestamp_ns} for row in ce3],
+                    "pe": [{"quote": row.source_timestamp_ns, "oi": row.oi_timestamp_ns} for row in pe3],
+                    "target": [{"quote": row.source_timestamp_ns, "oi": row.oi_timestamp_ns} for row in tgt],
+                    "spot_bars": [bar.timestamp_ns for bar in last_bars],
+                },
                 "iv_change_points": {"threshold_min": threshold, "actual": iv_jump, "opposite_max": 0.05, "opposite_actual": opposite_jump, "passed": iv_jump >= threshold and opposite_jump <= 0.05},
                 "volume_expansion": {"threshold_min_ratio": 2.5, "baseline_increment": baseline, "live_increment": current_increment, "actual_ratio": current_increment/baseline, "passed": current_increment >= 2.5*baseline},
                 "premium_rising": {"previous_ask": premium_prev, "live_ask": premium_now, "passed": premium_now > premium_prev},
@@ -211,8 +218,8 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_NOT_PERSISTENT",))
     latest = wall_rows[-1]
     # No age gate: timestamps are for ordering and audit, not signal eligibility.
-    if (latest.source_timestamp_ns > now_ns or latest.spot_timestamp_ns > now_ns
-            or any(row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns for row in wall_rows)):
+    if any(row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
+           or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns for row in wall_rows):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_TIMESTAMP",))
     wall_oi_timestamps = [row.oi_timestamp_ns for row in wall_rows]
     if any(
@@ -274,6 +281,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
                 "spot_distance_to_wall": {"threshold_max_points": 15, "actual_points": (wall-current.low) if direction == "BULLISH" else (current.high-wall), "wall_strike": wall, "passed": near_wall},
                 "initial_rejection_candle": {"open": current.open, "high": current.high, "low": current.low, "close": current.close, "previous_close": prior.close, "passed": rejection},
                 "change_timestamps_ns": {"wall_source": latest.source_timestamp_ns, "wall_oi": latest.oi_timestamp_ns, "wall_spot": latest.spot_timestamp_ns, "entry_quote": entry_quote.source_timestamp_ns, "entry_spot": entry_quote.spot_timestamp_ns, "entry_oi": entry_quote.oi_timestamp_ns, "rejection_candle": current.timestamp_ns},
+                "wall_history_timestamps_ns": [{"quote": row.source_timestamp_ns, "oi": row.oi_timestamp_ns, "spot": row.spot_timestamp_ns} for row in wall_rows],
                 "same_expiry_contract": {"expiry": expiry, "strike": wall, "option_type": option_type, "passed": True},
             },
             "evaluated_at_ns": now_ns,
