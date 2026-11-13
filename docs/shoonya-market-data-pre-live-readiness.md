@@ -25,7 +25,9 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - The supervisor does not open a socket merely because the application starts. A separately registered/subscribed instrument set is required before it starts the adapter.
 - `GET /api/v1/market-data/shoonya-health` exposes sanitized state, queue/freshness diagnostics, and explicit `shadow_only`, `order_routing_enabled=false`, and `strategy_fanout_enabled=false` flags. It never returns credentials.
 - Tick and order callbacks currently update bounded process-local counters only. There is no strategy fan-out, persistence, provider selection, or order action.
-- The environment toggle is the only operator enable/disable gate at this stage; changing it requires a controlled application restart. No UI control is implemented.
+- `POST /api/v1/market-data/shoonya/subscriptions` and `DELETE /api/v1/market-data/shoonya/subscriptions` accept explicit instrument descriptors and require the existing short-lived Box Spread real-owner bearer session. The POST is rejected unless the server-side Shoonya toggle is enabled; the DELETE remains available to release subscriptions while the supervisor exists.
+- Subscription requests are limited to 500 instruments, validate exchange/instrument types and option metadata, and are isolated from Angel One's registry and callbacks.
+- The environment toggle remains the hard ON/OFF gate; changing it requires a controlled application restart. The owner-authenticated API only adds/removes shadow subscriptions; it cannot enable Shoonya or activate trading.
 
 The following remain intentionally out of scope until a separately reviewed provider integration: selecting Shoonya for an existing scanner, automatic instrument-master translation, UI ON/OFF control, and live broker session validation. Angel One and existing scanners are not modified.
 
