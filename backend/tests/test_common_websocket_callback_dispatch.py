@@ -184,3 +184,34 @@ def test_retired_generation_callback_cannot_be_dispatched_after_replacement():
     manager._dispatch_transport_data(group, new_socket, {"token": "new"}, 2)
     assert delivered.wait(1.0)
     manager.close()
+
+def test_faulted_shard_does_not_block_an_independent_shard():
+    manager = CommonWebSocketManager(async_callback_dispatch=True, callback_dispatch_capacity=2)
+    first = SocketGroup(mode=1, shard=0)
+    second = SocketGroup(mode=1, shard=1)
+    first_socket = _Socket()
+    second_socket = _Socket()
+    _install_current(manager, first, first_socket, generation=11)
+    _install_current(manager, second, second_socket, generation=21)
+    manager._install_callback_adapter(first, 11)
+    manager._install_callback_adapter(second, 21)
+    recovery_requests = []
+    manager._schedule_socket_failure_recovery = lambda *args: recovery_requests.append(args)
+    delivered_second = Event()
+    manager._on_data = lambda group, *_args: delivered_second.set() if group == second else None
+
+    first_adapter = manager._callback_adapters[first][1]
+    first_adapter._fail_closed_locked("test_shard_fault")
+    manager._dispatch_transport_data(first, first_socket, {"token": "fault"}, 11)
+    manager._dispatch_transport_data(second, second_socket, {"token": "healthy"}, 21)
+
+    assert delivered_second.wait(1.0)
+    deadline = monotonic() + 1.0
+    while not recovery_requests and monotonic() < deadline:
+        sleep(0.01)
+    assert len(recovery_requests) == 1
+    assert recovery_requests[0][0] == first
+    state = manager.snapshot()
+    assert state["callback_dispatch_by_group"]["1:0"]["integrity_fault"] is True
+    assert state["callback_dispatch_by_group"]["1:1"]["delivery_status"] == "HEALTHY"
+    manager.close()
