@@ -1,7 +1,7 @@
 """Alert-only orchestration for the active NIFTY Weekly IV sampler."""
 from __future__ import annotations
 
-from datetime import datetime, time as clock_time
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -21,24 +21,13 @@ class IVEarlyEntryAlertEngine:
         self.aggregator = SourceMinuteAggregator(retention_minutes=retention_minutes)
         self._last_results: dict[str, dict[str, Any]] = {}
 
-    @staticmethod
-    def _in_window(now: datetime, strategy: str) -> bool:
-        local = now.astimezone(IST)
-        if local.weekday() >= 5 or local.time() < clock_time(9, 30) or local.time() > clock_time(15, 5):
-            return False
-        if strategy == "IV_VOLUME_MOMENTUM":
-            return (clock_time(9, 45) <= local.time() <= clock_time(11, 30)
-                    or clock_time(13, 30) <= local.time() <= clock_time(15, 0))
-        return clock_time(9, 30) <= local.time() <= clock_time(11, 30)
-
     def evaluate(self, *, sampler: Any, spot: Any, expiry: str, now: datetime, now_ns: int) -> dict[str, Any]:
         if now.tzinfo is None:
             raise ValueError("alert engine requires timezone-aware datetime")
         self.store.expire_session_alerts(now=now)
         live_spot_stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
         live_spot_price = float(getattr(spot, "price", 0) or 0)
-        if (0 < live_spot_stamp <= now_ns and now_ns-live_spot_stamp <= 5_000_000_000
-                and live_spot_price > 0):
+        if (0 < live_spot_stamp <= now_ns and live_spot_price > 0):
             self.store.invalidate_breached_oi_walls(
                 spot=live_spot_price, observed_at_ns=now_ns,
             )
@@ -76,9 +65,6 @@ class IVEarlyEntryAlertEngine:
             pe = token_rows.get(pair["PE"], ())
             for direction, target_type in (("BULLISH", "CE"), ("BEARISH", "PE")):
                 strategy = "IV_VOLUME_MOMENTUM"
-                if not self._in_window(now, strategy):
-                    reasons.append("OUTSIDE_IV_VOLUME_WINDOW")
-                    continue
                 live_ce = option_observation(current[pair["CE"]])
                 live_pe = option_observation(current[pair["PE"]])
                 live_target = option_observation(current[pair[target_type]])
@@ -111,7 +97,7 @@ class IVEarlyEntryAlertEngine:
                     if current_winner is None or row.oi > current_winner[0]:
                         winners[minute] = (row.oi, token)
             minutes = sorted(winners)[-3:]
-            if len(minutes) != 3 or any(b-a != 1 for a, b in zip(minutes, minutes[1:])):
+            if len(minutes) != 3:
                 return ()
             tokens = {winners[minute][1] for minute in minutes}
             if len(tokens) != 1:
@@ -120,8 +106,7 @@ class IVEarlyEntryAlertEngine:
             by_minute = {row.source_timestamp_ns // 60_000_000_000: row for row in histories[token]}
             return tuple(by_minute[minute] for minute in minutes if minute in by_minute)
         ce_wall, pe_wall = wall_history("CE"), wall_history("PE")
-        if self._in_window(now, "OI_WALL_REJECTION"):
-            for direction in ("BULLISH", "BEARISH"):
+        for direction in ("BULLISH", "BEARISH"):
                 wall_rows = pe_wall if direction == "BULLISH" else ce_wall
                 wall_strike = wall_rows[-1].strike if wall_rows else None
                 entry_type = "CE" if direction == "BULLISH" else "PE"
@@ -139,9 +124,6 @@ class IVEarlyEntryAlertEngine:
                     candidates.append(result.candidate)
                 elif result.reasons:
                     reasons.extend(result.reasons)
-        else:
-            reasons.append("OUTSIDE_OI_WALL_WINDOW")
-
         # Persist only valid EARLY_ENTRY transitions; store enforces durable cooldown.
         persisted = []
         conflicts = []
