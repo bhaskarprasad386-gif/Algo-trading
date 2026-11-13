@@ -1973,9 +1973,11 @@ class CommonWebSocketManager:
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
-            for group, (generation, adapter) in callback_adapters:
-                self._stop_retired_callback_adapter(adapter, group, generation)
-            for socket in sockets:
-                self._close_socket_bounded(socket, reason="manager_shutdown")
+        # Do not hold either manager lock while waiting for consumer callbacks:
+        # a callback may legitimately request subscription changes during shutdown.
+        for group, (generation, adapter) in callback_adapters:
+            self._stop_retired_callback_adapter(adapter, group, generation)
+        for socket in sockets:
+            self._close_socket_bounded(socket, reason="manager_shutdown")
         if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)
