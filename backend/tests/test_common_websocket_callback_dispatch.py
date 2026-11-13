@@ -100,7 +100,8 @@ def test_callback_queue_overflow_requests_only_current_shard_recovery_off_transp
     assert state["queue_depth"] == 0
     # Retired generation diagnostics remain visible after manager recovery
     # removes the active adapter from the current-generation map.
-    manager._retire_callback_adapter_locked(group)
+    with manager._lock:
+        manager._retire_callback_adapter_locked(group)
     retired = manager.snapshot()["callback_dispatch_retired_faults"]["1:0"]
     assert retired["generation"] == 1
     assert retired["integrity_fault"] is True
@@ -153,7 +154,8 @@ def test_overflow_reaches_generation_checked_manager_recovery_boundary():
 
     manager._schedule_socket_failure_recovery = record_recovery
     adapter = manager._callback_adapters[group][1]
-    adapter._fail_closed_locked("test_overflow")
+    with adapter._lock:
+        adapter._fail_closed_locked("test_overflow")
     manager._dispatch_transport_data(group, socket, {"token": "late"}, 7)
 
     assert requested.wait(1.0)
@@ -201,7 +203,8 @@ def test_faulted_shard_does_not_block_an_independent_shard():
     manager._on_data = lambda group, *_args: delivered_second.set() if group == second else None
 
     first_adapter = manager._callback_adapters[first][1]
-    first_adapter._fail_closed_locked("test_shard_fault")
+    with first_adapter._lock:
+        first_adapter._fail_closed_locked("test_shard_fault")
     manager._dispatch_transport_data(first, first_socket, {"token": "fault"}, 11)
     manager._dispatch_transport_data(second, second_socket, {"token": "healthy"}, 21)
 
