@@ -351,17 +351,28 @@ def test_shoonya_configuration_rejects_unsafe_limits():
         raise AssertionError("Shoonya token limit must never exceed 500")
 
 
-def test_adapter_redacts_credentials_from_error_logs_and_state(monkeypatch, caplog):
+def test_adapter_redacts_credentials_from_error_logs_and_state():
+    from io import StringIO
+
+    from app.core.logger import app_logger
     from app.market_data.shoonya_websocket import ShoonyaWebSocket
 
     adapter = ShoonyaWebSocket(
         uid="client-secret-uid", actid="client-secret-act",
         access_token="sensitive-access-token",
     )
-    adapter._on_error(None, RuntimeError("connection failed with sensitive-access-token"))
-    assert "sensitive-access-token" not in (adapter.snapshot()["last_error"] or "")
-    assert "sensitive-access-token" not in caplog.text
-    assert "[REDACTED]" in caplog.text
+    captured_logs = StringIO()
+    sink_id = app_logger.add(captured_logs, format="{message}", level="WARNING")
+    try:
+        adapter._on_error(None, RuntimeError("connection failed with sensitive-access-token"))
+        logged_error = captured_logs.getvalue()
+    finally:
+        app_logger.remove(sink_id)
+
+    stored_error = adapter.snapshot()["last_error"] or ""
+    assert "sensitive-access-token" not in stored_error
+    assert "sensitive-access-token" not in logged_error
+    assert "[REDACTED]" in logged_error
 
 
 def test_shoonya_owner_auth_uses_separate_scope_and_password(monkeypatch):
