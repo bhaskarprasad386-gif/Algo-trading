@@ -59,12 +59,42 @@ class AngelShardCallbackAdapter:
                 raise ValueError("generation must increase monotonically")
             self._generation = generation
 
+    def _discard_pending_locked(self) -> int:
+        discarded = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except Empty:
+                break
+            else:
+                self._queue.task_done()
+                discarded += 1
+        self._discarded += discarded
+        return discarded
+
+    def _fail_closed_locked(self, reason: str) -> None:
+        # A queue-integrity failure retires this adapter generation. Fence
+        # already-queued work and reject every subsequent publish. A callback
+        # already executing cannot be cancelled safely and may finish.
+        self._integrity_fault = True
+        self._closed = True
+        self._generation += 1
+        self._last_error = reason[:240]
+        self._discard_pending_locked()
+        self._stop.set()
+
     def publish(
         self,
         *,
         generation: int,
         invocations: Iterable[CallbackInvocation],
     ) -> bool:
+        with self._lock:
+            if self._closed:
+                return False
+            if generation != self._generation:
+                self._stale += 1
+                return False
         # Detach SDK payloads before they cross the thread boundary while
         # preserving the payload shape expected by existing consumers.
         try:
@@ -74,9 +104,11 @@ class AngelShardCallbackAdapter:
             )
         except Exception as exc:
             with self._lock:
-                self._copy_errors += 1
-                self._integrity_fault = True
-                self._last_error = f"payload_copy: {type(exc).__name__}: {exc}"[:240]
+                if not self._closed and generation == self._generation:
+                    self._copy_errors += 1
+                    self._fail_closed_locked(
+                        f"payload_copy: {type(exc).__name__}: {exc}"
+                    )
             return False
         batch = ShardCallbackBatch(generation, detached)
         if not batch.invocations:
@@ -91,7 +123,7 @@ class AngelShardCallbackAdapter:
                 self._queue.put_nowait(batch)
             except Full:
                 self._overflow += 1
-                self._integrity_fault = True
+                self._fail_closed_locked("queue_overflow: shard adapter retired")
                 return False
             self._accepted += 1
             return True
