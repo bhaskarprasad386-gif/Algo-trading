@@ -232,7 +232,7 @@ def test_concurrent_subscribe_then_unsubscribe_preserves_wire_order():
     assert [frame["t"] for frame in sent] == ["t", "u"]
 
 
-def test_stop_uses_one_shared_deadline_for_all_workers():
+def test_stop_uses_one_shared_deadline_for_all_workers(monkeypatch):
     class SlowWorker:
         def __init__(self, name):
             self.name = name
@@ -242,15 +242,18 @@ def test_stop_uses_one_shared_deadline_for_all_workers():
         def join(self, timeout=None):
             self.timeouts.append(timeout)
 
+    # Advance monotonic time deterministically on each read so the test proves
+    # later workers receive only the remaining budget, without sleeping.
+    clock = iter((0.0, 1.0, 2.0, 3.0))
+    monkeypatch.setattr("app.market_data.shoonya_websocket.time.monotonic", lambda: next(clock))
+
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     workers = [SlowWorker(name) for name in (
         "supervisor", "tick-dispatch", "order-dispatch", "heartbeat"
     )]
     feed._thread, feed._dispatch_thread, feed._order_dispatch_thread, feed._heartbeat_thread = workers
     feed.stop()
-    assert all(len(worker.timeouts) == 1 for worker in workers)
-    assert workers[0].timeouts[0] <= 3.0
-    assert sum(worker.timeouts[0] for worker in workers) <= 3.01
+    assert [worker.timeouts for worker in workers] == [[2.0], [1.0], [], []]
     assert feed.snapshot()["shutdown_workers_alive"] == [
         "supervisor", "tick-dispatch", "order-dispatch", "heartbeat"
     ]
