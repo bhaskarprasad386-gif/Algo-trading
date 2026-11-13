@@ -654,3 +654,44 @@ def test_order_queue_overflow_faults_feed_and_closes_socket():
     assert closed == [True]
     assert states[-1][0] == "ORDER_FEED_OVERFLOW"
     assert "reconcile broker order book" in states[-1][1]
+
+
+
+def test_authentication_watchdog_closes_socket_without_positive_ack():
+    states = []
+    closed = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        auth_timeout_seconds=5.0,
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    fake_ws = SimpleNamespace(close=lambda: closed.append(True))
+    feed._ws = fake_ws
+    feed._connected = True
+    feed._authenticated = False
+    feed._auth_started_at = __import__("time").monotonic() - 6.0
+
+    assert feed._check_authentication_freshness(fake_ws) is True
+    snapshot = feed.snapshot()
+    assert closed == [True]
+    assert states[-1][0] == "AUTH_TIMEOUT"
+    assert "authentication acknowledgement timeout" in states[-1][1]
+    assert snapshot["connected"] is False
+    assert snapshot["authenticated"] is False
+    assert snapshot["auth_timeout_seconds"] == 5.0
+
+
+def test_authentication_watchdog_ignores_authenticated_or_replaced_socket():
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        auth_timeout_seconds=5.0,
+    )
+    stale_ws = SimpleNamespace(close=lambda: None)
+    current_ws = SimpleNamespace(close=lambda: None)
+    feed._ws = current_ws
+    feed._auth_started_at = __import__("time").monotonic() - 10.0
+
+    assert feed._check_authentication_freshness(stale_ws) is False
+    feed._authenticated = True
+    assert feed._check_authentication_freshness(current_ws) is False
+    assert feed.snapshot()["authenticated"] is True
