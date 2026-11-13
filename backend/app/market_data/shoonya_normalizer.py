@@ -1,6 +1,5 @@
 """Normalize merged Shoonya Noren touchline snapshots to canonical records."""
 from __future__ import annotations
-from time import time_ns
 from typing import Any, Mapping
 from .contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
 from .registry import InstrumentDescriptor
