@@ -15,12 +15,46 @@ router = APIRouter(
 _CLOSED_OVERVIEW_CACHE: dict[str, dict] = {}
 _CLOSED_OVERVIEW_CACHE_LOCK = Lock()
 _live_cash_future_runner_snapshot_provider = None
+_shoonya_snapshot_provider = None
 
 
 def configure_live_cash_future_runner_snapshot(provider) -> None:
     """Configure the process-local Cash-Future common runner snapshot provider."""
     global _live_cash_future_runner_snapshot_provider
     _live_cash_future_runner_snapshot_provider = provider
+
+
+def configure_shoonya_snapshot(provider) -> None:
+    """Configure the isolated Shoonya shadow-feed diagnostics provider."""
+    global _shoonya_snapshot_provider
+    _shoonya_snapshot_provider = provider
+
+
+@router.get("/shoonya-health")
+def get_shoonya_health():
+    """Expose sanitized Shoonya shadow-feed state without credentials or control actions."""
+    from app.core.config import settings
+
+    if not settings.SHOONYA_MARKET_DATA_ENABLED:
+        return {
+            "broker": "shoonya",
+            "enabled": False,
+            "mode": "shadow_only",
+            "state": "DISABLED",
+            "order_routing_enabled": False,
+            "strategy_fanout_enabled": False,
+        }
+    provider = _shoonya_snapshot_provider
+    if provider is None:
+        return {
+            "broker": "shoonya",
+            "enabled": True,
+            "mode": "shadow_only",
+            "state": "NOT_INITIALIZED",
+            "order_routing_enabled": False,
+            "strategy_fanout_enabled": False,
+        }
+    return provider()
 
 
 
