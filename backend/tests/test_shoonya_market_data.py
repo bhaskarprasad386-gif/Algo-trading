@@ -361,3 +361,38 @@ def test_adapter_redacts_credentials_from_error_logs_and_state(monkeypatch, capl
     assert "sensitive-access-token" not in (adapter.snapshot()["last_error"] or "")
     assert "sensitive-access-token" not in caplog.text
     assert "[REDACTED]" in caplog.text
+
+
+def test_shoonya_owner_auth_uses_separate_scope_and_password(monkeypatch):
+    from fastapi import HTTPException
+    from app.core.security import create_access_token
+    from app.market_data import shoonya_owner_auth as auth
+
+    password = "shoonya-owner-password-123"
+    monkeypatch.setenv("SHOONYA_MARKET_DATA_OWNER_PASSWORD", password)
+    monkeypatch.setenv("BOX_SPREAD_REAL_OWNER_PASSWORD", "box-spread-owner-password-456")
+    monkeypatch.setattr(auth.settings, "SECRET_KEY", "test-secret-key-that-is-long-enough-for-token-tests")
+    auth._attempts.clear()
+    result = auth.login_shoonya_owner(auth.ShoonyaOwnerLogin(password=password))
+    assert result["expires_in"] == 1800
+    assert auth.require_shoonya_owner_access("Bearer " + result["access_token"]) == 0
+
+    box_token = create_access_token({
+        "sub": "box-spread-real-owner", "scope": "box-spread-real-owner",
+    })
+    try:
+        auth.require_shoonya_owner_access("Bearer " + box_token)
+    except HTTPException as exc:
+        assert exc.status_code == 401
+    else:
+        raise AssertionError("Box Spread owner token must not authorize Shoonya controls")
+
+
+def test_shoonya_owner_auth_fails_closed_without_dedicated_password(monkeypatch):
+    from fastapi import HTTPException
+    from app.market_data import shoonya_owner_auth as auth
+
+    monkeypatch.delenv("SHOONYA_MARKET_DATA_OWNER_PASSWORD", raising=False)
+    with pytest.raises(HTTPException) as raised:
+        auth.require_shoonya_owner_access("Bearer anything")
+    assert raised.value.status_code == 503
