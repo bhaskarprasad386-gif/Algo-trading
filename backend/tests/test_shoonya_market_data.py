@@ -89,3 +89,42 @@ def test_subscription_limit_is_500_and_atomic():
     else:
         raise AssertionError("501 subscriptions must be rejected")
     assert feed.snapshot()["subscriptions"] == 0
+
+
+def test_authentication_ack_is_required_before_market_subscription():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._on_open(fake_ws)
+    assert json.loads(sent[-1])["t"] == "a"
+    assert not feed.snapshot()["authenticated"]
+    feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
+    assert feed.snapshot()["authenticated"]
+    assert json.loads(sent[-1]) == {"t": "t", "k": "NFO|12345"}
+
+
+def test_rejected_authentication_never_subscribes():
+    sent, closed = [], []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="bad")
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=sent.append, close=lambda: closed.append(True))
+    feed._on_open(fake_ws)
+    feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "Not_Ok"}))
+    assert not feed.snapshot()["authenticated"]
+    assert feed.snapshot()["last_error"] == "Shoonya authentication rejected"
+    assert closed
+    assert all(json.loads(frame)["t"] != "t" for frame in sent)
+
+
+def test_uppercase_tick_frame_type_is_normalized():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws, feed._authenticated = fake_ws, True
+    feed._on_message(fake_ws, json.dumps({"t": "TK", "e": "NFO", "tk": "12345",
+        "lp": "100.00", "ft": "1794551794"}))
+    feed._on_message(fake_ws, json.dumps({"t": "TF", "e": "NFO", "tk": "12345",
+        "lp": "101.00", "ft": "1794551795"}))
+    assert feed._snapshots[("NFO", "12345")]["lp"] == "101.00"
+    assert feed.snapshot()["ticks_received"] == 2
