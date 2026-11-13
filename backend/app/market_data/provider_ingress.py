@@ -97,6 +97,7 @@ class BoundedProviderIngress:
         self._accepted = self._stale_generation = self._wrong_provider = 0
         self._overflow = 0
         self._stale_dequeued = 0
+        self._shutdown_discarded = 0
         self._integrity_fault = False
 
     def activate_generation(self, generation: int) -> None:
@@ -155,6 +156,21 @@ class BoundedProviderIngress:
     def task_done(self) -> None:
         self._queue.task_done()
 
+    def discard_pending(self) -> int:
+        """Discard queued frames during an explicitly non-draining shutdown."""
+        discarded = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except Empty:
+                break
+            else:
+                self._queue.task_done()
+                discarded += 1
+        with self._lock:
+            self._shutdown_discarded += discarded
+        return discarded
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
@@ -172,6 +188,7 @@ class BoundedProviderIngress:
                 "wrong_provider": self._wrong_provider,
                 "overflow": self._overflow,
                 "stale_dequeued": self._stale_dequeued,
+                "shutdown_discarded": self._shutdown_discarded,
                 "integrity_fault": self._integrity_fault,
                 "closed": self._closed,
             }
@@ -239,6 +256,7 @@ class ProviderIngressWorker:
         # promptly. Already-queued current-generation work remains consumable.
         self.ingress.close()
         if not drain:
+            self.ingress.discard_pending()
             self._stop.set()
         with self._lock:
             thread = self._thread
