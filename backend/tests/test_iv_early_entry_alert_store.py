@@ -165,13 +165,12 @@ def test_previous_session_alert_expires_on_next_morning_and_cancels_queue():
         session.close()
 
 
-def test_active_alert_expires_after_session_close():
+def test_active_alert_is_not_expired_by_fixed_clock_time():
     store = make_store()
-    result = store.record(candidate())
-    closed = datetime(2026, 11, 12, 15, 6, tzinfo=ZoneInfo("Asia/Kolkata"))
-    assert store.expire_session_alerts(now=closed) == 1
-    assert store.latest()[0]["state"] == "EXPIRED"
-    assert store.latest()[0]["reason"] == "TRADING_SESSION_CLOSED"
+    store.record(candidate())
+    after_market_clock = datetime(2026, 11, 12, 15, 6, tzinfo=ZoneInfo("Asia/Kolkata"))
+    assert store.expire_session_alerts(now=after_market_clock) == 0
+    assert store.latest()[0]["state"] == "EARLY_ENTRY"
 
 
 
@@ -573,35 +572,23 @@ def test_telegram_outbox_delivers_same_cycle_alerts_in_persisted_fifo_order():
 
 
 
-def test_notification_worker_skips_alert_expired_before_delivery():
+def test_notification_worker_can_deliver_after_clock_time_without_session_cutoff():
     store = make_store()
     result = store.record(candidate())
-    closed = datetime(2026, 11, 12, 15, 6, tzinfo=ZoneInfo("Asia/Kolkata"))
-    assert store.expire_session_alerts(now=closed) == 1
+    after_market_clock = datetime(2026, 11, 12, 15, 6, tzinfo=ZoneInfo("Asia/Kolkata"))
+    assert store.expire_session_alerts(now=after_market_clock) == 0
 
-    # A fresh worker instance simulates process restart: the durable outbox
-    # remains, but the alert lifecycle state must prevent stale delivery.
     restarted_worker = TelegramOutboxWorker(store.session_factory)
     delivered = []
-    skipped = restarted_worker.process_one(
+    sent = restarted_worker.process_one(
         now_ns=candidate().observed_at_ns + 1_000_000_000,
         sender=lambda payload: delivered.append(payload),
         configured=True,
     )
-    assert skipped["processed"] is False
-    assert skipped["reason"] == "NO_DUE_NOTIFICATION"
-    assert delivered == []
-    assert store.latest()[0]["state"] == "EXPIRED"
-    assert store.latest()[0]["delivery_status"] == "SKIPPED"
-
-    session = store.session_factory()
-    try:
-        row = session.query(IVEarlyEntryNotificationOutbox).one()
-        assert row.status == "SKIPPED"
-        assert row.lease_token is None
-        assert row.lease_until_ns is None
-    finally:
-        session.close()
+    assert sent["status"] == "SENT"
+    assert len(delivered) == 1
+    assert store.latest()[0]["state"] == "EARLY_ENTRY"
+    assert store.latest()[0]["delivery_status"] == "SENT"
 
 
 def test_pending_notification_survives_worker_restart_and_is_delivered():
