@@ -82,7 +82,7 @@ def test_callback_queue_overflow_requests_only_current_shard_recovery_off_transp
         recovery_called.set()
 
     manager._on_data = blocked_on_data
-    manager._handle_socket_failure = record_recovery
+    manager._schedule_socket_failure_recovery = record_recovery
     manager._install_callback_adapter(group, 1)
 
     manager._dispatch_transport_data(group, socket, {"token": "inflight"}, 1)
@@ -137,3 +137,50 @@ def test_callback_dispatch_configuration_rejects_truthy_non_boolean_values():
         CommonWebSocketManager(async_callback_dispatch="false")
     with pytest.raises(ValueError, match="callback_dispatch_capacity"):
         CommonWebSocketManager(callback_dispatch_capacity=0)
+
+def test_overflow_reaches_generation_checked_manager_recovery_boundary():
+    manager = CommonWebSocketManager(async_callback_dispatch=True, callback_dispatch_capacity=1)
+    group = SocketGroup(mode=1, shard=0)
+    socket = _Socket()
+    _install_current(manager, group, socket, generation=7)
+    manager._install_callback_adapter(group, 7)
+    requested = Event()
+    observed = []
+
+    def record_recovery(got_group, got_socket, generation, reason):
+        observed.append((got_group, got_socket, generation, reason, get_ident()))
+        requested.set()
+
+    manager._schedule_socket_failure_recovery = record_recovery
+    adapter = manager._callback_adapters[group][1]
+    adapter._fail_closed_locked("test_overflow")
+    manager._dispatch_transport_data(group, socket, {"token": "late"}, 7)
+
+    assert requested.wait(1.0)
+    assert observed[0][:4] == (
+        group, socket, 7, "callback_dispatch_integrity_fault"
+    )
+    assert observed[0][4] != get_ident()
+    assert manager._callback_adapters[group][1] is adapter
+    assert adapter.snapshot()["integrity_fault"] is True
+    manager.close()
+
+
+def test_retired_generation_callback_cannot_be_dispatched_after_replacement():
+    manager = CommonWebSocketManager(async_callback_dispatch=True, callback_dispatch_capacity=4)
+    group = SocketGroup(mode=1, shard=0)
+    old_socket = _Socket()
+    new_socket = _Socket()
+    _install_current(manager, group, old_socket, generation=1)
+    manager._install_callback_adapter(group, 1)
+    manager._retire_callback_adapter_locked(group)
+    _install_current(manager, group, new_socket, generation=2)
+    manager._install_callback_adapter(group, 2)
+    delivered = Event()
+    manager._on_data = lambda *_args: delivered.set()
+
+    manager._dispatch_transport_data(group, old_socket, {"token": "old"}, 1)
+    assert not delivered.wait(0.05)
+    manager._dispatch_transport_data(group, new_socket, {"token": "new"}, 2)
+    assert delivered.wait(1.0)
+    manager.close()
