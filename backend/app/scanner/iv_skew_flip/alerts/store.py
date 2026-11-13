@@ -6,7 +6,7 @@ from datetime import datetime, time as clock_time
 from zoneinfo import ZoneInfo
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import and_, or_, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown
@@ -317,11 +317,27 @@ class AlertCooldownStore:
         finally:
             session.close()
 
-    def latest(self, *, limit: int = 20) -> list[dict[str, Any]]:
+    def latest(
+        self, *, limit: int = 20,
+        before_observed_at_ns: int | None = None,
+        before_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return stable newest-first history, with a timestamp+ID keyset cursor."""
         limit = max(1, min(int(limit), 100))
+        if (before_observed_at_ns is None) != (before_id is None):
+            raise ValueError("both cursor fields must be provided together")
         session = self.session_factory()
         try:
-            rows = (session.query(IVEarlyEntryAlertEvent)
+            query = session.query(IVEarlyEntryAlertEvent)
+            if before_observed_at_ns is not None and before_id is not None:
+                query = query.filter(or_(
+                    IVEarlyEntryAlertEvent.observed_at_ns < int(before_observed_at_ns),
+                    and_(
+                        IVEarlyEntryAlertEvent.observed_at_ns == int(before_observed_at_ns),
+                        IVEarlyEntryAlertEvent.id < int(before_id),
+                    ),
+                ))
+            rows = (query
                     .order_by(IVEarlyEntryAlertEvent.observed_at_ns.desc(),
                               IVEarlyEntryAlertEvent.id.desc())
                     .limit(limit).all())
