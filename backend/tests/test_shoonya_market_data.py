@@ -741,3 +741,23 @@ def test_tick_queue_overflow_state_survives_socket_close_callback():
 
     assert states[-1][0] == "DEGRADED"
     assert "tick dispatch queue full" in states[-1][1]
+
+
+def test_reconnect_backoff_uses_bounded_jitter(monkeypatch):
+    import app.market_data.shoonya_websocket as shoonya_websocket_module
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        reconnect_min_seconds=2.0, reconnect_max_seconds=30.0,
+    )
+    bounds = []
+
+    def choose_upper(lower, upper):
+        bounds.append((lower, upper))
+        return upper
+
+    monkeypatch.setattr(shoonya_websocket_module.random, "uniform", choose_upper)
+    assert feed._jittered_backoff_delay(2.0) == 2.4
+    assert bounds[-1] == (2.0, 2.4)
+    assert feed._jittered_backoff_delay(30.0) == 30.0
+    assert bounds[-1] == (24.0, 30.0)
