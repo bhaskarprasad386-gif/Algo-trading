@@ -5,6 +5,9 @@ import pytest
 
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
 from app.market_data.provider_quote_adapter import observation_from_market_data_record
+from app.market_data.normalizer import AngelOneTickNormalizer
+from app.market_data.shoonya_normalizer import ShoonyaTickNormalizer
+from app.market_data.registry import InstrumentDescriptor
 from app.market_data.provider_quote_quality import QuoteQualityState, assess_quote, compare_provider_quotes
 
 
@@ -118,3 +121,57 @@ def test_adapter_rejects_malformed_option_expiry_instead_of_truncating_it():
     record = replace(_record("angel_one"), expiry="2026-11-19-not-a-date")
     with pytest.raises(ValueError):
         _observation("angel_one", record=record)
+
+
+def test_real_normalizer_shapes_feed_same_read_only_parity_adapter():
+    angel_descriptor = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "OPT", "ANGEL-123"),
+        symbol="NIFTY26NOV22000CE", instrument_type="option",
+        exchange="NFO", segment="OPT", expiry="2026-11-19",
+        strike=22000.0, option_type="CE", lot_size=65,
+        tick_size=0.05, underlying="NIFTY",
+    )
+    shoonya_descriptor = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "OPT", "SHOONYA-987"),
+        symbol="NIFTY 19 NOV 22000 CE", instrument_type="option",
+        exchange="NFO", segment="OPT", expiry="2026-11-19",
+        strike=22000.0, option_type="CE", lot_size=65,
+        tick_size=0.05, underlying="NIFTY",
+    )
+    angel_record = AngelOneTickNormalizer(price_scale=100).normalize(
+        angel_descriptor,
+        {
+            "token": "ANGEL-123",
+            "exchange_timestamp": 1_800_000_000_000,
+            "last_traded_price": 10_002,
+            "buy": [{"price": 10_000, "quantity": 25}],
+            "sell": [{"price": 10_005, "quantity": 30}],
+        },
+    )
+    shoonya_record = ShoonyaTickNormalizer().normalize(
+        shoonya_descriptor,
+        {
+            "tk": "SHOONYA-987", "e": "NFO",
+            "ts": "NIFTY 19 NOV 22000 CE", "ft": "1800000000",
+            "lp": "100.02", "bp1": "100.00", "sp1": "100.05",
+            "bq1": "25", "sq1": "30",
+        },
+    )
+    angel = observation_from_market_data_record(
+        "angel_one", angel_record, generation=8, authenticated=True,
+        connection_current=True, received_monotonic_ns=NOW_MONOTONIC - 500_000_000,
+        depth_complete=True,
+    )
+    shoonya = observation_from_market_data_record(
+        "shoonya", shoonya_record, generation=11, authenticated=True,
+        connection_current=True, received_monotonic_ns=NOW_MONOTONIC - 500_000_000,
+        depth_complete=True,
+    )
+    result = compare_provider_quotes(
+        angel, shoonya, now_monotonic_ns=NOW_MONOTONIC,
+        now_exchange_timestamp_ns=NOW_EXCHANGE, max_age_ns=MAX_AGE,
+    )
+    assert angel.contract == shoonya.contract
+    assert angel.bid == shoonya.bid == 100.0
+    assert angel.ask == shoonya.ask == 100.05
+    assert result.state is QuoteQualityState.COMPARABLE
