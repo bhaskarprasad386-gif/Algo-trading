@@ -258,3 +258,33 @@ def test_stop_uses_one_shared_deadline_for_all_workers(monkeypatch):
         "supervisor", "tick-dispatch", "order-dispatch", "heartbeat"
     ]
     assert feed.snapshot()["last_error"].startswith("workers did not stop")
+
+
+def test_stale_socket_callbacks_are_ignored_after_reconnect():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    old_ws = SimpleNamespace()
+    new_ws = SimpleNamespace()
+    feed._reset_feed_epoch()
+    old_epoch = feed._feed_epoch
+    feed._ws = old_ws
+    received = []
+    guarded = feed._guard_callback(lambda ws, raw: received.append((ws, raw)), old_epoch)
+
+    feed._reset_feed_epoch()
+    feed._ws = new_ws
+    guarded(old_ws, '{"t":"tk","e":"NFO","tk":"12345"}')
+    assert received == []
+    guarded(new_ws, '{"t":"tk","e":"NFO","tk":"12345"}')
+    assert received == []  # the callback is bound to the prior epoch even for a reused reference
+
+
+def test_current_socket_callback_is_allowed_only_for_current_epoch():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    ws = SimpleNamespace()
+    feed._reset_feed_epoch()
+    epoch = feed._feed_epoch
+    feed._ws = ws
+    received = []
+    guarded = feed._guard_callback(lambda socket, raw: received.append((socket, raw)), epoch)
+    guarded(ws, "current")
+    assert received == [(ws, "current")]
