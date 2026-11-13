@@ -119,6 +119,29 @@ def test_supervisor_unsubscribe_removes_owned_descriptor_and_stop_is_idempotent(
     assert supervisor._adapter.stopped == 1
 
 
+def test_supervisor_stops_adapter_when_final_subscription_is_removed(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    item = descriptor()
+    supervisor.subscribe([item])
+
+    assert supervisor.unsubscribe([item]) == 1
+    assert supervisor._adapter.stopped == 1
+    state = supervisor.snapshot()
+    assert state["enabled"] is True
+    assert state["state"] == "IDLE_NO_SUBSCRIPTIONS"
+    assert state["adapter"]["subscriptions"] == 0
+
+
+def test_supervisor_keeps_adapter_running_when_other_subscriptions_remain(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    first, second = descriptor("12345"), descriptor("67890")
+    supervisor.subscribe([first, second])
+
+    assert supervisor.unsubscribe([first]) == 1
+    assert supervisor._adapter.stopped == 0
+    assert supervisor.snapshot()["registry_instruments"] == 1
+
+
 def test_supervisor_tick_and_order_callbacks_only_update_shadow_counters(monkeypatch):
     supervisor = build_supervisor(monkeypatch)
     supervisor._observe_tick({"symbol": "NIFTY", "ltp": 100})
