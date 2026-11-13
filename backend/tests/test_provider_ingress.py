@@ -90,3 +90,25 @@ def test_generation_must_move_forward():
         ingress.activate_generation(2)
     with pytest.raises(ValueError):
         ingress.activate_generation(1)
+
+
+
+def test_queued_old_generation_is_discarded_after_reconnect():
+    ingress = BoundedProviderIngress(provider="angelone", capacity=3)
+    ingress.activate_generation(1)
+    assert ingress.publish(envelope(generation=1, token="old")) is True
+    ingress.activate_generation(2)
+    assert ingress.publish(envelope(generation=2, token="new")) is True
+    current = ingress.get_current(timeout=0.01)
+    assert current.token == "new"
+    ingress.task_done()
+    assert ingress.snapshot()["stale_dequeued"] == 1
+
+
+def test_nested_payload_is_detached_and_immutable():
+    source = {"depth": {"bids": [{"price": 100}]}}
+    item = envelope(payload=source)
+    source["depth"]["bids"][0]["price"] = 1
+    assert item.payload["depth"]["bids"][0]["price"] == 100
+    with pytest.raises(TypeError):
+        item.payload["depth"]["bids"][0]["price"] = 2
