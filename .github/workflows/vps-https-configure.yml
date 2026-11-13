@@ -221,12 +221,14 @@ jobs:
 
           # Certbot was installed in a Python venv, so do not assume the OS
           # package installed a renewal timer. Run renewal twice daily with jitter.
-          cat > /etc/systemd/system/certbot-ip-renew.service <<'UNIT'
+          CERTBOT_BIN="$(command -v certbot)"
+          test -x "$CERTBOT_BIN"
+          cat > /etc/systemd/system/certbot-ip-renew.service <<UNIT
           [Unit]
           Description=Renew Let's Encrypt short-lived IP certificate
           [Service]
           Type=oneshot
-          ExecStart=/usr/local/bin/certbot renew --quiet --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+          ExecStart=$CERTBOT_BIN renew --quiet --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
           UNIT
 
           cat > /etc/systemd/system/certbot-ip-renew.timer <<'UNIT'
