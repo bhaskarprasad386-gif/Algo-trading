@@ -531,3 +531,13 @@ def test_frame_watchdog_ignores_unauthenticated_and_replaced_sockets():
     feed._authenticated = True
     assert feed._check_frame_freshness(stale_ws) is False
     assert feed.snapshot()["authenticated"] is True
+
+
+def test_new_connection_epoch_resets_frame_freshness_and_old_timeout_reason():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token", frame_timeout_seconds=5.0)
+    feed._last_frame_at = __import__("time").time() - 10.0
+    feed._last_error = "broker frame timeout: stale"
+    feed._reset_feed_epoch()
+    assert feed.snapshot()["last_frame_at"] is None
+    assert feed.snapshot()["last_frame_age_seconds"] is None
+    assert feed.snapshot()["frame_stale"] is False
