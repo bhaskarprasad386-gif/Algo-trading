@@ -571,3 +571,31 @@ def test_shoonya_normalized_record_exposes_canonical_exchange_timestamp():
     assert record.timestamp_ns == expected_ns
     assert record.payload["exchange_timestamp_ns"] == expected_ns
     assert record.payload["source_timestamp_ns"] == expected_ns
+
+def test_shoonya_adapter_rejects_out_of_order_exchange_ticks_but_allows_same_timestamp_updates():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws, feed._authenticated = fake_ws, True
+
+    base = 1_794_551_794
+    feed._on_message(fake_ws, json.dumps({
+        "t": "tk", "e": "NFO", "tk": "12345", "lp": "100.00", "ft": str(base),
+    }))
+    # Same exchange-second timestamps may contain quote changes and remain valid.
+    feed._on_message(fake_ws, json.dumps({
+        "t": "tf", "e": "NFO", "tk": "12345", "lp": "100.10", "ft": str(base),
+    }))
+    # A delayed older frame must never roll the instrument backwards.
+    feed._on_message(fake_ws, json.dumps({
+        "t": "tf", "e": "NFO", "tk": "12345", "lp": "99.00", "ft": str(base - 1),
+    }))
+    assert feed.snapshot()["ticks_received"] == 2
+    assert feed.snapshot()["out_of_order_ticks"] == 1
+    assert feed._snapshots[("NFO", "12345")]["lp"] == "99.00"  # raw diagnostic snapshot only
+
+    feed._on_message(fake_ws, json.dumps({
+        "t": "tf", "e": "NFO", "tk": "12345", "lp": "100.20", "ft": str(base + 1),
+    }))
+    assert feed.snapshot()["ticks_received"] == 3
+    assert feed.snapshot()["out_of_order_ticks"] == 1
