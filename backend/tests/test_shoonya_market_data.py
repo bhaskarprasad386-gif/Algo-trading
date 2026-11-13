@@ -541,3 +541,16 @@ def test_new_connection_epoch_resets_frame_freshness_and_old_timeout_reason():
     assert feed.snapshot()["last_frame_at"] is None
     assert feed.snapshot()["last_frame_age_seconds"] is None
     assert feed.snapshot()["frame_stale"] is False
+
+
+def test_shoonya_timestamp_normalizer_supports_epoch_units():
+    from app.market_data.shoonya_normalizer import ShoonyaTickNormalizer
+
+    seconds = 1_794_551_794
+    expected_ns = seconds * 1_000_000_000
+    assert ShoonyaTickNormalizer._timestamp_ns({"ft": str(seconds)}) == expected_ns
+    assert ShoonyaTickNormalizer._timestamp_ns({"ft": str(seconds * 1_000)}) == expected_ns
+    assert ShoonyaTickNormalizer._timestamp_ns({"ft": str(seconds * 1_000_000)}) == expected_ns
+    assert ShoonyaTickNormalizer._timestamp_ns({"ft": str(expected_ns)}) == expected_ns
+    assert ShoonyaTickNormalizer._timestamp_ns({"ft": "not-a-timestamp"}) == 0
+    assert ShoonyaTickNormalizer._timestamp_ns({"ft": "0"}) == 0
