@@ -76,15 +76,13 @@ class SourceMinuteAggregator:
         self._spots = {stamp: row for stamp, row in self._spots.items() if stamp >= cutoff}
 
     def option_history(self, token: str, *, now_ns: int) -> tuple[OptionObservation, ...]:
-        """Return ordered source observations except the latest live sample.
+        """Return every ordered source observation in the retained session.
 
-        The latest source observation is supplied separately as the live quote;
-        every earlier distinct exchange update remains available as history.
-        No age, minute-alignment, or cadence cutoff is applied here.
+        The orchestrator removes the current live sample by its source timestamp;
+        this layer never discards an observation based on age or minute boundary.
         """
         rows = self._options.get(str(token), {})
-        ordered = tuple(rows[key] for key in sorted(rows) if key <= now_ns)
-        return ordered[:-1] if len(ordered) > 1 else ()
+        return tuple(rows[key] for key in sorted(rows) if key <= now_ns)
 
     def spot_bars(self, *, now_ns: int) -> tuple[SpotBar, ...]:
         current_minute = self._minute(now_ns)
