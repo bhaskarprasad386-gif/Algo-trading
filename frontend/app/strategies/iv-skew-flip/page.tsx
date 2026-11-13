@@ -419,7 +419,7 @@ export default function IVSkewFlipPage() {
         if(previous.size>500){const keep=new Set(newest.map(row=>row.id));seenAlertIds.current=keep;}
         setEarlyAlerts(current=>{
           const merged=new Map<number,EarlyAlert>();
-          [...newest,...current].forEach(row=>merged.set(row.id,row));
+          [...current,...newest].forEach(row=>merged.set(row.id,row));
           return [...merged.values()].sort(compareAlertTime);
         });
         if(!loadedOlderAlerts.current){
