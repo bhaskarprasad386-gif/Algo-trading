@@ -761,3 +761,56 @@ def test_reconnect_backoff_uses_bounded_jitter(monkeypatch):
     assert bounds[-1] == (2.0, 2.4)
     assert feed._jittered_backoff_delay(30.0) == 30.0
     assert bounds[-1] == (24.0, 30.0)
+
+
+def test_authenticated_session_subscribes_order_feed_when_callback_configured():
+    sent = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_order_update=lambda event: None,
+    )
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = fake_ws
+
+    feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
+
+    frames = [json.loads(frame) for frame in sent]
+    assert frames == [
+        {"t": "t", "k": "NFO|12345"},
+        {"t": "o", "actid": "ACT123"},
+    ]
+
+
+def test_order_feed_subscription_is_replayed_after_authenticated_reconnect():
+    sent = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_order_update=lambda event: None,
+    )
+    feed.subscribe([descriptor()])
+    old_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws = old_ws
+    feed._authenticated = True
+    feed._reset_feed_epoch()
+    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = new_ws
+
+    feed._on_message(new_ws, json.dumps({"t": "ak", "s": "OK"}))
+
+    frames = [json.loads(frame) for frame in sent]
+    assert frames == [
+        {"t": "t", "k": "NFO|12345"},
+        {"t": "o", "actid": "ACT123"},
+    ]
+
+
+def test_order_feed_is_not_subscribed_without_order_callback():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="ACT123", access_token="token")
+    fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = fake_ws
+
+    feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
+
+    assert sent == []
