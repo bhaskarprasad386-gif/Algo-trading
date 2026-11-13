@@ -56,38 +56,46 @@ class ShoonyaWebSocket:
     def subscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
         batch = tuple(descriptors)
         if not batch: return 0
-        with self._lock:
-            staged = dict(self._descriptors)
-            for d in batch:
-                key = (d.key.exchange.upper(), d.key.token)
-                if key in staged and staged[key] != d:
-                    raise ValueError(f"conflicting Shoonya instrument descriptor: {key}")
-                staged[key] = d
-            if len(staged) > 500:
-                raise ValueError("Shoonya allows at most 500 subscribed tokens per WebSocket connection")
-            self._descriptors = staged
-            ws, ready = self._ws, self._authenticated
-        if ready and ws is not None: self._send_subscriptions(ws)
+        # Serialize desired-state mutation with its corresponding wire update.
+        # Otherwise a subscribe can overtake an unsubscribe after the latter has
+        # removed local state but before it sends the broker's unsubscribe frame.
+        with self._subscription_send_lock:
+            with self._lock:
+                staged = dict(self._descriptors)
+                for d in batch:
+                    key = (d.key.exchange.upper(), d.key.token)
+                    if key in staged and staged[key] != d:
+                        raise ValueError(f"conflicting Shoonya instrument descriptor: {key}")
+                    staged[key] = d
+                if len(staged) > 500:
+                    raise ValueError("Shoonya allows at most 500 subscribed tokens per WebSocket connection")
+                self._descriptors = staged
+                ws, ready = self._ws, self._authenticated
+            if ready and ws is not None:
+                self._send_subscriptions_locked(ws)
         return len(batch)
 
     def unsubscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
-        removed = []
-        with self._lock:
-            for d in tuple(descriptors):
-                key = (d.key.exchange.upper(), d.key.token)
-                if key in self._descriptors:
-                    removed.append(key); self._descriptors.pop(key); self._snapshots.pop(key, None); self._initialized.discard(key)
-            ws, ready = self._ws, self._authenticated
-        if removed and ready and ws is not None:
-            try:
-                frame = json.dumps({"t": "u", "k": "#".join(f"{e}|{t}" for e, t in removed)}, separators=(",", ":"))
-                with self._subscription_send_lock:
+        with self._subscription_send_lock:
+            removed = []
+            with self._lock:
+                for d in tuple(descriptors):
+                    key = (d.key.exchange.upper(), d.key.token)
+                    if key in self._descriptors:
+                        removed.append(key)
+                        self._descriptors.pop(key)
+                        self._snapshots.pop(key, None)
+                        self._initialized.discard(key)
+                ws, ready = self._ws, self._authenticated
+            if removed and ready and ws is not None:
+                try:
+                    frame = json.dumps({"t": "u", "k": "#".join(f"{e}|{t}" for e, t in removed)}, separators=(",", ":"))
                     ws.send(frame)
-            except Exception as exc:
-                self._on_error(ws, exc)
-                try: ws.close()
-                except Exception: pass
-        return len(removed)
+                except Exception as exc:
+                    self._on_error(ws, exc)
+                    try: ws.close()
+                    except Exception: pass
+            return len(removed)
 
     def start(self) -> None:
         with self._lock:
@@ -251,19 +259,22 @@ class ShoonyaWebSocket:
             self._enqueue("order", message)
 
     def _send_subscriptions(self, ws: Any) -> None:
-        # Take the latest descriptor snapshot only after acquiring the wire lock.
-        # This prevents a delayed subscribe from overtaking a concurrent unsubscribe.
         with self._subscription_send_lock:
-            with self._lock: instruments = tuple(self._descriptors)
-            if not instruments:
-                return
-            keys = "#".join(f"{e}|{t}" for e, t in instruments)
-            try:
-                ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
-            except Exception as exc:
-                self._on_error(ws, exc)
-                try: ws.close()
-                except Exception: pass
+            self._send_subscriptions_locked(ws)
+
+    def _send_subscriptions_locked(self, ws: Any) -> None:
+        """Send the current desired set while the subscription lock is held."""
+        with self._lock:
+            instruments = tuple(self._descriptors)
+        if not instruments:
+            return
+        keys = "#".join(f"{e}|{t}" for e, t in instruments)
+        try:
+            ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
+        except Exception as exc:
+            self._on_error(ws, exc)
+            try: ws.close()
+            except Exception: pass
 
     def _handle_tick(self, message: dict[str, Any]) -> None:
         exchange, token = str(message.get("e") or "").upper(), str(message.get("tk") or "")
