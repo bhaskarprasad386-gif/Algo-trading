@@ -3,20 +3,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
-
 from .aggregation import SourceMinuteAggregator
 from .data_adapter import option_observation
 from .conditions import evaluate_strategy_a, evaluate_strategy_b, even_strikes
 from .models import AlertState, StrategyEvaluation
 
-IST = ZoneInfo("Asia/Kolkata")
-
-
 class IVEarlyEntryAlertEngine:
     """Consumes existing sampler data; never creates feeds or sends orders."""
 
-    def __init__(self, store: Any, *, retention_minutes: int = 30) -> None:
+    def __init__(self, store: Any, *, retention_minutes: int = 390) -> None:
         self.store = store
         self.aggregator = SourceMinuteAggregator(retention_minutes=retention_minutes)
         self._last_results: dict[str, dict[str, Any]] = {}
