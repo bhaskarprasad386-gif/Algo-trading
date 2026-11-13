@@ -46,7 +46,7 @@ class FakeAdapter:
         self.stopped += 1
 
     def snapshot(self):
-        return {"subscriptions": len(self.descriptors), "authenticated": False}
+        return {"subscriptions": len(self.descriptors), "authenticated": False, "last_error": self.last_error}
 
 
 def build_supervisor(monkeypatch, **kwargs):
@@ -227,3 +227,31 @@ def test_shoonya_option_subscription_requires_complete_contract_metadata():
         assert "expiry, strike and option_type" in str(exc)
     else:
         raise AssertionError("incomplete option metadata must be rejected")
+
+
+def test_supervisor_cleans_adapter_and_registry_when_start_fails(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    item = descriptor()
+
+    def fail_start():
+        raise RuntimeError("worker startup failed")
+
+    supervisor._adapter.start = fail_start
+    try:
+        supervisor.subscribe([item])
+    except RuntimeError as exc:
+        assert "worker startup failed" in str(exc)
+    else:
+        raise AssertionError("adapter startup failure must propagate")
+
+    assert supervisor.snapshot()["registry_instruments"] == 0
+    assert supervisor.registry.get(item.key) is None
+    assert supervisor._adapter.descriptors == {}
+
+
+def test_supervisor_unsubscribe_removes_inactive_registry_descriptor(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    item = descriptor()
+    supervisor.subscribe([item])
+    assert supervisor.unsubscribe([item]) == 1
+    assert supervisor.registry.get(item.key) is None
