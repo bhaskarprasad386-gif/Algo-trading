@@ -4,6 +4,7 @@ from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor
 from app.market_data.shoonya_normalizer import ShoonyaTickNormalizer
 from app.market_data.shoonya_websocket import ShoonyaWebSocket
+from app.market_data.live_provider import LiveMarketDataFeed
 
 def descriptor():
     return InstrumentDescriptor(key=InstrumentKey("NFO", "NFO", "12345"),
@@ -65,3 +66,8 @@ def test_order_updates_have_independent_queue():
     feed._enqueue("order", {"t":"om","status":"COMPLETE"})
     assert feed.snapshot()["order_queue_depth"] == 1
     assert feed.snapshot()["dispatch_queue_depth"] == 0
+
+
+def test_shoonya_feed_implements_broker_neutral_live_feed_contract():
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    assert isinstance(feed, LiveMarketDataFeed)
