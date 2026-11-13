@@ -1887,11 +1887,9 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         except Exception as exc:
             equity_pressure_error = f"{type(exc).__name__}: {exc}"
             app_logger.warning("IV top-10 constituent pressure unavailable: {}", equity_pressure_error)
-        # IV owns an independent Angel One manager/socket. All IV market
-        # data uses mode 3 on this single socket; the existing shared manager
-        # retains its Box Spread and other strategy subscriptions unchanged.
-        # IV and Box Spread must share one process-wide Angel manager so the
-        # three-session budget is enforced across both scanners, not per manager.
+        # IV and Box Spread share the process-wide Angel One manager.
+        # IV consumers request mode 3, while the manager enforces one global
+        # three-socket budget across all registered strategy subscriptions.
         iv_feed_manager = shared_common_manager()
         runtime = IVSkewFlipRuntime(
             instrument_master=instrument_master,
