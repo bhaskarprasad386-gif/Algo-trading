@@ -308,6 +308,46 @@ def test_stale_socket_error_cannot_poison_replacement_connection():
     assert states == []
 
 
+def test_stale_socket_cannot_receive_heartbeat_after_reconnect():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    old_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = new_ws
+    feed._authenticated = True
+
+    assert feed._send_heartbeat(old_ws) is False
+    assert sent == []
+
+
+def test_stale_socket_cannot_receive_subscription_replay_after_reconnect():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    old_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = new_ws
+    feed._authenticated = True
+
+    feed._send_subscriptions(old_ws)
+    assert sent == []
+
+
+def test_stale_socket_cannot_receive_order_subscription_after_reconnect():
+    sent = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_order_update=lambda event: None,
+    )
+    old_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = new_ws
+    feed._authenticated = True
+
+    feed._send_order_subscription(old_ws)
+    assert sent == []
+
+
 def test_stale_socket_callbacks_are_ignored_after_reconnect():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     old_ws = SimpleNamespace()
