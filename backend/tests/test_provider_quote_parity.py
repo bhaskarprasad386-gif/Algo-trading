@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from app.market_data.provider_contracts import CanonicalContractKey
 from app.market_data.provider_quote_quality import ProviderQuoteObservation, QuoteQualityState
-from app.market_data.provider_quote_parity import analyze_quote_parity
+from app.market_data.provider_quote_parity import QuoteParityHistory, analyze_quote_parity
 
 NOW_MONOTONIC = 90_000_000_000
 NOW_EXCHANGE = 1_800_000_000_000_000_000
@@ -81,3 +81,40 @@ def test_missing_or_invalid_side_suppresses_only_that_side_metric():
     assert result.bid_abs_diff is None
     assert result.ask_abs_diff == Decimal("0.05")
     assert result.mid_abs_diff is None
+
+def test_history_is_bounded_per_contract_and_returns_immutable_snapshots():
+    history = QuoteParityHistory(max_observations_per_contract=2)
+    metric = analyze_quote_parity(
+        _quote("angel"), _quote("shoonya"),
+        now_monotonic_ns=NOW_MONOTONIC, now_exchange_timestamp_ns=NOW_EXCHANGE,
+        max_age_ns=MAX_AGE,
+    )
+    assert history.record(metric, observed_monotonic_ns=10) == 1
+    assert history.record(metric, observed_monotonic_ns=20) == 2
+    assert history.record(metric, observed_monotonic_ns=30) == 2
+    snapshot = history.snapshot()
+    assert len(snapshot[metric.contract]) == 2
+    assert [item[0] for item in snapshot[metric.contract]] == [20, 30]
+    assert history.clear() == 2
+    assert history.snapshot() == {}
+
+
+def test_history_rejects_out_of_order_observation_time():
+    history = QuoteParityHistory(max_observations_per_contract=3)
+    metric = analyze_quote_parity(
+        _quote("angel"), _quote("shoonya"),
+        now_monotonic_ns=NOW_MONOTONIC, now_exchange_timestamp_ns=NOW_EXCHANGE,
+        max_age_ns=MAX_AGE,
+    )
+    history.record(metric, observed_monotonic_ns=100)
+    import pytest
+    with pytest.raises(ValueError, match="monotonic"):
+        history.record(metric, observed_monotonic_ns=99)
+
+
+def test_history_capacity_must_be_positive_integer():
+    import pytest
+    with pytest.raises(ValueError, match="positive integer"):
+        QuoteParityHistory(max_observations_per_contract=0)
+    with pytest.raises(ValueError, match="positive integer"):
+        QuoteParityHistory(max_observations_per_contract=True)
