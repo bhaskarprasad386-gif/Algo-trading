@@ -5,6 +5,7 @@ import pytest
 from app.market_data.provider_ingress import (
     BoundedProviderIngress,
     ProviderIngressEnvelope,
+    ProviderIngressWorker,
 )
 
 
@@ -112,3 +113,47 @@ def test_nested_payload_is_detached_and_immutable():
     assert item.payload["depth"]["bids"][0]["price"] == 100
     with pytest.raises(TypeError):
         item.payload["depth"]["bids"][0]["price"] = 2
+
+
+def test_worker_drains_accepted_current_generation_frames_on_shutdown():
+    ingress = BoundedProviderIngress(provider="angelone", capacity=4)
+    ingress.activate_generation(1)
+    seen = []
+    for token in ("a", "b", "c"):
+        assert ingress.publish(envelope(token=token)) is True
+    worker = ProviderIngressWorker(ingress, lambda item: seen.append(item.token))
+    worker.start()
+    worker.stop(timeout=2.0, drain=True)
+    assert seen == ["a", "b", "c"]
+    assert worker.snapshot()["processed"] == 3
+    assert worker.snapshot()["running"] is False
+
+
+def test_worker_counts_handler_errors_and_continues_processing():
+    ingress = BoundedProviderIngress(provider="shoonya", capacity=3)
+    ingress.activate_generation(1)
+    for token in ("bad", "good"):
+        assert ingress.publish(envelope(provider="shoonya", token=token)) is True
+    seen = []
+
+    def handler(item):
+        if item.token == "bad":
+            raise RuntimeError("test failure")
+        seen.append(item.token)
+
+    worker = ProviderIngressWorker(ingress, handler)
+    worker.start()
+    worker.stop(timeout=2.0, drain=True)
+    assert seen == ["good"]
+    assert worker.snapshot()["handler_errors"] == 1
+    assert worker.snapshot()["processed"] == 1
+
+
+def test_non_draining_shutdown_reports_discarded_pending_frames():
+    ingress = BoundedProviderIngress(provider="angelone", capacity=3)
+    ingress.activate_generation(1)
+    assert ingress.publish(envelope(token="pending")) is True
+    worker = ProviderIngressWorker(ingress, lambda item: None)
+    worker.stop(timeout=1.0, drain=False)
+    assert ingress.snapshot()["shutdown_discarded"] == 1
+    assert ingress.snapshot()["queue_depth"] == 0
