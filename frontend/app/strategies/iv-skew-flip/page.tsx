@@ -378,6 +378,8 @@ export default function IVSkewFlipPage() {
   const [durableHistory,setDurableHistory]=useState<Row|null>(null);
   const [chartHistory,setChartHistory]=useState<Row|null>(null);
   const [earlyAlerts,setEarlyAlerts]=useState<EarlyAlert[]>([]);
+  const [hasMoreAlerts,setHasMoreAlerts]=useState(false);
+  const [loadingMoreAlerts,setLoadingMoreAlerts]=useState(false);
   const [earlyAlertLive,setEarlyAlertLive]=useState<Row|null>(null);
   const [alertAudioEnabled,setAlertAudioEnabled]=useState(false);
   const [alertFetchError,setAlertFetchError]=useState("");
@@ -406,7 +408,12 @@ export default function IVSkewFlipPage() {
         const fresh=newest.filter(row=>!previous.has(row.id)&&row.state==="EARLY_ENTRY");
         newest.forEach(row=>previous.add(row.id));
         if(previous.size>500){const keep=new Set(newest.map(row=>row.id));seenAlertIds.current=keep;}
-        setEarlyAlerts(newest);
+        setEarlyAlerts(current=>{
+          const merged=new Map<number,EarlyAlert>();
+          [...newest,...current].forEach(row=>merged.set(row.id,row));
+          return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id).slice(0,1000);
+        });
+        setHasMoreAlerts(body.has_more===true);
         setEarlyAlertLive(body.live&&typeof body.live==="object"?body.live as Row:null);
         setAlertFetchError("");
         if(alertAudioEnabled&&fresh.length){
@@ -474,6 +481,33 @@ export default function IVSkewFlipPage() {
     const timer=window.setInterval(()=>{if(active)void poll();},5000);
     return()=>{active=false;window.clearInterval(timer);};
   },[base,requestedExpiry,activeWeeklyExpiry]);
+  const loadMoreAlerts=async()=>{
+    if(loadingMoreAlerts||!hasMoreAlerts||earlyAlerts.length===0)return;
+    const oldest=earlyAlerts[earlyAlerts.length-1];
+    const query=new URLSearchParams({
+      limit:"30",
+      before_observed_at_ns:String(oldest.observed_at_ns),
+      before_id:String(oldest.id),
+    });
+    setLoadingMoreAlerts(true);
+    try{
+      const response=await fetch(`${base}/api/latest-alert?${query.toString()}`,{cache:"no-store"});
+      const body=await response.json();
+      if(!response.ok)throw new Error(apiError(body,"Could not load older alert history"));
+      const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
+      setEarlyAlerts(current=>{
+        const merged=new Map<number,EarlyAlert>();
+        [...current,...rows].forEach(row=>merged.set(row.id,row));
+        return [...merged.values()].sort((a,b)=>b.observed_at_ns-a.observed_at_ns||b.id-a.id).slice(0,1000);
+      });
+      setHasMoreAlerts(body.has_more===true);
+      setAlertFetchError("");
+    }catch(e){
+      setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
+    }finally{
+      setLoadingMoreAlerts(false);
+    }
+  };
   const refresh=useCallback(async()=>{
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
@@ -618,7 +652,11 @@ export default function IVSkewFlipPage() {
           <td className="px-2 py-2"><details className="min-w-[220px]"><summary className="cursor-pointer font-bold text-blue-600">View {Object.keys(checks).length} checks</summary><div className="mt-2 space-y-2">{Object.entries(checks).map(([name,value])=>{const item=value&&typeof value==="object"?value as Row:{};return <div key={name} className="rounded border-2 border-slate-300 dark:border-slate-600 p-2"><div className="flex items-center justify-between gap-2"><b>{name.replaceAll("_"," ")}</b><span className={item.passed===true?"text-emerald-600":item.passed===false?"text-rose-600":"theme-muted"}>{item.passed===true?"PASS":item.passed===false?"FAIL":"RECORDED"}</span></div><pre className="mt-1 whitespace-pre-wrap break-words text-[10px] theme-muted">{JSON.stringify(item,null,2)}</pre></div>})}</div><pre className="mt-2 whitespace-pre-wrap break-words text-[10px] theme-muted">{JSON.stringify(alert.metadata?.live_quotes??{},null,2)}</pre></details></td>
         </tr>})}</tbody>
       </table></div>
-      <p className="text-[10px] theme-muted">Sound browser permission ke bina default OFF hai. Sound ON karne par sirf naye EARLY_ENTRY alert par local beep hoga. Ye dashboard kisi broker order ko place nahi karta.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] theme-muted">Showing {earlyAlerts.length} saved alerts • newest first</span>
+        {hasMoreAlerts&&<button type="button" onClick={()=>void loadMoreAlerts()} disabled={loadingMoreAlerts} className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold disabled:opacity-50">{loadingMoreAlerts?"Loading older alerts…":"Load older alerts"}</button>}
+      </div>
+      <p className="text-[10px] theme-muted">History is loaded from saved alert events using a timestamp + ID cursor, so equal timestamps do not skip or repeat rows. Sound browser permission ke bina default OFF hai. Sound ON karne par sirf naye EARLY_ENTRY alert par local beep hoga. Ye dashboard kisi broker order ko place nahi karta.</p>
     </section>
     {snapshotNotice&&<div role="status" className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3 text-sm theme-muted">{snapshotNotice} • broker snapshot saved as LAST data</div>}
     {error&&<div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-600">{error}</div>}
