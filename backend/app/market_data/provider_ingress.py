@@ -7,11 +7,22 @@ This module is intentionally not wired into either live broker or scanner yet.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from queue import Full, Queue
+from queue import Empty, Full, Queue
 from threading import Lock
-from time import monotonic_ns, time_ns
+from time import monotonic, monotonic_ns, time_ns
 from types import MappingProxyType
 from typing import Any, Mapping
+
+
+def _freeze(value: Any) -> Any:
+    """Recursively detach and freeze JSON-like provider payloads."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -46,9 +57,8 @@ class ProviderIngressEnvelope:
             raise ValueError("provider_timestamp_ns must be a non-negative integer or None")
         if not isinstance(self.payload, Mapping):
             raise TypeError("payload must be a mapping")
-        # Copy and freeze the top-level mapping so caller mutation cannot rewrite
-        # a queued frame after publication.
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        # Detach and recursively freeze nested provider data too.
+        object.__setattr__(self, "payload", _freeze(self.payload))
 
     @classmethod
     def capture(
@@ -86,6 +96,7 @@ class BoundedProviderIngress:
         self._closed = False
         self._accepted = self._stale_generation = self._wrong_provider = 0
         self._overflow = 0
+        self._stale_dequeued = 0
         self._integrity_fault = False
 
     def activate_generation(self, generation: int) -> None:
@@ -122,6 +133,25 @@ class BoundedProviderIngress:
     def get(self, timeout: float | None = None) -> ProviderIngressEnvelope:
         return self._queue.get(timeout=timeout)
 
+    def get_current(self, timeout: float | None = None) -> ProviderIngressEnvelope:
+        """Return only current-generation work, retiring queued frames after reconnect."""
+        deadline = None if timeout is None else monotonic() + max(0.0, timeout)
+        while True:
+            remaining = None if deadline is None else max(0.0, deadline - monotonic())
+            try:
+                item = self._queue.get(timeout=remaining)
+            except Empty:
+                raise
+            with self._lock:
+                current = not self._closed and item.generation == self._generation
+                if not current:
+                    self._stale_dequeued += 1
+            if current:
+                return item
+            self._queue.task_done()
+            if deadline is not None and monotonic() >= deadline:
+                raise Empty
+
     def task_done(self) -> None:
         self._queue.task_done()
 
@@ -141,6 +171,7 @@ class BoundedProviderIngress:
                 "stale_generation": self._stale_generation,
                 "wrong_provider": self._wrong_provider,
                 "overflow": self._overflow,
+                "stale_dequeued": self._stale_dequeued,
                 "integrity_fault": self._integrity_fault,
                 "closed": self._closed,
             }
