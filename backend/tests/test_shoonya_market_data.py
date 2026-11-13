@@ -108,9 +108,12 @@ def test_authentication_ack_is_required_before_market_subscription():
     assert json.loads(sent[-1]) == {"t": "t", "k": "NFO|12345"}
 
 
-def test_rejected_authentication_never_subscribes():
-    sent, closed = [], []
-    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="bad")
+def test_rejected_authentication_never_subscribes_and_state_survives_close():
+    sent, closed, states = [], [], []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="bad",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: closed.append(True))
     feed._on_open(fake_ws)
@@ -120,6 +123,9 @@ def test_rejected_authentication_never_subscribes():
     assert feed.snapshot()["last_error"] == "Shoonya authentication rejected"
     assert closed
     assert all(json.loads(frame)["t"] != "t" for frame in sent)
+    feed._on_close(fake_ws, 1000, "closed after rejected authentication")
+    assert states[-1][0] == "AUTH_FAILED"
+    assert states[-1][1] == "Shoonya authentication rejected"
 
 
 def test_uppercase_tick_frame_type_is_normalized():
