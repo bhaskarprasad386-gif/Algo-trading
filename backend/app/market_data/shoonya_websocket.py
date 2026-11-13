@@ -19,12 +19,14 @@ class ShoonyaWebSocket:
                  on_order_update: Callable[[dict[str, Any]], None] | None = None,
                  on_state: Callable[[str, str | None], None] | None = None,
                  websocket_factory: Callable[..., Any] | None = None, max_dispatch_queue: int = 10000,
-                 reconnect_min_seconds: float = 1.0, reconnect_max_seconds: float = 30.0):
+                 reconnect_min_seconds: float = 1.0, reconnect_max_seconds: float = 30.0,
+                 frame_timeout_seconds: float = 30.0):
         missing = [k for k, v in {"uid": uid, "actid": actid, "access_token": access_token}.items() if not str(v or "").strip()]
         if missing:
             raise ValueError(f"missing Shoonya session fields: {', '.join(missing)}")
-        if max_dispatch_queue < 1 or reconnect_min_seconds <= 0 or reconnect_max_seconds < reconnect_min_seconds:
-            raise ValueError("invalid queue or reconnect configuration")
+        if (max_dispatch_queue < 1 or reconnect_min_seconds <= 0 or reconnect_max_seconds < reconnect_min_seconds
+                or frame_timeout_seconds <= 3.0):
+            raise ValueError("invalid queue, reconnect, or frame-timeout configuration")
         self._uid, self._actid, self._access_token = str(uid).strip(), str(actid).strip(), str(access_token).strip()
         self._secret_values = tuple(value for value in (self._uid, self._actid, self._access_token) if value)
         self._source = str(source).strip().upper()
@@ -33,6 +35,7 @@ class ShoonyaWebSocket:
         self._on_tick, self._on_order_update, self._on_state = on_tick, on_order_update, on_state
         self._factory = websocket_factory or websocket.WebSocketApp
         self._backoff_min, self._backoff_max = reconnect_min_seconds, reconnect_max_seconds
+        self._frame_timeout_seconds = float(frame_timeout_seconds)
         self._stop = threading.Event()
         self._lock = threading.RLock()
         # Preserve subscribe/unsubscribe wire ordering across caller threads.
@@ -159,7 +162,10 @@ class ShoonyaWebSocket:
                     "order_queue_depth": self._order_queue.qsize(), "order_update_drops": self._order_update_drops,
                     "reconnect_count": self._reconnect_count, "last_error": self._last_error,
                     "shutdown_workers_alive": list(self._shutdown_workers_alive),
-                    "last_frame_at": self._last_frame_at, "last_tick_at": self._last_tick_at,
+                    "last_frame_at": self._last_frame_at, "last_frame_age_seconds": max(0.0, time.time() - self._last_frame_at) if self._last_frame_at else None,
+                    "frame_timeout_seconds": self._frame_timeout_seconds,
+                    "frame_stale": bool(self._last_frame_at and time.time() - self._last_frame_at >= self._frame_timeout_seconds),
+                    "last_tick_at": self._last_tick_at,
                     "last_tick_age_seconds": max(0.0, time.time() - self._last_tick_at) if self._last_tick_at else None}
 
     def _emit_state(self, state: str, reason: str | None) -> None:
@@ -333,14 +339,42 @@ class ShoonyaWebSocket:
             except Exception: app_logger.exception("Shoonya order callback failed")
             finally: self._order_queue.task_done()
 
+    def _check_frame_freshness(self, ws: Any) -> bool:
+        """Close an authenticated socket that stops delivering broker frames."""
+        now = time.time()
+        with self._lock:
+            if ws is not self._ws or not self._authenticated or self._last_frame_at is None:
+                return False
+            age = max(0.0, now - self._last_frame_at)
+            if age < self._frame_timeout_seconds:
+                return False
+            reason = (
+                f"broker frame timeout: no inbound Shoonya frame for {age:.1f}s "
+                f"(limit {self._frame_timeout_seconds:.1f}s)"
+            )
+            self._connected = self._authenticated = False
+            self._last_error = reason
+        self._emit_state("DEGRADED", reason)
+        try:
+            ws.close()
+        except Exception as exc:
+            app_logger.warning("Shoonya stale socket close failed: {}", self._safe_error_text(exc))
+        return True
+
     def _heartbeat_loop(self) -> None:
-        while not self._stop.wait(3.0):
+        next_heartbeat = time.monotonic() + 3.0
+        while not self._stop.wait(1.0):
             with self._lock:
                 ws, ready = self._ws, self._authenticated
             if not ready or ws is None:
                 continue
+            if self._check_frame_freshness(ws):
+                continue
+            if time.monotonic() < next_heartbeat:
+                continue
             try:
                 ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+                next_heartbeat = time.monotonic() + 3.0
             except Exception as exc:
                 self._on_error(ws, exc)
                 try: ws.close()
@@ -361,7 +395,10 @@ class ShoonyaWebSocket:
         app_logger.warning("Shoonya WebSocket error: {}", safe_error)
 
     def _on_close(self, ws: Any, status_code: Any, message: Any) -> None:
-        with self._lock: self._connected = self._authenticated = False
+        with self._lock:
+            self._connected = self._authenticated = False
+            timed_out = bool(self._last_error and self._last_error.startswith("broker frame timeout:"))
+            timeout_reason = self._last_error if timed_out else None
         if not self._stop.is_set():
-            reason = self._safe_error_text(message or status_code or "socket closed")
-            self._emit_state("DISCONNECTED", reason)
+            reason = self._safe_error_text(timeout_reason or message or status_code or "socket closed")
+            self._emit_state("DEGRADED" if timed_out else "DISCONNECTED", reason)
