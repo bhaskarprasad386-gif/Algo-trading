@@ -203,3 +203,43 @@ def test_graceful_stop_without_worker_counts_unprocessed_batches():
     state = adapter.snapshot()
     assert state["discarded_batches"] == 1
     assert state["queue_depth"] == 0
+
+
+
+def test_overflow_retires_generation_and_discards_queued_work_while_inflight_finishes():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=1)
+    adapter.activate_generation(1)
+    entered = Event()
+    release = Event()
+    seen = []
+
+    def blocked(value):
+        entered.set()
+        release.wait(timeout=2.0)
+        seen.append(value)
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(blocked, "inflight", "raw"),),
+    )
+    assert entered.wait(timeout=1.0)
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, "queued", "raw"),),
+    )
+    assert not adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, "overflow", "raw"),),
+    )
+    state = adapter.snapshot()
+    assert state["closed"] is True
+    assert state["queue_depth"] == 0
+    assert state["discarded_batches"] == 1
+    assert state["delivery_status"] == "DEGRADED"
+
+    release.set()
+    adapter.stop(timeout=2.0, drain=True)
+    assert seen == ["inflight"]
