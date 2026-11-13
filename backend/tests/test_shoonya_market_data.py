@@ -290,6 +290,24 @@ def test_stop_uses_one_shared_deadline_for_all_workers(monkeypatch):
     assert feed.snapshot()["last_error"].startswith("workers did not stop")
 
 
+def test_stale_socket_error_cannot_poison_replacement_connection():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    old_ws = SimpleNamespace()
+    current_ws = SimpleNamespace()
+    feed._ws = current_ws
+    feed._connected = feed._authenticated = True
+    feed._on_error(old_ws, OSError("old socket send failed"))
+
+    assert feed.snapshot()["connected"] is True
+    assert feed.snapshot()["authenticated"] is True
+    assert feed.snapshot()["last_error"] is None
+    assert states == []
+
+
 def test_stale_socket_callbacks_are_ignored_after_reconnect():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     old_ws = SimpleNamespace()
