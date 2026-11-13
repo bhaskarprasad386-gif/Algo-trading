@@ -627,12 +627,19 @@ def test_tick_queue_overflow_is_counted_without_blocking_feed_thread():
     feed = ShoonyaWebSocket(
         uid="U1", actid="U1", access_token="token", max_dispatch_queue=1,
     )
+    closed = []
+    states = []
+    fake_ws = SimpleNamespace(close=lambda: closed.append(True))
+    feed._ws = fake_ws
     feed._queue.put_nowait(("tick", {"symbol": "FIRST"}))
     feed._enqueue("tick", {"symbol": "SECOND"})
 
     snapshot = feed.snapshot()
     assert snapshot["dispatch_queue_depth"] == 1
     assert snapshot["dispatch_drops"] == 1
+    assert snapshot["authenticated"] is False
+    assert snapshot["last_error"].startswith("tick dispatch queue full:")
+    assert closed == [True]
     assert feed._queue.get_nowait()[1]["symbol"] == "FIRST"
 
 
@@ -654,6 +661,8 @@ def test_order_queue_overflow_faults_feed_and_closes_socket():
     assert closed == [True]
     assert states[-1][0] == "ORDER_FEED_OVERFLOW"
     assert "reconcile broker order book" in states[-1][1]
+    feed._on_close(fake_ws, 1000, "closed after overflow")
+    assert states[-1][0] == "ORDER_FEED_OVERFLOW"
 
 
 
@@ -708,3 +717,21 @@ def test_authentication_timeout_state_survives_socket_close_callback():
 
     assert states[-1][0] == "AUTH_TIMEOUT"
     assert "authentication acknowledgement timeout" in states[-1][1]
+
+
+
+def test_tick_queue_overflow_state_survives_socket_close_callback():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        max_dispatch_queue=1,
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    fake_ws = SimpleNamespace(close=lambda: None)
+    feed._ws = fake_ws
+    feed._queue.put_nowait(("tick", {"symbol": "FIRST"}))
+    feed._enqueue("tick", {"symbol": "SECOND"})
+    feed._on_close(fake_ws, 1000, "closed after overflow")
+
+    assert states[-1][0] == "DEGRADED"
+    assert "tick dispatch queue full" in states[-1][1]
