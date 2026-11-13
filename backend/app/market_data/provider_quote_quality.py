@@ -79,9 +79,9 @@ def assess_quote(
         raise ValueError("max_age_ns must be a positive integer")
 
     reasons: list[str] = []
-    if not observation.provider.strip():
+    if not isinstance(observation.provider, str) or not observation.provider.strip():
         reasons.append("provider_missing")
-    if isinstance(observation.generation, bool) or observation.generation <= 0:
+    if isinstance(observation.generation, bool) or not isinstance(observation.generation, int) or observation.generation <= 0:
         reasons.append("invalid_generation")
     if not observation.authenticated:
         reasons.append("session_not_authenticated")
@@ -92,13 +92,9 @@ def assess_quote(
     if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0:
         reasons.append("exchange_timestamp_missing")
         age_ns = None
-    elif timestamp > now_monotonic_ns + 86_400_000_000_000:
-        # Exchange epoch timestamps and monotonic clocks have different origins;
-        # only compare local monotonic receive age here. This guard is retained
-        # for malformed/future numeric values, not as an epoch-clock comparison.
-        age_ns = None
-        reasons.append("invalid_exchange_timestamp")
     else:
+        # Exchange time is epoch-based; freshness uses the local monotonic
+        # receive clock and must never compare those different clock domains.
         age_ns = now_monotonic_ns - observation.received_monotonic_ns
         if age_ns < 0:
             reasons.append("receive_time_in_future")
