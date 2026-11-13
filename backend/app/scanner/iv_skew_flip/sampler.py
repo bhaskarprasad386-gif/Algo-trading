@@ -160,7 +160,7 @@ class IVOneSecondSampler:
                         source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
                         spot_price=row.spot_price,
                         oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
-                        oi_timestamp_ns=row.source_timestamp_ns if row.oi is not None else None,
+                        oi_timestamp_ns=getattr(row, "oi_timestamp_ns", None),
                         iv_input=(
                             'BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None
                             else 'LTP' if row.ltp is not None else None
@@ -204,7 +204,7 @@ class IVOneSecondSampler:
                     token=item.token, underlying=item.underlying, expiry=item.expiry, strike=item.strike,
                     option_type=item.option_type, source_timestamp_ns=item.source_timestamp_ns,
                     spot_timestamp_ns=item.spot_timestamp_ns, spot_price=getattr(item, "spot_price", None), sampled_at_ns=item.sampled_at_ns,
-                    iv=item.iv, oi=item.oi, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
+                    iv=item.iv, oi=item.oi, oi_timestamp_ns=item.oi_timestamp_ns, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
                 ))
                 inserted += 1
             session.commit()
@@ -314,7 +314,7 @@ class IVOneSecondSampler:
                 bid=quote.bid if quote.bid is not None and isfinite(quote.bid) and quote.bid > 0 else None,
                 ask=quote.ask if quote.ask is not None and isfinite(quote.ask) and quote.ask > 0 else None,
                 volume=quote.volume if isinstance(quote.volume, int) and not isinstance(quote.volume, bool) and quote.volume >= 0 else None,
-                oi_timestamp_ns=(quote.oi_timestamp_ns or quote.timestamp_ns) if quote.oi is not None else None,
+                oi_timestamp_ns=quote.oi_timestamp_ns if quote.oi is not None else None,
             )
             updates[quote.token] = sample
             if self._last_source_timestamp.get(quote.token) != quote.timestamp_ns:
@@ -323,6 +323,23 @@ class IVOneSecondSampler:
         # Serialize source-cursor checks, durable inserts and in-memory history
         # updates. Concurrent refreshes must not race past the same source tick.
         with self._lock:
+            # Never let a delayed/out-of-order broker frame roll a contract
+            # backwards. Use all available in-memory and durable source-time
+            # watermarks; history may still be ahead when persistence is down.
+            for token, sample in tuple(updates.items()):
+                watermark = self._last_source_timestamp.get(token, 0)
+                current = self._latest.get(token)
+                if current is not None:
+                    watermark = max(watermark, current.source_timestamp_ns)
+                history = self._history.get(token)
+                if history:
+                    watermark = max(watermark, max(row.source_timestamp_ns for row in history))
+                if sample.source_timestamp_ns < watermark:
+                    updates.pop(token, None)
+            new_history = [
+                (token, sample) for token, sample in new_history
+                if token in updates
+            ]
             pending_history = [
                 (token, sample) for token, sample in new_history
                 if self._last_source_timestamp.get(token) != sample.source_timestamp_ns
@@ -451,6 +468,11 @@ class IVOneSecondSampler:
                     self._last_source_timestamp[token] = history[-1].source_timestamp_ns
         return copied
 
+    def history_snapshot(self, token: str) -> tuple[OptionMetricSample, ...]:
+        """Return an immutable, source-time-ordered copy of recent real observations."""
+        with self._lock:
+            return tuple(self._history.get(str(token), ()))
+
     def oi_reference(self, token: str, *, lookback_seconds: int = 300) -> OptionMetricSample | None:
         """Return the closest source-timestamped OI sample at/before 5m ago."""
         target = self.clock_ns() - lookback_seconds * 1_000_000_000
@@ -558,6 +580,19 @@ class IVOneSecondSampler:
             "oi_values": {item.token: item.oi for item in samples},
             "iv_values": {item.token: item.iv for item in samples},
             "live_metrics": live_metrics,
+            # The legacy early-move detector consumes metric dictionaries.
+            # Keep its IV fields bound to raw current-cycle observations too;
+            # never let display-carried IV inherit a fresh quote timestamp.
+            "raw_live_metrics": tuple({
+                "token": item.token,
+                "iv": item.iv,
+                "iv_input": item.iv_input,
+                "source_timestamp_ns": item.source_timestamp_ns,
+                "spot_timestamp_ns": item.spot_timestamp_ns,
+            } for item in live_samples),
+            # Signal engines must consume raw current observations only. The
+            # display `samples` collection may carry forward last-good IV values.
+            "live_samples": live_samples,
             "samples": samples,
             "history_samples_by_token": history_sizes,
             "history_persistence": "ENABLED" if self.history_session_factory is not None else "DISABLED",

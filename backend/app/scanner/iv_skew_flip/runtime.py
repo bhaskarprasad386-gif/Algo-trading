@@ -6,6 +6,16 @@ import json
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
 from typing import Any, Callable
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+from html import escape
+import math
+
+from app.core.config import settings
+from .alerts.notifications import (
+    AmbiguousDeliveryError, TelegramRateLimitError, TelegramRejectedError,
+    TelegramOutboxWorker,
+)
 from zoneinfo import ZoneInfo
 
 from app.core.database import SessionLocal
@@ -21,6 +31,7 @@ from .feed import IVSkewFlipFeedAdapter
 from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
+from .alerts import AlertCooldownStore, IVEarlyEntryAlertEngine
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from .universe import resolve_option_universe
 
@@ -160,8 +171,12 @@ class IVSkewFlipRuntime:
             "timeframe_agreement": False, "windows": {},
         }
         self._lock = RLock()
+        # Serialize full startup/shutdown transactions, including slow external
+        # feed registration and instrument-master loading.
+        self._lifecycle_lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
+        self._telegram_thread: Thread | None = None
         self._rows_by_stream: dict[str, tuple[dict[str, Any], ...]] = {}
         self._option_feeds: dict[str, IVSkewFlipFeedAdapter] = {}
         self._samplers: dict[str, IVOneSecondSampler] = {}
@@ -175,6 +190,9 @@ class IVSkewFlipRuntime:
         self._signals: dict[str, dict[str, Any]] = {}
         self._early_move_detectors = {stream_id: IVEarlyMoveDetector() for stream_id, _ in ACTIVE_CHAIN_CONFIGS}
         self._early_move: dict[str, dict[str, Any]] = {}
+        self._early_entry_alerts = IVEarlyEntryAlertEngine(AlertCooldownStore(SessionLocal, cooldown_seconds=600))
+        self._telegram_outbox = TelegramOutboxWorker(SessionLocal)
+        self._telegram_delivery = {"status": "DISABLED", "last_attempt_ns": None, "last_error": None}
         self._started = False
         self._stopping = False
 
@@ -188,6 +206,12 @@ class IVSkewFlipRuntime:
         )
 
     def start(self, *, instruments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        # A separate re-entrant lock covers the entire lifecycle transaction.
+        # Re-entrancy is required because failed startup calls stop() to unwind.
+        with self._lifecycle_lock:
+            return self._start_locked(instruments=instruments)
+
+    def _start_locked(self, *, instruments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         with self._lock:
             if self._stopping:
                 raise RuntimeError("IV scanner runtime is still stopping; retry after shutdown completes")
@@ -267,6 +291,12 @@ class IVSkewFlipRuntime:
                 daemon=True,
             )
             self._thread.start()
+            self._telegram_thread = Thread(
+                target=self._run_telegram_notifications,
+                name="iv-skew-flip-telegram-outbox",
+                daemon=True,
+            )
+            self._telegram_thread.start()
         return self.snapshot()
 
     @staticmethod
@@ -593,9 +623,15 @@ class IVSkewFlipRuntime:
                 continue
             try:
                 sampler_snapshot = sampler.snapshot()
+                if stream_id == "NIFTY_WEEKLY":
+                    expiry = sampler.configured_expiry
+                    self._early_entry_alerts.evaluate(
+                        sampler=sampler, spot=spot, expiry=expiry,
+                        now=self.clock_datetime(), now_ns=now_ns,
+                    )
                 result = self._early_move_detectors[stream_id].update(
                     quotes=feed.latest_quotes(),
-                    metrics=sampler_snapshot.get("live_metrics", ()),
+                    metrics=sampler_snapshot.get("raw_live_metrics", ()),
                     spot_price=spot.price,
                     now_ns=now_ns,
                     spot_timestamp_ns=getattr(spot, "timestamp_ns", None),
@@ -831,6 +867,142 @@ class IVSkewFlipRuntime:
             self._last_refresh_ns = now_ns
         return self.snapshot()
 
+    @staticmethod
+    def _telegram_sender(payload: dict[str, Any]) -> None:
+        """Send one persisted IV alert through Telegram Bot API; no secrets enter logs."""
+        token = str(settings.TELEGRAM_BOT_TOKEN or "").strip()
+        chat_id = str(settings.TELEGRAM_CHAT_ID or "").strip()
+        if not settings.TELEGRAM_ENABLED or not token or not chat_id:
+            raise RuntimeError("TELEGRAM_CONFIGURATION_MISSING")
+        observed_ns = int(payload.get("observed_at_ns") or 0)
+        observed = datetime.fromtimestamp(observed_ns / 1_000_000_000, tz=IST).strftime("%d-%b-%Y %H:%M:%S IST") if observed_ns else "—"
+        direction = str(payload.get("direction") or "—").upper()
+        emoji = "🟢" if direction == "BULLISH" else "🔴" if direction == "BEARISH" else "⚠️"
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        checks = metadata.get("checks") if isinstance(metadata.get("checks"), dict) else {}
+        change_times = checks.get("change_timestamps_ns") if isinstance(checks.get("change_timestamps_ns"), dict) else {}
+        history_times = checks.get("history_timestamps_ns") if isinstance(checks.get("history_timestamps_ns"), dict) else {}
+        wall_history_times = checks.get("wall_history_timestamps_ns")
+        def format_change_time(value: Any) -> str:
+            try:
+                stamp = int(value)
+                return datetime.fromtimestamp(stamp / 1_000_000_000, tz=IST).strftime("%H:%M:%S")
+            except (TypeError, ValueError, OverflowError, OSError):
+                return "—"
+        time_labels = {
+            "ce_quote": "CE", "pe_quote": "PE", "target_quote": "Target",
+            "target_oi": "Target OI", "wall_source": "Wall", "wall_oi": "Wall OI",
+            "entry_quote": "Entry", "entry_oi": "Entry OI",
+            "rejection_candle": "Rejection",
+        }
+        change_time_text = " • ".join(
+            f"{label} {format_change_time(change_times[key])}"
+            for key, label in time_labels.items() if key in change_times
+        )
+        if isinstance(history_times, dict):
+            for key in ("ce", "pe", "target"):
+                values = history_times.get(key)
+                if isinstance(values, list) and values:
+                    stamps = [format_change_time(item.get("quote")) for item in values if isinstance(item, dict)]
+                    change_time_text += f" • {key.upper()} history " + ",".join(stamps)
+        if isinstance(wall_history_times, list) and wall_history_times:
+            stamps = [format_change_time(item.get("quote")) for item in wall_history_times if isinstance(item, dict)]
+            change_time_text += " • Wall history " + ",".join(stamps)
+        lines = [
+            f"{emoji} <b>NIFTY WEEKLY IV EARLY ENTRY</b>",
+            f"<b>Strategy:</b> {escape(str(payload.get('strategy') or '—'))}",
+            f"<b>Signal:</b> {escape(direction)} • {escape(str(payload.get('option_type') or '—'))}",
+            f"<b>Contract:</b> {escape(str(payload.get('strike') or '—'))} • Expiry {escape(str(payload.get('expiry') or '—'))}",
+            f"<b>Spot:</b> {escape(str(payload.get('spot') or '—'))} • Premium: {escape(str(payload.get('premium') or '—'))}",
+            f"<b>IV Δ:</b> {escape(str(payload.get('iv_change_points') if payload.get('iv_change_points') is not None else '—'))} pt • Volume: {escape(str(payload.get('volume_ratio') if payload.get('volume_ratio') is not None else '—'))}x",
+            f"<b>Alert time:</b> {escape(observed)}",
+            f"<b>Change times (IST):</b> {escape(change_time_text or 'Source timestamps saved in alert history')}",
+            f"<b>Reason:</b> {escape(str(payload.get('reason') or 'Conditions satisfied'))}",
+            f"<b>Alert ID:</b> {int(payload.get('event_id') or 0)} • Alert only; no order placed",
+        ]
+        body = json.dumps({"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": True}).encode("utf-8")
+        request = Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body, headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            # Telegram rate limits are retryable. Preserve its Retry-After
+            # hint without exposing response URLs, headers, or bot credentials.
+            if exc.code == 429:
+                retry_after = None
+                # Telegram commonly places retry_after in responseParameters
+                # JSON; proxies may additionally expose a Retry-After header.
+                try:
+                    raw_retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                    if raw_retry_after is not None:
+                        parsed = float(raw_retry_after)
+                        if math.isfinite(parsed) and parsed >= 0:
+                            retry_after = parsed
+                except (TypeError, ValueError):
+                    retry_after = None
+                if retry_after is None:
+                    try:
+                        rejection = json.loads(exc.read().decode("utf-8"))
+                        raw_retry_after = rejection.get("parameters", {}).get("retry_after")
+                        parsed = float(raw_retry_after)
+                        if math.isfinite(parsed) and parsed >= 0:
+                            retry_after = parsed
+                    except (AttributeError, UnicodeDecodeError, ValueError, TypeError):
+                        retry_after = None
+                raise TelegramRateLimitError(retry_after) from None
+            # A 4xx (except 429 above) is a definitive configuration/request
+            # rejection. A 5xx may be transient, so let the outbox retry it.
+            if 400 <= exc.code < 500:
+                raise TelegramRejectedError("TELEGRAM_API_REJECTED") from None
+            raise RuntimeError("TELEGRAM_PROVIDER_TEMPORARY_FAILURE") from None
+        except Exception:
+            # Timeout, connection reset, or unreadable response may occur after
+            # Telegram accepted the POST. Retrying could duplicate the alert.
+            raise AmbiguousDeliveryError("TELEGRAM_DELIVERY_OUTCOME_UNKNOWN") from None
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise TelegramRejectedError("TELEGRAM_API_REJECTED")
+
+    def _process_telegram_outbox(self, now_ns: int) -> None:
+        configured = bool(
+            settings.TELEGRAM_ENABLED
+            and str(settings.TELEGRAM_BOT_TOKEN or "").strip()
+            and str(settings.TELEGRAM_CHAT_ID or "").strip()
+        )
+        try:
+            result = self._telegram_outbox.process_one(
+                now_ns=now_ns,
+                sender=self._telegram_sender if configured else None,
+                configured=configured,
+            )
+            if result.get("processed"):
+                self._telegram_delivery = {
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "last_attempt_ns": now_ns,
+                    "last_error": None,
+                }
+            elif not configured:
+                self._telegram_delivery = {
+                    "status": "WAITING_CONFIG",
+                    "last_attempt_ns": self._telegram_delivery.get("last_attempt_ns"),
+                    "last_error": "Set TELEGRAM_ENABLED, TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID",
+                }
+        except Exception as exc:
+            # Delivery failures are isolated from the market-data and signal loop.
+            self._telegram_delivery = {
+                "status": "ERROR",
+                "last_attempt_ns": now_ns,
+                "last_error": f"{type(exc).__name__}: {exc}"[:500],
+            }
+
+    def _run_telegram_notifications(self) -> None:
+        """Deliver outbox messages independently so Telegram latency never blocks market data."""
+        while not self._stop.is_set():
+            self._process_telegram_outbox(self.clock_ns())
+            self._stop.wait(1.0)
+
     def _run(self) -> None:
         next_run = monotonic()
         while not self._stop.is_set():
@@ -901,6 +1073,9 @@ class IVSkewFlipRuntime:
             "last_evaluation_ns": last_evaluation,
             "signals": signals,
             "early_move": early_move,
+            "early_entry_alerts": self._early_entry_alerts.snapshot(),
+            "telegram_delivery": dict(self._telegram_delivery),
+            "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and str(settings.TELEGRAM_CHAT_ID or "").strip()),
             "equity_pressure": {
                 **equity_pressure,
                 "enabled": self.equity_pressure_enabled,
@@ -949,13 +1124,28 @@ class IVSkewFlipRuntime:
         }
 
     def stop(self) -> dict[str, Any]:
+        with self._lifecycle_lock:
+            return self._stop_locked()
+
+    def _stop_locked(self) -> dict[str, Any]:
         self._stop.set()
         thread = self._thread
+        telegram_thread = self._telegram_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=3.0)
+        if telegram_thread is not None and telegram_thread.is_alive():
+            telegram_thread.join(timeout=6.0)
         if thread is not None and thread.is_alive():
             # Do not tear down feeds while refresh_once() may still be using
             # them. Keep the runtime registered and allow a later stop retry.
+            with self._lock:
+                self._stopping = True
+            return self.snapshot()
+        if telegram_thread is not None and telegram_thread.is_alive():
+            # A sender may still be completing an external Telegram request.
+            # Do not clear its thread reference or permit restart to clear the
+            # stop event while this worker is alive; that could create two
+            # concurrent outbox consumers after a slow shutdown.
             with self._lock:
                 self._stopping = True
             return self.snapshot()
@@ -1000,6 +1190,7 @@ class IVSkewFlipRuntime:
             self._started = False
             self._stopping = False
             self._thread = None
+            self._telegram_thread = None
             self._last_error.pop("CLEANUP", None)
             self._samplers.clear()
             self._option_feeds.clear()

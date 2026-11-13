@@ -39,6 +39,7 @@ class IVOptionObservation(Base):
     iv: Mapped[float | None] = mapped_column(Float, nullable=True)
     iv_source: Mapped[str] = mapped_column(String(24), nullable=False, default="LOCAL_MODEL", server_default="LOCAL_MODEL")
     oi: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    oi_timestamp_ns: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     bid: Mapped[float | None] = mapped_column(Float, nullable=True)
     ask: Mapped[float | None] = mapped_column(Float, nullable=True)
     ltp: Mapped[float | None] = mapped_column(Float, nullable=True)

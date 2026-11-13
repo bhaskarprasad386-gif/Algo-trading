@@ -273,6 +273,32 @@ def test_runtime_refresh_worker_retries_after_transient_refresh_error(monkeypatc
     assert "RUNTIME" not in runtime._last_error
 
 
+def test_runtime_stop_preserves_worker_reference_while_telegram_thread_is_alive():
+    class StillAliveThread:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            return None
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    telegram_thread = StillAliveThread()
+    runtime._telegram_thread = telegram_thread
+    stopped_spot = []
+    runtime.spot_feed.stop = lambda: stopped_spot.append(True)
+
+    pending = runtime.stop()
+
+    assert pending["status"] == "STOPPING"
+    assert runtime._stopping is True
+    assert runtime._telegram_thread is telegram_thread
+    assert stopped_spot == []
+
+
 def test_runtime_stop_preserves_resources_while_refresh_worker_is_alive():
     class DelayedWorker:
         def __init__(self):
@@ -693,3 +719,93 @@ def test_weekly_expiry_selection_rolls_after_1530_ist_and_stays_rolled_next_day(
     assert _universe_selection_date(before_close).isoformat() == "2026-11-17"
     assert _universe_selection_date(at_close).isoformat() == "2026-11-18"
     assert _universe_selection_date(next_day).isoformat() == "2026-11-18"
+
+
+
+def test_runtime_start_waits_for_lifecycle_transaction_lock():
+    from threading import Event, Thread
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    entered = Event()
+    finished = Event()
+    errors = []
+
+    def start_runtime():
+        entered.set()
+        try:
+            runtime.start(instruments=[])
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    runtime._lifecycle_lock.acquire()
+    worker = Thread(target=start_runtime)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert finished.is_set() is False
+    finally:
+        runtime._lifecycle_lock.release()
+    worker.join(timeout=2)
+
+    assert finished.is_set()
+    assert len(errors) == 1
+    assert "instrument master is empty" in str(errors[0])
+
+
+def test_runtime_stop_waits_for_lifecycle_transaction_lock():
+    from threading import Event, Thread
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    entered = Event()
+    finished = Event()
+    results = []
+
+    def stop_runtime():
+        entered.set()
+        results.append(runtime.stop())
+        finished.set()
+
+    runtime._lifecycle_lock.acquire()
+    worker = Thread(target=stop_runtime)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert finished.is_set() is False
+    finally:
+        runtime._lifecycle_lock.release()
+    worker.join(timeout=2)
+
+    assert finished.is_set()
+    assert results[0]["status"] == "STOPPED"
+
+
+
+def test_runtime_snapshot_requires_nonblank_telegram_credentials(monkeypatch):
+    from app.core.config import settings
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "   ")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    assert runtime.snapshot()["telegram_configured"] is False
+
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "   ")
+    assert runtime.snapshot()["telegram_configured"] is False
+
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    assert runtime.snapshot()["telegram_configured"] is True

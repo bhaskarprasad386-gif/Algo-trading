@@ -28,6 +28,8 @@ from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.iv_scanner_control import IVScannerControl
 from app.models.iv_option_observation import IVOptionObservation
+from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown  # noqa: F401 - register durable IV early-entry alert tables
+from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox  # noqa: F401 - register alert notification outbox
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion  # noqa: F401 - register isolated IV basket history table
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_synthetic_pair_history import LiveSyntheticPairHistory
@@ -63,6 +65,7 @@ from app.scanner.live_synthetic_routes import router as live_synthetic_router, c
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
 from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
@@ -1914,6 +1917,49 @@ def iv_skew_flip_basket_registry():
         )
     return summarize_basket_registry(records, as_of=datetime.now(timezone.utc).date())
 
+
+
+@app.get("/api/latest-alert")
+def iv_early_entry_latest_alert(
+    limit: int = 20,
+    before_observed_at_ns: int | None = None,
+    before_id: int | None = None,
+):
+    """Read-only NIFTY Weekly alert history with stable keyset pagination."""
+    if (before_observed_at_ns is None) != (before_id is None):
+        raise HTTPException(
+            status_code=422,
+            detail="before_observed_at_ns and before_id must be provided together",
+        )
+    if before_observed_at_ns is not None and (before_observed_at_ns <= 0 or before_id is None or before_id <= 0):
+        raise HTTPException(status_code=422, detail="alert history cursor values must be positive")
+    page_size = max(1, min(int(limit), 100))
+    store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
+    with _iv_skew_flip_runtime_lock:
+        runtime = iv_skew_flip_runtime
+        live = runtime.snapshot().get("early_entry_alerts") if runtime is not None else None
+    rows = store.latest(
+        limit=page_size + 1,
+        before_observed_at_ns=before_observed_at_ns,
+        before_id=before_id,
+    )
+    has_more = len(rows) > page_size
+    alerts = rows[:page_size]
+    next_cursor = None
+    if has_more and alerts:
+        next_cursor = {
+            "before_observed_at_ns": str(alerts[-1]["observed_at_ns"]),
+            "before_id": alerts[-1]["id"],
+        }
+    return {
+        "status": "ok",
+        "strategy_scope": "NIFTY_WEEKLY",
+        "orders_enabled": False,
+        "live": live or {"state": "WATCH", "signals_allowed": False, "reason": "IV_RUNTIME_STOPPED"},
+        "alerts": alerts,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+    }
 
 @app.get("/api/v1/scanner/iv-skew-flip/status")
 def iv_skew_flip_status():
