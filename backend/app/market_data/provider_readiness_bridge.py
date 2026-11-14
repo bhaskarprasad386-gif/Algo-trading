@@ -154,6 +154,9 @@ class ProviderReadinessBridge:
             if received_at <= self._angel_last_observation_ns.get(key, 0):
                 self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
                 return
+            if state.snapshot()["transport"] == "CLOSED":
+                self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
+                return
             self._angel_last_observation_ns[key] = received_at
             state.transport_open(generation)
             identity, timestamp_valid, fresh = self._valid_record(record)
