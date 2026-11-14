@@ -1262,3 +1262,16 @@ merge, and deployment remain outstanding.
 - This is lifecycle ordering hardening only, not SDK/network shutdown proof or
   broker authentication. Tests committed but not executed here. Box Spread and
   IV Scanner runtime behavior is unchanged.
+
+
+## Batch 61 — final targeted CI coverage for Shoonya lifecycle
+
+- Added the Shoonya WebSocket adapter module and its market-data regression
+  suite to the targeted Common Feed workflow path filters, syntax compilation,
+  and pytest invocation.
+- This ensures the repeated 12-cycle Shoonya worker start/stop test from Batch
+  58 is included whenever the targeted workflow runs, alongside the dual-broker
+  readiness bridge and Angel manager lifecycle regressions.
+- No runtime behavior changed. Existing scanners remain untouched and Shoonya
+  remains shadow-only. The workflow update is committed but cannot be claimed
+  as executed until GitHub reports an exact-head run.
