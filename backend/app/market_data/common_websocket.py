@@ -1852,6 +1852,31 @@ class CommonWebSocketManager:
                 socket.close()
             except Exception as exc:
                 app_logger.debug(f"Common feed socket close raised: {exc}")
+            # A wrapper's close() may return after its bounded abort attempt
+            # while the actual run_forever thread is still alive. The broker
+            # session is not retired until that transport exits; keep this
+            # tracked close worker alive so the retirement watcher continues
+            # blocking replacement admission.
+            transport_thread = getattr(socket, "_transport_thread", None)
+            if isinstance(transport_thread, Thread) and transport_thread is not current_thread():
+                while transport_thread.is_alive():
+                    transport_thread.join(timeout=10.0)
+                return
+            # Alternate wrappers may expose only a health flag. Honour it
+            # conservatively when no thread handle is available.
+            health = getattr(socket, "health", None)
+            if isinstance(health, dict) and health.get("transport_thread_alive") is True:
+                app_logger.error(
+                    "Common feed close returned while transport health remains alive; "
+                    "no thread handle is available to confirm retirement "
+                    f"group={f'{group.mode}:{group.shard}' if group is not None else 'unknown'} "
+                    f"generation={generation if generation is not None else 'unknown'}"
+                )
+                while True:
+                    time.sleep(1.0)
+                    health = getattr(socket, "health", None)
+                    if not isinstance(health, dict) or health.get("transport_thread_alive") is not True:
+                        break
         worker = Thread(target=_close, name="common-ws-close", daemon=True)
         worker.start()
         worker.join(timeout=max(0.1, float(timeout)))
