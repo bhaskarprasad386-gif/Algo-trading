@@ -157,3 +157,99 @@ def test_coverage_audit_surfaces_lot_and_tick_metadata_mismatch():
 def test_coverage_audit_requires_both_brokers():
     with pytest.raises(ValueError, match="one Angel One and one Shoonya"):
         audit_master_coverage([AngelOneMasterParser.parse(_angel_rows())])
+
+
+@pytest.mark.parametrize(
+    ("symbol_alias", "instrument", "expected"),
+    [
+        ("SENSEXOPT", "OPTIDX", "SENSEX"),
+        ("BANKEXOPT", "OPTIDX", "BANKEX"),
+        ("SENSEXFUT", "FUTIDX", "SENSEX"),
+        ("BANKEXFUT", "FUTIDX", "BANKEX"),
+    ],
+)
+def test_shoonya_bfo_symbol_alias_normalizes_to_underlying(
+    symbol_alias, instrument, expected,
+):
+    text = (
+        "Exchange,Token,LotSize,Symbol,TradingSymbol,Instrument,OptionType,"
+        "StrikePrice,TickSize,Expiry\n"
+        f"BFO,9001,20,{symbol_alias},{expected}26NOV2026FUT,"
+        f"{instrument},CE,0,0.05,26-Nov-2026\n"
+    )
+    if instrument == "OPTIDX":
+        text = text.replace(",0,0.05,", ",100,0.05,")
+    report = ShoonyaMasterParser.parse(text, delimiter=",")
+    assert report.accepted_rows == 1
+    assert report.mappings[0].key.underlying == expected
+
+
+@pytest.mark.parametrize(
+    ("symbol", "instrument", "expected", "strike"),
+    [
+        ("SENSEX26NOV2610000CE", "OPTIDX", "SENSEX", "1000000"),
+        ("BANKEX26NOV26FUT", "FUTIDX", "BANKEX", ""),
+    ],
+)
+def test_angel_bfo_contract_symbol_recovers_underlying_when_name_missing(
+    symbol, instrument, expected, strike,
+):
+    row = {
+        "exch_seg": "BFO",
+        "token": "BFO-1001",
+        "symbol": symbol,
+        "name": "",
+        "instrumenttype": instrument,
+        "expiry": "26NOV2026",
+        "strike": strike,
+        "lotsize": "20",
+        "tick_size": "5",
+    }
+    report = AngelOneMasterParser.parse([row])
+    assert report.accepted_rows == 1
+    assert report.mappings[0].key.underlying == expected
+
+
+@pytest.mark.parametrize(
+    ("symbol_alias", "trading_symbol", "expected"),
+    [
+        ("BKX", "BANKEX26NOV63800PE", "BANKEX"),
+        ("SX50", "SENSEX26NOV79800CE", "SENSEX"),
+        ("SX50", "SENSEX5026NOV25900PE", "SENSEX50"),
+    ],
+)
+def test_shoonya_bfo_short_alias_uses_trading_symbol_root(
+    symbol_alias, trading_symbol, expected,
+):
+    text = (
+        "Exchange,Token,LotSize,Symbol,TradingSymbol,Instrument,OptionType,"
+        "StrikePrice,TickSize,Expiry\n"
+        f"BFO,9101,20,{symbol_alias},{trading_symbol},OPTIDX,CE,100000,0.05,26-Nov-2026\n"
+    )
+    report = ShoonyaMasterParser.parse(text, delimiter=",")
+    assert report.accepted_rows == 1
+    assert report.mappings[0].key.underlying == expected
+
+
+def test_official_master_validation_fails_when_any_required_index_is_absent():
+    from scripts.validate_official_provider_masters import missing_required_index_roots
+
+    complete = {
+        name: {"angel_contracts": 1, "shoonya_contracts": 1}
+        for name in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
+    }
+    assert missing_required_index_roots(complete) == []
+
+    complete["SENSEX"]["shoonya_contracts"] = 0
+    complete["BANKEX"]["angel_contracts"] = 0
+    assert missing_required_index_roots(complete) == ["SENSEX", "BANKEX"]
+
+
+def test_official_master_validation_fails_closed_when_index_coverage_entry_is_missing():
+    from scripts.validate_official_provider_masters import missing_required_index_roots
+
+    partial = {
+        name: {"angel_contracts": 1, "shoonya_contracts": 1}
+        for name in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX")
+    }
+    assert missing_required_index_roots(partial) == ["BANKEX"]
