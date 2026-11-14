@@ -229,3 +229,27 @@ def test_shoonya_bfo_short_alias_uses_trading_symbol_root(
     report = ShoonyaMasterParser.parse(text, delimiter=",")
     assert report.accepted_rows == 1
     assert report.mappings[0].key.underlying == expected
+
+
+def test_official_master_validation_fails_when_any_required_index_is_absent():
+    from scripts.validate_official_provider_masters import missing_required_index_roots
+
+    complete = {
+        name: {"angel_contracts": 1, "shoonya_contracts": 1}
+        for name in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
+    }
+    assert missing_required_index_roots(complete) == []
+
+    complete["SENSEX"]["shoonya_contracts"] = 0
+    complete["BANKEX"]["angel_contracts"] = 0
+    assert missing_required_index_roots(complete) == ["SENSEX", "BANKEX"]
+
+
+def test_official_master_validation_fails_closed_when_index_coverage_entry_is_missing():
+    from scripts.validate_official_provider_masters import missing_required_index_roots
+
+    partial = {
+        name: {"angel_contracts": 1, "shoonya_contracts": 1}
+        for name in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX")
+    }
+    assert missing_required_index_roots(partial) == ["BANKEX"]
