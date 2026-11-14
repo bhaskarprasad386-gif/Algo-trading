@@ -57,6 +57,11 @@ class CanonicalContractKey:
         if self.instrument_type in {"OPTION", "OPTIDX", "OPTSTK"}:
             if self.expiry is None or self.strike is None or side is None:
                 raise ValueError("options require expiry, strike and option_type")
+        elif self.instrument_type in {"FUTURE", "FUT", "FUTIDX", "FUTSTK"}:
+            if self.expiry is None:
+                raise ValueError("futures require expiry")
+            if self.strike is not None or side is not None:
+                raise ValueError("strike and option_type are only valid for options")
         elif self.strike is not None or side is not None:
             raise ValueError("strike and option_type are only valid for options")
 
