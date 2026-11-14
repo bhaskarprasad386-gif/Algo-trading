@@ -82,7 +82,8 @@ class ProviderReadiness:
             self._auth_generation = None
             self._market_event_fresh = False
             self._last_liveness = "NONE"
-            self._integrity_fault = self._integrity_fault or reason[:160]
+            self._requested = False
+            self._acknowledged_tokens = frozenset()
             return True
 
     def record_authentication_ack(
@@ -116,7 +117,12 @@ class ProviderReadiness:
             return True
 
     def request_subscriptions(self, generation: int, tokens: Iterable[str]) -> bool:
-        normalized = frozenset(str(token).strip() for token in tokens)
+        if isinstance(tokens, (str, bytes)):
+            raise TypeError("tokens must be an iterable of token strings, not a string")
+        values = tuple(tokens)
+        if any(not isinstance(token, str) for token in values):
+            raise TypeError("subscription tokens must be strings")
+        normalized = frozenset(token.strip() for token in values)
         if not normalized or any(not token for token in normalized):
             raise ValueError("subscription tokens must be non-empty")
         with self._lock:
@@ -128,7 +134,12 @@ class ProviderReadiness:
             return True
 
     def acknowledge_subscriptions(self, generation: int, tokens: Iterable[str]) -> bool:
-        normalized = frozenset(str(token).strip() for token in tokens)
+        if isinstance(tokens, (str, bytes)):
+            raise TypeError("tokens must be an iterable of token strings, not a string")
+        values = tuple(tokens)
+        if any(not isinstance(token, str) for token in values):
+            raise TypeError("acknowledged tokens must be strings")
+        normalized = frozenset(token.strip() for token in values)
         if not normalized or any(not token for token in normalized):
             raise ValueError("acknowledged tokens must be non-empty")
         with self._lock:
