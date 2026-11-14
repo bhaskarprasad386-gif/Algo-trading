@@ -155,7 +155,13 @@ class AngelShardCallbackAdapter:
                         self._stale += 1
                 if current:
                     for invocation in batch.invocations:
+                        # Retirement may race after the batch was dequeued or
+                        # while an earlier callback in this batch was running.
+                        # Revalidate immediately before each consumer invocation.
                         with self._lock:
+                            if self._closed or batch.generation != self._generation:
+                                self._stale += 1
+                                break
                             self._callback_attempts += 1
                         try:
                             invocation.callback(invocation.payload)
@@ -180,6 +186,10 @@ class AngelShardCallbackAdapter:
         deadline = monotonic() + timeout
         with self._lock:
             self._closed = True
+            # Fence a batch that was already dequeued but has not yet entered
+            # its consumer callback. An already-running callback cannot be
+            # safely cancelled; the next invocation in its batch will be.
+            self._generation += 1
             thread = self._thread
         if not drain:
             discarded = 0
