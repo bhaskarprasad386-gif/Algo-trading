@@ -66,6 +66,7 @@ class ShoonyaWebSocket:
         self._auth_ack_received = False
         self._last_error = None
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
+        self._stale_dispatch_drops = 0
         self._last_frame_at = self._last_tick_at = None
         self._connection_opened_at = None
         self._auth_started_at = None
@@ -206,7 +207,7 @@ class ShoonyaWebSocket:
         with self._lock:
             return {"broker": "shoonya", "connected": self._connected, "authenticated": self._authenticated,
                     "subscriptions": len(self._descriptors), "ticks_received": self._ticks_received,
-                    "ticks_dispatched": self._ticks_dispatched, "dispatch_queue_depth": self._queue.qsize(),
+                    "ticks_dispatched": self._ticks_dispatched, "stale_dispatch_drops": self._stale_dispatch_drops, "dispatch_queue_depth": self._queue.qsize(),
                     "dispatch_queue_capacity": self._queue.maxsize, "dispatch_drops": self._dispatch_drops,
                     "order_queue_depth": self._order_queue.qsize(), "order_update_drops": self._order_update_drops,
                     "reconnect_count": self._reconnect_count, "out_of_order_ticks": self._out_of_order_ticks,
@@ -497,19 +498,26 @@ class ShoonyaWebSocket:
             except queue.Empty: continue
             try:
                 _, payload, *metadata = item
+                # A tick can wait in the bounded queue while the supervisor
+                # replaces its socket. Fence both legacy and shadow consumers:
+                # no callback may observe a quote from a retired feed epoch.
+                if metadata:
+                    record, epoch, authenticated, received_at_monotonic_ns = metadata[0]
+                    with self._lock:
+                        current = epoch == self._feed_epoch and self._authenticated and authenticated
+                        if not current:
+                            self._stale_dispatch_drops += 1
+                    if not current:
+                        continue
                 try:
                     if self._on_tick: self._on_tick(payload)
                 except Exception:
                     app_logger.exception("Shoonya tick callback failed")
                 if metadata and self._on_tick_observation:
-                    record, epoch, authenticated, received_at_monotonic_ns = metadata[0]
-                    with self._lock:
-                        current = epoch == self._feed_epoch and self._authenticated and authenticated
-                    if current:
-                        try:
-                            self._on_tick_observation(record, epoch, authenticated, received_at_monotonic_ns)
-                        except Exception:
-                            app_logger.exception('Shoonya read-only tick observation callback failed')
+                    try:
+                        self._on_tick_observation(record, epoch, authenticated, received_at_monotonic_ns)
+                    except Exception:
+                        app_logger.exception('Shoonya read-only tick observation callback failed')
                 with self._lock: self._ticks_dispatched += 1
             except Exception: app_logger.exception("Shoonya tick dispatch failed")
             finally: self._queue.task_done()
