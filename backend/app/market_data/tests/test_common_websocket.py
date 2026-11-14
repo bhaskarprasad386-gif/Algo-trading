@@ -2016,3 +2016,76 @@ def test_shared_broker_admission_serializes_connects_across_manager_instances():
         release.set()
         first_manager.close()
         second_manager.close()
+
+
+
+def test_retired_slot_waits_for_actual_transport_thread_after_close_returns():
+    class LingeringTransportSocket(FakeSocket):
+        release_transport = Event()
+
+        def connect(self, **kwargs):
+            super().connect(**kwargs)
+            self._transport_thread = Thread(
+                target=lambda: type(self).release_transport.wait(timeout=5.0),
+                name="test-lingering-angel-transport",
+                daemon=True,
+            )
+            self._transport_thread.start()
+
+        @property
+        def health(self):
+            return {
+                "connected": self.connected,
+                "transport_thread_alive": bool(
+                    getattr(self, "_transport_thread", None)
+                    and self._transport_thread.is_alive()
+                ),
+            }
+
+    LingeringTransportSocket.release_transport.clear()
+    registry = InstrumentRegistry()
+    item = descriptor("805")
+    registry.register(item)
+    manager = CommonWebSocketManager(
+        registry, socket_factory=LingeringTransportSocket
+    )
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        original = LingeringTransportSocket.instances[0]
+        group = SocketGroup(1, 0)
+        with manager._lock:
+            generation = manager._socket_generation[group]
+            manager._sockets.pop(group)
+            manager._socket_tokens.pop(group, None)
+            manager._socket_created_at.pop(group, None)
+            manager._socket_generation.pop(group, None)
+
+        close_worker = manager._close_socket_tracked(
+            original,
+            group=group,
+            generation=generation,
+            reason="test_transport_still_alive",
+            on_finished=lambda: manager._reconcile_after_retirement(group),
+            timeout=0.05,
+        )
+        assert close_worker.is_alive(), (
+            "close() returning must not mark the broker transport retired while "
+            "its run_forever thread is still alive"
+        )
+        manager._reconcile()
+        assert len(LingeringTransportSocket.instances) == 1
+        assert manager.snapshot()["retired_transport_count"] == 1
+
+        LingeringTransportSocket.release_transport.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if len(LingeringTransportSocket.instances) == 2 and manager.snapshot()["retired_transport_count"] == 0:
+                break
+            time.sleep(0.01)
+        assert len(LingeringTransportSocket.instances) == 2
+        assert manager.snapshot()["retired_transport_count"] == 0
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        LingeringTransportSocket.release_transport.set()
+        manager.close()
