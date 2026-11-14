@@ -55,7 +55,7 @@ class ShoonyaWebSocket:
         self._ws = self._thread = self._dispatch_thread = self._order_dispatch_thread = self._heartbeat_thread = None
         self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue(maxsize=max_dispatch_queue)
         # Order lifecycle events are isolated from high-volume market ticks.
-        self._order_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=2048)
+        self._order_queue: queue.Queue[tuple[str, dict[str, Any], int]] = queue.Queue(maxsize=2048)
         self._descriptors: dict[tuple[str, str], InstrumentDescriptor] = {}
         self._snapshots: dict[tuple[str, str], dict[str, Any]] = {}
         self._initialized: set[tuple[str, str]] = set()
@@ -470,7 +470,12 @@ class ShoonyaWebSocket:
     def _enqueue(self, kind: str, payload: dict[str, Any], *, observation: tuple[MarketDataRecord, int, bool, int] | None = None) -> None:
         target = self._order_queue if kind == "order" else self._queue
         try:
-            item = (kind, payload) if observation is None else (kind, payload, observation)
+            if kind == "order":
+                with self._lock:
+                    epoch = self._feed_epoch
+                item = (kind, payload, epoch)
+            else:
+                item = (kind, payload) if observation is None else (kind, payload, observation)
             target.put_nowait(item)
         except queue.Full:
             with self._lock:
@@ -514,6 +519,17 @@ class ShoonyaWebSocket:
                 except Exception:
                     app_logger.exception("Shoonya tick callback failed")
                 if metadata and self._on_tick_observation:
+                    with self._lock:
+                        still_current = (
+                            not self._stop.is_set()
+                            and epoch == self._feed_epoch
+                            and self._authenticated
+                            and authenticated
+                        )
+                    if not still_current:
+                        with self._lock:
+                            self._stale_dispatch_drops += 1
+                        continue
                     try:
                         self._on_tick_observation(record, epoch, authenticated, received_at_monotonic_ns)
                     except Exception:
@@ -524,10 +540,19 @@ class ShoonyaWebSocket:
 
     def _order_dispatch_loop(self) -> None:
         while not self._stop.is_set() or not self._order_queue.empty():
-            try: _, payload = self._order_queue.get(timeout=0.2)
+            try: _, payload, epoch = self._order_queue.get(timeout=0.2)
             except queue.Empty: continue
             try:
-                if self._on_order_update: self._on_order_update(payload)
+                with self._lock:
+                    current = (
+                        not self._stop.is_set()
+                        and epoch == self._feed_epoch
+                        and self._authenticated
+                    )
+                    if not current:
+                        self._stale_dispatch_drops += 1
+                if current and self._on_order_update:
+                    self._on_order_update(payload)
             except Exception: app_logger.exception("Shoonya order callback failed")
             finally: self._order_queue.task_done()
 
