@@ -1902,6 +1902,13 @@ class CommonWebSocketManager:
                 ),
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks) | set(self._record_observers)),
+                # Transport-open is not an independently verified Angel broker-auth acknowledgement.
+                "normalized_observer_authentication": {
+                    "state": "NOT_VERIFIABLE",
+                    "authenticated": False,
+                    "evidence": "NO_BROKER_AUTH_ACKNOWLEDGEMENT",
+                    "parity_generation_activation_allowed": False,
+                },
                 "socket_health_by_group": socket_health_by_group,
                 "async_callback_dispatch": self._async_callback_dispatch,
                 "callback_dispatch_by_group": {
