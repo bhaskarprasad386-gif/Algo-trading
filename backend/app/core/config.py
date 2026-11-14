@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # Read-only dual-broker quote parity diagnostics; disabled until explicitly enabled.
     PROVIDER_QUOTE_PARITY_ENABLED: bool = False
     PROVIDER_QUOTE_PARITY_DB: str = "./provider_quote_parity.db"
+    PROVIDER_QUOTE_PARITY_RETENTION_DAYS: int = 7
 
     # Angel One credentials
     angel_api_key: str = ""
