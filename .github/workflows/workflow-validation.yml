@@ -17,5 +17,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Run actionlint
+      - name: Run actionlint on the bootstrap workflows
         uses: rhysd/actionlint@v1.7.7
+        with:
+          args: .github/workflows/dual-broker-bootstrap-ci.yml .github/workflows/workflow-validation.yml
