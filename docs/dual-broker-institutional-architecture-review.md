@@ -799,3 +799,29 @@ merge, and deployment remain outstanding.
 - Tests are committed but have not been executed in this session. Exact-head
   CI, full regression, real broker validation, merge, and deployment remain
   outstanding.
+
+
+## Batch 33 — terminal Angel lifecycle failures and reconnect recovery
+
+- Hardened the per-group Angel readiness bridge so an `ERROR` or `CLOSED`
+  event is terminal for that socket generation. A delayed `OPEN` callback
+  cannot resurrect the failed generation; only a higher manager generation
+  can establish a new OPEN transport.
+- Preserved valid recovery: a replacement generation begins independently in
+  OPENING and may transition to OPEN. Authentication remains
+  `NOT_VERIFIABLE`; transport recovery does not imply broker authentication.
+- Updated the runtime evidence label to reflect that Angel socket lifecycle
+  callbacks are now observed alongside normalized market callbacks.
+- Added regression coverage for OPEN → ERROR → delayed OPEN rejection and
+  successful OPEN on a replacement generation.
+- Reviewed callback ordering: wrapper emits OPEN after connected state is set;
+  ERROR after connected state is cleared and before the legacy failure callback;
+  CLOSED after connected state is cleared. The manager binds each observer to
+  the socket generation, accepts a matching retiring-generation CLOSED event,
+  rejects stale older-generation events, and emits ERROR on immediate connect
+  exceptions. Lifecycle observer failures remain isolated.
+- No Box Spread or IV Scanner subscriptions, callbacks, calculations, scanner
+  source selection, pairing, persistence, or order routing changed.
+- Tests remain committed but unexecuted in this session. Exact-head CI,
+  full regression, broker validation, PR merge, and deployment remain
+  outstanding.
