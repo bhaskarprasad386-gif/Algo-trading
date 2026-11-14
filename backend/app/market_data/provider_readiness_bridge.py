@@ -187,7 +187,7 @@ class ProviderReadinessBridge:
                     }
                     for key, state in sorted(self._angel.items())
                 },
-                "angel_one_transport_evidence": "current_generation_normalized_market_callback_only; socket_lifecycle_not_observed",
+                "angel_one_transport_evidence": "current_generation_socket_lifecycle_and_normalized_market_callback; authentication_not_verifiable",
                 "pairing_enabled": False,
                 "scanner_fanout_enabled": False,
                 "order_eligible": False,
