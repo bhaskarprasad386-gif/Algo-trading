@@ -1954,3 +1954,65 @@ def test_late_connect_failure_after_manager_shutdown_does_not_pollute_health():
     finally:
         release.set()
         manager.close()
+
+
+
+def test_shared_broker_admission_serializes_connects_across_manager_instances():
+    started = Event()
+    release = Event()
+    second_started = Event()
+
+    class FirstBlockingSocket(FakeSocket):
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=4.0)
+            self.connecting = False
+            self.connected = True
+
+    class SecondSocket(FakeSocket):
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = False
+            self.connected = True
+            second_started.set()
+
+    first_registry = InstrumentRegistry()
+    second_registry = InstrumentRegistry()
+    first_item = descriptor("801")
+    second_item = descriptor("802")
+    first_registry.register(first_item)
+    second_registry.register(second_item)
+    first_manager = CommonWebSocketManager(
+        first_registry, socket_factory=FirstBlockingSocket
+    )
+    second_manager = CommonWebSocketManager(
+        second_registry, socket_factory=SecondSocket
+    )
+    first_manager._connect_call_wait_seconds = 0.02
+    second_manager._connect_call_wait_seconds = 0.02
+    first_manager._recovery_interval_seconds = 60.0
+    second_manager._recovery_interval_seconds = 60.0
+    try:
+        first_manager.subscribe("first", [first_item.key])
+        assert started.wait(timeout=1.0)
+
+        second_manager.subscribe("second", [second_item.key])
+        assert len(SecondSocket.instances) == 1
+        second_socket = SecondSocket.instances[0]
+        assert second_socket.connect_calls == []
+        assert not second_started.is_set(), (
+            "a second manager must not start a broker handshake while the "
+            "first manager's handshake is still unresolved"
+        )
+
+        release.set()
+        assert second_started.wait(timeout=2.0)
+        assert len(FirstBlockingSocket.instances) == 1
+        assert FirstBlockingSocket.instances[0].connected is True
+        assert second_socket.connected is True
+    finally:
+        release.set()
+        first_manager.close()
+        second_manager.close()
