@@ -123,7 +123,21 @@ def _mapping(
     token = _required(row, "token", "tk")
     symbol = _required(row, "tradingsymbol", "trading_symbol", "tsym", "symbol")
     kind = _instrument_type(_required(row, "instrumenttype", "instrument", "instname", "instrument_type"))
-    underlying = str(_value(row, "name", "underlying", "root", "dname", "symbol") or "").strip().upper()
+    underlying_value = _value(row, "name", "underlying", "root", "dname")
+    if underlying_value in (None, ""):
+        underlying_value = _value(row, "symbol")
+        # Shoonya's BFO master uses Symbol aliases such as SENSEXOPT and
+        # BANKEXFUT, whereas NFO uses the bare underlying (for example NIFTY).
+        # Strip only the instrument suffix for derivative rows; never infer
+        # the root from TradingSymbol because that also contains expiry/strike.
+        if broker.upper() == "SHOONYA" and kind in {"OPTION", "FUTURE"}:
+            raw_underlying = str(underlying_value or "").strip().upper()
+            for suffix in ("OPT", "FUT"):
+                if raw_underlying.endswith(suffix):
+                    raw_underlying = raw_underlying[:-len(suffix)]
+                    break
+            underlying_value = raw_underlying
+    underlying = str(underlying_value or "").strip().upper()
     if not underlying:
         if kind in {"EQUITY", "INDEX"}:
             underlying = symbol.upper()
