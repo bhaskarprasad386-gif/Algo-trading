@@ -6,6 +6,7 @@ acknowledgements, select providers, or route data to scanners or orders.
 from __future__ import annotations
 
 from threading import RLock
+from time import monotonic_ns
 from typing import Iterable
 
 
@@ -35,6 +36,8 @@ class ProviderReadiness:
         self._market_identity_valid = False
         self._market_timestamp_valid = False
         self._last_market_event_generation: int | None = None
+        self._market_event_received_monotonic_ns: int | None = None
+        self._max_market_age_ns = 5_000_000_000
         self._last_liveness = "NONE"
         self._integrity_fault: str | None = None
         self._counters = {
@@ -61,6 +64,7 @@ class ProviderReadiness:
             self._market_identity_valid = False
             self._market_timestamp_valid = False
             self._last_market_event_generation = None
+            self._market_event_received_monotonic_ns = None
             self._last_liveness = "NONE"
             self._integrity_fault = None
 
@@ -98,6 +102,8 @@ class ProviderReadiness:
             if not self._current(generation) or self._transport != "OPEN":
                 self._counters["ignored_stale_generation"] += 1
                 return False
+            if self._auth != "UNKNOWN":
+                return False
             # SmartWebSocketV2 has no verified broker-auth ACK in this contract.
             if self.provider != "shoonya" or evidence_kind != self.AUTH_ACK_KIND:
                 self._auth = "NOT_VERIFIABLE" if self.provider == "angel_one" else "UNKNOWN"
@@ -113,7 +119,7 @@ class ProviderReadiness:
 
     def authentication_timeout(self, generation: int) -> bool:
         with self._lock:
-            if not self._current(generation) or self._auth == "AUTHENTICATED":
+            if not self._current(generation) or self._auth != "UNKNOWN":
                 return False
             if self.provider == "shoonya":
                 self._auth = "TIMED_OUT"
@@ -166,11 +172,15 @@ class ProviderReadiness:
     def record_market_event(
         self, generation: int, *, canonical_identity_valid: bool,
         exchange_timestamp_valid: bool, fresh: bool,
+        received_monotonic_ns: int | None = None,
     ) -> bool:
         if any(type(value) is not bool for value in (
             canonical_identity_valid, exchange_timestamp_valid, fresh
         )):
             raise TypeError("market event validity flags must be bool")
+        received_at = monotonic_ns() if received_monotonic_ns is None else received_monotonic_ns
+        if isinstance(received_at, bool) or not isinstance(received_at, int) or received_at <= 0:
+            raise ValueError("received_monotonic_ns must be a positive integer")
         with self._lock:
             if not self._current(generation) or self._transport != "OPEN":
                 self._counters["market_events_rejected"] += 1
@@ -180,6 +190,7 @@ class ProviderReadiness:
             self._market_timestamp_valid = exchange_timestamp_valid
             self._market_event_fresh = fresh
             self._last_market_event_generation = generation
+            self._market_event_received_monotonic_ns = received_at
             if not (canonical_identity_valid and exchange_timestamp_valid and fresh):
                 self._counters["market_events_rejected"] += 1
                 return False
@@ -203,7 +214,10 @@ class ProviderReadiness:
             return False
         return True
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self, *, now_monotonic_ns: int | None = None) -> dict[str, object]:
+        now = monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        if isinstance(now, bool) or not isinstance(now, int) or now <= 0:
+            raise ValueError("now_monotonic_ns must be a positive integer")
         with self._lock:
             if not self._subscription_ack_supported:
                 subscription_state = "NOT_VERIFIABLE"
@@ -213,6 +227,16 @@ class ProviderReadiness:
                 subscription_state = "ACKNOWLEDGED"
             else:
                 subscription_state = "REQUEST_SENT"
+            event_age_ns = (
+                max(0, now - self._market_event_received_monotonic_ns)
+                if self._market_event_received_monotonic_ns is not None
+                and now >= self._market_event_received_monotonic_ns else None
+            )
+            event_fresh = bool(
+                self._market_event_fresh
+                and event_age_ns is not None
+                and event_age_ns <= self._max_market_age_ns
+            )
             authenticated = (
                 self.provider == "shoonya"
                 and self._auth == "AUTHENTICATED"
@@ -222,7 +246,7 @@ class ProviderReadiness:
                 self._transport == "OPEN"
                 and authenticated
                 and subscription_state == "ACKNOWLEDGED"
-                and self._market_event_fresh
+                and event_fresh
                 and self._market_identity_valid
                 and self._market_timestamp_valid
                 and self._last_market_event_generation == self._generation
@@ -240,7 +264,9 @@ class ProviderReadiness:
                 "desired_token_count": len(self._desired_tokens),
                 "acknowledged_token_count": len(self._acknowledged_tokens),
                 "last_liveness": self._last_liveness,
-                "market_event_fresh": self._market_event_fresh,
+                "market_event_fresh": event_fresh,
+                "market_event_age_ns": event_age_ns,
+                "max_market_age_ns": self._max_market_age_ns,
                 "canonical_identity_valid": self._market_identity_valid,
                 "exchange_timestamp_valid": self._market_timestamp_valid,
                 "integrity_fault": self._integrity_fault,
