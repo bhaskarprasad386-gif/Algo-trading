@@ -58,6 +58,15 @@ class ProviderReadinessBridge:
             if received_monotonic_ns <= self._shoonya_last_observation_ns:
                 self._shoonya_stale_observations += 1
                 return
+            # Authentication rejection/timeout and disconnect transitions are
+            # terminal for this feed epoch. A delayed AUTHENTICATING/LIVE (or
+            # connected=True) callback cannot resurrect a failed session.
+            terminal_transport = self._shoonya.snapshot()["transport"] == "CLOSED"
+            if terminal_transport and (
+                state in {"AUTHENTICATING", "LIVE"} or connected is True
+            ):
+                self._shoonya_stale_observations += 1
+                return
             self._shoonya_last_observation_ns = received_monotonic_ns
             if state == "AUTHENTICATING":
                 self._shoonya.transport_open(current)
