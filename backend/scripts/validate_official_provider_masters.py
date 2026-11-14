@@ -148,6 +148,27 @@ def mapping_breakdown(report: Any) -> dict[str, Any]:
     }
 
 
+def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[str, Any]:
+    targets = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")
+    result: dict[str, Any] = {}
+    for underlying in targets:
+        angel = {item.key for item in angel_report.mappings if item.key.underlying == underlying}
+        shoonya = {item.key for item in shoonya_report.mappings if item.key.underlying == underlying}
+        common = angel & shoonya
+        expiries = sorted({key.expiry.isoformat() for key in common if key.expiry is not None})
+        result[underlying] = {
+            "angel_contracts": len(angel),
+            "shoonya_contracts": len(shoonya),
+            "common_contracts": len(common),
+            "angel_only_contracts": len(angel - shoonya),
+            "shoonya_only_contracts": len(shoonya - angel),
+            "common_option_contracts": sum(1 for key in common if key.instrument_type == "OPTION"),
+            "common_future_contracts": sum(1 for key in common if key.instrument_type == "FUTURE"),
+            "common_expiries": expiries,
+        }
+    return result
+
+
 def report_summary(report: Any) -> dict[str, Any]:
     return {
         "broker": report.broker,
@@ -207,7 +228,7 @@ def main() -> int:
             "shoonya_only_ratio": round(audit.shoonya_only_ratio, 8),
             "metadata_mismatch_count": len(audit.metadata_mismatches),
             "metadata_mismatch_sample": [str(key) for key in audit.metadata_mismatches[:25]],
-            "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
+            "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),\n            "index_underlying_coverage": index_underlying_coverage(angel_report, shoonya_report),
             "angel_only_sample": [contract_key_summary(key) for key in audit.angel_only[:15]],
             "shoonya_only_sample": [contract_key_summary(key) for key in audit.shoonya_only[:15]],
         },
