@@ -110,10 +110,14 @@ jobs:
           assert box_live.get("strategy") == "box-spread", "Box live endpoint strategy mismatch"
           assert str(box_live.get("mode") or "").lower() == "paper-safe", "Box live endpoint is not paper-safe"
           assert isinstance(box_live.get("data"), list), "Box live data is not a list"
+          assert box_diag.get("strategy") == "box-spread", "Box diagnostics strategy mismatch"
+          assert str(box_diag.get("status") or "").lower() in {"available", "waiting"}, "Box diagnostics status invalid"
           assert isinstance(box_diag.get("counts", {}), dict), "Box diagnostic counters malformed"
-          assert isinstance(box_diag.get("last_scan", {}), dict), "Box last_scan malformed"
+          last_scan = box_diag.get("last_scan")
+          assert last_scan is None or isinstance(last_scan, dict), "Box last_scan must be an object or null"
           print("BOX_ENDPOINT_CONTRACTS=PASS")
           print("BOX_OFFMARKET_STATE=" + str(box_diag.get("status", "UNKNOWN")).upper())
+          print("BOX_LAST_SCAN=" + ("PRESENT" if last_scan else "NOT_YET_SCANNED"))
 
           assert shoonya.get("enabled") is False, "Shoonya is expected to remain disabled in this verification profile"
           assert shoonya.get("mode") == "shadow_only", "Shoonya mode must remain shadow_only"
