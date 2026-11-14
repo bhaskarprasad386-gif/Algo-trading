@@ -1826,6 +1826,9 @@ def market_data_runtime_health():
             manager.register_normalized_observer(
                 "provider-readiness-shadow", provider_readiness_bridge.angel_market_event
             )
+            manager.register_transport_observer(
+                "provider-readiness-transport-shadow", provider_readiness_bridge.angel_transport_event
+            )
             _provider_readiness_observer_manager_id = manager_identity
     cash_runner = live_cash_future_runner
     calendar_runner = live_calendar_spread_runner
