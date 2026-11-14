@@ -1111,3 +1111,55 @@ def test_observer_runs_even_if_legacy_tick_callback_raises():
     assert not dispatcher.is_alive()
     assert len(observed) == 1
     assert observed[0][1:3] == (11, True)
+
+
+
+def test_session_observer_is_additive_to_legacy_state_callback():
+    states, observations = [], []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+        on_session_observation=lambda *args: observations.append(args),
+    )
+    feed._feed_epoch = 11
+    feed._connected = True
+    feed._authenticated = True
+    feed._emit_state("LIVE", None)
+
+    assert states == [("LIVE", None)]
+    assert len(observations) == 1
+    state, reason, epoch, connected, authenticated, received_ns = observations[0]
+    assert (state, reason, epoch, connected, authenticated) == ("LIVE", None, 11, True, True)
+    assert received_ns > 0
+
+
+def test_session_observer_failure_does_not_break_legacy_state_callback():
+    states = []
+    def fail_observer(*_args):
+        raise RuntimeError("observer failure")
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+        on_session_observation=fail_observer,
+    )
+    feed._feed_epoch = 12
+    feed._emit_state("AUTHENTICATING", None)
+    assert states == [("AUTHENTICATING", None)]
+
+
+def test_legacy_state_callback_failure_does_not_block_session_observer():
+    observations = []
+    def fail_state(_state, _reason):
+        raise RuntimeError("legacy callback failure")
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=fail_state,
+        on_session_observation=lambda *args: observations.append(args),
+    )
+    feed._feed_epoch = 13
+    feed._connected = True
+    feed._emit_state("AUTHENTICATING", None)
+    assert len(observations) == 1
+    assert observations[0][2] == 13
