@@ -1025,6 +1025,6 @@ merge, and deployment remain outstanding.
 
 - Found a shutdown race in `MarketDataWebSocket`: `_reconnect_after_disconnect()` could pass its stopping check, pause before `connect()`, then `close()` could set `_stopping=True`; the delayed reconnect subsequently entered `connect()`, which unconditionally reset `_stopping=False` and could create a new socket after shutdown.
 - Added a monotonically increasing `_lifecycle_generation`. `close()` increments it. Internal reconnect workers capture the generation and pass it to `connect()`; the generation/stopping check now occurs before any subscription or callback state mutation. A stale internal reconnect returns without reopening the wrapper.
-- Explicit caller-initiated `connect()` remains the supported way to intentionally restart a previously closed wrapper; it may clear `_stopping` and begin a new lifecycle.
+- Explicit caller-initiated `connect()` remains the supported way to intentionally restart a previously closed wrapper; it advances the lifecycle generation, clears `_stopping`, and supersedes any older in-flight reconnect worker.
 - Added tests for close winning the reconnect race, stale reconnect rejection without subscription mutation, and explicit manual restart after close.
 - No scanner feed selection, subscription intent, provider readiness, strategy, or order-routing behavior changed. Tests committed but not executed in this environment.
