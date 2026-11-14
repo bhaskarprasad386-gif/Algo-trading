@@ -42,7 +42,7 @@ def test_common_strategy_feed_warm_starts_then_accepts_newer_live_tick():
     try:
         feed.start([descriptor], received.append)
         assert [(r.timestamp_ns, r.ltp) for r in received] == [(base_timestamp, 100.0)]
-        manager._on_data(SocketGroup(1, 0), {
+        manager._on_data(SocketGroup(3, 0), {
             "token": descriptor.key.token, "exchange_type": 1,
             "timestamp_ns": base_timestamp + 1_000_000, "last_traded_price": 12345,
         })
@@ -50,7 +50,7 @@ def test_common_strategy_feed_warm_starts_then_accepts_newer_live_tick():
         assert cache.get(descriptor.key.value)["timestamp_ns"] == base_timestamp + 1_000_000
 
         # A delayed broker frame must not overwrite the newer scanner snapshot.
-        manager._on_data(SocketGroup(1, 0), {
+        manager._on_data(SocketGroup(3, 0), {
             "token": descriptor.key.token, "exchange_type": 1,
             "timestamp_ns": base_timestamp + 500_000, "last_traded_price": 11000,
         })
