@@ -1063,3 +1063,11 @@ merge, and deployment remain outstanding.
 - Adapter stop now advances its generation. The worker rechecks both closed state and batch generation immediately before every callback invocation, so retirement fences remaining invocations in an already-dequeued batch. A callback already executing cannot be cancelled safely and is allowed to finish.
 - Added a deterministic regression test with a blocked first callback, concurrent non-draining retirement, and a second callback that must never execute.
 - Existing Angel callback dispatch remains opt-in; no scanner subscriptions, callback dispatch mode, or broker routing behavior was changed. Test committed but not executed. This is a deterministic lifecycle race test, not a throughput or live-market test.
+
+
+### Batch 48 — Angel callback worker retirement observability
+
+- The manager already retired async per-shard callback adapters without joining them under its lifecycle lock. However, if a consumer callback blocked beyond the one-second stop budget, the adapter was removed from the active map and only a warning remained; health snapshots did not expose the still-running worker.
+- Added manager-owned `retired_callback_workers` lifecycle metadata. A worker that outlives the bounded stop is now visible with shard, generation, thread name/identity, alive state, and retirement time. A dedicated watcher removes the record only after the worker exits; no callback payload or credential data is retained.
+- Added a regression test using a deliberately blocked worker to verify it remains visible after timeout and is removed after exit.
+- This affects diagnostics and cleanup visibility only. Async callback dispatch remains opt-in; no scanner, subscription, routing, reconnect, or broker selection behavior changed. Test committed but not executed.
