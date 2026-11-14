@@ -1507,6 +1507,7 @@ def test_repeated_shoonya_start_stop_cycles_keep_one_worker_generation_and_snaps
     factory_lock = threading.Lock()
     factory_apps = []
     reader_stop = threading.Event()
+    reader_ready = threading.Event()
     reader_failures = []
     snapshots = []
 
@@ -1541,12 +1542,14 @@ def test_repeated_shoonya_start_stop_cycles_keep_one_worker_generation_and_snaps
                 assert isinstance(state["shutdown_watcher_alive"], bool)
                 assert isinstance(state["connected"], bool)
                 snapshots.append(state)
+                reader_ready.set()
         except BaseException as exc:
             reader_failures.append(exc)
 
     reader = threading.Thread(target=snapshot_reader, name="shoonya-health-snapshot-reader")
     reader.start()
     try:
+        assert reader_ready.wait(timeout=1), "snapshot reader did not start"
         for cycle in range(12):
             feed.start()
             deadline = time.monotonic() + 1.0
