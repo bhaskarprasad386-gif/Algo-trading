@@ -29,7 +29,7 @@ jobs:
         env:
           VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_HOST: 82.41.67.22
+          VPS_HOST: ${{ secrets.VPS_HOST }}
         shell: bash
         run: |
           set -euo pipefail
@@ -88,19 +88,23 @@ jobs:
           print("MARKET_SESSION=CLOSED")
           print("LIVE_ORDER_SAFETY=OFF")
 
-          for key in ("ticks_received", "active_instruments", "delivery_errors"):
-              value = common.get(key)
-              if value is not None:
-                  assert isinstance(value, (int, float)) and value >= 0, f"invalid common-feed counter {key}={value}"
-          assert isinstance(common.get("socket_health_by_group", {}), dict), "socket group health shape invalid"
-          assert isinstance(common.get("consumers", []), list), "consumer list shape invalid"
+          feed = common.get("feed")
+          assert common.get("initialized") is True, "common feed manager is not initialized"
+          assert isinstance(feed, dict), "common-feed snapshot missing"
+          for key in ("ticks_received", "active_instruments", "socket_groups", "delivery_errors"):
+              value = feed.get(key)
+              assert isinstance(value, (int, float)) and value >= 0, f"invalid common-feed counter {key}={value}"
+          assert feed["active_instruments"] > 0, "common feed has no active instruments"
+          assert feed["socket_groups"] > 0, "common feed has no socket groups"
+          assert isinstance(feed.get("socket_health_by_group", {}), dict), "socket group health shape invalid"
+          assert isinstance(feed.get("consumers", []), list), "consumer list shape invalid"
           print("COMMON_FEED_DIAGNOSTICS=PASS")
           print("COMMON_FEED_SUMMARY=" + json.dumps({
-              "active_instruments": common.get("active_instruments"),
-              "socket_groups": common.get("socket_groups"),
-              "ticks_received": common.get("ticks_received"),
-              "delivery_errors": common.get("delivery_errors"),
-              "authentication": (common.get("normalized_observer_authentication") or {}).get("state", "UNKNOWN"),
+              "active_instruments": feed.get("active_instruments"),
+              "socket_groups": feed.get("socket_groups"),
+              "ticks_received": feed.get("ticks_received"),
+              "delivery_errors": feed.get("delivery_errors"),
+              "authentication": (feed.get("normalized_observer_authentication") or {}).get("state", "UNKNOWN"),
           }, sort_keys=True))
 
           assert box_live.get("strategy") == "box-spread", "Box live endpoint strategy mismatch"
@@ -112,8 +116,11 @@ jobs:
           print("BOX_OFFMARKET_STATE=" + str(box_diag.get("status", "UNKNOWN")).upper())
 
           assert shoonya.get("enabled") is False, "Shoonya is expected to remain disabled in this verification profile"
+          assert shoonya.get("mode") == "shadow_only", "Shoonya mode must remain shadow_only"
           assert shoonya.get("order_routing_enabled") is False, "Shoonya order routing must remain disabled"
+          assert shoonya.get("strategy_fanout_enabled") is False, "Shoonya strategy fanout must remain disabled"
           print("SHOONYA_ORDER_ROUTING=OFF")
+          print("SHOONYA_STRATEGY_FANOUT=OFF")
           print("OFFMARKET_RUNTIME_RESULT=PASS")
           PY
 
