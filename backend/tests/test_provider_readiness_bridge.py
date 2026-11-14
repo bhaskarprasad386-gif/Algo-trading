@@ -176,3 +176,51 @@ def test_bridge_rejects_missing_canonical_identity():
     state = bridge.snapshot()["angel_one"]["2:1"]
     assert state["canonical_identity_valid"] is False
     assert state["feed_ready"] is False
+
+
+def test_angel_transport_open_close_events_are_generation_scoped():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=3, shard=4)
+    bridge.angel_transport_event("OPEN", group, 31, 100)
+    opened = bridge.snapshot()["angel_one"]["3:4"]
+    assert opened["transport"] == "OPEN"
+    assert opened["authentication"] == "NOT_VERIFIABLE"
+    bridge.angel_market_event(_record(), group, 31, False, True, 200)
+    assert bridge.snapshot()["angel_one"]["3:4"]["market_event_age_ns"] is not None
+    bridge.angel_transport_event("CLOSED", group, 31, 300)
+    closed = bridge.snapshot()["angel_one"]["3:4"]
+    assert closed["transport"] == "CLOSED"
+    assert closed["market_event_age_ns"] is None
+    assert closed["authenticated"] is False
+
+
+def test_angel_old_generation_close_cannot_close_replacement():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=1, shard=2)
+    bridge.angel_transport_event("OPEN", group, 41, 100)
+    bridge.angel_transport_event("OPEN", group, 42, 200)
+    bridge.angel_transport_event("CLOSED", group, 41, 300)
+    state = bridge.snapshot()["angel_one"]["1:2"]
+    assert state["generation"] == 42
+    assert state["transport"] == "OPEN"
+
+
+def test_angel_closed_generation_rejects_late_market_event():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=2, shard=3)
+    bridge.angel_transport_event("OPEN", group, 51, 100)
+    bridge.angel_transport_event("CLOSED", group, 51, 200)
+    bridge.angel_market_event(_record(), group, 51, False, True, 300)
+    state = bridge.snapshot()["angel_one"]["2:3"]
+    assert state["transport"] == "CLOSED"
+    assert state["market_event_age_ns"] is None
+
+
+def test_angel_transport_event_rejects_out_of_order_lifecycle():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=2, shard=4)
+    bridge.angel_transport_event("OPEN", group, 61, 200)
+    bridge.angel_transport_event("CLOSED", group, 61, 150)
+    state = bridge.snapshot()["angel_one"]["2:4"]
+    assert state["transport"] == "OPEN"
+    assert state["stale_observations_rejected"] == 1
