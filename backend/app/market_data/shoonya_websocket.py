@@ -310,6 +310,9 @@ class ShoonyaWebSocket:
             ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
                                 "source": self._source, "accesstoken": self._access_token},
                                separators=(",", ":")))
+            with self._lock:
+                if ws is not self._ws or self._stop.is_set():
+                    return
         except Exception as exc:
             self._on_error(ws, exc)
             try:
