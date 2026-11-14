@@ -423,3 +423,23 @@ Important boundaries:
 - No broker callback, scanner, Box Spread, IV Scanner, strategy, or order path is connected.
 - SQLite store and API tests are committed but have not been executed in this session. Full backend tests and exact-head CI are still required.
 - This is a diagnostics foundation, not production feed validation or broker failover approval.
+
+
+## 24. Batch 19 — bounded shadow parity ingestion worker
+
+Added `BoundedQuoteParityWorker` and immutable `QuoteParityEnvelope`:
+- Non-blocking FIFO submission; all parity calculation and SQLite writes run on one worker thread, not in the submit/callback path.
+- Queue capacity is configurable (`PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY=2048` by default).
+- Queue overflow latches an integrity fault and rejects further submissions; pending queued work is discarded rather than silently reported as complete.
+- Both providers must have explicitly activated current generations. A generation change fences already-queued observations before persistence.
+- Duplicate pair identity includes provider, generation and exchange timestamp; timestamp-less observations use their local receive timestamp.
+- Out-of-order local receive timestamps are rejected per canonical contract/provider pair.
+- Dedupe keys and per-contract ordering state are bounded; counters expose queue depth/capacity, duplicates, stale generations, out-of-order events, overflow, persistence, handler errors and shutdown discards.
+- Graceful shutdown drains accepted items within a bounded timeout. Non-draining shutdown discards pending items. If shutdown times out, application lifecycle leaves the SQLite handle open rather than closing it under a possibly active worker.
+- Added read-only `GET /api/v1/market-data/provider-quote-parity/status` for worker health.
+
+The opt-in application lifespan now starts/stops the worker with the parity store. It remains disabled by default. No producer activates generations or submits live Angel/Shoonya quotes yet; the worker currently has no live broker integration.
+
+Eleven focused worker tests cover persistence, explicit generation gating, duplicate and out-of-order rejection, overflow fail-closed, bounded dedupe state, canonical identity validation, graceful drain, queued generation fencing, and timestamp-less duplicate identity. Tests have been committed but not executed in this session; exact-head CI and full regression remain required.
+
+No changes to Box Spread or IV Scanner strategy logic, WebSocket subscriptions, source selection, failover, or order routing.
