@@ -2106,6 +2106,18 @@ class CommonWebSocketManager:
         for group, (generation, adapter) in callback_adapters:
             self._stop_retired_callback_adapter(adapter, group, generation)
         for socket in sockets:
-            self._close_socket_bounded(socket, reason="manager_shutdown")
+            # Shutdown must retain visibility of close calls that outlive the
+            # bounded wait. Otherwise the manager can return while an orphaned
+            # SDK close worker is still running with no retirement diagnostic.
+            self._close_socket_tracked(
+                socket,
+                group=next(
+                    (group for group, candidate in self._sockets.items() if candidate is socket),
+                    SocketGroup(mode=0, shard=0),
+                ),
+                generation=None,
+                reason="manager_shutdown",
+                timeout=2.0,
+            )
         if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)
