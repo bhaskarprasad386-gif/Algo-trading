@@ -1190,3 +1190,19 @@ merge, and deployment remain outstanding.
 - The test is committed but not executed in this session. Production manager
   behavior is unchanged; Box Spread and IV Scanner callback/feed behavior,
   subscriptions, calculations and order routes remain untouched.
+
+
+## Batch 57 — manager recovery versus shutdown serialization
+
+- Added a deterministic threaded regression that starts from a real manager
+  subscription and forces its current fake socket into the disconnected recovery
+  path. A test gate pauses recovery while it owns the reconcile serialization
+  boundary; a separate thread starts manager shutdown before recovery is released.
+- The test verifies recovery and shutdown both terminate, the recovery pass is
+  accounted for, any replacement socket created by the in-flight recovery is
+  subsequently closed by shutdown, and the manager ends with no active sockets.
+- This is a deterministic manager concurrency test with fake sockets, not an
+  Angel SDK/network test. It does not validate broker reconnect timing or live
+  feed behavior. The test is committed but has not been executed in this session.
+- No production code changed. Box Spread and IV Scanner subscriptions,
+  calculations, callback contracts, feed selection and order routing are unchanged.
