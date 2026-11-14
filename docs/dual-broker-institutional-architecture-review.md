@@ -902,3 +902,30 @@ merge, and deployment remain outstanding.
 - Tests are committed but have not been executed in this session. Exact-head
   CI, full regression, live broker validation, merge, and deployment remain
   outstanding.
+
+
+## Batch 37 — tracked Angel socket retirement during manager shutdown
+
+- Jointly audited CommonWebSocketManager shutdown, its bounded socket-close
+  helper, the Angel wrapper's SDK close/transport-thread cleanup, and the
+  optional per-shard callback worker.
+- Found a shutdown observability gap: manager.close() used the bounded close
+  helper directly. If an SDK close call outlived the wait, the daemon close
+  worker could remain alive without being entered in retired-transport
+  diagnostics or supervised until completion.
+- Manager shutdown now routes every captured (SocketGroup, socket) pair
+  through the tracked retirement path. A close worker that exceeds the
+  bounded wait remains visible with its group, reason and generation metadata;
+  its watcher clears the retirement record only after the close call exits.
+- The shutdown path captures group/socket pairs before clearing active maps,
+  preserving the correct shard identity in diagnostics. It continues to
+  release manager locks before waiting for callbacks or socket cleanup.
+- Added tests proving manager shutdown uses tracked retirement with the
+  original SocketGroup, and that a deliberately blocked close remains visible
+  until its worker exits.
+- No scanner callbacks, subscriptions, calculations, provider selection,
+  parity pairing, persistence, or order routing changed. Angel async callback
+  dispatch remains opt-in and default-off.
+- Tests are committed but have not been executed in this session. Exact-head
+  CI, full regression, live broker validation, merge, and deployment remain
+  outstanding.
