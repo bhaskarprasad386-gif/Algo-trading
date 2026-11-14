@@ -177,6 +177,7 @@ class MarketDataWebSocket:
         self.subscriptions: dict[int, list[str]] = {}
         self.on_data: Optional[Callable] = None
         self.on_failure: Optional[Callable[[str], None]] = None
+        self.on_lifecycle: Optional[Callable[[str, int], None]] = None
         self._lock = Lock()
         self._connected = False
         self._stopping = False
@@ -280,6 +281,14 @@ class MarketDataWebSocket:
         )):
             socket.connect = lambda: _connect_sdk_socket_with_verified_tls(socket)
 
+        def emit_lifecycle(event: str) -> None:
+            callback = self.on_lifecycle
+            if callback is not None:
+                try:
+                    callback(event, time.monotonic_ns())
+                except Exception as exc:
+                    app_logger.error(f"Angel One lifecycle observer failed: {type(exc).__name__}: {exc}")
+
         def handle_open(wsapp):
             with self._lock:
                 self._connected = True
@@ -289,6 +298,7 @@ class MarketDataWebSocket:
                 self._consecutive_failures = 0
                 self._last_error = None
             app_logger.info("Angel One WebSocket connected")
+            emit_lifecycle("OPEN")
             if self.exchange_type is not None and self.tokens:
                 self._subscribe_initial_bounded(socket)
 
@@ -310,6 +320,7 @@ class MarketDataWebSocket:
                 self._last_error = error_detail
                 failure_callback = self.on_failure
             app_logger.error(f"Angel One WebSocket error: {error_detail}")
+            emit_lifecycle("ERROR")
             if failure_callback is not None:
                 try:
                     failure_callback(error_detail)
@@ -329,6 +340,7 @@ class MarketDataWebSocket:
             app_logger.warning(
                 f"Angel One WebSocket connection closed code={close_code} reason={close_reason}"
             )
+            emit_lifecycle("CLOSED")
             if not stopping and failure_callback is not None:
                 try:
                     failure_callback("socket closed")
@@ -451,7 +463,7 @@ class MarketDataWebSocket:
             if should_retry:
                 self._schedule_reconnect()
 
-    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None):
+    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None, on_lifecycle: Optional[Callable[[str, int], None]] = None):
         """Connect and retry failed starts while preserving validated subscriptions."""
         if exchange_type is not None and (not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0):
             raise ValueError("exchange_type must be a positive integer")
@@ -471,12 +483,15 @@ class MarketDataWebSocket:
             raise ValueError("use either subscriptions or exchange_type/tokens, not both")
         if on_data is not None and not callable(on_data):
             raise ValueError("on_data must be callable")
+        if on_lifecycle is not None and not callable(on_lifecycle):
+            raise ValueError("on_lifecycle must be callable")
         with self._lock:
             self._set_subscriptions(subscriptions)
             self.mode = mode
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
             self.on_failure = on_failure
+            self.on_lifecycle = on_lifecycle
             self._stopping = False
             self._connecting = True
             self._reconnect_attempts = reconnect_attempts
