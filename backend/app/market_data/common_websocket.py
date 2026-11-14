@@ -357,11 +357,16 @@ class CommonWebSocketManager:
 
     def _notify_transport_observers(self, event: str, group: SocketGroup, generation: int, received_ns: int) -> None:
         with self._lock:
-            current = (
+            active_generation = (
                 not self._closed
                 and self._socket_generation.get(group) == generation
                 and group in self._sockets
             )
+            retiring_generation = (
+                event == "CLOSED"
+                and self._socket_generation_counter.get(group) == generation
+            )
+            current = active_generation or retiring_generation
             observers = tuple(self._transport_observers.values()) if current else ()
         for observer in observers:
             try:
