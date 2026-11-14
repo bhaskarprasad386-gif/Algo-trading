@@ -446,3 +446,75 @@ def test_lifecycle_observer_exception_does_not_break_socket_callbacks(monkeypatc
     socket = FakeSocket.instances[-1]
     socket.on_close(socket)
     assert client.health["connected"] is False
+
+
+
+def test_reconnect_worker_cannot_reopen_socket_after_close_wins_race(monkeypatch):
+    from threading import Event, Thread
+
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    entered_connect = Event()
+    release_connect = Event()
+    original_connect = client.connect
+
+    def pause_before_guard(**kwargs):
+        entered_connect.set()
+        assert release_connect.wait(timeout=2.0)
+        return original_connect(**kwargs)
+
+    monkeypatch.setattr(client, "connect", pause_before_guard)
+    worker = Thread(target=client._reconnect_after_disconnect, name="test-angel-reconnect")
+    worker.start()
+    assert entered_connect.wait(timeout=1.0)
+
+    # Shutdown advances the lifecycle generation while the reconnect worker
+    # is paused between capturing its generation and entering connect().
+    client.close()
+    release_connect.set()
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert FakeSocket.instances == []
+    assert client.health["connected"] is False
+    assert client.health["connecting"] is False
+    assert client._stopping is True
+
+
+def test_stale_internal_reconnect_does_not_mutate_subscription_state(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    client.subscriptions = {1: ["101"]}
+    expected_generation = client._lifecycle_generation
+    client.close()
+
+    client.connect(
+        subscriptions={2: ["202"]},
+        _expected_lifecycle_generation=expected_generation,
+    )
+
+    assert client.subscriptions == {1: ["101"]}
+    assert client.websocket is None
+    assert FakeSocket.instances == []
+
+
+def test_explicit_connect_can_restart_wrapper_after_close(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    first_socket = client.websocket
+    client.close()
+
+    client.connect(1, ["202"])
+
+    assert len(FakeSocket.instances) == 2
+    assert FakeSocket.instances[0] is first_socket
+    assert client.connected is True
+    assert client.tokens == ["202"]
+    client.close()
