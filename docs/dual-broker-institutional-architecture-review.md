@@ -1071,3 +1071,12 @@ merge, and deployment remain outstanding.
 - Added manager-owned `retired_callback_workers` lifecycle metadata. A worker that outlives the bounded stop is now visible with shard, generation, thread name/identity, alive state, and retirement time. A dedicated watcher removes the record only after the worker exits; no callback payload or credential data is retained.
 - Added a regression test using a deliberately blocked worker to verify it remains visible after timeout and is removed after exit.
 - This affects diagnostics and cleanup visibility only. Async callback dispatch remains opt-in; no scanner, subscription, routing, reconnect, or broker selection behavior changed. Test committed but not executed.
+
+
+### Batch 49 — Shoonya order and in-flight observer epoch fencing
+
+- Joint worker audit found two Shoonya delivery gaps: order updates entered a separate queue without their source feed epoch, and a tick's shadow observer could still run after the legacy tick callback blocked while a reconnect replaced the feed epoch.
+- Order queue entries now carry the current feed epoch and the order dispatcher validates epoch plus authenticated/non-stopping session immediately before invoking the consumer. Retired queued order updates are dropped and counted in the existing stale-dispatch counter.
+- Tick dispatcher revalidates the feed epoch/session after the legacy callback returns and immediately before the shadow observer. An already-running legacy callback cannot be cancelled safely, but it cannot cause a retired quote to be forwarded to the later observer.
+- Added deterministic tests for stale queued order updates and reconnect during a blocked legacy callback.
+- No broker socket protocol, scanner feed, subscription set, or execution path changed. Tests committed but not executed.
