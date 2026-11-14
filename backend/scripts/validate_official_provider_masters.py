@@ -232,6 +232,15 @@ def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[st
     return result
 
 
+
+def missing_required_index_roots(index_coverage: dict[str, Any]) -> list[str]:
+    targets = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
+    return [
+        underlying for underlying in targets
+        if not index_coverage.get(underlying, {}).get("angel_contracts")
+        or not index_coverage.get(underlying, {}).get("shoonya_contracts")
+    ]
+
 def bse_index_symbol_diagnostics(report: Any) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {"SENSEX": [], "BANKEX": []}
     for item in report.mappings:
@@ -303,15 +312,19 @@ def main() -> int:
     shoonya_report = combine_segment_reports("SHOONYA", shoonya_segment_reports)
     audit = audit_master_coverage((angel_report, shoonya_report))
     index_coverage = index_underlying_coverage(angel_report, shoonya_report)
+    missing_index_roots = missing_required_index_roots(index_coverage)
     index_coverage_gaps = [
         {
             "underlying": underlying,
             "angel_only_contracts": values["angel_only_contracts"],
             "angel_only_by_expiry": values["angel_only_by_expiry"],
             "shoonya_only_contracts": values["shoonya_only_contracts"],
+            "shoonya_only_by_expiry": values["shoonya_only_by_expiry"],
+            "missing_from_one_or_both_brokers": underlying in missing_index_roots,
         }
         for underlying, values in index_coverage.items()
         if values["angel_only_contracts"] or values["shoonya_only_contracts"]
+        or underlying in missing_index_roots
     ]
 
     output = {
@@ -335,7 +348,8 @@ def main() -> int:
             "metadata_mismatch_sample": [str(key) for key in audit.metadata_mismatches[:25]],
             "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
             "index_underlying_coverage": index_coverage,
-            "index_coverage_status": "PASS" if not index_coverage_gaps else "PASS_WITH_COVERAGE_GAPS",
+            "index_coverage_status": "FAIL_MISSING_REQUIRED_INDEX" if missing_index_roots else ("PASS" if not index_coverage_gaps else "PASS_WITH_COVERAGE_GAPS"),
+            "missing_required_index_roots": missing_index_roots,
             "index_coverage_gaps": index_coverage_gaps,
             "underlying_inventory": underlying_inventory(angel_report, shoonya_report),
             "bse_index_symbol_diagnostics": {
@@ -355,6 +369,8 @@ def main() -> int:
             failures.append(f"{item.broker}: no accepted contracts")
         if Decimal(str(item.rejection_ratio)) > args.max_rejection_ratio:
             failures.append(f"{item.broker}: rejection ratio {item.rejection_ratio:.4%} exceeds {args.max_rejection_ratio:.4%}")
+    if missing_index_roots:
+        failures.append("required index roots missing from one or both brokers: " + ", ".join(missing_index_roots))
     if audit.common_contracts == 0:
         failures.append("no canonical contracts are common to both brokers")
     if audit.metadata_mismatches:
