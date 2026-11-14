@@ -14,11 +14,19 @@ def _reset_cache():
     with cls._cache_lock:
         cls._cached_instruments = None
         cls._cached_snapshot_date = None
+        cls._last_download_attempt_at = 0.0
+        cls._last_download_error = None
+        cls._cached_disk_snapshot_fetched_at = None
 
 
 def test_cache_reads_are_not_blocked_while_master_network_refresh_waits(monkeypatch):
     cls = instruments_module.InstrumentMaster
     _reset_cache()
+    monkeypatch.setattr(
+        cls,
+        "_write_disk_snapshot",
+        classmethod(lambda _cls, _rows: None),
+    )
     entered_download = threading.Event()
     release_download = threading.Event()
     download_errors = []
@@ -59,6 +67,11 @@ def test_cache_reads_are_not_blocked_while_master_network_refresh_waits(monkeypa
 def test_concurrent_refreshes_are_single_flight(monkeypatch):
     cls = instruments_module.InstrumentMaster
     _reset_cache()
+    monkeypatch.setattr(
+        cls,
+        "_write_disk_snapshot",
+        classmethod(lambda _cls, _rows: None),
+    )
     entered_download = threading.Event()
     release_download = threading.Event()
     calls = []

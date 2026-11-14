@@ -1,6 +1,10 @@
-import requests
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +30,11 @@ class InstrumentMaster:
     _download_lock = Lock()
     _cached_instruments: Optional[List[Dict[str, Any]]] = None
     _cached_snapshot_date: Optional[str] = None
+    _last_download_attempt_at: float = 0.0
+    _last_download_error: Optional[str] = None
+    _cached_disk_snapshot_fetched_at: Optional[datetime] = None
+    _retry_after_seconds: float = 60.0
+    _disk_fallback_max_age_seconds: float = 36 * 60 * 60
 
     def __init__(self):
         # Each instance remains a cheap view over the process-wide snapshot.
@@ -34,10 +43,12 @@ class InstrumentMaster:
         self.instruments: List[Dict[str, Any]] = []
         self._loaded = False
         self._symbol_exchange_index = None
+        self._disk_fallback_fetched_at: Optional[datetime] = None
         cached = self._get_cached_snapshot()
         if cached is not None:
             self.instruments = cached
             self._loaded = True
+            self._disk_fallback_fetched_at = self.__class__._cached_disk_snapshot_fetched_at
 
     @classmethod
     def _get_cached_snapshot(cls) -> Optional[List[Dict[str, Any]]]:
@@ -45,6 +56,76 @@ class InstrumentMaster:
             if cls._cached_instruments is None:
                 return None
             return cls._cached_instruments
+
+    @classmethod
+    def _disk_cache_path(cls) -> Path:
+        configured = os.environ.get("INSTRUMENT_MASTER_CACHE_PATH", "").strip()
+        if configured:
+            return Path(configured).expanduser()
+        return Path(__file__).resolve().parents[2] / "data" / "instrument_master_cache.json"
+
+    @classmethod
+    def _read_disk_snapshot(cls):
+        path = cls._disk_cache_path()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+                return None
+            rows = payload.get("instruments")
+            fetched_at = payload.get("fetched_at")
+            if (
+                not isinstance(rows, list)
+                or not rows
+                or not all(
+                    isinstance(row, dict)
+                    and str(row.get("symbol", "")).strip()
+                    and str(row.get("exch_seg", "")).strip()
+                    and str(row.get("token", "")).strip()
+                    for row in rows
+                )
+            ):
+                return None
+            fetched = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - fetched.astimezone(timezone.utc)).total_seconds()
+            if age < 0 or age > cls._disk_fallback_max_age_seconds:
+                return None
+            return rows, fetched
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    @classmethod
+    def _write_disk_snapshot(cls, rows: List[Dict[str, Any]]) -> None:
+        path = cls._disk_cache_path()
+        payload = {
+            "schema_version": 1,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "instruments": rows,
+        }
+        temp_name = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=str(path.parent),
+                prefix=path.name + ".",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temp_name = handle.name
+                json.dump(payload, handle, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, path)
+        except OSError as exc:
+            app_logger.warning("Could not persist instrument-master snapshot: {}", str(exc))
+            if temp_name:
+                try:
+                    os.unlink(temp_name)
+                except OSError:
+                    pass
 
     def download(self, *, force: bool = False, timeout: Any = 30) -> List[Dict[str, Any]]:
         """Refresh once per IST day without holding the cache lock during network I/O.
@@ -79,6 +160,38 @@ class InstrumentMaster:
             if cached is not None:
                 return cached
 
+            now = time.monotonic()
+            if (
+                not force
+                and cls._last_download_error
+                and now - cls._last_download_attempt_at < cls._retry_after_seconds
+            ):
+                with cls._cache_lock:
+                    disk_fallback = cls._cached_instruments if cls._cached_snapshot_date is None else None
+                    fetched_at = cls._cached_disk_snapshot_fetched_at
+                    if disk_fallback and fetched_at is not None:
+                        age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+                        if 0 <= age <= cls._disk_fallback_max_age_seconds:
+                            self.instruments = disk_fallback
+                            self._loaded = True
+                            self._disk_fallback_fetched_at = fetched_at
+                            self._symbol_exchange_index = None
+                            return self.instruments
+                    if cls._cached_snapshot_date is None and cls._cached_disk_snapshot_fetched_at is not None:
+                        cls._cached_instruments = None
+                        cls._cached_disk_snapshot_fetched_at = None
+                        self.instruments = []
+                        self._loaded = False
+                        self._disk_fallback_fetched_at = None
+                        self._symbol_exchange_index = None
+                raise TradingAppException(
+                    "InstrumentMasterDownloadCooldown",
+                    "Instrument-master download recently failed; retry is temporarily throttled.",
+                    502,
+                )
+
+            disk_snapshot = cls._read_disk_snapshot()
+            cls._last_download_attempt_at = now
             try:
                 source_errors = []
                 data = None
@@ -114,10 +227,16 @@ class InstrumentMaster:
                 with cls._cache_lock:
                     cls._cached_instruments = data
                     cls._cached_snapshot_date = today
+                    cls._last_download_error = None
+                    cls._cached_disk_snapshot_fetched_at = None
                     self.instruments = data
                     self._loaded = True
+                    self._disk_fallback_fetched_at = None
                     self._symbol_exchange_index = None
 
+                # Disk persistence is best-effort and happens only after the
+                # complete official payload has passed master_transport validation.
+                cls._write_disk_snapshot(data)
                 app_logger.info(
                     "Loaded {} instruments from Angel One instrument master",
                     len(data),
@@ -126,6 +245,24 @@ class InstrumentMaster:
             except TradingAppException:
                 raise
             except Exception as exc:
+                cls._last_download_error = f"{type(exc).__name__}: {exc}"
+                if disk_snapshot is not None:
+                    rows, fetched_at = disk_snapshot
+                    with cls._cache_lock:
+                        cls._cached_instruments = rows
+                        # None prevents an old disk snapshot from masquerading
+                        # as today's successful provider refresh.
+                        cls._cached_snapshot_date = None
+                        cls._cached_disk_snapshot_fetched_at = fetched_at
+                        self.instruments = rows
+                        self._loaded = True
+                        self._disk_fallback_fetched_at = fetched_at
+                        self._symbol_exchange_index = None
+                    app_logger.warning(
+                        "Instrument master provider unavailable; using validated disk snapshot fetched_at={}",
+                        fetched_at.isoformat(),
+                    )
+                    return rows
                 app_logger.error("Failed to download instrument master: {}", str(exc))
                 raise TradingAppException("InstrumentMasterDownloadError", str(exc), 502)
 
@@ -138,6 +275,13 @@ class InstrumentMaster:
         """Search instruments by symbol, exchange, or token."""
         # An explicitly supplied empty snapshot is a valid test/offline state and
         # must not trigger an unexpected network request.
+        if self._disk_fallback_fetched_at is not None:
+            age = (datetime.now(timezone.utc) - self._disk_fallback_fetched_at).total_seconds()
+            if age < 0 or age > self.__class__._disk_fallback_max_age_seconds:
+                self.instruments = []
+                self._loaded = False
+                self._disk_fallback_fetched_at = None
+                self._symbol_exchange_index = None
         if not self._loaded and not self.instruments:
             self.download()
         results = self.instruments
