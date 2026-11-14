@@ -373,4 +373,9 @@ def test_manager_transport_observer_and_shoonya_epoch_recovery_are_integrated():
     assert state["pairing_enabled"] is False
     assert state["scanner_fanout_enabled"] is False
     assert state["order_eligible"] is False
+    # These are sentinel socket objects, not SDK sockets; detach them before
+    # manager shutdown so the test exercises no fake close implementation.
+    with manager._lock:
+        manager._sockets.clear()
+        manager._socket_generation.clear()
     manager.close()
