@@ -14,6 +14,8 @@ on:
       - "backend/app/market_data/websocket.py"
       - "backend/app/market_data/provider_readiness.py"
       - "backend/app/market_data/provider_readiness_bridge.py"
+      - "backend/app/market_data/shoonya_websocket.py"
+      - "backend/tests/test_shoonya_market_data.py"
       - "backend/tests/test_provider_readiness.py"
       - "backend/tests/test_provider_readiness_bridge.py"
       - "backend/app/market_data/tests/test_common_websocket.py"
@@ -54,6 +56,7 @@ jobs:
           python -m py_compile app/market_data/websocket.py
           python -m py_compile app/market_data/provider_readiness.py
           python -m py_compile app/market_data/provider_readiness_bridge.py
+          python -m py_compile app/market_data/shoonya_websocket.py
           python -m py_compile app/market_data/normalizer.py
           python -m py_compile app/market_data/cash_future_opportunity.py
           python -m py_compile app/market_data/live_cash_future_common.py
@@ -88,4 +91,5 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_provider_readiness.py \
-            tests/test_provider_readiness_bridge.py
+            tests/test_provider_readiness_bridge.py \
+            tests/test_shoonya_market_data.py
