@@ -6,11 +6,13 @@ import random
 import ssl
 import threading
 import time
+from time import monotonic_ns
 from typing import Any, Callable, Iterable
 import websocket
 from app.core.logger import app_logger
 from .registry import InstrumentDescriptor
 from .shoonya_normalizer import ShoonyaTickNormalizer
+from .contracts import MarketDataRecord
 
 class ShoonyaWebSocket:
     URL = "wss://api.shoonya.com/NorenWSAPI/"
@@ -19,6 +21,7 @@ class ShoonyaWebSocket:
                  on_tick: Callable[[dict[str, Any]], None] | None = None,
                  on_order_update: Callable[[dict[str, Any]], None] | None = None,
                  on_state: Callable[[str, str | None], None] | None = None,
+                 on_tick_observation: Callable[[MarketDataRecord, int, bool, int], None] | None = None,
                  websocket_factory: Callable[..., Any] | None = None, max_dispatch_queue: int = 10000,
                  reconnect_min_seconds: float = 1.0, reconnect_max_seconds: float = 30.0,
                  frame_timeout_seconds: float = 30.0, auth_timeout_seconds: float = 15.0):
@@ -34,6 +37,9 @@ class ShoonyaWebSocket:
         if self._source not in {"API", "WEB", "MOB"}:
             raise ValueError("source must be API, WEB or MOB")
         self._on_tick, self._on_order_update, self._on_state = on_tick, on_order_update, on_state
+        if on_tick_observation is not None and not callable(on_tick_observation):
+            raise TypeError('on_tick_observation must be callable')
+        self._on_tick_observation = on_tick_observation
         self._factory = websocket_factory or websocket.WebSocketApp
         self._backoff_min, self._backoff_max = reconnect_min_seconds, reconnect_max_seconds
         self._frame_timeout_seconds = float(frame_timeout_seconds)
@@ -43,7 +49,7 @@ class ShoonyaWebSocket:
         # Preserve subscribe/unsubscribe wire ordering across caller threads.
         self._subscription_send_lock = threading.Lock()
         self._ws = self._thread = self._dispatch_thread = self._order_dispatch_thread = self._heartbeat_thread = None
-        self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=max_dispatch_queue)
+        self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue(maxsize=max_dispatch_queue)
         # Order lifecycle events are isolated from high-volume market ticks.
         self._order_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=2048)
         self._descriptors: dict[tuple[str, str], InstrumentDescriptor] = {}
@@ -363,7 +369,8 @@ class ShoonyaWebSocket:
         if not exchange or not token: return
         with self._lock:
             descriptor = self._descriptors.get(key)
-            if descriptor is None: return
+            if descriptor is None or not self._authenticated: return
+            epoch = self._feed_epoch
             is_snapshot = str(message.get("t") or "").lower() == "tk"
             if not is_snapshot and key not in self._initialized:
                 return
@@ -385,15 +392,21 @@ class ShoonyaWebSocket:
             self._snapshots[key] = merged
             if is_snapshot:
                 self._initialized.add(key)
+            # Recheck session identity after normalization; reconnect may have
+            # superseded this tick while normalization was running.
+            if epoch != self._feed_epoch or not self._authenticated:
+                return
             self._last_exchange_timestamp_ns[key] = record.timestamp_ns
             self._ticks_received += 1
             self._last_tick_at = time.time()
-        self._enqueue("tick", record.as_dict())
+            received_at_monotonic_ns = monotonic_ns()
+        self._enqueue("tick", record.as_dict(), observation=(record, epoch, True, received_at_monotonic_ns))
 
-    def _enqueue(self, kind: str, payload: dict[str, Any]) -> None:
+    def _enqueue(self, kind: str, payload: dict[str, Any], *, observation: tuple[MarketDataRecord, int, bool, int] | None = None) -> None:
         target = self._order_queue if kind == "order" else self._queue
         try:
-            target.put_nowait((kind, payload))
+            item = (kind, payload) if observation is None else (kind, payload, observation)
+            target.put_nowait(item)
         except queue.Full:
             with self._lock:
                 ws = self._ws
@@ -416,10 +429,20 @@ class ShoonyaWebSocket:
 
     def _dispatch_loop(self) -> None:
         while not self._stop.is_set() or not self._queue.empty():
-            try: _, payload = self._queue.get(timeout=0.2)
+            try: item = self._queue.get(timeout=0.2)
             except queue.Empty: continue
             try:
+                _, payload, *metadata = item
                 if self._on_tick: self._on_tick(payload)
+                if metadata and self._on_tick_observation:
+                    record, epoch, authenticated, received_at_monotonic_ns = metadata[0]
+                    with self._lock:
+                        current = epoch == self._feed_epoch and self._authenticated and authenticated
+                    if current:
+                        try:
+                            self._on_tick_observation(record, epoch, authenticated, received_at_monotonic_ns)
+                        except Exception:
+                            app_logger.exception('Shoonya read-only tick observation callback failed')
                 with self._lock: self._ticks_dispatched += 1
             except Exception: app_logger.exception("Shoonya tick callback failed")
             finally: self._queue.task_done()
