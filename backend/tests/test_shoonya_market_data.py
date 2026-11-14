@@ -1,6 +1,7 @@
 import pytest
 import json
 import threading
+import time
 
 from types import SimpleNamespace
 from app.market_data.contracts import InstrumentKey
@@ -1335,7 +1336,7 @@ def test_retired_epoch_queue_items_never_reach_legacy_or_shadow_callbacks():
         feed._feed_epoch = retired_epoch
         feed._enqueue(
             "tick", {"epoch": retired_epoch},
-            observation=(object(), retired_epoch, True, threading.get_native_id()),
+            observation=(object(), retired_epoch, True, time.monotonic_ns()),
         )
     # Simulate the latest reconnect completing before the dispatcher drains.
     feed._feed_epoch = 8
@@ -1365,7 +1366,7 @@ def test_shoonya_dispatch_queue_remains_bounded_during_reconnect_burst():
         feed._feed_epoch = epoch
         feed._enqueue(
             "tick", {"epoch": epoch},
-            observation=(object(), epoch, True, threading.get_native_id()),
+            observation=(object(), epoch, True, time.monotonic_ns()),
         )
 
     state = feed.snapshot()
