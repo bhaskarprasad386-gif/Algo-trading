@@ -577,3 +577,104 @@ def test_manager_shutdown_fences_concurrent_late_transport_open_callback():
     assert final["pairing_enabled"] is False
     assert final["scanner_fanout_enabled"] is False
     assert final["order_eligible"] is False
+
+def test_manager_shutdown_serializes_with_inflight_recovery_and_closes_replacement():
+    """A recovery pass cannot leave a replacement socket alive after close."""
+    from threading import Event, Thread
+
+    from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+    from app.market_data.contracts import InstrumentKey
+    from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+
+    class LifecycleSocket:
+        instances = []
+
+        def __init__(self):
+            self.connected = False
+            self.connecting = False
+            self.closed = False
+            type(self).instances.append(self)
+
+        def connect(self, **kwargs):
+            self.connected = True
+
+        def subscribe_groups(self, groups, mode=None):
+            pass
+
+        def unsubscribe_groups(self, groups):
+            pass
+
+        def close(self):
+            self.closed = True
+            self.connected = False
+
+    LifecycleSocket.instances.clear()
+    registry = InstrumentRegistry()
+    key = InstrumentKey("NSE", "EQ", "123456")
+    registry.register(InstrumentDescriptor(
+        key=key, symbol="TEST", instrument_type="equity",
+        exchange="NSE", segment="EQ",
+    ))
+    manager = CommonWebSocketManager(registry, socket_factory=LifecycleSocket)
+    manager._recovery_interval_seconds = 60.0
+    recovery_close_entered = Event()
+    release_recovery_close = Event()
+    shutdown_started = Event()
+    recovery_results = []
+    failures = []
+    original_close_tracked = manager._close_socket_tracked
+
+    def gated_close_tracked(*args, **kwargs):
+        if kwargs.get("reason") == "stale_recovery":
+            recovery_close_entered.set()
+            if not release_recovery_close.wait(timeout=3):
+                raise AssertionError("recovery close gate was not released")
+        return original_close_tracked(*args, **kwargs)
+
+    manager._close_socket_tracked = gated_close_tracked
+    try:
+        manager.subscribe("concurrency-regression", [key])
+        group = SocketGroup(1, 0)
+        original_socket = manager._sockets[group]
+        # Force the existing generation into the disconnected recovery path.
+        original_socket.connected = False
+        manager._socket_created_at[group] = monotonic_ns() / 1_000_000_000 - 2.0
+
+        def recover():
+            try:
+                recovery_results.append(manager.recover_disconnected(
+                    min_age_seconds=0.0, silent_age_seconds=-1.0
+                ))
+            except BaseException as exc:
+                failures.append(exc)
+
+        def shutdown():
+            shutdown_started.set()
+            try:
+                manager.close()
+            except BaseException as exc:
+                failures.append(exc)
+
+        recovery_thread = Thread(target=recover, name="recovery-close-race")
+        recovery_thread.start()
+        assert recovery_close_entered.wait(timeout=2), "recovery did not reach retirement"
+        shutdown_thread = Thread(target=shutdown, name="manager-close-race")
+        shutdown_thread.start()
+        assert shutdown_started.wait(timeout=1), "shutdown thread did not start"
+        release_recovery_close.set()
+        recovery_thread.join(timeout=4)
+        shutdown_thread.join(timeout=4)
+
+        assert not recovery_thread.is_alive(), "recovery deadlocked with shutdown"
+        assert not shutdown_thread.is_alive(), "shutdown deadlocked with recovery"
+        assert failures == []
+        assert recovery_results == [1]
+        assert len(LifecycleSocket.instances) == 2
+        assert all(item.closed and not item.connected for item in LifecycleSocket.instances)
+        final = manager.snapshot()
+        assert final["socket_groups"] == 0
+        assert final["connected_groups"] == []
+        assert manager._closed is True
+    finally:
+        release_recovery_close.set()
+        manager.close()
