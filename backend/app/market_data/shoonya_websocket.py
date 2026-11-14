@@ -21,6 +21,7 @@ class ShoonyaWebSocket:
                  on_tick: Callable[[dict[str, Any]], None] | None = None,
                  on_order_update: Callable[[dict[str, Any]], None] | None = None,
                  on_state: Callable[[str, str | None], None] | None = None,
+                 on_session_observation: Callable[[str, str | None, int, bool, bool, int], None] | None = None,
                  on_tick_observation: Callable[[MarketDataRecord, int, bool, int], None] | None = None,
                  websocket_factory: Callable[..., Any] | None = None, max_dispatch_queue: int = 10000,
                  reconnect_min_seconds: float = 1.0, reconnect_max_seconds: float = 30.0,
@@ -37,6 +38,9 @@ class ShoonyaWebSocket:
         if self._source not in {"API", "WEB", "MOB"}:
             raise ValueError("source must be API, WEB or MOB")
         self._on_tick, self._on_order_update, self._on_state = on_tick, on_order_update, on_state
+        if on_session_observation is not None and not callable(on_session_observation):
+            raise TypeError("on_session_observation must be callable")
+        self._on_session_observation = on_session_observation
         if on_tick_observation is not None and not callable(on_tick_observation):
             raise TypeError('on_tick_observation must be callable')
         self._on_tick_observation = on_tick_observation
@@ -189,6 +193,15 @@ class ShoonyaWebSocket:
         if self._on_state:
             try: self._on_state(state, reason)
             except Exception: app_logger.exception("Shoonya state callback failed")
+        if self._on_session_observation:
+            try:
+                with self._lock:
+                    evidence = (self._feed_epoch, self._connected, self._authenticated)
+                self._on_session_observation(
+                    state, reason, evidence[0], evidence[1], evidence[2], monotonic_ns()
+                )
+            except Exception:
+                app_logger.exception("Shoonya session evidence observer failed")
 
     def _run_loop(self) -> None:
         delay = self._backoff_min
