@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch official public broker NFO masters and validate parser/coverage offline.
+"""Fetch official public broker NFO and BFO masters and validate parser/coverage offline.
 
 Read-only: no broker login, credentials, WebSocket, subscriptions or order calls.
 """
@@ -27,7 +27,10 @@ from app.market_data.provider_master_audit import audit_master_coverage
 from app.market_data.provider_master_parsers import AngelOneMasterParser, MasterParseReport, QuarantinedMasterRow, ShoonyaMasterParser
 
 ANGEL_URL = "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
-SHOONYA_URLS = {\n    "NFO": "https://api.shoonya.com/NFO_symbols.txt.zip",\n    "BFO": "https://api.shoonya.com/BFO_symbols.txt.zip",\n}
+SHOONYA_URLS = {
+    "NFO": "https://api.shoonya.com/NFO_symbols.txt.zip",
+    "BFO": "https://api.shoonya.com/BFO_symbols.txt.zip",
+}
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 TIMEOUT = (15, 120)
 
