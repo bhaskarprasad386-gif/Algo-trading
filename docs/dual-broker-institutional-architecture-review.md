@@ -673,3 +673,36 @@ No scanner, Box Spread, IV Scanner, subscription universe, order routing, or
 production runtime behavior was changed. No tests were executed or claimed as
 passing; exact-head CI, official protocol confirmation, live broker validation,
 merge, and deployment remain outstanding.
+
+
+## Batch 29 — read-only broker callback-to-readiness bridge
+
+- Added `ProviderReadinessBridge`, which maintains one Shoonya readiness reducer
+  and independent Angel One reducers per socket group/generation. Per-group
+  isolation avoids allowing one Angel shard's traffic to mask another shard.
+- Added an optional Shoonya session-evidence callback. It reports adapter state,
+  feed epoch, connected/authenticated flags, and monotonic observation time;
+  callback exceptions are isolated from the existing state callback.
+- Wired the Shoonya supervisor's existing normalized tick observation hook and
+  the additive session-evidence hook to the bridge. Only the adapter's
+  `LIVE` state with its authenticated flag (set after the Noren `ak/s=OK`
+  response) can record the Shoonya auth evidence.
+- Registered an additive Angel normalized observer on the existing shared
+  manager from the runtime-health endpoint. It does not add or remove broker
+  subscriptions and does not replace Box Spread or IV Scanner callbacks.
+- Angel transport/generation/market observations are captured per socket group,
+  but authentication and subscription remain `NOT_VERIFIABLE`. The callback's
+  auth-shaped metadata is deliberately not trusted to promote authentication.
+- Runtime health now exposes `provider_readiness` alongside existing feed and
+  scanner diagnostics. The bridge is read-only: pairing, scanner fan-out, and
+  order eligibility are explicitly false.
+- Shoonya subscription ACK capability remains false because no independent
+  per-token broker ACK was verified. Thus even after a valid auth ACK and fresh
+  market event, Shoonya `feed_ready` and `parity_eligible` remain false.
+- Added focused bridge tests for Shoonya epoch/auth evidence, reconnect reset,
+  Angel fail-closed authentication, per-shard generation isolation, and the
+  no-activation boundary.
+- Tests have been committed but not executed in this environment. Exact-head
+  CI, callback compatibility regression, live broker validation, merge, and
+  deployment are not claimed. Existing scanner subscriptions and order paths
+  were not modified.
