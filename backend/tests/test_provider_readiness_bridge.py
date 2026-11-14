@@ -199,7 +199,12 @@ def test_bridge_rejects_invalid_or_future_exchange_timestamp():
 def test_bridge_rejects_missing_canonical_identity():
     bridge = ProviderReadinessBridge()
     group = SimpleNamespace(mode=2, shard=1)
-    invalid_record = replace(_record(), symbol=" ")
+    valid = _record()
+    invalid_record = SimpleNamespace(
+        instrument=valid.instrument,
+        symbol=" ",
+        timestamp_ns=valid.timestamp_ns,
+    )
     bridge.angel_market_event(invalid_record, group, 22, False, True, monotonic_ns())
     state = bridge.snapshot()["angel_one"]["2:1"]
     assert state["canonical_identity_valid"] is False
