@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS: float = 30.0
     SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS: float = 15.0
 
+    # Read-only dual-broker quote parity diagnostics; disabled until explicitly enabled.
+    PROVIDER_QUOTE_PARITY_ENABLED: bool = False
+    PROVIDER_QUOTE_PARITY_DB: str = "./provider_quote_parity.db"
+    PROVIDER_QUOTE_PARITY_RETENTION_DAYS: int = 7
+    PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY: int = 2048
+
     # Angel One credentials
     angel_api_key: str = ""
     angel_client_id: str = ""

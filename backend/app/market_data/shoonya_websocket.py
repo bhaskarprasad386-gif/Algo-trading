@@ -6,11 +6,13 @@ import random
 import ssl
 import threading
 import time
+from time import monotonic_ns
 from typing import Any, Callable, Iterable
 import websocket
 from app.core.logger import app_logger
 from .registry import InstrumentDescriptor
 from .shoonya_normalizer import ShoonyaTickNormalizer
+from .contracts import MarketDataRecord
 
 class ShoonyaWebSocket:
     URL = "wss://api.shoonya.com/NorenWSAPI/"
@@ -19,6 +21,8 @@ class ShoonyaWebSocket:
                  on_tick: Callable[[dict[str, Any]], None] | None = None,
                  on_order_update: Callable[[dict[str, Any]], None] | None = None,
                  on_state: Callable[[str, str | None], None] | None = None,
+                 on_session_observation: Callable[[str, str | None, int, bool, bool, int], None] | None = None,
+                 on_tick_observation: Callable[[MarketDataRecord, int, bool, int], None] | None = None,
                  websocket_factory: Callable[..., Any] | None = None, max_dispatch_queue: int = 10000,
                  reconnect_min_seconds: float = 1.0, reconnect_max_seconds: float = 30.0,
                  frame_timeout_seconds: float = 30.0, auth_timeout_seconds: float = 15.0):
@@ -34,6 +38,12 @@ class ShoonyaWebSocket:
         if self._source not in {"API", "WEB", "MOB"}:
             raise ValueError("source must be API, WEB or MOB")
         self._on_tick, self._on_order_update, self._on_state = on_tick, on_order_update, on_state
+        if on_session_observation is not None and not callable(on_session_observation):
+            raise TypeError("on_session_observation must be callable")
+        self._on_session_observation = on_session_observation
+        if on_tick_observation is not None and not callable(on_tick_observation):
+            raise TypeError('on_tick_observation must be callable')
+        self._on_tick_observation = on_tick_observation
         self._factory = websocket_factory or websocket.WebSocketApp
         self._backoff_min, self._backoff_max = reconnect_min_seconds, reconnect_max_seconds
         self._frame_timeout_seconds = float(frame_timeout_seconds)
@@ -43,9 +53,9 @@ class ShoonyaWebSocket:
         # Preserve subscribe/unsubscribe wire ordering across caller threads.
         self._subscription_send_lock = threading.Lock()
         self._ws = self._thread = self._dispatch_thread = self._order_dispatch_thread = self._heartbeat_thread = None
-        self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=max_dispatch_queue)
+        self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue(maxsize=max_dispatch_queue)
         # Order lifecycle events are isolated from high-volume market ticks.
-        self._order_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=2048)
+        self._order_queue: queue.Queue[tuple[str, dict[str, Any], int]] = queue.Queue(maxsize=2048)
         self._descriptors: dict[tuple[str, str], InstrumentDescriptor] = {}
         self._snapshots: dict[tuple[str, str], dict[str, Any]] = {}
         self._initialized: set[tuple[str, str]] = set()
@@ -56,11 +66,13 @@ class ShoonyaWebSocket:
         self._auth_ack_received = False
         self._last_error = None
         self._reconnect_count = self._ticks_received = self._ticks_dispatched = self._dispatch_drops = self._order_update_drops = 0
+        self._stale_dispatch_drops = 0
         self._last_frame_at = self._last_tick_at = None
         self._connection_opened_at = None
         self._auth_started_at = None
         self._feed_epoch = 0
         self._shutdown_workers_alive: list[str] = []
+        self._shutdown_watcher: threading.Thread | None = None
         self._normalizer = ShoonyaTickNormalizer()
 
     def subscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
@@ -121,11 +133,42 @@ class ShoonyaWebSocket:
             self._dispatch_thread = threading.Thread(target=self._dispatch_loop, name="shoonya-tick-dispatch", daemon=True)
             self._order_dispatch_thread = threading.Thread(target=self._order_dispatch_loop, name="shoonya-order-dispatch", daemon=True)
             self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="shoonya-heartbeat", daemon=True)
-            self._dispatch_thread.start()
-            self._order_dispatch_thread.start()
-            self._heartbeat_thread.start()
             self._thread = threading.Thread(target=self._run_loop, name="shoonya-ws-supervisor", daemon=True)
-            self._thread.start()
+            started: list[threading.Thread] = []
+            try:
+                # Thread.start() can fail independently (resource exhaustion,
+                # interpreter shutdown, or an injected runtime failure). Treat
+                # startup as one transaction: never leave earlier workers
+                # running when a later worker cannot be created.
+                for worker in (
+                    self._dispatch_thread,
+                    self._order_dispatch_thread,
+                    self._heartbeat_thread,
+                    self._thread,
+                ):
+                    worker.start()
+                    started.append(worker)
+            except Exception:
+                self._stop.set()
+                deadline = time.monotonic() + 3.0
+                for worker in started:
+                    if worker is threading.current_thread():
+                        continue
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    worker.join(timeout=remaining)
+                with self._lock:
+                    alive = [worker for worker in started if worker.is_alive()]
+                    self._shutdown_workers_alive = [worker.name for worker in alive]
+                    self._connected = self._authenticated = False
+                    if not alive:
+                        self._thread = None
+                        self._dispatch_thread = None
+                        self._order_dispatch_thread = None
+                        self._heartbeat_thread = None
+                        self._ws = None
+                raise
 
     def stop(self) -> None:
         self._stop.set()
@@ -157,20 +200,51 @@ class ShoonyaWebSocket:
         if alive:
             reason = "workers did not stop before timeout: " + ", ".join(alive)
             with self._lock: self._last_error = reason
+            self._start_shutdown_watcher(workers)
             self._emit_state("STOP_TIMEOUT", reason)
         else:
             self._emit_state("STOPPED", None)
+
+    def _start_shutdown_watcher(self, workers: tuple[Any, ...]) -> None:
+        """Refresh timed-out worker diagnostics when the last worker eventually exits."""
+        with self._lock:
+            existing = self._shutdown_watcher
+            if existing is not None and existing.is_alive():
+                return
+
+            def watch() -> None:
+                for worker in workers:
+                    if worker is not None and worker is not threading.current_thread():
+                        worker.join()
+                with self._lock:
+                    current_workers = (
+                        self._thread, self._dispatch_thread,
+                        self._order_dispatch_thread, self._heartbeat_thread,
+                    )
+                    self._shutdown_workers_alive = [
+                        worker.name for worker in current_workers
+                        if worker is not None and worker.is_alive()
+                    ]
+                    if not (self._thread and self._thread.is_alive()):
+                        self._ws = None
+
+            watcher = threading.Thread(
+                target=watch, name="shoonya-shutdown-watch", daemon=True
+            )
+            self._shutdown_watcher = watcher
+            watcher.start()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {"broker": "shoonya", "connected": self._connected, "authenticated": self._authenticated,
                     "subscriptions": len(self._descriptors), "ticks_received": self._ticks_received,
-                    "ticks_dispatched": self._ticks_dispatched, "dispatch_queue_depth": self._queue.qsize(),
+                    "ticks_dispatched": self._ticks_dispatched, "stale_dispatch_drops": self._stale_dispatch_drops, "dispatch_queue_depth": self._queue.qsize(),
                     "dispatch_queue_capacity": self._queue.maxsize, "dispatch_drops": self._dispatch_drops,
                     "order_queue_depth": self._order_queue.qsize(), "order_update_drops": self._order_update_drops,
                     "reconnect_count": self._reconnect_count, "out_of_order_ticks": self._out_of_order_ticks,
                     "last_error": self._last_error,
                     "shutdown_workers_alive": list(self._shutdown_workers_alive),
+                    "shutdown_watcher_alive": bool(self._shutdown_watcher and self._shutdown_watcher.is_alive()),
                     "last_frame_at": self._last_frame_at, "last_frame_age_seconds": max(0.0, time.time() - self._last_frame_at) if self._last_frame_at else None,
                     "frame_timeout_seconds": self._frame_timeout_seconds,
                     "auth_timeout_seconds": self._auth_timeout_seconds,
@@ -183,6 +257,15 @@ class ShoonyaWebSocket:
         if self._on_state:
             try: self._on_state(state, reason)
             except Exception: app_logger.exception("Shoonya state callback failed")
+        if self._on_session_observation:
+            try:
+                with self._lock:
+                    evidence = (self._feed_epoch, self._connected, self._authenticated)
+                self._on_session_observation(
+                    state, reason, evidence[0], evidence[1], evidence[2], monotonic_ns()
+                )
+            except Exception:
+                app_logger.exception("Shoonya session evidence observer failed")
 
     def _run_loop(self) -> None:
         delay = self._backoff_min
@@ -198,7 +281,20 @@ class ShoonyaWebSocket:
                     on_error=self._guard_callback(self._on_error, epoch),
                     on_close=self._guard_callback(self._on_close, epoch),
                 )
-                with self._lock: self._ws = ws
+                # Factory creation can block while stop() completes. Do not
+                # publish or run a transport from a retired worker generation.
+                with self._lock:
+                    if self._stop.is_set() or epoch != self._feed_epoch:
+                        should_close = True
+                    else:
+                        self._ws = ws
+                        should_close = False
+                if should_close:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    break
                 ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED}, ping_interval=20, ping_timeout=10)
                 with self._lock:
                     opened_at = self._connection_opened_at
@@ -244,14 +340,32 @@ class ShoonyaWebSocket:
         return guarded
 
     def _on_open(self, ws: Any) -> None:
-        ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
-                            "source": self._source, "accesstoken": self._access_token}, separators=(",", ":")))
-        with self._lock:
-            self._connected, self._authenticated = True, False
-            self._last_error = None
-            # A TCP/WebSocket open is not a healthy broker session until auth succeeds.
-            self._connection_opened_at = None
-            self._auth_started_at = time.monotonic()
+        # Validate socket identity before writing, then release the lifecycle
+        # lock around network I/O so stop() can close a stalled transport.
+        try:
+            with self._lock:
+                if ws is not self._ws or self._stop.is_set():
+                    return
+                self._connected, self._authenticated = True, False
+                self._last_error = None
+                # A TCP/WebSocket open is not a healthy broker session until auth succeeds.
+                self._connection_opened_at = None
+                self._auth_started_at = time.monotonic()
+            # Never hold the lifecycle lock across SDK/network I/O: stop() must
+            # be able to acquire it, close this socket, and unblock a stalled send.
+            ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
+                                "source": self._source, "accesstoken": self._access_token},
+                               separators=(",", ":")))
+            with self._lock:
+                if ws is not self._ws or self._stop.is_set():
+                    return
+        except Exception as exc:
+            self._on_error(ws, exc)
+            try:
+                ws.close()
+            except Exception:
+                pass
+            return
         self._emit_state("AUTHENTICATING", None)
 
     def _on_message(self, ws: Any, raw: str) -> None:
@@ -260,7 +374,14 @@ class ShoonyaWebSocket:
             with self._lock: self._last_error = "invalid JSON frame"
             return
         if not isinstance(message, dict): return
-        with self._lock: self._last_frame_at = time.time()
+        with self._lock:
+            # The outer guarded callback can lose a race to reconnect after
+            # its initial identity check. Capture and fence the source epoch
+            # here before any frame can mutate replacement-session state.
+            if ws is not self._ws or self._stop.is_set():
+                return
+            message_epoch = self._feed_epoch
+            self._last_frame_at = time.time()
         kind = str(message.get("t") or "").lower()
         if kind == "h":
             try: ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
@@ -271,6 +392,11 @@ class ShoonyaWebSocket:
             # Ignore duplicate acknowledgements so subscriptions are never
             # replayed twice on the same connection.
             with self._lock:
+                # The callback may have passed its outer epoch guard just
+                # before reconnect began. Re-check identity at the state
+                # transition so an obsolete socket cannot mark the new feed LIVE.
+                if ws is not self._ws or self._stop.is_set():
+                    return
                 if self._auth_ack_received:
                     return
                 self._auth_ack_received = True
@@ -289,39 +415,54 @@ class ShoonyaWebSocket:
         # acknowledged this socket's authentication. A transport-open socket is
         # not an authenticated feed and must never publish apparently-live data.
         with self._lock:
-            authenticated = self._authenticated
+            authenticated = (
+                ws is self._ws
+                and not self._stop.is_set()
+                and message_epoch == self._feed_epoch
+                and self._authenticated
+            )
         if not authenticated:
             return
         if kind in {"tk", "tf"}:
-            self._handle_tick(message)
+            self._handle_tick(message, source_epoch=message_epoch)
         elif kind == "om" and self._on_order_update:
-            self._enqueue("order", message)
+            self._enqueue("order", message, feed_epoch=message_epoch)
 
     def _send_subscriptions(self, ws: Any) -> None:
         with self._subscription_send_lock:
             self._send_subscriptions_locked(ws)
 
     def _send_subscriptions_locked(self, ws: Any) -> None:
-        """Send the current desired set while the subscription lock is held."""
-        with self._lock:
-            instruments = tuple(self._descriptors)
-        if not instruments:
-            return
-        keys = "#".join(f"{e}|{t}" for e, t in instruments)
+        """Send desired subscriptions only to the currently authenticated socket."""
         try:
+            # The subscription lock preserves wire ordering; the lifecycle
+            # lock is used only to snapshot current socket/auth/desired state.
+            with self._lock:
+                if ws is not self._ws or self._stop.is_set() or not self._authenticated:
+                    return
+                instruments = tuple(self._descriptors)
+                if not instruments:
+                    return
+                keys = "#".join(f"{e}|{t}" for e, t in instruments)
+            # _subscription_send_lock preserves subscribe/unsubscribe ordering;
+            # the lifecycle lock is intentionally released before socket.send.
             ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
         except Exception as exc:
             self._on_error(ws, exc)
             try: ws.close()
             except Exception: pass
 
-    def _handle_tick(self, message: dict[str, Any]) -> None:
+    def _handle_tick(self, message: dict[str, Any], *, source_epoch: int | None = None) -> None:
+        received_at_monotonic_ns = monotonic_ns()
         exchange, token = str(message.get("e") or "").upper(), str(message.get("tk") or "")
         key = (exchange, token)
         if not exchange or not token: return
         with self._lock:
             descriptor = self._descriptors.get(key)
-            if descriptor is None: return
+            if (descriptor is None or not self._authenticated
+                    or (source_epoch is not None and source_epoch != self._feed_epoch)):
+                return
+            epoch = self._feed_epoch if source_epoch is None else source_epoch
             is_snapshot = str(message.get("t") or "").lower() == "tk"
             if not is_snapshot and key not in self._initialized:
                 return
@@ -338,20 +479,31 @@ class ShoonyaWebSocket:
             if record.timestamp_ns < previous_timestamp:
                 self._out_of_order_ticks += 1
                 return
-            # Commit the merged snapshot only after normalization and ordering
-            # checks; a delayed frame must not poison later incremental updates.
+            # Recheck session identity before mutating any snapshot state;
+            # reconnect may have superseded this tick during normalization.
+            if epoch != self._feed_epoch or not self._authenticated:
+                return
+            # Commit only after normalization, ordering, and epoch checks so
+            # an old socket cannot poison the replacement session's snapshot.
             self._snapshots[key] = merged
             if is_snapshot:
                 self._initialized.add(key)
             self._last_exchange_timestamp_ns[key] = record.timestamp_ns
             self._ticks_received += 1
             self._last_tick_at = time.time()
-        self._enqueue("tick", record.as_dict())
+        self._enqueue("tick", record.as_dict(), observation=(record, epoch, True, received_at_monotonic_ns))
 
-    def _enqueue(self, kind: str, payload: dict[str, Any]) -> None:
+    def _enqueue(self, kind: str, payload: dict[str, Any], *, observation: tuple[MarketDataRecord, int, bool, int] | None = None, feed_epoch: int | None = None) -> None:
         target = self._order_queue if kind == "order" else self._queue
         try:
-            target.put_nowait((kind, payload))
+            if kind == "order":
+                if feed_epoch is None:
+                    with self._lock:
+                        feed_epoch = self._feed_epoch
+                item = (kind, payload, feed_epoch)
+            else:
+                item = (kind, payload) if observation is None else (kind, payload, observation)
+            target.put_nowait(item)
         except queue.Full:
             with self._lock:
                 ws = self._ws
@@ -374,20 +526,60 @@ class ShoonyaWebSocket:
 
     def _dispatch_loop(self) -> None:
         while not self._stop.is_set() or not self._queue.empty():
-            try: _, payload = self._queue.get(timeout=0.2)
+            try: item = self._queue.get(timeout=0.2)
             except queue.Empty: continue
             try:
-                if self._on_tick: self._on_tick(payload)
+                _, payload, *metadata = item
+                # A tick can wait in the bounded queue while the supervisor
+                # replaces its socket. Fence both legacy and shadow consumers:
+                # no callback may observe a quote from a retired feed epoch.
+                if metadata:
+                    record, epoch, authenticated, received_at_monotonic_ns = metadata[0]
+                    with self._lock:
+                        current = epoch == self._feed_epoch and self._authenticated and authenticated
+                        if not current:
+                            self._stale_dispatch_drops += 1
+                    if not current:
+                        continue
+                try:
+                    if self._on_tick: self._on_tick(payload)
+                except Exception:
+                    app_logger.exception("Shoonya tick callback failed")
+                if metadata and self._on_tick_observation:
+                    with self._lock:
+                        still_current = (
+                            not self._stop.is_set()
+                            and epoch == self._feed_epoch
+                            and self._authenticated
+                            and authenticated
+                        )
+                    if not still_current:
+                        with self._lock:
+                            self._stale_dispatch_drops += 1
+                        continue
+                    try:
+                        self._on_tick_observation(record, epoch, authenticated, received_at_monotonic_ns)
+                    except Exception:
+                        app_logger.exception('Shoonya read-only tick observation callback failed')
                 with self._lock: self._ticks_dispatched += 1
-            except Exception: app_logger.exception("Shoonya tick callback failed")
+            except Exception: app_logger.exception("Shoonya tick dispatch failed")
             finally: self._queue.task_done()
 
     def _order_dispatch_loop(self) -> None:
         while not self._stop.is_set() or not self._order_queue.empty():
-            try: _, payload = self._order_queue.get(timeout=0.2)
+            try: _, payload, epoch = self._order_queue.get(timeout=0.2)
             except queue.Empty: continue
             try:
-                if self._on_order_update: self._on_order_update(payload)
+                with self._lock:
+                    current = (
+                        not self._stop.is_set()
+                        and epoch == self._feed_epoch
+                        and self._authenticated
+                    )
+                    if not current:
+                        self._stale_dispatch_drops += 1
+                if current and self._on_order_update:
+                    self._on_order_update(payload)
             except Exception: app_logger.exception("Shoonya order callback failed")
             finally: self._order_queue.task_done()
 
@@ -435,6 +627,22 @@ class ShoonyaWebSocket:
             app_logger.warning("Shoonya auth-timeout socket close failed: {}", self._safe_error_text(exc))
         return True
 
+    def _send_heartbeat(self, ws: Any) -> bool:
+        """Send heartbeat only while this socket remains the authenticated owner."""
+        try:
+            with self._lock:
+                if ws is not self._ws or self._stop.is_set() or not self._authenticated:
+                    return False
+            ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+            return True
+        except Exception as exc:
+            self._on_error(ws, exc)
+            try:
+                ws.close()
+            except Exception:
+                pass
+            return False
+
     def _heartbeat_loop(self) -> None:
         next_heartbeat = time.monotonic() + 3.0
         while not self._stop.wait(1.0):
@@ -449,13 +657,8 @@ class ShoonyaWebSocket:
                 continue
             if time.monotonic() < next_heartbeat:
                 continue
-            try:
-                ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+            if self._send_heartbeat(ws):
                 next_heartbeat = time.monotonic() + 3.0
-            except Exception as exc:
-                self._on_error(ws, exc)
-                try: ws.close()
-                except Exception: pass
 
     def _safe_error_text(self, value: Any) -> str:
         safe = str(value)
@@ -466,6 +669,11 @@ class ShoonyaWebSocket:
     def _on_error(self, ws: Any, error: Any) -> None:
         safe_error = f"{type(error).__name__}: {self._safe_error_text(error)}"
         with self._lock:
+            # Internal send/watchdog paths can race a reconnect even though
+            # transport callbacks are epoch-guarded. An error from an obsolete
+            # socket must never mark the replacement session unhealthy.
+            if ws is not None and ws is not self._ws:
+                return
             self._last_error = safe_error
             self._connected = self._authenticated = False
         self._emit_state("ERROR", safe_error)
@@ -473,6 +681,11 @@ class ShoonyaWebSocket:
 
     def _on_close(self, ws: Any, status_code: Any, message: Any) -> None:
         with self._lock:
+            # A callback can pass the epoch guard and then lose a race to
+            # reconnect before acquiring this lock. Recheck socket identity
+            # atomically here so a retired socket cannot close its replacement.
+            if ws is not None and ws is not self._ws:
+                return
             self._connected = self._authenticated = False
             preserved_faults = (
                 ("Shoonya authentication rejected", "AUTH_FAILED"),

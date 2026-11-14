@@ -65,7 +65,10 @@ class BoundedMarketDataIngestor:
     def _run(self):
         batch=[]; deadline=monotonic_ns()+int(self.flush_seconds*1_000_000_000)
         while not self._stop.is_set() or self._queue.qsize()>0:
-            try:item=self._queue.get(timeout=max(.01,(deadline-monotonic_ns())/1_000_000_000))
+            try:item=self._queue.get(
+                timeout=max(.01,(deadline-monotonic_ns())/1_000_000_000),
+                stop_event=self._stop,
+            )
             except Empty:item=None
             if item is not None:batch.append(item);self._queue.task_done()
             if batch and (len(batch)>=self.batch_size or monotonic_ns()>=deadline):
@@ -83,6 +86,9 @@ class BoundedMarketDataIngestor:
         except (OSError,ValueError,IndexError):return None
     def close(self,timeout=10.0):
         self._stop.set()
+        # Wake a writer blocked on an empty queue; shutdown must not wait for
+        # the normal flush interval before the worker can observe _stop.
+        self._queue.wake_all()
         if self._thread is not None:
             self._thread.join(timeout=max(.1,float(timeout)))
             if self._thread.is_alive():raise TimeoutError("market-data writer did not stop before timeout")

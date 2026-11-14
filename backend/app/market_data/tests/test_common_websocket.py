@@ -18,7 +18,7 @@ class FakeSocket:
         self.closed = False
         self.connected = False
         self.connecting = False
-        FakeSocket.instances.append(self)
+        type(self).instances.append(self)
 
     def connect(self, **kwargs):
         self.connect_calls.append(kwargs)
@@ -1866,4 +1866,236 @@ def test_snapshot_exposes_per_instrument_subscription_roster_and_raw_frames():
         }]
         assert snapshot["raw_frames_by_instrument"] == {"3:1:99926000": 1}
     finally:
+        manager.close()
+
+
+def test_transport_observer_receives_current_open_and_retiring_close_only():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(3, 1)
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 7
+    manager._socket_generation_counter[group] = 7
+    events = []
+    manager.register_transport_observer(
+        "readiness", lambda *args: events.append(args)
+    )
+
+    manager._notify_transport_observers("OPEN", group, 7, 100)
+    manager._sockets.pop(group)
+    manager._socket_generation.pop(group)
+    manager._notify_transport_observers("CLOSED", group, 7, 200)
+    manager._notify_transport_observers("ERROR", group, 7, 300)
+    manager._notify_transport_observers("CLOSED", group, 6, 400)
+
+    assert [(event, generation, received) for event, _group, generation, received in events] == [
+        ("OPEN", 7, 100), ("CLOSED", 7, 200)
+    ]
+
+
+def test_transport_observer_failure_isolated_from_other_observers():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(1, 0)
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 3
+    manager._socket_generation_counter[group] = 3
+    received = []
+    manager.register_transport_observer(
+        "broken", lambda *_: (_ for _ in ()).throw(RuntimeError("observer failure"))
+    )
+    manager.register_transport_observer("healthy", lambda *args: received.append(args))
+    manager._notify_transport_observers("OPEN", group, 3, 123)
+
+    assert len(received) == 1
+    assert manager._delivery_errors == 1
+
+
+
+def test_late_connect_failure_after_manager_shutdown_does_not_pollute_health():
+    started = Event()
+    release = Event()
+    failed = Event()
+
+    class LateFailureSocket(FakeSocket):
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=4.0)
+            failed.set()
+            raise RuntimeError("late retired handshake failure")
+
+    registry = InstrumentRegistry()
+    item = descriptor("994")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=LateFailureSocket)
+    manager._connect_call_wait_seconds = 0.02
+    try:
+        manager.subscribe("cash", [item.key])
+        assert started.wait(timeout=1.0)
+        before = manager.snapshot()
+        assert before["connect_failures"] == 0
+
+        manager.close()
+        release.set()
+        assert failed.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if not any(
+                thread.name.startswith("common-ws-connect-") and thread.is_alive()
+                for thread in __import__("threading").enumerate()
+            ):
+                break
+            time.sleep(0.01)
+
+        after = manager.snapshot()
+        assert after["connect_failures"] == 0
+        assert after["last_connect_failure"] is None
+        assert after["socket_groups"] == 0
+    finally:
+        release.set()
+        manager.close()
+
+
+
+def test_shared_broker_admission_serializes_connects_across_manager_instances():
+    started = Event()
+    release = Event()
+    second_started = Event()
+
+    class FirstBlockingSocket(FakeSocket):
+        # Keep this subclass's instance accounting isolated from sibling
+        # FakeSocket subclasses that inherit the base class list.
+        instances = []
+
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=4.0)
+            self.connecting = False
+            self.connected = True
+
+    class SecondSocket(FakeSocket):
+        # FakeSocket.instances is inherited by subclasses; keep this test's
+        # instance accounting isolated from FirstBlockingSocket.
+        instances = []
+
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = False
+            self.connected = True
+            second_started.set()
+
+    first_registry = InstrumentRegistry()
+    second_registry = InstrumentRegistry()
+    first_item = descriptor("801")
+    second_item = descriptor("802")
+    first_registry.register(first_item)
+    second_registry.register(second_item)
+    first_manager = CommonWebSocketManager(
+        first_registry, socket_factory=FirstBlockingSocket
+    )
+    second_manager = CommonWebSocketManager(
+        second_registry, socket_factory=SecondSocket
+    )
+    first_manager._connect_call_wait_seconds = 0.02
+    second_manager._connect_call_wait_seconds = 0.02
+    first_manager._recovery_interval_seconds = 60.0
+    second_manager._recovery_interval_seconds = 60.0
+    try:
+        first_manager.subscribe("first", [first_item.key])
+        assert started.wait(timeout=1.0)
+
+        second_manager.subscribe("second", [second_item.key])
+        assert not second_started.is_set(), (
+            "a second manager must not start a broker handshake while the "
+            "first manager's handshake is still unresolved"
+        )
+
+        # The second manager may defer socket construction itself until the
+        # process-wide admission slot is free. Assert handshake serialization,
+        # not eager placeholder allocation.
+        release.set()
+        assert second_started.wait(timeout=2.0)
+        assert len(FirstBlockingSocket.instances) == 1
+        assert FirstBlockingSocket.instances[0].connected is True
+        assert len(SecondSocket.instances) == 1
+        second_socket = SecondSocket.instances[0]
+        assert second_socket.connected is True
+    finally:
+        release.set()
+        first_manager.close()
+        second_manager.close()
+
+
+
+def test_retired_slot_waits_for_actual_transport_thread_after_close_returns():
+    class LingeringTransportSocket(FakeSocket):
+        release_transport = Event()
+
+        def connect(self, **kwargs):
+            super().connect(**kwargs)
+            self._transport_thread = Thread(
+                target=lambda: type(self).release_transport.wait(timeout=5.0),
+                name="test-lingering-angel-transport",
+                daemon=True,
+            )
+            self._transport_thread.start()
+
+        @property
+        def health(self):
+            return {
+                "connected": self.connected,
+                "transport_thread_alive": bool(
+                    getattr(self, "_transport_thread", None)
+                    and self._transport_thread.is_alive()
+                ),
+            }
+
+    LingeringTransportSocket.release_transport.clear()
+    registry = InstrumentRegistry()
+    item = descriptor("805")
+    registry.register(item)
+    manager = CommonWebSocketManager(
+        registry, socket_factory=LingeringTransportSocket
+    )
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        original = LingeringTransportSocket.instances[0]
+        group = SocketGroup(1, 0)
+        with manager._lock:
+            generation = manager._socket_generation[group]
+            manager._sockets.pop(group)
+            manager._socket_tokens.pop(group, None)
+            manager._socket_created_at.pop(group, None)
+            manager._socket_generation.pop(group, None)
+
+        close_worker = manager._close_socket_tracked(
+            original,
+            group=group,
+            generation=generation,
+            reason="test_transport_still_alive",
+            on_finished=lambda: manager._reconcile_after_retirement(group),
+            timeout=0.05,
+        )
+        assert close_worker.is_alive(), (
+            "close() returning must not mark the broker transport retired while "
+            "its run_forever thread is still alive"
+        )
+        manager._reconcile()
+        assert len(LingeringTransportSocket.instances) == 1
+        assert manager.snapshot()["retired_transport_count"] == 1
+
+        LingeringTransportSocket.release_transport.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if len(LingeringTransportSocket.instances) == 2 and manager.snapshot()["retired_transport_count"] == 0:
+                break
+            time.sleep(0.01)
+        assert len(LingeringTransportSocket.instances) == 2
+        assert manager.snapshot()["retired_transport_count"] == 0
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        LingeringTransportSocket.release_transport.set()
         manager.close()

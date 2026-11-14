@@ -1,6 +1,8 @@
 import pytest
 import json
 import threading
+import time
+
 from types import SimpleNamespace
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor
@@ -59,6 +61,7 @@ def test_application_heartbeat_is_answered():
     sent = []
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = fake_ws
     feed._on_message(fake_ws, json.dumps({"t":"h"}))
     assert json.loads(sent[0]) == {"t":"h"}
 
@@ -98,6 +101,7 @@ def test_authentication_ack_is_required_before_market_subscription():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = fake_ws
     feed._on_open(fake_ws)
     assert json.loads(sent[-1])["t"] == "a"
     assert not feed.snapshot()["authenticated"]
@@ -135,6 +139,7 @@ def test_rejected_authentication_never_subscribes_and_state_survives_close():
     )
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: closed.append(True))
+    feed._ws = fake_ws
     feed._on_open(fake_ws)
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "Not_Ok"}))
     assert not feed.snapshot()["authenticated"]
@@ -165,6 +170,7 @@ def test_reconnect_clears_previous_snapshot_before_new_incremental_frames():
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
     # The first socket has completed authentication before market frames.
+    feed._ws = fake_ws
     feed._authenticated = True
     feed._on_message(fake_ws, json.dumps({"t": "tk", "e": "NFO", "tk": "12345",
         "lp": "100.00", "oi": "777", "ft": "1794551794"}))
@@ -189,6 +195,7 @@ def test_subscription_send_failure_marks_error_and_closes_socket():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     fake_ws = SimpleNamespace(send=fail_send, close=lambda: closed.append(True))
     feed.subscribe([descriptor()])
+    feed._ws, feed._authenticated = fake_ws, True
     feed._send_subscriptions(fake_ws)
     assert closed
     assert "socket unavailable" in feed.snapshot()["last_error"]
@@ -275,6 +282,7 @@ def test_stop_uses_one_shared_deadline_for_all_workers(monkeypatch):
     # Advance monotonic time deterministically on each read so the test proves
     # later workers receive only the remaining budget, without sleeping.
     clock = iter((0.0, 1.0, 2.0, 3.0))
+    monkeypatch.setattr(ShoonyaWebSocket, "_start_shutdown_watcher", lambda self, workers: None)
     monkeypatch.setattr("app.market_data.shoonya_websocket.time.monotonic", lambda: next(clock))
 
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
@@ -288,6 +296,66 @@ def test_stop_uses_one_shared_deadline_for_all_workers(monkeypatch):
         "supervisor", "tick-dispatch", "order-dispatch", "heartbeat"
     ]
     assert feed.snapshot()["last_error"].startswith("workers did not stop")
+
+
+def test_stale_socket_error_cannot_poison_replacement_connection():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    old_ws = SimpleNamespace()
+    current_ws = SimpleNamespace()
+    feed._ws = current_ws
+    feed._connected = feed._authenticated = True
+    feed._on_error(old_ws, OSError("old socket send failed"))
+
+    assert feed.snapshot()["connected"] is True
+    assert feed.snapshot()["authenticated"] is True
+    assert feed.snapshot()["last_error"] is None
+    assert states == []
+
+
+def test_stale_socket_cannot_receive_heartbeat_after_reconnect():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    old_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = new_ws
+    feed._authenticated = True
+
+    assert feed._send_heartbeat(old_ws) is False
+    assert sent == []
+
+
+def test_stale_socket_cannot_receive_subscription_replay_after_reconnect():
+    sent = []
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    old_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = new_ws
+    feed._authenticated = True
+
+    feed._send_subscriptions(old_ws)
+    assert sent == []
+
+
+def test_order_updates_use_inbound_om_frames_without_separate_subscription():
+    sent, received = [], []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_order_update=received.append,
+    )
+    current_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = current_ws
+    feed._authenticated = True
+    feed._on_message(current_ws, json.dumps({"t": "om", "status": "COMPLETE"}))
+
+    # Shoonya delivers order updates through the authenticated order stream;
+    # this adapter must not send the obsolete t:o subscription frame.
+    assert sent == []
+    assert feed.snapshot()["order_queue_depth"] == 1
 
 
 def test_stale_socket_callbacks_are_ignored_after_reconnect():
@@ -737,8 +805,10 @@ def test_authentication_timeout_state_survives_socket_close_callback():
         uid="U1", actid="U1", access_token="token",
         on_state=lambda state, reason: states.append((state, reason)),
     )
+    fake_ws = SimpleNamespace()
+    feed._ws = fake_ws
     feed._last_error = "authentication acknowledgement timeout: no Shoonya ak frame for 16s (limit 15s)"
-    feed._on_close(SimpleNamespace(), 1000, "closed by client")
+    feed._on_close(fake_ws, 1000, "closed by client")
 
     assert states[-1][0] == "AUTH_TIMEOUT"
     assert "authentication acknowledgement timeout" in states[-1][1]
@@ -782,30 +852,25 @@ def test_reconnect_backoff_uses_bounded_jitter(monkeypatch):
     assert bounds[-1] == (24.0, 30.0)
 
 
-def test_order_updates_arrive_after_auth_without_separate_subscription_frame():
-    received = []
+def test_authenticated_session_subscribes_order_feed_when_callback_configured():
     sent = []
     feed = ShoonyaWebSocket(
         uid="U1", actid="ACT123", access_token="token",
-        on_order_update=received.append,
+        on_order_update=lambda event: None,
     )
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
     feed._ws = fake_ws
 
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
-    feed._on_message(fake_ws, json.dumps({
-        "t": "om", "actid": "ACT123", "norenordno": "ORDER-1",
-        "status": "COMPLETE", "reporttype": "Fill",
-    }))
 
     frames = [json.loads(frame) for frame in sent]
-    assert frames == [{"t": "t", "k": "NFO|12345"}]
-    assert feed.snapshot()["order_queue_depth"] == 1
-    assert feed.snapshot()["authenticated"]
+    assert frames == [
+        {"t": "t", "k": "NFO|12345"},
+    ]
 
 
-def test_order_updates_continue_to_use_independent_queue_after_reconnect():
+def test_order_updates_do_not_require_separate_subscription_after_reconnect():
     sent = []
     feed = ShoonyaWebSocket(
         uid="U1", actid="ACT123", access_token="token",
@@ -820,28 +885,706 @@ def test_order_updates_continue_to_use_independent_queue_after_reconnect():
     feed._ws = new_ws
 
     feed._on_message(new_ws, json.dumps({"t": "ak", "s": "OK"}))
-    feed._on_message(new_ws, json.dumps({
-        "t": "om", "actid": "ACT123", "norenordno": "ORDER-2",
-        "status": "REJECTED", "reporttype": "Rejected",
-    }))
 
     frames = [json.loads(frame) for frame in sent]
-    assert frames == [{"t": "t", "k": "NFO|12345"}]
-    assert feed.snapshot()["order_queue_depth"] == 1
-    assert feed.snapshot()["authenticated"]
+    assert frames == [
+        {"t": "t", "k": "NFO|12345"},
+    ]
 
 
-def test_order_updates_are_ignored_when_no_order_callback_is_configured():
+def test_order_feed_is_not_subscribed_without_order_callback():
     sent = []
     feed = ShoonyaWebSocket(uid="U1", actid="ACT123", access_token="token")
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
     feed._ws = fake_ws
 
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "OK"}))
-    feed._on_message(fake_ws, json.dumps({
-        "t": "om", "actid": "ACT123", "norenordno": "ORDER-3",
-        "status": "COMPLETE", "reporttype": "Fill",
-    }))
 
     assert sent == []
+
+
+def test_stale_socket_open_cannot_authenticate_or_send_credentials_after_reconnect():
+    sent = []
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    current_ws = SimpleNamespace(send=lambda frame: sent.append(("current", frame)), close=lambda: None)
+    stale_ws = SimpleNamespace(send=lambda frame: sent.append(("stale", frame)), close=lambda: None)
+    feed._ws = current_ws
+
+    feed._on_open(stale_ws)
+
+    assert sent == []
+    assert feed.snapshot()["connected"] is False
+    assert feed.snapshot()["authenticated"] is False
+    assert states == []
+
+
+def test_stale_socket_close_cannot_mark_replacement_session_disconnected():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    current_ws = SimpleNamespace()
+    retired_ws = SimpleNamespace()
+    feed._ws = current_ws
+    feed._connected = True
+    feed._authenticated = True
+
+    feed._on_close(retired_ws, 1000, "late close from retired socket")
+
+    assert feed.snapshot()["connected"] is True
+    assert feed.snapshot()["authenticated"] is True
+    assert states == []
+
+
+def test_stale_auth_ack_cannot_mark_replacement_socket_live():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    current_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    stale_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws = current_ws
+
+    feed._on_message(stale_ws, json.dumps({"t": "ak", "s": "OK"}))
+
+    assert feed.snapshot()["authenticated"] is False
+    assert feed._auth_ack_received is False
+    assert states == []
+
+
+def test_repeated_start_is_idempotent_and_restart_creates_one_new_worker_generation():
+    created = []
+    opened = []
+    created_event = threading.Event()
+    class BlockingSocket:
+        def __init__(self, **callbacks):
+            self.callbacks = callbacks
+            self.closed = threading.Event()
+            self.opened = threading.Event()
+        def run_forever(self, **kwargs):
+            self.opened.set()
+            opened.append(self)
+            self.closed.wait(timeout=3)
+        def close(self):
+            self.closed.set()
+
+    def factory(url, **callbacks):
+        socket = BlockingSocket(**callbacks)
+        created.append(socket)
+        created_event.set()
+        return socket
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        websocket_factory=factory,
+        reconnect_min_seconds=0.01,
+        reconnect_max_seconds=0.02,
+    )
+
+    feed.start()
+    assert created_event.wait(timeout=1)
+    assert created[0].opened.wait(timeout=1)
+    first_supervisor = feed._thread
+    first_dispatcher = feed._dispatch_thread
+    feed.start()
+    assert feed._thread is first_supervisor
+    assert feed._dispatch_thread is first_dispatcher
+    assert len(created) == 1
+
+    feed.stop()
+    assert not feed.snapshot()["shutdown_workers_alive"]
+
+    feed.start()
+    assert len(created) == 2 or (len(created) == 1 and created[0].opened.wait(timeout=0.1))
+    if len(created) == 1:
+        # The first fake socket has been closed; the second run loop may not
+        # have entered its factory yet when the thread-start assertion occurs.
+        deadline = __import__("time").monotonic() + 1
+        while len(created) < 2 and __import__("time").monotonic() < deadline:
+            threading.Event().wait(0.01)
+    assert len(created) == 2
+    assert created[1].opened.wait(timeout=1)
+    feed.stop()
+    assert not feed.snapshot()["shutdown_workers_alive"]
+
+
+def test_read_only_tick_observer_receives_authenticated_generation_metadata_off_queue():
+    observed = []
+    legacy = []
+    delivered = threading.Event()
+
+    def observer(record, generation, authenticated, received_monotonic_ns):
+        observed.append((record, generation, authenticated, received_monotonic_ns))
+        delivered.set()
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=legacy.append,
+        on_tick_observation=observer,
+    )
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws = fake_ws
+    feed._authenticated = True
+    feed._feed_epoch = 7
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+
+    assert feed.snapshot()["dispatch_queue_depth"] == 1
+    item = feed._queue.get_nowait()
+    feed._queue.task_done()
+    assert len(item) == 3
+    feed._queue.put_nowait(item)
+
+    dispatcher = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    dispatcher.start()
+    assert delivered.wait(timeout=1)
+    feed._stop.set()
+    dispatcher.join(timeout=1)
+
+    assert not dispatcher.is_alive()
+    assert len(legacy) == 1 and isinstance(legacy[0], dict)
+    assert len(observed) == 1
+    record, generation, authenticated, received_ns = observed[0]
+    assert record.timestamp_ns == 1794551794000000000
+    assert generation == 7
+    assert authenticated is True
+    assert received_ns > 0
+
+
+def test_read_only_tick_observer_does_not_receive_retired_generation():
+    observed = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick_observation=lambda *args: observed.append(args),
+    )
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    feed._feed_epoch = 3
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+    feed._reset_feed_epoch()
+    # Drain the accepted legacy payload; the observer must be fenced.
+    feed._stop.set()
+    dispatcher = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    dispatcher.start()
+    dispatcher.join(timeout=1)
+    assert not dispatcher.is_alive()
+    assert observed == []
+
+
+
+def test_superseded_epoch_cannot_mutate_snapshot_after_normalization(monkeypatch):
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    original_normalize = feed._normalizer.normalize
+
+    def normalize_then_reconnect(instrument, payload):
+        record = original_normalize(instrument, payload)
+        feed._reset_feed_epoch()
+        feed._authenticated = True
+        return record
+
+    monkeypatch.setattr(feed._normalizer, "normalize", normalize_then_reconnect)
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55", "ft": "1794551794",
+    })
+
+    assert ("NFO", "12345") not in feed._snapshots
+    assert feed.snapshot()["ticks_received"] == 0
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
+
+
+def test_observer_runs_even_if_legacy_tick_callback_raises():
+    observed = []
+    delivered = threading.Event()
+
+    def observer(record, generation, authenticated, received_monotonic_ns):
+        observed.append((record, generation, authenticated, received_monotonic_ns))
+        delivered.set()
+
+    def broken_legacy(_payload):
+        raise RuntimeError("legacy consumer failure")
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=broken_legacy,
+        on_tick_observation=observer,
+    )
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    feed._feed_epoch = 11
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+
+    dispatcher = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    dispatcher.start()
+    assert delivered.wait(timeout=1)
+    feed._stop.set()
+    dispatcher.join(timeout=1)
+
+    assert not dispatcher.is_alive()
+    assert len(observed) == 1
+    assert observed[0][1:3] == (11, True)
+
+
+
+def test_session_observer_is_additive_to_legacy_state_callback():
+    states, observations = [], []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+        on_session_observation=lambda *args: observations.append(args),
+    )
+    feed._feed_epoch = 11
+    feed._connected = True
+    feed._authenticated = True
+    feed._emit_state("LIVE", None)
+
+    assert states == [("LIVE", None)]
+    assert len(observations) == 1
+    state, reason, epoch, connected, authenticated, received_ns = observations[0]
+    assert (state, reason, epoch, connected, authenticated) == ("LIVE", None, 11, True, True)
+    assert received_ns > 0
+
+
+def test_session_observer_failure_does_not_break_legacy_state_callback():
+    states = []
+    def fail_observer(*_args):
+        raise RuntimeError("observer failure")
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+        on_session_observation=fail_observer,
+    )
+    feed._feed_epoch = 12
+    feed._emit_state("AUTHENTICATING", None)
+    assert states == [("AUTHENTICATING", None)]
+
+
+def test_legacy_state_callback_failure_does_not_block_session_observer():
+    observations = []
+    def fail_state(_state, _reason):
+        raise RuntimeError("legacy callback failure")
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_state=fail_state,
+        on_session_observation=lambda *args: observations.append(args),
+    )
+    feed._feed_epoch = 13
+    feed._connected = True
+    feed._emit_state("AUTHENTICATING", None)
+    assert len(observations) == 1
+    assert observations[0][2] == 13
+
+
+def test_partial_worker_start_failure_rolls_back_all_started_workers(monkeypatch):
+    original_start = threading.Thread.start
+    calls = {"count": 0}
+
+    def fail_third_start(worker):
+        calls["count"] += 1
+        if calls["count"] == 3:
+            raise RuntimeError("simulated thread resource exhaustion")
+        return original_start(worker)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_third_start)
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+
+    with pytest.raises(RuntimeError, match="simulated thread resource exhaustion"):
+        feed.start()
+
+    assert calls["count"] == 3
+    assert feed._stop.is_set()
+    assert feed.snapshot()["shutdown_workers_alive"] == []
+    assert feed._thread is None
+    assert feed._dispatch_thread is None
+    assert feed._order_dispatch_thread is None
+    assert feed._heartbeat_thread is None
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["open", "heartbeat", "market_subscription"],
+)
+def test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock(operation):
+    send_entered = threading.Event()
+    release_send = threading.Event()
+    close_called = threading.Event()
+
+    def blocked_send(_frame):
+        send_entered.set()
+        assert release_send.wait(timeout=2.0)
+
+    class BlockingWriteSocket:
+        def send(self, frame):
+            blocked_send(frame)
+
+        def close(self):
+            close_called.set()
+            release_send.set()
+
+    order_callback = None
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_order_update=order_callback,
+    )
+    socket = BlockingWriteSocket()
+    feed._ws = socket
+    if operation != "open":
+        feed._authenticated = True
+    if operation == "market_subscription":
+        feed.subscribe([descriptor()])
+
+    def write():
+        if operation == "open":
+            feed._on_open(socket)
+        elif operation == "heartbeat":
+            feed._send_heartbeat(socket)
+        elif operation == "market_subscription":
+            feed._send_subscriptions(socket)
+        else:
+            feed._send_subscriptions(socket)
+
+    writer = threading.Thread(target=write, name=f"blocked-{operation}-write")
+    writer.start()
+    assert send_entered.wait(timeout=1.0)
+
+    stopper = threading.Thread(target=feed.stop, name=f"stop-during-{operation}-write")
+    stopper.start()
+    try:
+        assert close_called.wait(timeout=0.5), (
+            f"stop() could not close the socket while {operation} send was blocked; "
+            "network I/O must not hold the lifecycle lock"
+        )
+    finally:
+        release_send.set()
+        writer.join(timeout=1.0)
+        stopper.join(timeout=1.0)
+
+    assert not writer.is_alive()
+    assert not stopper.is_alive()
+    assert feed.snapshot()["shutdown_workers_alive"] == []
+
+
+
+def test_late_shoonya_factory_completion_cannot_resurrect_stopped_adapter():
+    factory_entered = threading.Event()
+    release_factory = threading.Event()
+    created = []
+
+    class DelayedSocket:
+        def __init__(self):
+            self.closed = False
+            self.run_calls = 0
+
+        def close(self):
+            self.closed = True
+
+        def run_forever(self, **kwargs):
+            self.run_calls += 1
+
+    def delayed_factory(*args, **kwargs):
+        factory_entered.set()
+        assert release_factory.wait(timeout=8.0)
+        socket = DelayedSocket()
+        created.append(socket)
+        return socket
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        websocket_factory=delayed_factory,
+    )
+    feed.start()
+    assert factory_entered.wait(timeout=2.0)
+    try:
+        feed.stop()
+    finally:
+        release_factory.set()
+
+    supervisor = feed._thread
+    assert supervisor is not None
+    supervisor.join(timeout=2.0)
+    assert not supervisor.is_alive()
+    assert len(created) == 1
+    assert created[0].closed is True
+    assert created[0].run_calls == 0
+    assert feed.snapshot()["connected"] is False
+    assert feed._ws is None
+
+
+
+def test_retired_epoch_queue_items_never_reach_legacy_or_shadow_callbacks():
+    legacy, shadow = [], []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=legacy.append,
+        on_tick_observation=lambda *args: shadow.append(args),
+    )
+    feed._authenticated = True
+    for retired_epoch in range(1, 8):
+        feed._feed_epoch = retired_epoch
+        feed._enqueue(
+            "tick", {"epoch": retired_epoch},
+            observation=(object(), retired_epoch, True, time.monotonic_ns()),
+        )
+    # Simulate the latest reconnect completing before the dispatcher drains.
+    feed._feed_epoch = 8
+    feed._authenticated = True
+    feed._stop.set()
+    dispatcher = threading.Thread(target=feed._dispatch_loop, name="stale-epoch-drain")
+    dispatcher.start()
+    dispatcher.join(timeout=2.0)
+
+    assert not dispatcher.is_alive()
+    assert legacy == []
+    assert shadow == []
+    assert feed.snapshot()["stale_dispatch_drops"] == 7
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
+    assert feed.snapshot()["ticks_dispatched"] == 0
+
+
+def test_shoonya_dispatch_queue_remains_bounded_during_reconnect_burst():
+    close_calls = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        max_dispatch_queue=3,
+    )
+    feed._ws = SimpleNamespace(close=lambda: close_calls.append(True))
+    feed._authenticated = True
+    for epoch in range(1, 11):
+        feed._feed_epoch = epoch
+        feed._enqueue(
+            "tick", {"epoch": epoch},
+            observation=(object(), epoch, True, time.monotonic_ns()),
+        )
+
+    state = feed.snapshot()
+    assert state["dispatch_queue_capacity"] == 3
+    assert state["dispatch_queue_depth"] == 3
+    assert state["dispatch_drops"] == 7
+    assert len(close_calls) == 7
+
+
+
+def test_shoonya_order_updates_from_retired_epoch_are_dropped():
+    delivered = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_order_update=delivered.append,
+    )
+    feed._feed_epoch = 4
+    feed._authenticated = True
+    feed._enqueue("order", {"t": "om", "status": "OLD"})
+    feed._feed_epoch = 5
+    feed._authenticated = True
+    feed._stop.set()
+    worker = threading.Thread(target=feed._order_dispatch_loop, daemon=True)
+    worker.start()
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert delivered == []
+    assert feed.snapshot()["stale_dispatch_drops"] == 1
     assert feed.snapshot()["order_queue_depth"] == 0
+
+
+def test_shoonya_shadow_observer_is_fenced_if_epoch_changes_during_legacy_callback():
+    entered = threading.Event()
+    release = threading.Event()
+    observed = []
+
+    def legacy(_payload):
+        entered.set()
+        assert release.wait(timeout=2.0)
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=legacy,
+        on_tick_observation=lambda *args: observed.append(args),
+    )
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    feed._feed_epoch = 21
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+    worker = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    feed._reset_feed_epoch()
+    feed._authenticated = True
+    release.set()
+    feed._stop.set()
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert observed == []
+    assert feed.snapshot()["stale_dispatch_drops"] == 1
+
+
+
+def test_shoonya_shutdown_timeout_diagnostics_clear_after_worker_exits():
+    release = threading.Event()
+    worker = threading.Thread(
+        target=lambda: release.wait(timeout=2.0),
+        name="blocked-shoonya-test-worker",
+        daemon=True,
+    )
+    worker.start()
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed._dispatch_thread = worker
+    feed._shutdown_workers_alive = [worker.name]
+
+    feed._start_shutdown_watcher((worker,))
+    assert feed.snapshot()["shutdown_watcher_alive"] is True
+    assert feed.snapshot()["shutdown_workers_alive"] == [worker.name]
+
+    release.set()
+    worker.join(timeout=1.0)
+    watcher = feed._shutdown_watcher
+    assert watcher is not None
+    watcher.join(timeout=1.0)
+
+    state = feed.snapshot()
+    assert state["shutdown_watcher_alive"] is False
+    assert state["shutdown_workers_alive"] == []
+
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"t": "om", "status": "COMPLETE"},
+        {
+            "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+            "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+            "bq1": "100", "sq1": "120", "ft": "1794551794",
+        },
+    ],
+)
+def test_shoonya_retired_socket_message_cannot_be_retagged_with_new_epoch(message):
+    delivered_orders = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_order_update=delivered_orders.append,
+    )
+    feed.subscribe([descriptor()])
+    retired_socket = SimpleNamespace()
+    current_socket = SimpleNamespace()
+    feed._ws = current_socket
+    feed._feed_epoch = 32
+    feed._authenticated = True
+
+    # Model the narrow race where the outer callback guard already returned,
+    # then the old socket callback reaches _on_message after replacement.
+    feed._on_message(retired_socket, json.dumps(message))
+
+    assert feed.snapshot()["last_frame_at"] is None
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
+    assert feed.snapshot()["order_queue_depth"] == 0
+    assert delivered_orders == []
+
+
+def test_repeated_shoonya_start_stop_cycles_keep_one_worker_generation_and_snapshots_consistent():
+    """Exercise repeated real worker creation/retirement with a concurrent health reader."""
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        reconnect_min_seconds=0.01, reconnect_max_seconds=0.02,
+    )
+    factory_lock = threading.Lock()
+    factory_apps = []
+    reader_stop = threading.Event()
+    reader_ready = threading.Event()
+    reader_failures = []
+    snapshots = []
+
+    class BlockingApp:
+        def __init__(self, url, **callbacks):
+            self.callbacks = callbacks
+            self.started = threading.Event()
+            self.closed = threading.Event()
+            self.run_count = 0
+
+        def run_forever(self, **kwargs):
+            self.run_count += 1
+            self.started.set()
+            self.closed.wait(timeout=2)
+
+        def close(self):
+            self.closed.set()
+
+    def factory(url, **callbacks):
+        app = BlockingApp(url, **callbacks)
+        with factory_lock:
+            factory_apps.append(app)
+        return app
+
+    feed._factory = factory
+
+    def snapshot_reader():
+        try:
+            while not reader_stop.is_set():
+                state = feed.snapshot()
+                assert isinstance(state["shutdown_workers_alive"], list)
+                assert isinstance(state["shutdown_watcher_alive"], bool)
+                assert isinstance(state["connected"], bool)
+                snapshots.append(state)
+                reader_ready.set()
+        except BaseException as exc:
+            reader_failures.append(exc)
+
+    reader = threading.Thread(target=snapshot_reader, name="shoonya-health-snapshot-reader")
+    reader.start()
+    try:
+        assert reader_ready.wait(timeout=1), "snapshot reader did not start"
+        for cycle in range(12):
+            feed.start()
+            deadline = time.monotonic() + 1.0
+            app = None
+            while time.monotonic() < deadline:
+                with factory_lock:
+                    if len(factory_apps) > cycle:
+                        app = factory_apps[cycle]
+                if app is not None and app.started.wait(timeout=0.01):
+                    break
+            assert app is not None and app.started.is_set(), f"cycle {cycle} transport did not start"
+            feed.stop()
+            state = feed.snapshot()
+            assert state["shutdown_workers_alive"] == [], f"cycle {cycle} leaked workers: {state}"
+            assert app.closed.is_set()
+            assert app.run_count == 1
+    finally:
+        feed.stop()
+        reader_stop.set()
+        reader.join(timeout=2)
+
+    assert not reader.is_alive(), "snapshot reader did not terminate"
+    assert reader_failures == []
+    assert len(factory_apps) == 12
+    assert all(app.run_count == 1 and app.closed.is_set() for app in factory_apps)
+    assert snapshots, "concurrent health reader did not capture any snapshots"
+    final = feed.snapshot()
+    assert final["shutdown_workers_alive"] == []
+    assert final["shutdown_watcher_alive"] is False

@@ -27,16 +27,21 @@ class BoundedPriorityBuffer(Generic[T]):
                     return False
                 self._condition.wait(left)
             (self._critical if priority is BufferPriority.CRITICAL else self._normal).append(item);self._condition.notify_all();return True
-    def get(self,timeout=None):
+    def get(self,timeout=None,*,stop_event=None):
         with self._condition:
             deadline=None if timeout is None else monotonic()+max(0,timeout)
             while not self._critical and not self._normal:
+                if stop_event is not None and stop_event.is_set():
+                    raise Empty
                 if deadline is None:self._condition.wait()
                 else:
                     left=deadline-monotonic()
                     if left<=0:raise Empty
                     self._condition.wait(left)
             item=(self._critical if self._critical else self._normal).popleft();self._condition.notify_all();return item
+    def wake_all(self):
+        """Wake blocked consumers so they can observe an external stop event."""
+        with self._condition:self._condition.notify_all()
     def task_done(self):
         with self._condition:self._condition.notify_all()
     def snapshot(self):

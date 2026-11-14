@@ -34,3 +34,151 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
         "exchange_type": 1, "exchange": "NSE", "segment": "NSE", "token": "123",
         "symbol": "TEST", "timestamp_ns": 123456789, "ltp": 101.5, "bid": 101.4, "ask": 101.6,
     }
+
+
+def test_angel_normalized_observer_receives_generation_but_auth_fails_closed():
+    key = InstrumentKey("NSE", "NSE", "123")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="TEST", instrument_type="equity", exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("observer", key, mode=3)
+    group = SocketGroup(3, 0)
+    manager._route_index = {group: {(1, "123"): [("observer", key)]}}
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 9
+    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
+    )
+    observed = []
+    manager.register_normalized_observer("observer", lambda *args: observed.append(args))
+
+    manager._on_data(group, {"token": "123", "exchange_type": 1}, generation=9)
+
+    assert len(observed) == 1
+    record, observed_group, generation, authenticated, current, received_ns = observed[0]
+    assert record.symbol == "TEST"
+    assert observed_group == group
+    assert generation == 9
+    assert authenticated is False
+    assert current is True
+    assert received_ns > 0
+
+    auth = manager.snapshot()["normalized_observer_authentication"]
+    assert auth == {
+        "state": "NOT_VERIFIABLE",
+        "authenticated": False,
+        "evidence": "NO_BROKER_AUTH_ACKNOWLEDGEMENT",
+        "transport_open_is_authentication": False,
+        "subscription_send_is_authentication": False,
+        "authentication_acknowledgement_observed": False,
+        "parity_generation_activation_allowed": False,
+    }
+
+
+def test_angel_observer_is_not_called_for_retired_generation():
+    key = InstrumentKey("NSE", "NSE", "123")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="TEST", instrument_type="equity", exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("observer", key, mode=3)
+    group = SocketGroup(3, 0)
+    manager._route_index = {group: {(1, "123"): [("observer", key)]}}
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 10
+    observed = []
+    manager.register_normalized_observer("observer", lambda *args: observed.append(args))
+
+    manager._on_data(group, {"token": "123", "exchange_type": 1}, generation=9)
+
+    assert observed == []
+
+
+def test_angel_observer_failure_does_not_break_legacy_normalized_callback():
+    key = InstrumentKey("NSE", "NSE", "123")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="TEST", instrument_type="equity", exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("legacy", key, mode=3)
+    manager.registry.subscribe("observer", key, mode=3)
+    group = SocketGroup(3, 0)
+    manager._route_index = {group: {(1, "123"): [("legacy", key), ("observer", key)]}}
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 2
+    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
+    )
+    delivered = []
+    manager.register_normalized_callback("legacy", delivered.append)
+    manager.register_normalized_observer("observer", lambda *_: (_ for _ in ()).throw(RuntimeError("observer fault")))
+
+    manager._on_data(group, {"token": "123", "exchange_type": 1}, generation=2)
+
+    assert len(delivered) == 1
+    assert delivered[0].symbol == "TEST"
+    assert manager.snapshot()["normalized_records_delivered"] == 1
+
+
+def test_angel_observer_keeps_all_legacy_consumers_on_same_instrument():
+    key = InstrumentKey("NSE", "NSE", "123")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="TEST", instrument_type="equity", exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("first", key, mode=3)
+    manager.registry.subscribe("second", key, mode=3)
+    group = SocketGroup(3, 0)
+    manager._route_index = {group: {(1, "123"): [("first", key), ("second", key)]}}
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 3
+    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
+    )
+    first, second = [], []
+    manager.register_normalized_callback("first", first.append)
+    manager.register_normalized_callback("second", second.append)
+    manager.register_normalized_observer("second", lambda *_: None)
+
+    manager._on_data(group, {"token": "123", "exchange_type": 1}, generation=3)
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert manager.snapshot()["normalized_records_delivered"] == 2
+
+
+
+def test_angel_observer_only_consumer_is_a_valid_route_and_can_unregister():
+    key = InstrumentKey("NSE", "NSE", "456")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="OBSERVER_ONLY", instrument_type="equity",
+        exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("observer-only", key, mode=3)
+    group = SocketGroup(3, 0)
+    manager._route_index = {group: {(1, "456"): [("observer-only", key)]}}
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 4
+    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+        instrument=key, symbol="OBSERVER_ONLY", timestamp_ns=123456789,
+        ltp=10.0, bid=9.9, ask=10.1,
+    )
+    observed = []
+    manager.register_normalized_observer("observer-only", lambda *args: observed.append(args))
+
+    manager._on_data(group, {"token": "456", "exchange_type": 1}, generation=4)
+    assert len(observed) == 1
+    assert manager.snapshot()["missing_callback_routes"] == 0
+    assert "observer-only" in manager.snapshot()["consumers"]
+
+    manager.unregister_normalized_observer("observer-only")
+    manager._on_data(group, {"token": "456", "exchange_type": 1}, generation=4)
+    assert len(observed) == 1
+    assert manager.snapshot()["missing_callback_routes"] == 1
