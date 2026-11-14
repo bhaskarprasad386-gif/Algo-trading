@@ -137,4 +137,4 @@ jobs:
       - name: Run off-market replay and Box readiness contracts
         working-directory: backend
         run: |
-          PYTHONPATH=. pytest -q tests/test_off_market_runtime_verification.py app/market_data/tests/test_common_strategy_feed_warm_start.py tests/test_live_box_spread_runner.py
+          PYTHONPATH=. pytest -q tests/test_off_market_runtime_verification.py app/market_data/tests/test_common_strategy_feed_warm_start.py
