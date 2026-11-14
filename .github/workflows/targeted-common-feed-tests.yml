@@ -1,6 +1,26 @@
 name: Targeted Common Feed Tests
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/market_data/common_websocket.py"
+      - "backend/app/market_data/common_strategy_feed.py"
+      - "backend/app/market_data/normalizer.py"
+      - "backend/app/market_data/cash_future_opportunity.py"
+      - "backend/app/market_data/live_cash_future_common.py"
+      - "backend/app/market_data/websocket.py"
+      - "backend/app/market_data/provider_readiness.py"
+      - "backend/app/market_data/provider_readiness_bridge.py"
+      - "backend/app/market_data/shoonya_websocket.py"
+      - "backend/app/market_data/tests/**"
+      - "backend/tests/test_live_cash_future_common.py"
+      - "backend/tests/test_live_synthetic_underlying.py"
+      - "backend/tests/test_live_synthetic_runner.py"
+      - "backend/tests/test_provider_readiness.py"
+      - "backend/tests/test_provider_readiness_bridge.py"
+      - "backend/tests/test_shoonya_market_data.py"
+      - ".github/workflows/targeted-common-feed-tests.yml"
   pull_request:
     branches: [main]
     paths:
@@ -9,24 +29,31 @@ on:
       - "backend/app/market_data/normalizer.py"
       - "backend/app/market_data/cash_future_opportunity.py"
       - "backend/app/market_data/live_cash_future_common.py"
-      - "backend/app/market_data/tests/test_batch_k.py"
-      - "backend/tests/test_live_cash_future_common.py"
       - "backend/app/market_data/websocket.py"
-      - "backend/app/market_data/tests/test_common_websocket.py"
-      - "backend/app/market_data/tests/test_common_websocket_429_cooldown.py"
-      - "backend/app/market_data/tests/test_websocket.py"
-      - "backend/app/market_data/tests/test_batch_pq.py"
-      - "backend/app/market_data/live_synthetic_underlying.py"
-      - "backend/app/market_data/live_synthetic_runner.py"
+      - "backend/app/market_data/provider_readiness.py"
+      - "backend/app/market_data/provider_readiness_bridge.py"
+      - "backend/app/market_data/shoonya_websocket.py"
+      - "backend/app/market_data/tests/**"
+      - "backend/tests/test_live_cash_future_common.py"
       - "backend/tests/test_live_synthetic_underlying.py"
       - "backend/tests/test_live_synthetic_runner.py"
+      - "backend/tests/test_provider_readiness.py"
+      - "backend/tests/test_provider_readiness_bridge.py"
+      - "backend/tests/test_shoonya_market_data.py"
       - ".github/workflows/targeted-common-feed-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: common-feed-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   common-feed:
     name: Common feed targeted regression
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       SECRET_KEY: ci-test-secret-key-not-for-production
     steps:
@@ -48,6 +75,9 @@ jobs:
           python -m py_compile app/market_data/common_websocket.py
           python -m py_compile app/market_data/common_strategy_feed.py
           python -m py_compile app/market_data/websocket.py
+          python -m py_compile app/market_data/provider_readiness.py
+          python -m py_compile app/market_data/provider_readiness_bridge.py
+          python -m py_compile app/market_data/shoonya_websocket.py
           python -m py_compile app/market_data/normalizer.py
           python -m py_compile app/market_data/cash_future_opportunity.py
           python -m py_compile app/market_data/live_cash_future_common.py
@@ -74,3 +104,12 @@ jobs:
             tests/test_live_synthetic_underlying.py \
             tests/test_live_synthetic_runner.py \
             -k "underlying_feed_clears_old_subscription or underlying_feed_does_not_mark_recently_received_stale_exchange_tick or runner_does_not_block_startup_on_underlying_token_preflight or run_forever_starts_common_feed_without_descriptor_token_attribute or underlying_feed_retains_unresolved_target_and_recovers_token or underlying_feed_maps_shared_canonical_symbol_back_to_configured_underlying or underlying_feed_reports_connected_but_silent or underlying_feed_reports_stale_after_last_tick_expires or underlying_feed_reports_reconnecting_when_transport_is_down_without_ticks or underlying_feed_reports_failed_when_transport_close_is_stuck"
+      - name: Run dual-broker readiness lifecycle regressions
+        working-directory: backend
+        env:
+          PYTHONPATH: ..
+        run: |
+          python -m pytest -q \
+            tests/test_provider_readiness.py \
+            tests/test_provider_readiness_bridge.py \
+            tests/test_shoonya_market_data.py
