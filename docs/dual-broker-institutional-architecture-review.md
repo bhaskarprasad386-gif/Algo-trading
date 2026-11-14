@@ -549,3 +549,13 @@ an incomplete implementation:
 - Added a focused assertion that the diagnostic remains fail-closed.
 - No SmartAPI lifecycle, subscription, scanner, Box Spread, IV Scanner, source-selection, failover, or order-routing behavior changed.
 - Tests are committed but have not been executed in this session; exact-head CI remains required.
+
+
+## Batch 25 — distinguish Angel transport readiness from authentication evidence
+
+- Reviewed the upstream `angel-one/smartapi-python` `SmartWebSocketV2` implementation: `_on_open` delegates to the application open callback; its control-message handler handles ping/pong; the documented sample subscribes from `on_open`. These are transport/control/subscription lifecycle events, not a separately exposed broker-authentication acknowledgement.
+- Extended the common-feed diagnostic to state explicitly that transport-open and subscription-send are not authentication evidence, and that no authentication acknowledgement has been observed.
+- Kept `authenticated=false` and parity-generation activation disabled.
+- Extended the regression assertion for these explicit fail-closed fields.
+- No SDK monkey-patching, scanner, Box Spread, IV Scanner, subscription, source-selection, failover, or order-routing changes.
+- Tests remain unexecuted in this session; exact-head CI is required.
