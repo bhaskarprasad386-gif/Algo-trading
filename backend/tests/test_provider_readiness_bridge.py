@@ -1,4 +1,6 @@
+from dataclasses import replace
 from types import SimpleNamespace
+import time
 from time import monotonic_ns, time_ns
 
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
@@ -185,7 +187,7 @@ def test_shoonya_market_event_after_auth_rejection_is_ignored():
 def test_bridge_rejects_invalid_or_future_exchange_timestamp():
     bridge = ProviderReadinessBridge()
     group = SimpleNamespace(mode=2, shard=0)
-    future_record = _record().model_copy(update={"timestamp_ns": time_ns() + 60_000_000_000})
+    future_record = replace(_record(), timestamp_ns=time_ns() + 60_000_000_000)
     bridge.angel_market_event(future_record, group, 21, False, True, monotonic_ns())
     state = bridge.snapshot()["angel_one"]["2:0"]
     assert state["canonical_identity_valid"] is True
@@ -197,7 +199,7 @@ def test_bridge_rejects_invalid_or_future_exchange_timestamp():
 def test_bridge_rejects_missing_canonical_identity():
     bridge = ProviderReadinessBridge()
     group = SimpleNamespace(mode=2, shard=1)
-    invalid_record = _record().model_copy(update={"symbol": " "})
+    invalid_record = replace(_record(), symbol=" ")
     bridge.angel_market_event(invalid_record, group, 22, False, True, monotonic_ns())
     state = bridge.snapshot()["angel_one"]["2:1"]
     assert state["canonical_identity_valid"] is False
