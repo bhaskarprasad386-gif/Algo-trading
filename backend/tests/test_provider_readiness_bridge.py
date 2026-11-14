@@ -695,6 +695,10 @@ def test_manager_observer_concurrent_three_shard_recovery_storm_isolated():
     barrier = Barrier(len(groups))
     generations = 40
 
+    class NoopSocket:
+        def close(self):
+            pass
+
     def drive_group(group):
         try:
             barrier.wait(timeout=2)
@@ -703,7 +707,7 @@ def test_manager_observer_concurrent_three_shard_recovery_storm_isolated():
                 replacement = generation + 1
                 # Publish a new active manager generation before its OPEN event.
                 with manager._lock:
-                    manager._sockets[group] = object()
+                    manager._sockets[group] = (generation, NoopSocket())
                     manager._socket_generation[group] = generation
                     manager._socket_generation_counter[group] = generation
                 manager._notify_transport_observers(
@@ -719,7 +723,7 @@ def test_manager_observer_concurrent_three_shard_recovery_storm_isolated():
                 )
                 # Retire the generation in the manager and publish its successor.
                 with manager._lock:
-                    manager._sockets[group] = object()
+                    manager._sockets[group] = (replacement, NoopSocket())
                     manager._socket_generation[group] = replacement
                     manager._socket_generation_counter[group] = replacement
                 manager._notify_transport_observers(
