@@ -65,6 +65,14 @@ def test_angel_normalized_observer_receives_generation_but_auth_fails_closed():
     assert current is True
     assert received_ns > 0
 
+    auth = manager.snapshot()["normalized_observer_authentication"]
+    assert auth == {
+        "state": "NOT_VERIFIABLE",
+        "authenticated": False,
+        "evidence": "NO_BROKER_AUTH_ACKNOWLEDGEMENT",
+        "parity_generation_activation_allowed": False,
+    }
+
 
 def test_angel_observer_is_not_called_for_retired_generation():
     key = InstrumentKey("NSE", "NSE", "123")
