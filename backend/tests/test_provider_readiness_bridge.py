@@ -760,3 +760,69 @@ def test_manager_observer_concurrent_three_shard_recovery_storm_isolated():
         assert state["order_eligible"] is False
     finally:
         manager.close()
+
+
+def test_manager_close_waits_for_pre_admitted_transport_observer_callback():
+    """Shutdown cannot return while a pre-admitted OPEN observer is still executing."""
+    from threading import Event, Thread
+
+    from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    callback_entered = Event()
+    release_callback = Event()
+    close_finished = Event()
+    calls = []
+
+    def observer(event, observed_group, generation, received_ns):
+        calls.append((event, observed_group, generation))
+        callback_entered.set()
+        assert release_callback.wait(timeout=3), "observer release gate timed out"
+
+    manager.register_transport_observer("blocking-regression", observer)
+    with manager._lock:
+        manager._sockets[group] = object()
+        manager._socket_generation[group] = 7
+        manager._socket_generation_counter[group] = 7
+
+    notify_thread = Thread(
+        target=lambda: manager._notify_transport_observers("OPEN", group, 7, 100),
+        name="pre-admitted-transport-open",
+    )
+    close_errors = []
+
+    def close_manager():
+        try:
+            manager.close()
+        except BaseException as exc:
+            close_errors.append(exc)
+        finally:
+            close_finished.set()
+
+    try:
+        notify_thread.start()
+        assert callback_entered.wait(timeout=2), "OPEN observer was not invoked"
+        close_thread = Thread(target=close_manager, name="observer-dispatch-shutdown")
+        close_thread.start()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            with manager._lock:
+                if manager._closed:
+                    break
+            time.sleep(0.005)
+        with manager._lock:
+            assert manager._closed is True
+        assert not close_finished.wait(timeout=0.05), "close returned before observer callback completed"
+        release_callback.set()
+        notify_thread.join(timeout=2)
+        close_thread.join(timeout=2)
+        assert not notify_thread.is_alive()
+        assert not close_thread.is_alive()
+        assert close_errors == []
+        assert close_finished.is_set()
+        manager._notify_transport_observers("OPEN", group, 7, 200)
+        assert calls == [("OPEN", group, 7)]
+    finally:
+        release_callback.set()
+        manager.close()
