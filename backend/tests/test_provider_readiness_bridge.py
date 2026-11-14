@@ -379,3 +379,61 @@ def test_manager_transport_observer_and_shoonya_epoch_recovery_are_integrated():
         manager._sockets.clear()
         manager._socket_generation.clear()
     manager.close()
+
+
+def test_dual_broker_reconnect_storm_keeps_only_latest_generations_authoritative():
+    """Replay many reconnect/failure cycles and late callbacks without broker I/O."""
+    bridge = ProviderReadinessBridge()
+    groups = [
+        SimpleNamespace(mode=1, shard=0),
+        SimpleNamespace(mode=3, shard=1),
+        SimpleNamespace(mode=5, shard=2),
+    ]
+
+    # Angel: each shard repeatedly opens, errors, rejects same-generation
+    # resurrection, then advances. Delayed close from the retired generation
+    # must never close the replacement.
+    for cycle in range(1, 65):
+        for offset, group in enumerate(groups):
+            generation = cycle * 100 + offset + 1
+            base = cycle * 10_000 + offset * 100
+            bridge.angel_transport_event("OPEN", group, generation, base + 1)
+            bridge.angel_transport_event("ERROR", group, generation, base + 2)
+            bridge.angel_transport_event("OPEN", group, generation, base + 3)
+            bridge.angel_transport_event("OPEN", group, generation + 1, base + 4)
+            bridge.angel_transport_event("CLOSED", group, generation, base + 5)
+
+    # Shoonya: authenticate each epoch, terminally reject it, then start a
+    # higher epoch. A late LIVE from the retired epoch must not authenticate it.
+    for epoch in range(1, 65):
+        received = epoch * 1_000
+        bridge.shoonya_state("AUTHENTICATING", None, epoch, True, False, received + 1)
+        bridge.shoonya_state("LIVE", None, epoch, True, True, received + 2)
+        bridge.shoonya_state("AUTH_TIMEOUT", "simulated timeout", epoch, False, False, received + 3)
+        bridge.shoonya_state("LIVE", None, epoch, True, True, received + 4)
+
+    # Final epoch recovers; late callbacks from the 64th epoch cannot regress it.
+    bridge.shoonya_state("AUTHENTICATING", None, 65, True, False, 65_001)
+    bridge.shoonya_state("LIVE", None, 65, True, True, 65_002)
+    bridge.shoonya_state("AUTH_FAILED", "late retired failure", 64, True, False, 65_003)
+
+    snapshot = bridge.snapshot()
+    for offset, group in enumerate(groups):
+        key = f"{group.mode}:{group.shard}"
+        state = snapshot["angel_one"][key]
+        assert state["generation"] == 64 * 100 + offset + 2
+        assert state["transport"] == "OPEN"
+        assert state["authentication"] == "NOT_VERIFIABLE"
+        assert state["feed_ready"] is False
+        assert state["order_eligible"] is False
+
+    shoonya = snapshot["shoonya"]
+    assert shoonya["generation"] == 65
+    assert shoonya["transport"] == "OPEN"
+    assert shoonya["authentication"] == "AUTHENTICATED"
+    assert shoonya["authenticated"] is True
+    assert shoonya["feed_ready"] is False
+    assert shoonya["parity_eligible"] is False
+    assert snapshot["pairing_enabled"] is False
+    assert snapshot["scanner_fanout_enabled"] is False
+    assert snapshot["order_eligible"] is False
