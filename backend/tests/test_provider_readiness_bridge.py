@@ -122,3 +122,57 @@ def test_angel_non_current_connection_observation_is_ignored():
     group = SimpleNamespace(mode=3, shard=0)
     bridge.angel_market_event(_record(), group, 8, False, False, monotonic_ns())
     assert bridge.snapshot()["angel_one"] == {}
+
+
+
+def test_shoonya_live_state_without_connected_transport_cannot_authenticate():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 14, True, False, 100)
+    bridge.shoonya_state("LIVE", None, 14, False, True, 200)
+    state = bridge.snapshot()["shoonya"]
+    assert state["authentication"] == "UNKNOWN"
+    assert state["authenticated"] is False
+    assert state["feed_ready"] is False
+
+
+def test_shoonya_market_event_requires_current_verified_authenticated_session():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 15, True, False, 100)
+    bridge.shoonya_market_event(_record(), 15, True, 200)
+    state = bridge.snapshot()["shoonya"]
+    assert state["authentication"] == "UNKNOWN"
+    assert state["market_event_age_ns"] is None
+    assert state["feed_ready"] is False
+
+
+def test_shoonya_market_event_after_auth_rejection_is_ignored():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 16, True, False, 100)
+    bridge.shoonya_state("AUTH_FAILED", "rejected", 16, True, False, 200)
+    bridge.shoonya_market_event(_record(), 16, True, 300)
+    state = bridge.snapshot()["shoonya"]
+    assert state["transport"] == "CLOSED"
+    assert state["authentication"] == "REJECTED"
+    assert state["market_event_age_ns"] is None
+
+
+def test_bridge_rejects_invalid_or_future_exchange_timestamp():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=2, shard=0)
+    future_record = _record().model_copy(update={"timestamp_ns": time_ns() + 60_000_000_000})
+    bridge.angel_market_event(future_record, group, 21, False, True, monotonic_ns())
+    state = bridge.snapshot()["angel_one"]["2:0"]
+    assert state["canonical_identity_valid"] is True
+    assert state["exchange_timestamp_valid"] is True
+    assert state["market_event_fresh"] is False
+    assert state["feed_ready"] is False
+
+
+def test_bridge_rejects_missing_canonical_identity():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=2, shard=1)
+    invalid_record = _record().model_copy(update={"symbol": " "})
+    bridge.angel_market_event(invalid_record, group, 22, False, True, monotonic_ns())
+    state = bridge.snapshot()["angel_one"]["2:1"]
+    assert state["canonical_identity_valid"] is False
+    assert state["feed_ready"] is False
