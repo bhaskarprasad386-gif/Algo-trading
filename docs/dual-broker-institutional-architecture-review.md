@@ -1118,3 +1118,19 @@ merge, and deployment remain outstanding.
   or scanner cutover. Existing Box Spread and IV Scanner behavior is untouched.
 - Test is committed but has not been executed in this session; exact-head CI,
   full regression, live broker validation, merge, and deployment remain open.
+
+
+## Batch 53 — targeted CI coverage for readiness lifecycle
+
+- Extended the existing targeted common-feed pull-request workflow so changes to
+  the provider readiness reducer/bridge and their regression tests trigger the
+  targeted job.
+- The job now compiles both readiness modules and runs
+  `test_provider_readiness.py` plus `test_provider_readiness_bridge.py`,
+  including the Batch 52 manager-observer integration regression.
+- This is a CI wiring change only. It does not enable broker connections,
+  alter feed selection, or change Box Spread / IV Scanner behavior.
+- The workflow has been committed, but the exact-head workflow query currently
+  returns no runs. Therefore the tests remain unexecuted/unverified; no pass is
+  claimed. The visible Vercel status is a deployment-rate-limit failure and is
+  not evidence about backend test results.
