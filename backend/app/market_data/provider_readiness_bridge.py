@@ -5,7 +5,7 @@ No quote is forwarded to scanners, pairers, persistence, or order execution.
 from __future__ import annotations
 
 from threading import RLock
-from time import monotonic_ns, time_ns
+from time import time_ns
 from typing import Any
 
 from .provider_readiness import ProviderReadiness
