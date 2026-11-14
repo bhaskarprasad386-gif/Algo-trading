@@ -501,16 +501,16 @@ class MarketDataWebSocket:
         if on_lifecycle is not None and not callable(on_lifecycle):
             raise ValueError("on_lifecycle must be callable")
         with self._lock:
+            if _expected_lifecycle_generation is not None and (
+                self._stopping or self._lifecycle_generation != _expected_lifecycle_generation
+            ):
+                return
             self._set_subscriptions(subscriptions)
             self.mode = mode
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
             self.on_failure = on_failure
             self.on_lifecycle = on_lifecycle
-            if _expected_lifecycle_generation is not None and (
-                self._stopping or self._lifecycle_generation != _expected_lifecycle_generation
-            ):
-                return
             # Only an explicit caller may reopen a stopped wrapper. Internal
             # reconnect workers must match the lifecycle generation they captured.
             if _expected_lifecycle_generation is None:
