@@ -199,7 +199,21 @@ def test_websocket_failure_callbacks_notify_manager_on_error_and_close(monkeypat
     socket.on_error(socket, "temporary DNS failure")
     assert failures == ["temporary DNS failure"]
     socket.on_close(socket)
-    assert failures == ["temporary DNS failure", "socket closed"]
+    assert failures == ["temporary DNS failure"]
+
+
+def test_websocket_error_then_close_requests_only_one_reconnect(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=True)
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+    client.websocket = socket
+
+    socket.on_error(socket, "temporary DNS failure")
+    socket.on_close(socket)
+
+    assert scheduled == [True]
 
 
 def test_sdk_internal_error_handler_forwards_original_error_without_retrying(monkeypatch):
@@ -277,6 +291,25 @@ def test_websocket_reconnect_scheduler_is_single_flight(monkeypatch):
     assert client.health["reconnect_count"] == 1
     assert client._is_reconnecting is True
 
+
+
+def test_websocket_reconnect_scheduler_start_failure_releases_guard(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+
+    class BrokenThread:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread start failed")
+
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    client._schedule_reconnect()
+
+    assert client._is_reconnecting is False
+    assert client._reconnect_thread is None
+    assert client.health["reconnect_count"] == 0
 
 
 def test_marking_auth_stale_forces_token_refresh_even_for_young_session():
