@@ -1,0 +1,23 @@
+name: Workflow Configuration Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/dual-broker-bootstrap-ci.yml"
+      - ".github/workflows/workflow-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: Validate GitHub Actions workflow syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run actionlint on the bootstrap workflows
+        uses: rhysd/actionlint@v1.7.7
+        with:
+          args: .github/workflows/dual-broker-bootstrap-ci.yml .github/workflows/workflow-validation.yml
