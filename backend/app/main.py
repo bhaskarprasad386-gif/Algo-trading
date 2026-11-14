@@ -49,6 +49,8 @@ from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSprea
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.shoonya_supervisor import ShoonyaMarketDataSupervisor
+from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
+from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
@@ -104,6 +106,7 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
+provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
@@ -366,7 +369,13 @@ async def _iv_scanner_recovery_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor
+    global provider_quote_parity_store
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
+    if settings.PROVIDER_QUOTE_PARITY_ENABLED:
+        provider_quote_parity_store = SQLiteQuoteParityStore(settings.PROVIDER_QUOTE_PARITY_DB)
+        configure_provider_quote_parity_store(provider_quote_parity_store)
+    else:
+        configure_provider_quote_parity_store(None)
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
     from app.scanner.backtest_jobs import recover_interrupted_jobs
@@ -471,6 +480,10 @@ async def lifespan(app: FastAPI):
         _weekly_swing_refresh_task = None
         _iv_option_snapshot_task = None
         _iv_scanner_recovery_task = None
+        if provider_quote_parity_store is not None:
+            provider_quote_parity_store.close()
+            provider_quote_parity_store = None
+            configure_provider_quote_parity_store(None)
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
@@ -493,6 +506,7 @@ app.include_router(brokers_router)
 app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
+app.include_router(provider_quote_parity_router)
 app.include_router(scanner_router)
 app.include_router(weekly_swing_scanner_router)
 app.include_router(full_fno_router)
