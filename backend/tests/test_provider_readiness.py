@@ -210,3 +210,40 @@ def test_subscription_tokens_must_be_explicit_strings():
         state.request_subscriptions(1, "NFO|123")
     with pytest.raises(TypeError):
         state.request_subscriptions(1, [123])
+
+
+
+def test_market_event_expires_by_monotonic_age_without_another_callback():
+    state = _open()
+    state.record_authentication_ack(1, accepted=True, evidence_kind="shoonya_ak_ack")
+    state.request_subscriptions(1, ["NFO|123"])
+    state.acknowledge_subscriptions(1, ["NFO|123"])
+    assert state.record_market_event(
+        1, canonical_identity_valid=True, exchange_timestamp_valid=True,
+        fresh=True, received_monotonic_ns=1_000_000_000,
+    )
+    assert state.snapshot(now_monotonic_ns=1_000_000_001)["feed_ready"] is True
+    expired = state.snapshot(now_monotonic_ns=6_000_000_001)
+    assert expired["market_event_fresh"] is False
+    assert expired["market_event_age_ns"] == 5_000_000_001
+    assert expired["feed_ready"] is False
+
+
+def test_authentication_timeout_is_terminal_for_generation():
+    state = _open()
+    assert state.authentication_timeout(1)
+    assert not state.record_authentication_ack(
+        1, accepted=True, evidence_kind="shoonya_ak_ack"
+    )
+    assert state.snapshot()["authentication"] == "TIMED_OUT"
+
+
+def test_rejected_authentication_cannot_be_overwritten_by_late_success():
+    state = _open()
+    assert not state.record_authentication_ack(
+        1, accepted=False, evidence_kind="shoonya_ak_ack"
+    )
+    assert not state.record_authentication_ack(
+        1, accepted=True, evidence_kind="shoonya_ak_ack"
+    )
+    assert state.snapshot()["authentication"] == "REJECTED"
