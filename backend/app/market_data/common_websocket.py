@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
+from .shared_cache import put_market_data_record
 from .normalizer import AngelOneTickNormalizer
 from .angel_callback_dispatch import AngelShardCallbackAdapter, CallbackInvocation
 from .websocket import MarketDataWebSocket
@@ -1647,6 +1648,18 @@ class CommonWebSocketManager:
                 continue
             try:
                 record = self._normalizer.normalize(descriptor, message)
+                # Publish one latest normalized snapshot before strategy fan-out.
+                # A cache failure must never suppress live scanner callbacks.
+                try:
+                    put_market_data_record(record)
+                except Exception as cache_exc:
+                    app_logger.warning(
+                        "Common feed shared-cache publish failed exchange=%s segment=%s token=%s error=%s",
+                        record.instrument.exchange,
+                        record.instrument.segment,
+                        record.instrument.token,
+                        cache_exc,
+                    )
                 with self._lock:
                     self._normalized_records_emitted += 1
                     self._last_tick = {
