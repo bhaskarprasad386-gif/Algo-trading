@@ -1430,8 +1430,10 @@ class CommonWebSocketManager:
         if adapter_state.get("integrity_fault") or adapter_state.get("delivery_status") == "DEGRADED":
             key = f"{group.mode}:{group.shard}"
             self._callback_dispatch_retired_faults[key] = {
-                "generation": generation,
                 **adapter_state,
+                # Adapter increments its private fence when failing closed;
+                # diagnostics identify the socket generation that faulted.
+                "generation": generation,
             }
             while len(self._callback_dispatch_retired_faults) > 12:
                 self._callback_dispatch_retired_faults.pop(next(iter(self._callback_dispatch_retired_faults)))
