@@ -1184,3 +1184,28 @@ def test_legacy_state_callback_failure_does_not_block_session_observer():
     feed._emit_state("AUTHENTICATING", None)
     assert len(observations) == 1
     assert observations[0][2] == 13
+
+
+def test_partial_worker_start_failure_rolls_back_all_started_workers(monkeypatch):
+    original_start = threading.Thread.start
+    calls = {"count": 0}
+
+    def fail_third_start(worker):
+        calls["count"] += 1
+        if calls["count"] == 3:
+            raise RuntimeError("simulated thread resource exhaustion")
+        return original_start(worker)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_third_start)
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+
+    with pytest.raises(RuntimeError, match="simulated thread resource exhaustion"):
+        feed.start()
+
+    assert calls["count"] == 3
+    assert feed._stop.is_set()
+    assert feed.snapshot()["shutdown_workers_alive"] == []
+    assert feed._thread is None
+    assert feed._dispatch_thread is None
+    assert feed._order_dispatch_thread is None
+    assert feed._heartbeat_thread is None
