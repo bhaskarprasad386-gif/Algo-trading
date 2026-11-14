@@ -1,6 +1,7 @@
 import pytest
 import json
 import threading
+
 from types import SimpleNamespace
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor
@@ -1319,3 +1320,56 @@ def test_late_shoonya_factory_completion_cannot_resurrect_stopped_adapter():
     assert created[0].run_calls == 0
     assert feed.snapshot()["connected"] is False
     assert feed._ws is None
+
+
+
+def test_retired_epoch_queue_items_never_reach_legacy_or_shadow_callbacks():
+    legacy, shadow = [], []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=legacy.append,
+        on_tick_observation=lambda *args: shadow.append(args),
+    )
+    feed._authenticated = True
+    for retired_epoch in range(1, 8):
+        feed._feed_epoch = retired_epoch
+        feed._enqueue(
+            "tick", {"epoch": retired_epoch},
+            observation=(object(), retired_epoch, True, threading.get_native_id()),
+        )
+    # Simulate the latest reconnect completing before the dispatcher drains.
+    feed._feed_epoch = 8
+    feed._authenticated = True
+    feed._stop.set()
+    dispatcher = threading.Thread(target=feed._dispatch_loop, name="stale-epoch-drain")
+    dispatcher.start()
+    dispatcher.join(timeout=2.0)
+
+    assert not dispatcher.is_alive()
+    assert legacy == []
+    assert shadow == []
+    assert feed.snapshot()["stale_dispatch_drops"] == 7
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
+    assert feed.snapshot()["ticks_dispatched"] == 0
+
+
+def test_shoonya_dispatch_queue_remains_bounded_during_reconnect_burst():
+    close_calls = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        max_dispatch_queue=3,
+    )
+    feed._ws = SimpleNamespace(close=lambda: close_calls.append(True))
+    feed._authenticated = True
+    for epoch in range(1, 11):
+        feed._feed_epoch = epoch
+        feed._enqueue(
+            "tick", {"epoch": epoch},
+            observation=(object(), epoch, True, threading.get_native_id()),
+        )
+
+    state = feed.snapshot()
+    assert state["dispatch_queue_capacity"] == 3
+    assert state["dispatch_queue_depth"] == 3
+    assert state["dispatch_drops"] == 7
+    assert len(close_calls) == 7
