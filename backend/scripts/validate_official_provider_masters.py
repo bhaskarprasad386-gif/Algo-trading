@@ -160,6 +160,7 @@ def report_summary(report: Any) -> dict[str, Any]:
             {"row": item.row_number, "reason": item.reason}
             for item in report.quarantined[:20]
         ],
+        "breakdown": mapping_breakdown(report),
     }
 
 
@@ -206,7 +207,9 @@ def main() -> int:
             "shoonya_only_ratio": round(audit.shoonya_only_ratio, 8),
             "metadata_mismatch_count": len(audit.metadata_mismatches),
             "metadata_mismatch_sample": [str(key) for key in audit.metadata_mismatches[:25]],
-            "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),\n            "angel_only_sample": [contract_key_summary(key) for key in audit.angel_only[:15]],\n            "shoonya_only_sample": [contract_key_summary(key) for key in audit.shoonya_only[:15]],
+            "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
+            "angel_only_sample": [contract_key_summary(key) for key in audit.angel_only[:15]],
+            "shoonya_only_sample": [contract_key_summary(key) for key in audit.shoonya_only[:15]],
         },
     }
     Path(args.report).write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
