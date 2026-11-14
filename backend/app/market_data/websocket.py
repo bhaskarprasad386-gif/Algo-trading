@@ -514,6 +514,8 @@ class MarketDataWebSocket:
             # Only an explicit caller may reopen a stopped wrapper. Internal
             # reconnect workers must match the lifecycle generation they captured.
             if _expected_lifecycle_generation is None:
+                # An explicit new lifecycle supersedes any older reconnect worker.
+                self._lifecycle_generation += 1
                 self._stopping = False
             self._connecting = True
             self._reconnect_attempts = reconnect_attempts
@@ -521,7 +523,10 @@ class MarketDataWebSocket:
         last_error = None
         for attempt in range(reconnect_attempts + 1):
             with self._lock:
-                if self._stopping:
+                if self._stopping or (
+                    _expected_lifecycle_generation is not None
+                    and self._lifecycle_generation != _expected_lifecycle_generation
+                ):
                     return
             sdk_socket = None
             try:
@@ -538,7 +543,10 @@ class MarketDataWebSocket:
                 # Never let a late connect completion publish thread/state for
                 # a socket that close() or a replacement attempt has retired.
                 with self._lock:
-                    stale_attempt = self._stopping or self.websocket is not sdk_socket
+                    stale_attempt = self._stopping or self.websocket is not sdk_socket or (
+                        _expected_lifecycle_generation is not None
+                        and self._lifecycle_generation != _expected_lifecycle_generation
+                    )
                     if not stale_attempt:
                         self._transport_thread = getattr(sdk_socket, "_transport_thread", None)
                         # on_open may report initial-subscription failure before connect returns.
@@ -556,6 +564,9 @@ class MarketDataWebSocket:
                 with self._lock:
                     stale_attempt = self._stopping or (
                         sdk_socket is not None and self.websocket is not sdk_socket
+                    ) or (
+                        _expected_lifecycle_generation is not None
+                        and self._lifecycle_generation != _expected_lifecycle_generation
                     )
                     if not stale_attempt:
                         self._transport_thread = transport_thread
