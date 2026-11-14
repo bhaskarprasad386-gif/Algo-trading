@@ -1867,3 +1867,43 @@ def test_snapshot_exposes_per_instrument_subscription_roster_and_raw_frames():
         assert snapshot["raw_frames_by_instrument"] == {"3:1:99926000": 1}
     finally:
         manager.close()
+
+
+def test_transport_observer_receives_current_open_and_retiring_close_only():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(3, 1)
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 7
+    manager._socket_generation_counter[group] = 7
+    events = []
+    manager.register_transport_observer(
+        "readiness", lambda *args: events.append(args)
+    )
+
+    manager._notify_transport_observers("OPEN", group, 7, 100)
+    manager._sockets.pop(group)
+    manager._socket_generation.pop(group)
+    manager._notify_transport_observers("CLOSED", group, 7, 200)
+    manager._notify_transport_observers("ERROR", group, 7, 300)
+    manager._notify_transport_observers("CLOSED", group, 6, 400)
+
+    assert [(event, generation, received) for event, _group, generation, received in events] == [
+        ("OPEN", 7, 100), ("CLOSED", 7, 200)
+    ]
+
+
+def test_transport_observer_failure_isolated_from_other_observers():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(1, 0)
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 3
+    manager._socket_generation_counter[group] = 3
+    received = []
+    manager.register_transport_observer(
+        "broken", lambda *_: (_ for _ in ()).throw(RuntimeError("observer failure"))
+    )
+    manager.register_transport_observer("healthy", lambda *args: received.append(args))
+    manager._notify_transport_observers("OPEN", group, 3, 123)
+
+    assert len(received) == 1
+    assert manager._delivery_errors == 1
