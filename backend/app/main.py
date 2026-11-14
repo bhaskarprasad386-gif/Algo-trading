@@ -373,6 +373,11 @@ async def lifespan(app: FastAPI):
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
         provider_quote_parity_store = SQLiteQuoteParityStore(settings.PROVIDER_QUOTE_PARITY_DB)
+        parity_retention_days = settings.PROVIDER_QUOTE_PARITY_RETENTION_DAYS
+        if isinstance(parity_retention_days, bool) or not isinstance(parity_retention_days, int) or parity_retention_days < 1:
+            raise ValueError("PROVIDER_QUOTE_PARITY_RETENTION_DAYS must be a positive integer")
+        parity_cutoff_ns = time_module.time_ns() - parity_retention_days * 24 * 60 * 60 * 1_000_000_000
+        provider_quote_parity_store.prune_before(cutoff_utc_ns=parity_cutoff_ns)
         configure_provider_quote_parity_store(provider_quote_parity_store)
     else:
         configure_provider_quote_parity_store(None)
