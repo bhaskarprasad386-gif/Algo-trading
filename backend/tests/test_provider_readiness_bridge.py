@@ -437,3 +437,85 @@ def test_dual_broker_reconnect_storm_keeps_only_latest_generations_authoritative
     assert snapshot["pairing_enabled"] is False
     assert snapshot["scanner_fanout_enabled"] is False
     assert snapshot["order_eligible"] is False
+
+
+def test_threaded_dual_broker_lifecycle_updates_are_isolated_and_generation_fenced():
+    """Run broker lifecycle callbacks concurrently across real Python threads."""
+    from threading import Barrier, Thread
+
+    bridge = ProviderReadinessBridge()
+    groups = [
+        SimpleNamespace(mode=1, shard=0),
+        SimpleNamespace(mode=3, shard=1),
+        SimpleNamespace(mode=5, shard=2),
+    ]
+    start = Barrier(4)
+    failures = []
+
+    def angel_worker(group, seed):
+        try:
+            start.wait()
+            received = monotonic_ns()
+            for cycle in range(1, 41):
+                generation = seed + cycle * 10
+                received += 1
+                bridge.angel_transport_event("OPEN", group, generation, received)
+                received += 1
+                bridge.angel_transport_event("ERROR", group, generation, received)
+                received += 1
+                bridge.angel_transport_event("OPEN", group, generation + 1, received)
+                received += 1
+                # A delayed close from the retired generation must not close
+                # the replacement even while other providers update concurrently.
+                bridge.angel_transport_event("CLOSED", group, generation, received)
+        except BaseException as exc:
+            failures.append(exc)
+
+    def shoonya_worker():
+        try:
+            start.wait()
+            received = monotonic_ns()
+            for epoch in range(1, 41):
+                received += 1
+                bridge.shoonya_state("AUTHENTICATING", None, epoch, True, False, received)
+                received += 1
+                bridge.shoonya_state("LIVE", None, epoch, True, True, received)
+                received += 1
+                bridge.shoonya_state("AUTH_TIMEOUT", "threaded test timeout", epoch, False, False, received)
+                received += 1
+                bridge.shoonya_state("LIVE", None, epoch, True, True, received)
+        except BaseException as exc:
+            failures.append(exc)
+
+    workers = [
+        Thread(target=angel_worker, args=(groups[0], 1000), name="angel-mode1-race"),
+        Thread(target=angel_worker, args=(groups[1], 2000), name="angel-mode3-race"),
+        Thread(target=angel_worker, args=(groups[2], 3000), name="angel-mode5-race"),
+        Thread(target=shoonya_worker, name="shoonya-epoch-race"),
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=5)
+
+    assert all(not worker.is_alive() for worker in workers), "lifecycle worker did not terminate"
+    assert failures == []
+
+    snapshot = bridge.snapshot()
+    for group, seed in zip(groups, (1000, 2000, 3000)):
+        state = snapshot["angel_one"][f"{group.mode}:{group.shard}"]
+        assert state["generation"] == seed + 401
+        assert state["transport"] == "OPEN"
+        assert state["authentication"] == "NOT_VERIFIABLE"
+        assert state["feed_ready"] is False
+        assert state["order_eligible"] is False
+
+    shoonya = snapshot["shoonya"]
+    assert shoonya["generation"] == 40
+    assert shoonya["transport"] == "CLOSED"
+    assert shoonya["authentication"] == "TIMED_OUT"
+    assert shoonya["authenticated"] is False
+    assert shoonya["feed_ready"] is False
+    assert snapshot["pairing_enabled"] is False
+    assert snapshot["scanner_fanout_enabled"] is False
+    assert snapshot["order_eligible"] is False
