@@ -1153,3 +1153,22 @@ merge, and deployment remain outstanding.
   proof, broker integration, or live-market validation. The test is included
   in the targeted CI workflow added in Batch 53, but has not been executed
   locally or confirmed by an exact-head CI run.
+
+
+## Batch 55 — real threaded dual-provider lifecycle concurrency
+
+- Added a real Python-thread regression that concurrently drives three independent
+  Angel socket groups and one Shoonya authentication-epoch stream through the
+  shared readiness bridge.
+- Each Angel worker runs 40 OPEN/ERROR/replacement-OPEN/late-retired-CLOSED
+  sequences. The Shoonya worker runs 40 AUTHENTICATING/LIVE/AUTH_TIMEOUT/late-LIVE
+  sequences. A barrier starts all four workers together; bounded joins ensure
+  a deadlock or stuck worker fails the test instead of hanging the suite.
+- Assertions verify each Angel group retains only its final replacement
+  generation, Shoonya retains its final terminal timeout epoch, and no provider
+  becomes feed-ready, parity-eligible, scanner-enabled, paired, or order-eligible.
+- This is actual threaded concurrency against the reducer/bridge, but not a
+  live broker, manager shutdown, SDK transport, or throughput test. The test
+  is committed but has not been executed in this session.
+- No production runtime code, Box Spread/IV Scanner callbacks, calculations,
+  subscriptions, or feed-selection behavior changed.
