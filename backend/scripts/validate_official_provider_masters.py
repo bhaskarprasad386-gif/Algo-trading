@@ -310,7 +310,10 @@ def main() -> int:
             "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
             "index_underlying_coverage": index_underlying_coverage(angel_report, shoonya_report),
             "underlying_inventory": underlying_inventory(angel_report, shoonya_report),
-            "bse_index_symbol_diagnostics": {\n                "angel_one": bse_index_symbol_diagnostics(angel_report),\n                "shoonya": bse_index_symbol_diagnostics(shoonya_report),\n            },
+            "bse_index_symbol_diagnostics": {
+                "angel_one": bse_index_symbol_diagnostics(angel_report),
+                "shoonya": bse_index_symbol_diagnostics(shoonya_report),
+            },
             "angel_only_sample": [contract_key_summary(key) for key in audit.angel_only[:15]],
             "shoonya_only_sample": [contract_key_summary(key) for key in audit.shoonya_only[:15]],
         },
