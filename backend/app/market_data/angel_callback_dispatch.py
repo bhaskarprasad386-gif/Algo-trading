@@ -159,7 +159,10 @@ class AngelShardCallbackAdapter:
                         # while an earlier callback in this batch was running.
                         # Revalidate immediately before each consumer invocation.
                         with self._lock:
-                            if self._closed or batch.generation != self._generation:
+                            # _closed blocks new publishes. Accepted work may
+                            # still drain during graceful stop; non-draining stop
+                            # and integrity retirement advance the generation.
+                            if batch.generation != self._generation:
                                 self._stale += 1
                                 break
                             self._callback_attempts += 1
