@@ -274,6 +274,8 @@ class MarketDataWebSocket:
                 callback(wsapp, error)
 
         socket._on_error = forward_sdk_error
+        # The shared manager owns retries; disable SmartAPI's nested retry loop.
+        socket.MAX_RETRY_ATTEMPT = 0
 
         # Override only the real Angel SDK transport. Test doubles and alternate
         # socket adapters keep their own connect() implementation.
