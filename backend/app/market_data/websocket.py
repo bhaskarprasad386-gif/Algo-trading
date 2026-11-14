@@ -291,10 +291,11 @@ class MarketDataWebSocket:
 
         def handle_open(wsapp):
             with self._lock:
+                if self._stopping or self.websocket is not socket:
+                    return
                 self._connected = True
                 self._connecting = False
                 self._initial_subscribe_success = None
-            with self._lock:
                 self._consecutive_failures = 0
                 self._last_error = None
             app_logger.info("Angel One WebSocket connected")
@@ -303,11 +304,16 @@ class MarketDataWebSocket:
                 self._subscribe_initial_bounded(socket)
 
         def handle_data(wsapp, message):
-            if self.on_data:
-                self.on_data(message)
+            with self._lock:
+                current = not self._stopping and self.websocket is socket
+                callback = self.on_data if current else None
+            if callback is not None:
+                callback(message)
 
         def handle_error(wsapp, error):
             with self._lock:
+                if self._stopping or self.websocket is not socket:
+                    return
                 self._connected = False
                 self._connecting = False
                 self._error_count += 1
@@ -331,10 +337,12 @@ class MarketDataWebSocket:
 
         def handle_close(wsapp):
             with self._lock:
-                self._connected = False
-                self._connecting = False
-                stopping = self._stopping
-                failure_callback = self.on_failure
+                current = self.websocket is socket
+                if current:
+                    self._connected = False
+                    self._connecting = False
+                stopping = self._stopping or not current
+                failure_callback = self.on_failure if current else None
             close_code = getattr(wsapp, "close_status_code", None)
             close_reason = getattr(wsapp, "close_reason", None)
             app_logger.warning(
