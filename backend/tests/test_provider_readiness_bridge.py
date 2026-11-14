@@ -224,3 +224,21 @@ def test_angel_transport_event_rejects_out_of_order_lifecycle():
     state = bridge.snapshot()["angel_one"]["2:4"]
     assert state["transport"] == "OPEN"
     assert state["stale_observations_rejected"] == 1
+
+
+def test_angel_error_is_terminal_until_a_new_generation_opens():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=2, shard=5)
+    bridge.angel_transport_event("OPEN", group, 71, 100)
+    bridge.angel_transport_event("ERROR", group, 71, 200)
+    bridge.angel_transport_event("OPEN", group, 71, 300)
+    failed = bridge.snapshot()["angel_one"]["2:5"]
+    assert failed["generation"] == 71
+    assert failed["transport"] == "CLOSED"
+    assert failed["stale_observations_rejected"] == 1
+
+    bridge.angel_transport_event("OPEN", group, 72, 400)
+    recovered = bridge.snapshot()["angel_one"]["2:5"]
+    assert recovered["generation"] == 72
+    assert recovered["transport"] == "OPEN"
+    assert recovered["authentication"] == "NOT_VERIFIABLE"
