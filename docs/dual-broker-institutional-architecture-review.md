@@ -614,3 +614,4 @@ Snapshots must expose raw evidence and derived state separately so operators can
 - Tests have been added but not executed in this environment. Exact-head Actions and full regression remain required before runtime integration.
 
 - Follow-up hardening accumulates partial per-token subscription acknowledgements until the complete desired set is covered; transport close clears generation-scoped acknowledgement and market-validity evidence without converting a normal close into an integrity fault. Regression cases cover partial coverage, close reset, and strict token input types.
+- Readiness freshness is re-evaluated against monotonic receive age at snapshot time (5-second default), so a previously fresh tick cannot keep FEED_READY true indefinitely. Authentication timeout/rejection is terminal for that generation; late success cannot revive the same epoch. Added deterministic regressions for both cases.
