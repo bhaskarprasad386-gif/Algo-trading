@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     PROVIDER_QUOTE_PARITY_ENABLED: bool = False
     PROVIDER_QUOTE_PARITY_DB: str = "./provider_quote_parity.db"
     PROVIDER_QUOTE_PARITY_RETENTION_DAYS: int = 7
+    PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY: int = 2048
 
     # Angel One credentials
     angel_api_key: str = ""
