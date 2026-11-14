@@ -132,12 +132,27 @@ def _mapping(
         # Strip only the instrument suffix for derivative rows; never infer
         # the root from TradingSymbol because that also contains expiry/strike.
         raw_underlying = str(underlying_value or "").strip().upper()
-        if broker.upper() == "SHOONYA" and kind in {"OPTION", "FUTURE"}:
-            # Shoonya BFO Symbol aliases are commonly suffixed with OPT/FUT.
-            for suffix in ("OPT", "FUT"):
-                if raw_underlying.endswith(suffix):
-                    raw_underlying = raw_underlying[:-len(suffix)]
-                    break
+        if broker.upper() == "SHOONYA" and exchange == "BFO" and kind in {"OPTION", "FUTURE"}:
+            # Shoonya BFO's Symbol column can be a short exchange alias (BKX,
+            # SX50). The TradingSymbol carries the actual contract root and
+            # expiry/strike suffix, so derive the root from that exact shape.
+            raw_trading_symbol = symbol.strip().upper()
+            option_match = re.match(
+                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}\\d+(?:\\.\\d+)?(?:CE|PE)$",
+                raw_trading_symbol,
+            )
+            future_match = re.match(
+                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}FUT$",
+                raw_trading_symbol,
+            )
+            match = option_match or future_match
+            if match:
+                raw_underlying = match.group(1)
+            else:
+                for suffix in ("OPT", "FUT"):
+                    if raw_underlying.endswith(suffix):
+                        raw_underlying = raw_underlying[:-len(suffix)]
+                        break
             underlying_value = raw_underlying
         elif broker.upper() == "ANGELONE" and exchange == "BFO" and kind in {"OPTION", "FUTURE"}:
             # Angel BFO rows may omit the separate root/name field and carry
