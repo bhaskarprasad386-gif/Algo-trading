@@ -1080,3 +1080,11 @@ merge, and deployment remain outstanding.
 - Tick dispatcher revalidates the feed epoch/session after the legacy callback returns and immediately before the shadow observer. An already-running legacy callback cannot be cancelled safely, but it cannot cause a retired quote to be forwarded to the later observer.
 - Added deterministic tests for stale queued order updates and reconnect during a blocked legacy callback.
 - No broker socket protocol, scanner feed, subscription set, or execution path changed. Tests committed but not executed.
+
+
+### Batch 50 — Shoonya shutdown timeout recovery visibility
+
+- The combined shutdown audit found that Shoonya recorded worker names when the shared three-second stop budget expired, but did not refresh that list if a blocked callback/worker exited later. The snapshot could therefore continue reporting a worker as alive after it had terminated.
+- Added a single deduplicated shutdown watcher. It waits for the timed-out worker set, then recomputes actual liveness from the adapter's current worker references and clears the socket reference once the supervisor has exited. Snapshot now exposes whether the watcher itself is alive.
+- Added a deterministic worker-release test confirming timeout diagnostics remain visible while blocked and clear after worker termination.
+- This is shutdown observability/cleanup only; no socket reconnect, feed routing, subscription, scanner, or order behavior changed. Test committed but not executed.
