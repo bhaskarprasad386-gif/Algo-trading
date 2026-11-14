@@ -86,6 +86,32 @@ def test_shoonya_out_of_order_session_callback_cannot_revoke_newer_auth_state():
     assert state["stale_observations_rejected"] == 1
 
 
+def test_shoonya_delayed_live_callback_cannot_resurrect_rejected_epoch():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 31, True, False, 100)
+    bridge.shoonya_state("AUTH_FAILED", "bad credentials", 31, True, False, 200)
+    bridge.shoonya_state("LIVE", None, 31, True, True, 300)
+    state = bridge.snapshot()["shoonya"]
+    assert state["generation"] == 31
+    assert state["transport"] == "CLOSED"
+    assert state["authentication"] == "REJECTED"
+    assert state["authenticated"] is False
+    assert state["stale_observations_rejected"] == 1
+
+
+def test_shoonya_delayed_live_callback_cannot_resurrect_timed_out_epoch():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 32, True, False, 100)
+    bridge.shoonya_state("AUTH_TIMEOUT", "no auth ack", 32, False, False, 200)
+    bridge.shoonya_state("LIVE", None, 32, True, True, 300)
+    state = bridge.snapshot()["shoonya"]
+    assert state["generation"] == 32
+    assert state["transport"] == "CLOSED"
+    assert state["authentication"] == "TIMED_OUT"
+    assert state["authenticated"] is False
+    assert state["stale_observations_rejected"] == 1
+
+
 def test_shoonya_auth_rejection_closes_transport_but_preserves_rejection_evidence():
     bridge = ProviderReadinessBridge()
     bridge.shoonya_state("AUTHENTICATING", None, 3, True, False, 100)
