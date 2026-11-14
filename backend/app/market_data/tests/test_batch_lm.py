@@ -19,3 +19,15 @@ def test_ingestor_is_bounded_and_observable():
 def test_daily_repository_deduplicates_and_shards(tmp_path):
     r=DailySQLiteMarketDataRepository(str(tmp_path/"market.sqlite3"));x=HistoricalRecord("angelone-live-1s","NSE:EQ:1","1s",1758000000000000000,{"ltp":100})
     assert r.write_batch([x,x])==1;assert r.stats()["duplicates"]==1;assert len(r.catalog.shard_paths())==1;r.checkpoint();r.close()
+
+
+def test_ingestor_close_interrupts_idle_writer_before_flush_deadline():
+    repository = FakeRepository()
+    ingestor = BoundedMarketDataIngestor(
+        repository, batch_size=4, flush_seconds=60.0
+    )
+    ingestor.start()
+    started = __import__("time").monotonic()
+    ingestor.close(timeout=1.0)
+    assert __import__("time").monotonic() - started < 1.0
+    assert ingestor.snapshot()["running"] is False
