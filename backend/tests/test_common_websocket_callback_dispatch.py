@@ -218,3 +218,61 @@ def test_faulted_shard_does_not_block_an_independent_shard():
     assert state["callback_dispatch_by_group"]["1:0"]["integrity_fault"] is True
     assert state["callback_dispatch_by_group"]["1:1"]["delivery_status"] == "HEALTHY"
     manager.close()
+
+
+def test_manager_shutdown_uses_tracked_close_and_preserves_socket_group():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=3, shard=2)
+    socket = _Socket()
+    _install_current(manager, group, socket, generation=19)
+    calls = []
+
+    def tracked_close(candidate, **kwargs):
+        calls.append((candidate, kwargs))
+
+    manager._close_socket_tracked = tracked_close
+    manager.close()
+
+    assert calls == [(
+        socket,
+        {
+            "group": group,
+            "generation": None,
+            "reason": "manager_shutdown",
+            "timeout": 2.0,
+        },
+    )]
+
+
+def test_timed_out_retired_close_remains_visible_until_worker_exits():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=2, shard=1)
+    release = Event()
+
+    class BlockingCloseSocket(_Socket):
+        def close(self):
+            release.wait(2.0)
+            self.connected = False
+
+    socket = BlockingCloseSocket()
+    worker = manager._close_socket_tracked(
+        socket,
+        group=group,
+        generation=44,
+        reason="test_shutdown",
+        timeout=0.05,
+    )
+
+    state = manager.snapshot()
+    assert worker.is_alive()
+    assert state["retired_transport_count"] == 1
+    assert state["retired_transports"][0]["group"] == "2:1"
+    assert state["retired_transports"][0]["generation"] == 44
+    assert state["retired_transports"][0]["close_worker_alive"] is True
+
+    release.set()
+    deadline = monotonic() + 1.0
+    while manager.snapshot()["retired_transport_count"] and monotonic() < deadline:
+        sleep(0.01)
+    assert manager.snapshot()["retired_transport_count"] == 0
+    manager.close()
