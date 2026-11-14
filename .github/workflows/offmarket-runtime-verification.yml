@@ -129,9 +129,9 @@ jobs:
           )
           ssh_status=1
           for attempt in 1 2 3; do
-            if printf '%s\\n' "$REMOTE_SCRIPT" | timeout 120 ssh -i /tmp/vps_key \\
-              -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \\
-              -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \\
+            if printf '%s\n' "$REMOTE_SCRIPT" | timeout 120 ssh -i /tmp/vps_key \
+              -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
+              -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
               "$VPS_USER@$VPS_HOST" 'bash -s'; then
               ssh_status=0
               break
