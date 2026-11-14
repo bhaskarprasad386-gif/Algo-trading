@@ -61,7 +61,7 @@ class ProviderReadinessBridge:
             self._shoonya_last_observation_ns = received_monotonic_ns
             if state == "AUTHENTICATING":
                 self._shoonya.transport_open(current)
-            elif state == "LIVE" and authenticated:
+            elif state == "LIVE" and connected is True and authenticated is True:
                 self._shoonya.transport_open(current)
                 self._shoonya.record_authentication_ack(
                     current, accepted=True, evidence_kind=ProviderReadiness.AUTH_ACK_KIND
@@ -82,7 +82,10 @@ class ProviderReadinessBridge:
 
     def shoonya_market_event(self, record: Any, generation: int, authenticated: bool, received_at: int) -> None:
         with self._lock:
-            if (generation != self._shoonya_generation or not authenticated
+            session = self._shoonya.snapshot()
+            if (generation != self._shoonya_generation or authenticated is not True
+                    or session["transport"] != "OPEN"
+                    or session["authentication"] != "AUTHENTICATED"
                     or isinstance(received_at, bool) or not isinstance(received_at, int)
                     or received_at <= 0 or received_at <= self._shoonya_last_observation_ns):
                 self._shoonya_stale_observations += 1
