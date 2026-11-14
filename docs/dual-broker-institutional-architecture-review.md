@@ -1037,3 +1037,13 @@ merge, and deployment remain outstanding.
 - Added a second test proving an Angel socket-group failure closes only that group and leaves another active group unchanged.
 - This verifies the readiness evidence boundary, not live broker reconnection or provider parity. Angel authentication and subscription acknowledgement remain `NOT_VERIFIABLE`; Shoonya subscription acknowledgement remains `NOT_VERIFIABLE`; scanner fanout, pairing and order eligibility remain disabled.
 - Tests committed but not executed. No production scanner, subscription, or reconnect policy was changed in this batch.
+
+
+
+### Batch 45 — Shoonya late factory completion and worker retirement
+
+- Found a supervisor lifecycle race: a blocking Shoonya WebSocket factory could return after `stop()` set the stop event; `_run_loop` previously published that socket and invoked `run_forever` without rechecking shutdown or the feed epoch.
+- Added a post-factory stop/epoch check under the adapter lifecycle lock. A socket created for a stopped or superseded epoch is closed without publishing it or running its transport loop.
+- Added a delayed-factory regression test: hold the factory during shutdown, release it after stop, and assert the socket was closed, `run_forever` never ran, and the supervisor exited.
+- Reviewed existing resource safeguards: bounded tick/order queues, shared shutdown join deadline, worker-alive diagnostics, and Angel tracked retirement watchers. No new queue capacity, broker cooldown, or reconnect-policy changes in this batch.
+- The new test was committed but not executed; repeated-cycle thread/memory profiling and live dual-broker recovery remain unverified. No scanner, pairing, or order-routing changes.
