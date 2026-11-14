@@ -153,3 +153,42 @@ def test_late_connect_completion_cannot_resurrect_socket_after_close():
     assert client.websocket is None
     assert client.health["stopping"] is True
     assert client.health["connected"] is False
+
+
+
+def test_retired_socket_callbacks_cannot_mutate_or_deliver_to_current_wrapper(monkeypatch):
+    from app.market_data import websocket as websocket_module
+
+    class FakeSdkSocket:
+        def __init__(self, *args):
+            self.on_open = None
+            self.on_data = None
+            self.on_error = None
+            self.on_close = None
+
+        def close_connection(self):
+            return None
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSdkSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    delivered = []
+    failures = []
+    client.on_data = delivered.append
+    client.on_failure = failures.append
+    socket = client._build_socket()
+    client.websocket = socket
+    client.close()
+    before = client.health
+
+    socket.on_open(None)
+    socket.on_data(None, {"token": "123"})
+    socket.on_error(None, RuntimeError("late retired error"))
+    socket.on_close(None)
+
+    after = client.health
+    assert delivered == []
+    assert failures == []
+    assert after["connected"] is False
+    assert after["connecting"] is False
+    assert after["error_count"] == before["error_count"]
+    assert client.websocket is None
