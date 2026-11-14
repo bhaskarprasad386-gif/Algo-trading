@@ -501,31 +501,53 @@ class MarketDataWebSocket:
             with self._lock:
                 if self._stopping:
                     return
+            sdk_socket = None
             try:
-                self.websocket = self._build_socket()
-                self._transport_thread = None
-                self._transport_close_timed_out = False
-                self.websocket.connect()
-                # The SDK transport belongs to the underlying SmartWebSocketV2
-                # instance, while this wrapper owns its lifecycle. Retain the
-                # actual thread reference so close() can verify termination.
+                sdk_socket = self._build_socket()
                 with self._lock:
-                    self._transport_thread = getattr(self.websocket, "_transport_thread", None)
-                    # on_open may report initial-subscription failure before connect returns.
-                    if self._connected and self._last_error is None:
-                        self._consecutive_failures = 0
+                    # close() or a newer connect() may have superseded this
+                    # attempt while authentication/socket construction ran.
+                    if self._stopping:
+                        return
+                    self.websocket = sdk_socket
+                    self._transport_thread = None
+                    self._transport_close_timed_out = False
+                sdk_socket.connect()
+                # Never let a late connect completion publish thread/state for
+                # a socket that close() or a replacement attempt has retired.
+                with self._lock:
+                    stale_attempt = self._stopping or self.websocket is not sdk_socket
+                    if not stale_attempt:
+                        self._transport_thread = getattr(sdk_socket, "_transport_thread", None)
+                        # on_open may report initial-subscription failure before connect returns.
+                        if self._connected and self._last_error is None:
+                            self._consecutive_failures = 0
+                if stale_attempt:
+                    _close_sdk_connection_bounded(
+                        sdk_socket, phase=f"superseded-connect-attempt-{attempt + 1}"
+                    )
+                    return
                 return
             except Exception as exc:
                 last_error = exc
-                sdk_socket = self.websocket
                 transport_thread = getattr(sdk_socket, "_transport_thread", None) if sdk_socket else None
                 with self._lock:
-                    self._transport_thread = transport_thread
-                    self._connected = False
-                    self._connecting = False
-                    self._error_count += 1
-                    self._consecutive_failures += 1
-                    self._last_error = str(exc)
+                    stale_attempt = self._stopping or (
+                        sdk_socket is not None and self.websocket is not sdk_socket
+                    )
+                    if not stale_attempt:
+                        self._transport_thread = transport_thread
+                        self._connected = False
+                        self._connecting = False
+                        self._error_count += 1
+                        self._consecutive_failures += 1
+                        self._last_error = str(exc)
+                if stale_attempt:
+                    if sdk_socket is not None:
+                        _close_sdk_connection_bounded(
+                            sdk_socket, phase=f"stale-connect-failure-{attempt + 1}"
+                        )
+                    return
                 # Failed handshakes can leave run_forever unwinding after connect()
                 # raises. Request SDK close and wait boundedly before another attempt.
                 if sdk_socket is not None:
