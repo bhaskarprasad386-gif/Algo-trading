@@ -415,3 +415,12 @@ def test_shoonya_subscription_request_rejects_duplicate_broker_tokens():
         assert "duplicate" in str(exc)
     else:
         raise AssertionError("duplicate broker tokens must be rejected before mutation")
+
+
+
+def test_supervisor_passes_session_observer_additively_to_adapter(monkeypatch):
+    observations = []
+    callback = lambda *args: observations.append(args)
+    supervisor = build_supervisor(monkeypatch, on_session_observation=callback)
+    assert supervisor._adapter.kwargs["on_session_observation"] is callback
+    assert supervisor._adapter.kwargs["on_state"] == supervisor._observe_state
