@@ -72,7 +72,7 @@ def test_invalid_snapshot_does_not_block_live_subscription():
     cache.put(descriptor.key.value, {"timestamp_ns": "not-an-int", "ltp": 100.0})
     manager = CommonWebSocketManager(socket_factory=FakeSocket)
     manager._recovery_interval_seconds = 60.0
-    feed = CommonStrategyMarketFeed("cache-invalid-snapshot-test", manager=manager)
+    feed = CommonStrategyMarketFeed("cache-invalid-snapshot-test", manager=manager, warm_start=True)
     received = []
     try:
         feed.start([descriptor], received.append)
