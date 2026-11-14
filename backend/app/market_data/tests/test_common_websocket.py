@@ -1907,3 +1907,50 @@ def test_transport_observer_failure_isolated_from_other_observers():
 
     assert len(received) == 1
     assert manager._delivery_errors == 1
+
+
+
+def test_late_connect_failure_after_manager_shutdown_does_not_pollute_health():
+    started = Event()
+    release = Event()
+    failed = Event()
+
+    class LateFailureSocket(FakeSocket):
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=4.0)
+            failed.set()
+            raise RuntimeError("late retired handshake failure")
+
+    registry = InstrumentRegistry()
+    item = descriptor("994")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=LateFailureSocket)
+    manager._connect_call_wait_seconds = 0.02
+    try:
+        manager.subscribe("cash", [item.key])
+        assert started.wait(timeout=1.0)
+        before = manager.snapshot()
+        assert before["connect_failures"] == 0
+
+        manager.close()
+        release.set()
+        assert failed.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if not any(
+                thread.name.startswith("common-ws-connect-") and thread.is_alive()
+                for thread in __import__("threading").enumerate()
+            ):
+                break
+            time.sleep(0.01)
+
+        after = manager.snapshot()
+        assert after["connect_failures"] == 0
+        assert after["last_connect_failure"] is None
+        assert after["socket_groups"] == 0
+    finally:
+        release.set()
+        manager.close()
