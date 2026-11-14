@@ -138,11 +138,11 @@ def _mapping(
             # expiry/strike suffix, so derive the root from that exact shape.
             raw_trading_symbol = symbol.strip().upper()
             option_match = re.match(
-                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}\\d+(?:\\.\\d+)?(?:CE|PE)$",
+                r"^(.+?)\d{1,2}[A-Z]{3}\d{2,4}\d+(?:\.\d+)?(?:CE|PE)$",
                 raw_trading_symbol,
             )
             future_match = re.match(
-                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}FUT$",
+                r"^(.+?)\d{1,2}[A-Z]{3}\d{2,4}FUT$",
                 raw_trading_symbol,
             )
             match = option_match or future_match
