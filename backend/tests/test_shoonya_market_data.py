@@ -980,3 +980,74 @@ def test_repeated_start_is_idempotent_and_restart_creates_one_new_worker_generat
     assert created[1].opened.wait(timeout=1)
     feed.stop()
     assert not feed.snapshot()["shutdown_workers_alive"]
+
+
+def test_read_only_tick_observer_receives_authenticated_generation_metadata_off_queue():
+    observed = []
+    legacy = []
+    delivered = threading.Event()
+
+    def observer(record, generation, authenticated, received_monotonic_ns):
+        observed.append((record, generation, authenticated, received_monotonic_ns))
+        delivered.set()
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=legacy.append,
+        on_tick_observation=observer,
+    )
+    feed.subscribe([descriptor()])
+    fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
+    feed._ws = fake_ws
+    feed._authenticated = True
+    feed._feed_epoch = 7
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+
+    assert feed.snapshot()["dispatch_queue_depth"] == 1
+    item = feed._queue.get_nowait()
+    feed._queue.task_done()
+    assert len(item) == 3
+    feed._queue.put_nowait(item)
+
+    dispatcher = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    dispatcher.start()
+    assert delivered.wait(timeout=1)
+    feed._stop.set()
+    dispatcher.join(timeout=1)
+
+    assert not dispatcher.is_alive()
+    assert len(legacy) == 1 and isinstance(legacy[0], dict)
+    assert len(observed) == 1
+    record, generation, authenticated, received_ns = observed[0]
+    assert record.timestamp_ns == 1794551794000000000
+    assert generation == 7
+    assert authenticated is True
+    assert received_ns > 0
+
+
+def test_read_only_tick_observer_does_not_receive_retired_generation():
+    observed = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick_observation=lambda *args: observed.append(args),
+    )
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    feed._feed_epoch = 3
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+    feed._reset_feed_epoch()
+    # Drain the accepted legacy payload; the observer must be fenced.
+    feed._stop.set()
+    dispatcher = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    dispatcher.start()
+    dispatcher.join(timeout=1)
+    assert not dispatcher.is_alive()
+    assert observed == []
