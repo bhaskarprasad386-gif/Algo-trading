@@ -420,3 +420,29 @@ def test_initial_subscribe_success_is_reported_separately(monkeypatch):
     client.connect(1, ["101"])
     assert client.health["initial_subscribe_success"] is True
     client.close()
+
+
+def test_lifecycle_observer_receives_open_error_and_close_without_auth_claim(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    observations = []
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], on_lifecycle=lambda event, received_ns: observations.append((event, received_ns)))
+    socket = FakeSocket.instances[-1]
+    socket.on_error(socket, "temporary transport failure")
+    socket.on_close(socket)
+
+    assert [event for event, _ in observations] == ["OPEN", "ERROR", "CLOSED"]
+    assert all(isinstance(received_ns, int) and received_ns > 0 for _, received_ns in observations)
+    assert observations == sorted(observations, key=lambda item: item[1])
+    assert client.health["connected"] is False
+
+
+def test_lifecycle_observer_exception_does_not_break_socket_callbacks(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], on_lifecycle=lambda *_: (_ for _ in ()).throw(RuntimeError("observer down")))
+    socket = FakeSocket.instances[-1]
+    socket.on_close(socket)
+    assert client.health["connected"] is False
