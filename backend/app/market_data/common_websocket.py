@@ -150,6 +150,9 @@ class CommonWebSocketManager:
         self._callback_dispatch_capacity = callback_dispatch_capacity
         self._callback_adapters: dict[SocketGroup, tuple[int, AngelShardCallbackAdapter]] = {}
         self._callback_dispatch_retired_faults: dict[str, dict[str, Any]] = {}
+        # A callback worker can outlive its bounded stop wait when a consumer
+        # callback blocks. Retain only lifecycle metadata until that worker exits.
+        self._retired_callback_workers: dict[str, dict[str, Any]] = {}
         self._resolve_exchange_type = exchange_type_resolver or self._default_exchange_type
         self._sockets: dict[SocketGroup, Any] = {}
         self._socket_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
@@ -1430,13 +1433,38 @@ class CommonWebSocketManager:
         Thread(target=lambda: self._stop_retired_callback_adapter(adapter, group, generation),
                name=f"angel-callback-retire-{group.mode}-{group.shard}-{generation}", daemon=True).start()
 
-    @staticmethod
-    def _stop_retired_callback_adapter(adapter: AngelShardCallbackAdapter, group: SocketGroup, generation: int) -> None:
+    def _stop_retired_callback_adapter(self, adapter: AngelShardCallbackAdapter, group: SocketGroup, generation: int) -> None:
         try:
             adapter.stop(timeout=1.0, drain=False)
         except TimeoutError:
-            app_logger.warning("Angel callback worker did not stop within retirement budget group=%s generation=%s",
-                               f"{group.mode}:{group.shard}", generation)
+            worker = getattr(adapter, "_thread", None)
+            key = f"{group.mode}:{group.shard}:{generation}"
+            with self._lock:
+                self._retired_callback_workers[key] = {
+                    "group": f"{group.mode}:{group.shard}",
+                    "generation": generation,
+                    "worker_name": worker.name if isinstance(worker, Thread) else None,
+                    "worker_ident": worker.ident if isinstance(worker, Thread) else None,
+                    "worker_alive": bool(isinstance(worker, Thread) and worker.is_alive()),
+                    "retired_at": time.time(),
+                }
+            app_logger.warning(
+                "Angel callback worker did not stop within retirement budget group=%s generation=%s",
+                f"{group.mode}:{group.shard}", generation,
+            )
+            if isinstance(worker, Thread) and worker.is_alive():
+                def _watch_worker() -> None:
+                    worker.join()
+                    with self._lock:
+                        self._retired_callback_workers.pop(key, None)
+                Thread(
+                    target=_watch_worker,
+                    name=f"angel-callback-retire-watch-{group.mode}-{group.shard}-{generation}",
+                    daemon=True,
+                ).start()
+            else:
+                with self._lock:
+                    self._retired_callback_workers.pop(key, None)
 
     def _dispatch_transport_data(self, group: SocketGroup, socket: Any, message: Any, generation: int) -> None:
         """Keep SDK callback work bounded; optional adapter runs routing/consumers off-thread."""
@@ -2103,6 +2131,8 @@ class CommonWebSocketManager:
                 "retired_transport_groups": sorted({
                     str(item.get("group")) for item in self._retired_transports.values()
                 }),
+                "retired_callback_worker_count": len(self._retired_callback_workers),
+                "retired_callback_workers": [dict(item) for item in self._retired_callback_workers.values()],
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
             }
