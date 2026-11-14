@@ -248,7 +248,20 @@ class ShoonyaWebSocket:
                     on_error=self._guard_callback(self._on_error, epoch),
                     on_close=self._guard_callback(self._on_close, epoch),
                 )
-                with self._lock: self._ws = ws
+                # Factory creation can block while stop() completes. Do not
+                # publish or run a transport from a retired worker generation.
+                with self._lock:
+                    if self._stop.is_set() or epoch != self._feed_epoch:
+                        should_close = True
+                    else:
+                        self._ws = ws
+                        should_close = False
+                if should_close:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    break
                 ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED}, ping_interval=20, ping_timeout=10)
                 with self._lock:
                     opened_at = self._connection_opened_at
