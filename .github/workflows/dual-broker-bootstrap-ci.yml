@@ -1,18 +1,6 @@
 name: Dual Broker Readiness Bootstrap CI
 
 on:
-  push:
-    branches:
-      - ci/bootstrap-dual-broker-readiness
-    paths:
-      - "backend/app/market_data/common_websocket.py"
-      - "backend/app/market_data/provider_readiness.py"
-      - "backend/app/market_data/provider_readiness_bridge.py"
-      - "backend/app/market_data/shoonya_websocket.py"
-      - "backend/tests/test_provider_readiness.py"
-      - "backend/tests/test_provider_readiness_bridge.py"
-      - "backend/tests/test_shoonya_market_data.py"
-      - ".github/workflows/dual-broker-bootstrap-ci.yml"
   pull_request:
     branches: [main]
     paths:
