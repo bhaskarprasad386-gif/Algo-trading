@@ -539,3 +539,13 @@ an incomplete implementation:
   They remain unexecuted in this session; exact-head CI is required.
 - No scanner, Box Spread, IV Scanner, broker subscription, source selection,
   failover, or order-routing behavior changed.
+
+
+## Batch 24 — explicit Angel observer authentication readiness diagnostics
+
+- Added a read-only `normalized_observer_authentication` diagnostic to the common Angel feed snapshot.
+- State is `NOT_VERIFIABLE`; `authenticated` and parity-generation activation remain false until a separately verified broker-authentication acknowledgement exists.
+- The diagnostic explicitly identifies the missing evidence rather than allowing transport-open/connected state to be mistaken for authenticated market data.
+- Added a focused assertion that the diagnostic remains fail-closed.
+- No SmartAPI lifecycle, subscription, scanner, Box Spread, IV Scanner, source-selection, failover, or order-routing behavior changed.
+- Tests are committed but have not been executed in this session; exact-head CI remains required.
