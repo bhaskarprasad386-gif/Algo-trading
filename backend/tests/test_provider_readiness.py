@@ -175,3 +175,38 @@ def test_invalid_evidence_types_are_rejected():
         state.record_market_event(
             1, canonical_identity_valid=1, exchange_timestamp_valid=True, fresh=True
         )
+
+
+
+def test_partial_subscription_acknowledgements_accumulate_until_full_coverage():
+    state = _open()
+    state.record_authentication_ack(1, accepted=True, evidence_kind="shoonya_ak_ack")
+    state.request_subscriptions(1, ["NFO|123", "NFO|124"])
+    assert state.acknowledge_subscriptions(1, ["NFO|123"])
+    assert state.snapshot()["subscription"] == "REQUEST_SENT"
+    assert state.acknowledge_subscriptions(1, ["NFO|124"])
+    assert state.snapshot()["subscription"] == "ACKNOWLEDGED"
+
+
+def test_transport_close_clears_generation_scoped_subscription_and_market_evidence():
+    state = _open()
+    state.record_authentication_ack(1, accepted=True, evidence_kind="shoonya_ak_ack")
+    state.request_subscriptions(1, ["NFO|123"])
+    state.acknowledge_subscriptions(1, ["NFO|123"])
+    state.record_market_event(
+        1, canonical_identity_valid=True, exchange_timestamp_valid=True, fresh=True
+    )
+    assert state.transport_closed(1)
+    snapshot = state.snapshot()
+    assert snapshot["subscription"] == "NOT_REQUESTED"
+    assert snapshot["acknowledged_token_count"] == 0
+    assert snapshot["canonical_identity_valid"] is False
+    assert snapshot["exchange_timestamp_valid"] is False
+
+
+def test_subscription_tokens_must_be_explicit_strings():
+    state = _open()
+    with pytest.raises(TypeError):
+        state.request_subscriptions(1, "NFO|123")
+    with pytest.raises(TypeError):
+        state.request_subscriptions(1, [123])
