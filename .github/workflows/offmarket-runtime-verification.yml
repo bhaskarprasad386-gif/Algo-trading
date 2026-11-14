@@ -111,3 +111,23 @@ jobs:
             grep -Ei 'error|exception|failed|timeout|429|sqlite|websocket' |
             tail -40 || true
           REMOTE
+
+  test-offmarket-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend test dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pytest-timeout
+      - name: Run off-market replay and Box readiness contracts
+        working-directory: backend
+        run: |
+          pytest -q tests/test_off_market_runtime_verification.py app/market_data/tests/test_common_strategy_feed_warm_start.py tests/test_live_box_spread_runner.py
