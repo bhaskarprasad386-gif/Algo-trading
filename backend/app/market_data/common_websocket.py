@@ -161,6 +161,7 @@ class CommonWebSocketManager:
         self._max_sockets = 3
         self._callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
+        self._record_observers: dict[str, Callable[..., None]] = {}
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._reconcile_lock = RLock()
@@ -324,6 +325,23 @@ class CommonWebSocketManager:
         with self._lock:
             self._record_callbacks.pop(self._consumer_name(consumer), None)
 
+    def register_normalized_observer(self, consumer: str, callback: Callable[..., None]) -> None:
+        """Register an additive observer with transport trust metadata.
+
+        Signature: (record, group, generation, authenticated, connection_current,
+        received_monotonic_ns). SmartAPI currently exposes no independently
+        verified auth acknowledgement, so authenticated is always False.
+        """
+        consumer = self._consumer_name(consumer)
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        with self._lock:
+            self._record_observers[consumer] = callback
+
+    def unregister_normalized_observer(self, consumer: str) -> None:
+        with self._lock:
+            self._record_observers.pop(self._consumer_name(consumer), None)
+
     def subscribe(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
         consumer = self._consumer_name(consumer)
         if not keys:
@@ -397,6 +415,7 @@ class CommonWebSocketManager:
             removed = self.registry.clear_consumer(consumer)
             self._callbacks.pop(consumer, None)
             self._record_callbacks.pop(consumer, None)
+            self._record_observers.pop(consumer, None)
             total = len(self.registry.subscriptions())
             if removed:
                 app_logger.info(
@@ -1403,6 +1422,7 @@ class CommonWebSocketManager:
             if group not in self._sockets:
                 return
             self._raw_frames_received += 1
+            received_monotonic_ns = time.monotonic_ns()
             frame_at = time.monotonic()
             self._last_raw_frame_at = frame_at
             self._last_raw_frame_at_by_group[group] = frame_at
@@ -1482,9 +1502,12 @@ class CommonWebSocketManager:
                 self._unmatched_frames += 1
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
+            record_observers = [(self._record_observers.get(name), key) for name, key in matching]
             self._missing_callback_routes += sum(
                 1 for name, _ in matching
-                if self._callbacks.get(name) is None and self._record_callbacks.get(name) is None
+                if self._callbacks.get(name) is None
+                and self._record_callbacks.get(name) is None
+                and self._record_observers.get(name) is None
             )
             if matching:
                 self._ticks_received += 1
@@ -1878,7 +1901,7 @@ class CommonWebSocketManager:
                     if group not in sockets or not bool(getattr(sockets.get(group), "connected", False))
                 ),
                 "max_socket_sessions": self._max_sockets,
-                "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
+                "consumers": sorted(set(self._callbacks) | set(self._record_callbacks) | set(self._record_observers)),
                 "socket_health_by_group": socket_health_by_group,
                 "async_callback_dispatch": self._async_callback_dispatch,
                 "callback_dispatch_by_group": {
