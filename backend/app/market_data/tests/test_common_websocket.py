@@ -1963,6 +1963,10 @@ def test_shared_broker_admission_serializes_connects_across_manager_instances():
     second_started = Event()
 
     class FirstBlockingSocket(FakeSocket):
+        # Keep this subclass's instance accounting isolated from sibling
+        # FakeSocket subclasses that inherit the base class list.
+        instances = []
+
         def connect(self, **kwargs):
             self.connect_calls.append(kwargs)
             self.connecting = True
