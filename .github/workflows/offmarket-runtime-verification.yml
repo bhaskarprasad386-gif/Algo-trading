@@ -1,0 +1,113 @@
+name: Off-Market Runtime Verification
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 18:45 IST on weekdays: after the NSE/BSE cash and derivatives session.
+    - cron: "15 13 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offmarket-runtime-verification
+  cancel-in-progress: false
+
+jobs:
+  verify-vps-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify off-market VPS runtime (read-only)
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOST: 82.41.67.22
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY"
+          test -n "$VPS_USER"
+          test -n "$VPS_HOST"
+          printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -T 5 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/Algo-Trading
+
+          echo "=== OFF-MARKET RUNTIME VERIFICATION ==="
+          echo "COMMIT=$(git rev-parse --short HEAD)"
+          test "$(systemctl is-active algo-trading.service)" = "active"
+          echo "SERVICE=PASS"
+
+          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/health -o /tmp/offmarket-health.json
+          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/live-health -o /tmp/offmarket-live-health.json
+          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/common-feed-health -o /tmp/offmarket-common-feed.json
+          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/scanner/box-spread/live -o /tmp/offmarket-box-live.json
+          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/scanner/box-spread/diagnostics -o /tmp/offmarket-box-diagnostics.json
+          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/shoonya-health -o /tmp/offmarket-shoonya.json
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          def load(name):
+              return json.loads(Path(f"/tmp/offmarket-{name}.json").read_text())
+
+          health = load("health")
+          live = load("live-health")
+          common = load("common-feed")
+          box_live = load("box-live")
+          box_diag = load("box-diagnostics")
+          shoonya = load("shoonya")
+
+          assert health.get("status") == "ok", f"application health is not ok: {health}"
+          print("API_HEALTH=PASS")
+
+          session = str(live.get("market_session") or "").upper()
+          assert session == "CLOSED", f"probe ran in {session or 'UNKNOWN'} market session"
+          assert str(live.get("live_orders") or "").upper() == "OFF", "live order safety is not OFF"
+          print("MARKET_SESSION=CLOSED")
+          print("LIVE_ORDER_SAFETY=OFF")
+
+          for key in ("ticks_received", "active_instruments", "delivery_errors"):
+              value = common.get(key)
+              if value is not None:
+                  assert isinstance(value, (int, float)) and value >= 0, f"invalid common-feed counter {key}={value}"
+          assert isinstance(common.get("socket_health_by_group", {}), dict), "socket group health shape invalid"
+          assert isinstance(common.get("consumers", []), list), "consumer list shape invalid"
+          print("COMMON_FEED_DIAGNOSTICS=PASS")
+          print("COMMON_FEED_SUMMARY=" + json.dumps({
+              "active_instruments": common.get("active_instruments"),
+              "socket_groups": common.get("socket_groups"),
+              "ticks_received": common.get("ticks_received"),
+              "delivery_errors": common.get("delivery_errors"),
+              "authentication": (common.get("normalized_observer_authentication") or {}).get("state", "UNKNOWN"),
+          }, sort_keys=True))
+
+          assert box_live.get("strategy") == "box-spread", "Box live endpoint strategy mismatch"
+          assert str(box_live.get("mode") or "").lower() == "paper-safe", "Box live endpoint is not paper-safe"
+          assert isinstance(box_live.get("data"), list), "Box live data is not a list"
+          assert isinstance(box_diag.get("counts", {}), dict), "Box diagnostic counters malformed"
+          assert isinstance(box_diag.get("last_scan", {}), dict), "Box last_scan malformed"
+          print("BOX_ENDPOINT_CONTRACTS=PASS")
+          print("BOX_OFFMARKET_STATE=" + str(box_diag.get("status", "UNKNOWN")).upper())
+
+          assert shoonya.get("enabled") is False, "Shoonya is expected to remain disabled in this verification profile"
+          assert shoonya.get("order_routing_enabled") is False, "Shoonya order routing must remain disabled"
+          print("SHOONYA_ORDER_ROUTING=OFF")
+          print("OFFMARKET_RUNTIME_RESULT=PASS")
+          PY
+
+          integrity=$(sqlite3 backend/algo_trading.db "PRAGMA integrity_check;")
+          test "$integrity" = "ok"
+          echo "SQLITE_INTEGRITY=PASS"
+
+          echo "=== RECENT SERVICE FAULTS (INFORMATIONAL) ==="
+          journalctl -u algo-trading.service --since "24 hours ago" --no-pager 2>/dev/null |
+            grep -Ei 'error|exception|failed|timeout|429|sqlite|websocket' |
+            tail -40 || true
+          REMOTE
