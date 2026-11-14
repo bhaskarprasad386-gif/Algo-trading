@@ -1019,3 +1019,12 @@ merge, and deployment remain outstanding.
 - Added parameterized regression coverage `test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock` for all four paths. It blocks `send()`, invokes `stop()`, and requires `close()` to be called promptly and both worker threads to finish.
 - This removes lifecycle-lock starvation; it does not claim a blocked network call is forcibly killed. Existing bounded shutdown diagnostics still report any worker that fails to terminate.
 - Tests committed but not executed in this environment. Shoonya remains opt-in/read-only; Angel/Box/IV scanner behavior and order routing are unchanged.
+
+
+### Batch 43 — Angel reconnect worker lifecycle-generation fence
+
+- Found a shutdown race in `MarketDataWebSocket`: `_reconnect_after_disconnect()` could pass its stopping check, pause before `connect()`, then `close()` could set `_stopping=True`; the delayed reconnect subsequently entered `connect()`, which unconditionally reset `_stopping=False` and could create a new socket after shutdown.
+- Added a monotonically increasing `_lifecycle_generation`. `close()` increments it. Internal reconnect workers capture the generation and pass it to `connect()`; the generation/stopping check now occurs before any subscription or callback state mutation. A stale internal reconnect returns without reopening the wrapper.
+- Explicit caller-initiated `connect()` remains the supported way to intentionally restart a previously closed wrapper; it may clear `_stopping` and begin a new lifecycle.
+- Added tests for close winning the reconnect race, stale reconnect rejection without subscription mutation, and explicit manual restart after close.
+- No scanner feed selection, subscription intent, provider readiness, strategy, or order-routing behavior changed. Tests committed but not executed in this environment.
