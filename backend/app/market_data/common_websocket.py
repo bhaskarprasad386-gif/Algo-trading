@@ -1518,10 +1518,13 @@ class CommonWebSocketManager:
         for observer, observer_key in record_observers:
             if observer is not None:
                 observers_by_key[observer_key].append(observer)
-        callback_by_key = {key: callback for callback, key in record_callbacks}
+        callbacks_by_key: dict[InstrumentKey, list[Callable[..., None]]] = defaultdict(list)
+        for callback, callback_key in record_callbacks:
+            if callback is not None:
+                callbacks_by_key[callback_key].append(callback)
         for key in dict.fromkeys([key for _, key in record_callbacks] + [key for _, key in record_observers]):
-            callback = callback_by_key.get(key)
-            if callback is None and not observers_by_key.get(key):
+            callbacks = callbacks_by_key.get(key, ())
+            if not callbacks and not observers_by_key.get(key):
                 continue
             descriptor = self.registry.get(key)
             if descriptor is None:
@@ -1582,7 +1585,7 @@ class CommonWebSocketManager:
                                     (group, incoming_exchange_type)
                                 ] = incoming_timestamp_ns
                             self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
-                if callback is not None:
+                for callback in callbacks:
                     callback(record)
                     with self._lock:
                         self._normalized_records_delivered += 1
