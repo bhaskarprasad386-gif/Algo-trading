@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from threading import RLock
 from time import time
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from app.core.logger import app_logger
 from .registry import InstrumentDescriptor, InstrumentRegistry
@@ -32,7 +32,7 @@ class ShoonyaMarketDataSupervisor:
         frame_timeout_seconds: float = 30.0,
         auth_timeout_seconds: float = 15.0,
         websocket_factory: Any | None = None,
-        on_tick_observation: Any | None = None,
+        on_tick_observation: Callable[[MarketDataRecord, int, bool, int], None] | None = None,
     ) -> None:
         if not 1 <= int(max_tokens) <= 500:
             raise ValueError("max_tokens must be between 1 and 500")
