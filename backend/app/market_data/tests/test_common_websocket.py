@@ -2003,18 +2003,20 @@ def test_shared_broker_admission_serializes_connects_across_manager_instances():
         assert started.wait(timeout=1.0)
 
         second_manager.subscribe("second", [second_item.key])
-        assert len(SecondSocket.instances) == 1
-        second_socket = SecondSocket.instances[0]
-        assert second_socket.connect_calls == []
         assert not second_started.is_set(), (
             "a second manager must not start a broker handshake while the "
             "first manager's handshake is still unresolved"
         )
 
+        # The second manager may defer socket construction itself until the
+        # process-wide admission slot is free. Assert handshake serialization,
+        # not eager placeholder allocation.
         release.set()
         assert second_started.wait(timeout=2.0)
         assert len(FirstBlockingSocket.instances) == 1
         assert FirstBlockingSocket.instances[0].connected is True
+        assert len(SecondSocket.instances) == 1
+        second_socket = SecondSocket.instances[0]
         assert second_socket.connected is True
     finally:
         release.set()
