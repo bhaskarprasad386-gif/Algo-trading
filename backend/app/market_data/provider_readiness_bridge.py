@@ -71,6 +71,7 @@ class ProviderReadinessBridge:
                 self._shoonya.record_authentication_ack(
                     current, accepted=False, evidence_kind=ProviderReadiness.AUTH_ACK_KIND
                 )
+                self._shoonya.transport_closed(current, reason=state)
             elif state == "AUTH_TIMEOUT":
                 self._shoonya.authentication_timeout(current)
                 self._shoonya.transport_closed(current, reason=state)
@@ -145,6 +146,7 @@ class ProviderReadinessBridge:
                     }
                     for key, state in sorted(self._angel.items())
                 },
+                "angel_one_transport_evidence": "current_generation_normalized_market_callback_only; socket_lifecycle_not_observed",
                 "pairing_enabled": False,
                 "scanner_fanout_enabled": False,
                 "order_eligible": False,
