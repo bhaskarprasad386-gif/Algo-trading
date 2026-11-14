@@ -161,7 +161,7 @@ class BoundedQuoteParityWorker:
                         continue
                 metrics = analyze_quote_parity(
                     envelope.left, envelope.right,
-                    now_monotonic_ns=envelope.received_monotonic_ns,
+                    now_monotonic_ns=monotonic_ns(),
                     now_exchange_timestamp_ns=envelope.now_exchange_timestamp_ns,
                     max_age_ns=envelope.max_age_ns,
                 )
