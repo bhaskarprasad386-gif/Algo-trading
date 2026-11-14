@@ -405,7 +405,7 @@ def check_trace_exit(trace_id: int):
     reverse = {}
     for leg, descriptor in descriptors.items():
         reverse[(descriptor.key.exchange, descriptor.key.token)] = leg
-    feed = CommonStrategyMarketFeed(consumer, manager=manager, mode=3)
+    feed = CommonStrategyMarketFeed(consumer, manager=manager, mode=3, warm_start=True)
     def on_record(record):
         key = (record.instrument.exchange, record.instrument.token)
         leg = reverse.get(key)

@@ -6,14 +6,16 @@ values. No strategy opens or owns a broker WebSocket directly.
 from __future__ import annotations
 
 from threading import Lock
+from time import time_ns
 from typing import Any, Callable, Iterable
 
 from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
 
 from .common_websocket import CommonWebSocketManager
-from .contracts import InstrumentKey
+from .contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
 from .registry import InstrumentDescriptor
+from .shared_cache import get_shared_market_data_cache
 
 _EXCHANGE_SEGMENTS = {
     "NSE": "NSE", "NFO": "NFO", "BSE": "BSE",
@@ -45,6 +47,76 @@ def shared_common_manager(
         return _SHARED_MANAGER
 
 
+def _record_from_snapshot(descriptor: InstrumentDescriptor, snapshot: dict[str, Any]) -> MarketDataRecord | None:
+    timestamp_ns = snapshot.get("timestamp_ns")
+    if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < 0:
+        return None
+    try:
+        instrument_type = InstrumentType(str(descriptor.instrument_type).strip().lower())
+        raw_option_type = descriptor.option_type or snapshot.get("option_type")
+        option_type = OptionType(str(raw_option_type).strip().upper()) if raw_option_type else None
+        if instrument_type is InstrumentType.OPTION and option_type is None:
+            return None
+        raw_payload = snapshot.get("payload")
+        return MarketDataRecord(
+            instrument=descriptor.key,
+            symbol=descriptor.symbol,
+            instrument_type=instrument_type,
+            timestamp_ns=timestamp_ns,
+            timeframe=str(snapshot.get("timeframe") or "1s"),
+            ltp=snapshot.get("ltp"),
+            bid=snapshot.get("bid"),
+            ask=snapshot.get("ask"),
+            bid_qty=snapshot.get("bid_qty"),
+            ask_qty=snapshot.get("ask_qty"),
+            volume=snapshot.get("volume"),
+            oi=snapshot.get("oi"),
+            open=snapshot.get("open"),
+            high=snapshot.get("high"),
+            low=snapshot.get("low"),
+            close=snapshot.get("close"),
+            underlying=descriptor.underlying or snapshot.get("underlying"),
+            expiry=descriptor.expiry or snapshot.get("expiry"),
+            strike=descriptor.strike if descriptor.strike is not None else snapshot.get("strike"),
+            option_type=option_type,
+            lot_size=descriptor.lot_size if descriptor.lot_size is not None else snapshot.get("lot_size"),
+            tick_size=descriptor.tick_size if descriptor.tick_size is not None else snapshot.get("tick_size"),
+            payload=dict(raw_payload) if isinstance(raw_payload, dict) else {},
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def replay_cached_snapshots(
+    descriptors: Iterable[InstrumentDescriptor],
+    callback: Callable[[MarketDataRecord], None],
+    *,
+    max_age_seconds: float = 5.0,
+    max_future_skew_seconds: float = 1.0,
+) -> int:
+    """Replay only exchange-timestamp-fresh snapshots into an opted-in consumer."""
+    if max_age_seconds <= 0 or max_future_skew_seconds < 0:
+        raise ValueError("snapshot freshness bounds are invalid")
+    now_ns = time_ns()
+    max_age_ns = int(max_age_seconds * 1_000_000_000)
+    max_future_ns = int(max_future_skew_seconds * 1_000_000_000)
+    cache = get_shared_market_data_cache()
+    replayed = 0
+    for descriptor in descriptors:
+        snapshot = cache.get(descriptor.key.value)
+        if snapshot is None:
+            continue
+        record = _record_from_snapshot(descriptor, snapshot)
+        if record is None:
+            continue
+        age_ns = now_ns - record.timestamp_ns
+        if age_ns > max_age_ns or age_ns < -max_future_ns:
+            continue
+        callback(record)
+        replayed += 1
+    return replayed
+
+
 class CommonStrategyMarketFeed:
     """Own one consumer registration on the process-wide common feed."""
 
@@ -56,6 +128,7 @@ class CommonStrategyMarketFeed:
         manager: CommonWebSocketManager | None = None,
         socket_factory: Callable[[], Any] | None = None,
         mode: int = 3,
+        warm_start: bool = False,
     ) -> None:
         self.consumer = str(consumer).strip()
         if not self.consumer:
@@ -63,8 +136,12 @@ class CommonStrategyMarketFeed:
         if not isinstance(mode, int) or isinstance(mode, bool) or mode not in {1, 2, 3, 4}:
             raise ValueError("mode must be one of 1, 2, 3 or 4")
         self.mode = mode
+        self.warm_start = bool(warm_start)
         self.manager = manager or shared_common_manager(auth, socket_factory=socket_factory)
         self._started = False
+        self._last_timestamp_ns: dict[str, int] = {}
+        self._timestamp_guard = Lock()
+        self._callback_locks: dict[str, Lock] = {}
 
     @staticmethod
     def descriptor(
@@ -121,7 +198,22 @@ class CommonStrategyMarketFeed:
                 fresh.append(descriptor)
         if fresh:
             self.manager.registry.register_many(tuple(fresh))
-        self.manager.register_normalized_callback(self.consumer, callback)
+        self._last_timestamp_ns.clear()
+
+        def ordered_callback(record: MarketDataRecord) -> None:
+            key = record.instrument.value
+            with self._timestamp_guard:
+                callback_lock = self._callback_locks.setdefault(key, Lock())
+            with callback_lock:
+                previous = self._last_timestamp_ns.get(key)
+                if previous is not None and record.timestamp_ns < previous:
+                    return
+                self._last_timestamp_ns[key] = record.timestamp_ns
+                callback(record)
+
+        self.manager.register_normalized_callback(self.consumer, ordered_callback)
+        if self.warm_start:
+            replay_cached_snapshots(descriptors, ordered_callback)
         keys = tuple(d.key for d in descriptors)
         self.manager.subscribe(self.consumer, list(keys), mode=self.mode)
         self._started = True
@@ -140,4 +232,4 @@ class CommonStrategyMarketFeed:
         self.stop()
 
 
-__all__ = ["CommonStrategyMarketFeed", "shared_common_manager"]
+__all__ = ["CommonStrategyMarketFeed", "replay_cached_snapshots", "shared_common_manager"]
