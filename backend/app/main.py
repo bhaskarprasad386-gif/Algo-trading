@@ -40,8 +40,6 @@ from app.market_data.client import MarketDataClient
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
-from app.market_data.common_websocket import CommonWebSocketManager
-from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
@@ -1953,20 +1951,17 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         except Exception as exc:
             equity_pressure_error = f"{type(exc).__name__}: {exc}"
             app_logger.warning("IV top-10 constituent pressure unavailable: {}", equity_pressure_error)
-        # IV owns an independent Angel One manager/socket. All IV market
-        # data uses mode 3 on this single socket; the existing shared manager
-        # retains its Box Spread and other strategy subscriptions unchanged.
-        iv_auth = AngelOneAuth()
-        iv_feed_manager = CommonWebSocketManager(
-            socket_factory=lambda: MarketDataWebSocket(auth=iv_auth, auto_reconnect=False)
-        )
-        iv_feed_manager._max_sockets = 1
+        # IV and Box Spread share the process-wide Angel One manager.
+        # IV consumers request mode 3, while the manager enforces one global
+        # three-socket budget across all registered strategy subscriptions.
+        iv_feed_manager = shared_common_manager()
         runtime = IVSkewFlipRuntime(
             instrument_master=instrument_master,
             equity_pressure_enabled=bool(equity_baskets),
             equity_baskets=equity_baskets,
             equity_pressure_unavailable_reason=equity_pressure_error,
             feed_manager=iv_feed_manager,
+            close_feed_manager=False,
         )
         try:
             snapshot = runtime.start(instruments=iv_instruments)

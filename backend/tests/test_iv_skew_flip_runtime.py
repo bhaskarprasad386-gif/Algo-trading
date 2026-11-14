@@ -273,6 +273,32 @@ def test_runtime_refresh_worker_retries_after_transient_refresh_error(monkeypatc
     assert "RUNTIME" not in runtime._last_error
 
 
+def test_runtime_does_not_close_application_owned_shared_feed_manager():
+    class SharedManager:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+        def snapshot(self):
+            return {"status": "LIVE", "socket_count": 1}
+
+    manager = SharedManager()
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        feed_manager=manager,
+        close_feed_manager=False,
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+
+    result = runtime.stop()
+
+    assert result["status"] == "STOPPED"
+    assert manager.close_calls == 0
+
+
 def test_runtime_stop_preserves_worker_reference_while_telegram_thread_is_alive():
     class StillAliveThread:
         def is_alive(self):
