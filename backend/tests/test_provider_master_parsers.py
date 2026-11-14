@@ -182,3 +182,29 @@ def test_shoonya_bfo_symbol_alias_normalizes_to_underlying(
     report = ShoonyaMasterParser.parse(text, delimiter=",")
     assert report.accepted_rows == 1
     assert report.mappings[0].key.underlying == expected
+
+
+@pytest.mark.parametrize(
+    ("symbol", "instrument", "expected", "strike"),
+    [
+        ("SENSEX26NOV2610000CE", "OPTIDX", "SENSEX", "1000000"),
+        ("BANKEX26NOV26FUT", "FUTIDX", "BANKEX", ""),
+    ],
+)
+def test_angel_bfo_contract_symbol_recovers_underlying_when_name_missing(
+    symbol, instrument, expected, strike,
+):
+    row = {
+        "exch_seg": "BFO",
+        "token": "BFO-1001",
+        "symbol": symbol,
+        "name": "",
+        "instrumenttype": instrument,
+        "expiry": "26NOV2026",
+        "strike": strike,
+        "lotsize": "20",
+        "tick_size": "5",
+    }
+    report = AngelOneMasterParser.parse([row])
+    assert report.accepted_rows == 1
+    assert report.mappings[0].key.underlying == expected
