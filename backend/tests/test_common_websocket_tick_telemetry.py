@@ -139,3 +139,35 @@ def test_angel_observer_keeps_all_legacy_consumers_on_same_instrument():
     assert len(first) == 1
     assert len(second) == 1
     assert manager.snapshot()["normalized_records_delivered"] == 2
+
+
+
+def test_angel_observer_only_consumer_is_a_valid_route_and_can_unregister():
+    key = InstrumentKey("NSE", "NSE", "456")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="OBSERVER_ONLY", instrument_type="equity",
+        exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("observer-only", key, mode=3)
+    group = SocketGroup(3, 0)
+    manager._route_index = {group: {(1, "456"): [("observer-only", key)]}}
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 4
+    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+        instrument=key, symbol="OBSERVER_ONLY", timestamp_ns=123456789,
+        ltp=10.0, bid=9.9, ask=10.1,
+    )
+    observed = []
+    manager.register_normalized_observer("observer-only", lambda *args: observed.append(args))
+
+    manager._on_data(group, {"token": "456", "exchange_type": 1}, generation=4)
+    assert len(observed) == 1
+    assert manager.snapshot()["missing_callback_routes"] == 0
+    assert "observer-only" in manager.snapshot()["consumers"]
+
+    manager.unregister_normalized_observer("observer-only")
+    manager._on_data(group, {"token": "456", "exchange_type": 1}, generation=4)
+    assert len(observed) == 1
+    assert manager.snapshot()["missing_callback_routes"] == 1
