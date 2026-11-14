@@ -157,3 +157,28 @@ def test_coverage_audit_surfaces_lot_and_tick_metadata_mismatch():
 def test_coverage_audit_requires_both_brokers():
     with pytest.raises(ValueError, match="one Angel One and one Shoonya"):
         audit_master_coverage([AngelOneMasterParser.parse(_angel_rows())])
+
+
+@pytest.mark.parametrize(
+    ("symbol_alias", "instrument", "expected"),
+    [
+        ("SENSEXOPT", "OPTIDX", "SENSEX"),
+        ("BANKEXOPT", "OPTIDX", "BANKEX"),
+        ("SENSEXFUT", "FUTIDX", "SENSEX"),
+        ("BANKEXFUT", "FUTIDX", "BANKEX"),
+    ],
+)
+def test_shoonya_bfo_symbol_alias_normalizes_to_underlying(
+    symbol_alias, instrument, expected,
+):
+    text = (
+        "Exchange,Token,LotSize,Symbol,TradingSymbol,Instrument,OptionType,"
+        "StrikePrice,TickSize,Expiry\n"
+        f"BFO,9001,20,{symbol_alias},{expected}26NOV2026FUT,"
+        f"{instrument},CE,0,0.05,26-Nov-2026\n"
+    )
+    if instrument == "OPTIDX":
+        text = text.replace(",0,0.05,", ",100,0.05,")
+    report = ShoonyaMasterParser.parse(text, delimiter=",")
+    assert report.accepted_rows == 1
+    assert report.mappings[0].key.underlying == expected
