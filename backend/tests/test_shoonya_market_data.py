@@ -1273,3 +1273,49 @@ def test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock(operation):
     assert not writer.is_alive()
     assert not stopper.is_alive()
     assert feed.snapshot()["shutdown_workers_alive"] == []
+
+
+
+def test_late_shoonya_factory_completion_cannot_resurrect_stopped_adapter():
+    factory_entered = threading.Event()
+    release_factory = threading.Event()
+    created = []
+
+    class DelayedSocket:
+        def __init__(self):
+            self.closed = False
+            self.run_calls = 0
+
+        def close(self):
+            self.closed = True
+
+        def run_forever(self, **kwargs):
+            self.run_calls += 1
+
+    def delayed_factory(*args, **kwargs):
+        factory_entered.set()
+        assert release_factory.wait(timeout=8.0)
+        socket = DelayedSocket()
+        created.append(socket)
+        return socket
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        websocket_factory=delayed_factory,
+    )
+    feed.start()
+    assert factory_entered.wait(timeout=2.0)
+    try:
+        feed.stop()
+    finally:
+        release_factory.set()
+
+    supervisor = feed._thread
+    assert supervisor is not None
+    supervisor.join(timeout=2.0)
+    assert not supervisor.is_alive()
+    assert len(created) == 1
+    assert created[0].closed is True
+    assert created[0].run_calls == 0
+    assert feed.snapshot()["connected"] is False
+    assert feed._ws is None
