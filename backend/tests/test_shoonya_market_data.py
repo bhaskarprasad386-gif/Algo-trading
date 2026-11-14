@@ -1433,3 +1433,31 @@ def test_shoonya_shadow_observer_is_fenced_if_epoch_changes_during_legacy_callba
     assert not worker.is_alive()
     assert observed == []
     assert feed.snapshot()["stale_dispatch_drops"] == 1
+
+
+
+def test_shoonya_shutdown_timeout_diagnostics_clear_after_worker_exits():
+    release = threading.Event()
+    worker = threading.Thread(
+        target=lambda: release.wait(timeout=2.0),
+        name="blocked-shoonya-test-worker",
+        daemon=True,
+    )
+    worker.start()
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed._dispatch_thread = worker
+    feed._shutdown_workers_alive = [worker.name]
+
+    feed._start_shutdown_watcher((worker,))
+    assert feed.snapshot()["shutdown_watcher_alive"] is True
+    assert feed.snapshot()["shutdown_workers_alive"] == [worker.name]
+
+    release.set()
+    worker.join(timeout=1.0)
+    watcher = feed._shutdown_watcher
+    assert watcher is not None
+    watcher.join(timeout=1.0)
+
+    state = feed.snapshot()
+    assert state["shutdown_watcher_alive"] is False
+    assert state["shutdown_workers_alive"] == []
