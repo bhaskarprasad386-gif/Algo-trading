@@ -512,3 +512,8 @@ Added `backend/app/market_data/provider_quote_pairer.py` and focused tests in
 - No parity worker wiring, scanner change, Box/IV behavior change, subscription
   change, source selection, failover, or order route was added. Exact-head CI
   and tests remain unverified.
+
+- Follow-up static review caught and corrected a potential fan-out regression:
+  observers and legacy callbacks are now grouped by instrument without collapsing
+  multiple consumers subscribed to the same contract. A dedicated regression
+  test covers two legacy consumers plus an observer on one instrument.
