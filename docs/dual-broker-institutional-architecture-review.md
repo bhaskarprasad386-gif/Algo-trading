@@ -1010,3 +1010,12 @@ merge, and deployment remain outstanding.
 - Added `test_retired_slot_waits_for_actual_transport_thread_after_close_returns`, which simulates a wrapper close returning while the transport thread remains alive and verifies no replacement socket is opened until that thread exits.
 - Existing bounded SDK close/abort behavior remains unchanged. This does not claim Python can forcibly kill a stuck thread; it makes the unresolved transport visible and prevents an unsafe overlapping replacement.
 - Tests committed but not executed in this environment. No scanner, strategy, subscription intent, pairing, or order-routing behavior changed.
+
+
+### Batch 42 — Shoonya shutdown must not wait behind socket writes
+
+- Lifecycle audit found four outbound paths (`_on_open`, heartbeat, market subscription replay, and order subscription) held the adapter lifecycle lock while calling `ws.send()`. A blocked SDK/network write could therefore prevent `stop()` from acquiring the same lock, so shutdown could not even reach `ws.close()` to unblock the write.
+- Moved socket writes outside the lifecycle lock. Each path now validates/snapshots current socket ownership and auth state under the lock, then performs network I/O after releasing it. Subscription ordering remains serialized by the dedicated `_subscription_send_lock`; no new lock is held by shutdown.
+- Added parameterized regression coverage `test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock` for all four paths. It blocks `send()`, invokes `stop()`, and requires `close()` to be called promptly and both worker threads to finish.
+- This removes lifecycle-lock starvation; it does not claim a blocked network call is forcibly killed. Existing bounded shutdown diagnostics still report any worker that fails to terminate.
+- Tests committed but not executed in this environment. Shoonya remains opt-in/read-only; Angel/Box/IV scanner behavior and order routing are unchanged.
