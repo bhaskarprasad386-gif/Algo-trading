@@ -98,6 +98,35 @@ class ProviderReadinessBridge:
                 received_monotonic_ns=received_at,
             )
 
+    def angel_transport_event(self, event: str, group: Any, generation: int, received_at: int) -> None:
+        """Record current Angel socket lifecycle without inferring authentication."""
+        if (event not in {"OPEN", "ERROR", "CLOSED"}
+                or isinstance(generation, bool) or not isinstance(generation, int) or generation < 1
+                or isinstance(received_at, bool) or not isinstance(received_at, int) or received_at <= 0):
+            return
+        key = f"{getattr(group, 'mode', 'unknown')}:{getattr(group, 'shard', 'unknown')}"
+        with self._lock:
+            current = self._angel_generations.get(key, 0)
+            if generation > current:
+                state = ProviderReadiness("angel_one", subscription_ack_supported=False)
+                state.begin_generation(generation)
+                self._angel[key] = state
+                self._angel_generations[key] = generation
+                self._angel_last_observation_ns[key] = 0
+                self._angel_stale_observations[key] = 0
+            state = self._angel.get(key)
+            if state is None or self._angel_generations.get(key) != generation:
+                self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
+                return
+            if received_at <= self._angel_last_observation_ns.get(key, 0):
+                self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
+                return
+            self._angel_last_observation_ns[key] = received_at
+            if event == "OPEN":
+                state.transport_open(generation)
+            else:
+                state.transport_closed(generation, reason=event.lower())
+
     def angel_market_event(
         self, record: Any, group: Any, generation: int, authenticated: bool,
         connection_current: bool, received_at: int,
