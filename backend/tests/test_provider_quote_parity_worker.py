@@ -4,6 +4,7 @@ from time import monotonic, sleep
 
 from app.market_data.provider_contracts import CanonicalContractKey
 from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
+from app.market_data.provider_quote_parity import analyze_quote_parity
 from app.market_data.provider_quote_parity_worker import (
     BoundedQuoteParityWorker, QuoteParityEnvelope,
 )
@@ -45,6 +46,13 @@ def _store(tmp_path, name="worker.sqlite3"):
     return SQLiteQuoteParityStore(tmp_path / name)
 
 
+def _worker(store, *, capacity=2048):
+    worker = BoundedQuoteParityWorker(store, capacity=capacity)
+    worker.activate_generation("angel_one", 1)
+    worker.activate_generation("shoonya", 1)
+    return worker
+
+
 def _wait_for(predicate, timeout=2.0):
     deadline = monotonic() + timeout
     while monotonic() < deadline:
@@ -56,7 +64,7 @@ def _wait_for(predicate, timeout=2.0):
 
 def test_worker_persists_submitted_pair_off_submit_path(tmp_path):
     store = _store(tmp_path)
-    worker = BoundedQuoteParityWorker(store, capacity=4)
+    worker = _worker(store, capacity=4)
     worker.activate_generation("angel_one", 1)
     worker.activate_generation("shoonya", 1)
     worker.start()
@@ -66,13 +74,11 @@ def test_worker_persists_submitted_pair_off_submit_path(tmp_path):
     assert snapshot["processed"] == 1
     assert snapshot["queue_depth"] == 0
     assert worker.stop(drain=True)
-    rows = store.latest(contract_key=store._contract_key(
-        __import__("app.market_data.provider_quote_parity", fromlist=["analyze_quote_parity"]).analyze_quote_parity(
-            _envelope().left, _envelope().right,
-            now_monotonic_ns=100, now_exchange_timestamp_ns=EXCHANGE_NOW,
-            max_age_ns=5_000_000_000,
-        )
-    ))
+    rows = store.latest(contract_key=store._contract_key(analyze_quote_parity(
+        _envelope().left, _envelope().right,
+        now_monotonic_ns=100, now_exchange_timestamp_ns=EXCHANGE_NOW,
+        max_age_ns=5_000_000_000,
+    )))
     assert len(rows) == 1
     store.close()
 
@@ -90,7 +96,7 @@ def test_worker_rejects_stale_generation_before_queueing(tmp_path):
 
 def test_worker_rejects_duplicate_exchange_timestamp_pair(tmp_path):
     store = _store(tmp_path)
-    worker = BoundedQuoteParityWorker(store)
+    worker = _worker(store)
     assert worker.submit(_envelope(received=100))
     assert worker.submit(_envelope(received=101)) is False
     assert worker.snapshot()["duplicates"] == 1
@@ -100,7 +106,7 @@ def test_worker_rejects_duplicate_exchange_timestamp_pair(tmp_path):
 
 def test_worker_rejects_out_of_order_receive_time(tmp_path):
     store = _store(tmp_path)
-    worker = BoundedQuoteParityWorker(store)
+    worker = _worker(store)
     assert worker.submit(_envelope(received=200))
     assert worker.submit(_envelope(received=199)) is False
     assert worker.snapshot()["out_of_order"] == 1
@@ -110,7 +116,7 @@ def test_worker_rejects_out_of_order_receive_time(tmp_path):
 
 def test_queue_overflow_latches_integrity_fault_and_stops_accepting(tmp_path):
     store = _store(tmp_path)
-    worker = BoundedQuoteParityWorker(store, capacity=1)
+    worker = _worker(store, capacity=1)
     assert worker.submit(_envelope(received=100))
     assert worker.submit(_envelope(
         received=101,
@@ -129,7 +135,7 @@ def test_queue_overflow_latches_integrity_fault_and_stops_accepting(tmp_path):
 
 def test_dedupe_memory_is_bounded(tmp_path):
     store = _store(tmp_path)
-    worker = BoundedQuoteParityWorker(store, capacity=1)
+    worker = _worker(store, capacity=1)
     for index in range(1100):
         assert worker.submit(_envelope(
             received=1000 + index,
@@ -168,3 +174,22 @@ def test_envelope_rejects_different_contract_identity():
             received_monotonic_ns=100, observed_at_utc_ns=EXCHANGE_NOW,
             now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=1_000_000_000,
         )
+
+
+def test_worker_drains_accepted_event_on_graceful_stop(tmp_path):
+    store = _store(tmp_path)
+    worker = _worker(store, capacity=4)
+    worker.start()
+    assert worker.submit(_envelope())
+    assert worker.stop(drain=True, timeout_seconds=2.0)
+    assert worker.snapshot()["persisted"] == 1
+    store.close()
+
+
+def test_worker_rejects_unregistered_provider_generation(tmp_path):
+    store = _store(tmp_path)
+    worker = BoundedQuoteParityWorker(store)
+    assert worker.submit(_envelope()) is False
+    assert worker.snapshot()["stale_generation"] == 1
+    worker.stop(drain=False)
+    store.close()
