@@ -6,7 +6,7 @@ analysis or SQLite I/O. This worker never publishes executable quotes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from collections import deque
+from collections import OrderedDict, deque
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread, current_thread
 from time import monotonic_ns
@@ -61,7 +61,7 @@ class BoundedQuoteParityWorker:
         self._integrity_fault = False
         self._fault_reason: str | None = None
         self._active_generation: dict[str, int] = {}
-        self._last_pair_time: dict[tuple[str, str, str], int] = {}
+        self._last_pair_time: OrderedDict[tuple, int] = OrderedDict()
         self._dedupe_capacity = max(1024, capacity * 4)
         self._seen_pair_keys: set[tuple] = set()
         self._seen_pair_order: deque[tuple] = deque()
@@ -135,6 +135,9 @@ class BoundedQuoteParityWorker:
                 expired = self._seen_pair_order.popleft()
                 self._seen_pair_keys.discard(expired)
             self._last_pair_time[pair_key] = envelope.received_monotonic_ns
+            self._last_pair_time.move_to_end(pair_key)
+            while len(self._last_pair_time) > self._dedupe_capacity:
+                self._last_pair_time.popitem(last=False)
             self._counters["submitted"] += 1
             return True
 
@@ -187,7 +190,11 @@ class BoundedQuoteParityWorker:
             self._closed = True
             self._drain_on_stop = drain
             thread = self._thread
-            if not drain:
+            if thread is None and drain and not self._integrity_fault and not self._queue.empty():
+                thread = Thread(target=self._run, name=self._name, daemon=True)
+                self._thread = thread
+                thread.start()
+            if not drain or self._integrity_fault:
                 while True:
                     try:
                         self._queue.get_nowait()
@@ -208,6 +215,7 @@ class BoundedQuoteParityWorker:
                 "queue_capacity": self._queue.maxsize,
                 "dedupe_entries": len(self._seen_pair_keys),
                 "dedupe_capacity": self._dedupe_capacity,
+                "pair_order_entries": len(self._last_pair_time),
                 "running": self._thread is not None and self._thread.is_alive(),
                 "closed": self._closed,
                 "integrity_fault": self._integrity_fault,
