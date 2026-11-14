@@ -795,8 +795,10 @@ def test_authentication_timeout_state_survives_socket_close_callback():
         uid="U1", actid="U1", access_token="token",
         on_state=lambda state, reason: states.append((state, reason)),
     )
+    fake_ws = SimpleNamespace()
+    feed._ws = fake_ws
     feed._last_error = "authentication acknowledgement timeout: no Shoonya ak frame for 16s (limit 15s)"
-    feed._on_close(SimpleNamespace(), 1000, "closed by client")
+    feed._on_close(fake_ws, 1000, "closed by client")
 
     assert states[-1][0] == "AUTH_TIMEOUT"
     assert "authentication acknowledgement timeout" in states[-1][1]
@@ -909,6 +911,25 @@ def test_stale_socket_open_cannot_authenticate_or_send_credentials_after_reconne
     assert sent == []
     assert feed.snapshot()["connected"] is False
     assert feed.snapshot()["authenticated"] is False
+    assert states == []
+
+
+def test_stale_socket_close_cannot_mark_replacement_session_disconnected():
+    states = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_state=lambda state, reason: states.append((state, reason)),
+    )
+    current_ws = SimpleNamespace()
+    retired_ws = SimpleNamespace()
+    feed._ws = current_ws
+    feed._connected = True
+    feed._authenticated = True
+
+    feed._on_close(retired_ws, 1000, "late close from retired socket")
+
+    assert feed.snapshot()["connected"] is True
+    assert feed.snapshot()["authenticated"] is True
     assert states == []
 
 
