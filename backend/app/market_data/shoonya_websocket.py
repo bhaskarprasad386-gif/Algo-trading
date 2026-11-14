@@ -301,14 +301,16 @@ class ShoonyaWebSocket:
             with self._lock:
                 if ws is not self._ws or self._stop.is_set():
                     return
-                ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
-                                    "source": self._source, "accesstoken": self._access_token},
-                                   separators=(",", ":")))
                 self._connected, self._authenticated = True, False
                 self._last_error = None
                 # A TCP/WebSocket open is not a healthy broker session until auth succeeds.
                 self._connection_opened_at = None
                 self._auth_started_at = time.monotonic()
+            # Never hold the lifecycle lock across SDK/network I/O: stop() must
+            # be able to acquire it, close this socket, and unblock a stalled send.
+            ws.send(json.dumps({"t": "a", "uid": self._uid, "actid": self._actid,
+                                "source": self._source, "accesstoken": self._access_token},
+                               separators=(",", ":")))
         except Exception as exc:
             self._on_error(ws, exc)
             try:
@@ -375,9 +377,10 @@ class ShoonyaWebSocket:
             # Keep the identity/auth check and send atomic with respect to
             # connection-epoch replacement; never send an auth frame to a stale socket.
             with self._lock:
-                if ws is not self._ws or not self._authenticated:
+                if ws is not self._ws or self._stop.is_set() or not self._authenticated:
                     return
-                ws.send(json.dumps({"t": "o", "actid": self._actid}, separators=(",", ":")))
+                actid = self._actid
+            ws.send(json.dumps({"t": "o", "actid": actid}, separators=(",", ":")))
         except Exception as exc:
             self._on_error(ws, exc)
             try:
@@ -395,13 +398,15 @@ class ShoonyaWebSocket:
             # The lock prevents reconnect epoch replacement between validation
             # and the actual wire write.
             with self._lock:
-                if ws is not self._ws or not self._authenticated:
+                if ws is not self._ws or self._stop.is_set() or not self._authenticated:
                     return
                 instruments = tuple(self._descriptors)
                 if not instruments:
                     return
                 keys = "#".join(f"{e}|{t}" for e, t in instruments)
-                ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
+            # _subscription_send_lock preserves subscribe/unsubscribe ordering;
+            # the lifecycle lock is intentionally released before socket.send.
+            ws.send(json.dumps({"t": "t", "k": keys}, separators=(",", ":")))
         except Exception as exc:
             self._on_error(ws, exc)
             try: ws.close()
@@ -551,9 +556,9 @@ class ShoonyaWebSocket:
         """Send heartbeat only while this socket remains the authenticated owner."""
         try:
             with self._lock:
-                if ws is not self._ws or not self._authenticated:
+                if ws is not self._ws or self._stop.is_set() or not self._authenticated:
                     return False
-                ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
+            ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
             return True
         except Exception as exc:
             self._on_error(ws, exc)
