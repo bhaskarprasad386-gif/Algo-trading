@@ -992,3 +992,12 @@ merge, and deployment remain outstanding.
 - The regression is committed but has not been executed in this session.
   Exact-head CI, full regression, live broker validation, PR merge, and
   deployment remain outstanding.
+
+
+### Batch 40 — process-wide broker connect admission regression
+
+- Audited the timeout/recovery path for a blocked Angel handshake. A manager can retire and replace its local socket generation, but the replacement must not open a second broker handshake while the old connect() call is unresolved.
+- The process-wide _SHARED_BROKER_CONNECT_ADMISSION_LOCK already enforces this boundary across manager instances, not merely within one scanner or manager. The new regression test exercises two independent CommonWebSocketManager instances: the second socket is created but its broker connect() is held until the first handshake returns.
+- This is deliberately conservative: a hung SDK handshake can delay new broker sessions rather than risk overlapping sessions and consuming the broker connection limit. The test does not claim the underlying SDK call can be forcibly cancelled.
+- Added test_shared_broker_admission_serializes_connects_across_manager_instances.
+- Tests committed but not executed in this environment. No scanner feed, subscription, runner, pairing, or order behavior changed.
