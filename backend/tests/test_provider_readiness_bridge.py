@@ -324,3 +324,53 @@ def test_angel_socket_group_failure_does_not_close_other_group():
     assert states["1:0"]["transport"] == "CLOSED"
     assert states["3:0"]["transport"] == "OPEN"
     assert states["3:0"]["generation"] == 21
+
+
+def test_manager_transport_observer_and_shoonya_epoch_recovery_are_integrated():
+    """Exercise the manager's real observer gate against the dual-provider reducer."""
+    from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+
+    bridge = ProviderReadinessBridge()
+    manager = CommonWebSocketManager()
+    group = SocketGroup(3, 7)
+    manager.register_transport_observer(
+        "provider-readiness-integration", bridge.angel_transport_event
+    )
+
+    # The manager only publishes lifecycle events for its active socket generation.
+    first_socket = object()
+    with manager._lock:
+        manager._sockets[group] = first_socket
+        manager._socket_generation[group] = 10
+        manager._socket_generation_counter[group] = 10
+    manager._notify_transport_observers("OPEN", group, 10, 100)
+
+    # Replace the socket. A late close from generation 10 must not reach the bridge.
+    second_socket = object()
+    with manager._lock:
+        manager._sockets[group] = second_socket
+        manager._socket_generation[group] = 11
+        manager._socket_generation_counter[group] = 11
+    manager._notify_transport_observers("OPEN", group, 11, 200)
+    manager._notify_transport_observers("CLOSED", group, 10, 300)
+
+    # Shoonya can independently fail and recover without changing Angel's shard.
+    bridge.shoonya_state("AUTHENTICATING", None, 20, True, False, 400)
+    bridge.shoonya_state("AUTH_FAILED", "rejected", 20, True, False, 500)
+    bridge.shoonya_state("AUTHENTICATING", None, 21, True, False, 600)
+    bridge.shoonya_state("LIVE", None, 21, True, True, 700)
+
+    # The active Angel generation closes; a later stale OPEN is not accepted.
+    manager._notify_transport_observers("CLOSED", group, 11, 800)
+    manager._notify_transport_observers("OPEN", group, 11, 900)
+    state = bridge.snapshot()
+    assert state["angel_one"]["3:7"]["generation"] == 11
+    assert state["angel_one"]["3:7"]["transport"] == "CLOSED"
+    assert state["angel_one"]["3:7"]["authentication"] == "NOT_VERIFIABLE"
+    assert state["shoonya"]["generation"] == 21
+    assert state["shoonya"]["transport"] == "OPEN"
+    assert state["shoonya"]["authentication"] == "AUTHENTICATED"
+    assert state["pairing_enabled"] is False
+    assert state["scanner_fanout_enabled"] is False
+    assert state["order_eligible"] is False
+    manager.close()
