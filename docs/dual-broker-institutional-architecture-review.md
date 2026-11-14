@@ -1172,3 +1172,21 @@ merge, and deployment remain outstanding.
   is committed but has not been executed in this session.
 - No production runtime code, Box Spread/IV Scanner callbacks, calculations,
   subscriptions, or feed-selection behavior changed.
+
+
+## Batch 56 — manager shutdown versus late transport callback race
+
+- Added a threaded regression using the real CommonWebSocketManager.close()
+  and transport-observer gate with a deliberately blocked fake socket close.
+- The test starts shutdown on a separate thread, waits until socket retirement
+  is in progress (after manager state has been atomically closed/cleared), then
+  injects late OPEN and CLOSED notifications for the retired generation.
+- It verifies late OPEN cannot resurrect the Angel readiness generation,
+  the manager's retirement gate permits only the matching retiring CLOSED
+  observation, and shutdown completes after the fake SDK close is released.
+- This covers manager shutdown/callback ordering without broker credentials,
+  network access, or live SDK transport. It is not proof of broker behavior or
+  an actual SmartAPI SDK shutdown under network failure.
+- The test is committed but not executed in this session. Production manager
+  behavior is unchanged; Box Spread and IV Scanner callback/feed behavior,
+  subscriptions, calculations and order routes remain untouched.
