@@ -2,6 +2,12 @@ name: Off-Market Runtime Verification
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/offmarket-runtime-verification.yml'
+      - 'backend/tests/test_off_market_runtime_verification.py'
+      - 'backend/app/market_data/common_strategy_feed.py'
+      - 'backend/app/market_data/live_box_spread_runner.py'
   schedule:
     # 18:45 IST on weekdays: after the NSE/BSE cash and derivatives session.
     - cron: "15 13 * * 1-5"
