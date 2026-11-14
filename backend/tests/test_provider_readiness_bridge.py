@@ -268,3 +268,59 @@ def test_angel_error_is_terminal_until_a_new_generation_opens():
     assert recovered["generation"] == 72
     assert recovered["transport"] == "OPEN"
     assert recovered["authentication"] == "NOT_VERIFIABLE"
+
+
+
+def test_simultaneous_broker_failures_and_recovery_remain_isolated():
+    bridge = ProviderReadinessBridge()
+    angel_group = SimpleNamespace(mode=3, shard=1)
+
+    # Both brokers establish their own current-generation transport evidence.
+    bridge.shoonya_state("AUTHENTICATING", None, 101, True, False, 100)
+    bridge.shoonya_state("LIVE", None, 101, True, True, 200)
+    bridge.angel_transport_event("OPEN", angel_group, 201, 300)
+
+    # Fail both providers independently. Neither failure may rewrite the other's state.
+    bridge.shoonya_state("AUTH_FAILED", "Shoonya auth rejected", 101, True, False, 400)
+    bridge.angel_transport_event("ERROR", angel_group, 201, 500)
+    failed = bridge.snapshot()
+    assert failed["shoonya"]["transport"] == "CLOSED"
+    assert failed["shoonya"]["authentication"] == "REJECTED"
+    assert failed["angel_one"]["3:1"]["transport"] == "CLOSED"
+    assert failed["angel_one"]["3:1"]["authentication"] == "NOT_VERIFIABLE"
+
+    # A fresh Angel socket generation must not resurrect Shoonya's rejected epoch.
+    bridge.angel_transport_event("OPEN", angel_group, 202, 600)
+    after_angel_recovery = bridge.snapshot()
+    assert after_angel_recovery["angel_one"]["3:1"]["generation"] == 202
+    assert after_angel_recovery["angel_one"]["3:1"]["transport"] == "OPEN"
+    assert after_angel_recovery["shoonya"]["generation"] == 101
+    assert after_angel_recovery["shoonya"]["transport"] == "CLOSED"
+    assert after_angel_recovery["shoonya"]["authentication"] == "REJECTED"
+
+    # A new Shoonya epoch can authenticate without changing Angel's new generation.
+    bridge.shoonya_state("AUTHENTICATING", None, 102, True, False, 700)
+    bridge.shoonya_state("LIVE", None, 102, True, True, 800)
+    # Delayed failure callbacks from both retired generations are ignored.
+    bridge.shoonya_state("AUTH_FAILED", "late old rejection", 101, True, False, 900)
+    bridge.angel_transport_event("CLOSED", angel_group, 201, 1000)
+    recovered = bridge.snapshot()
+    assert recovered["shoonya"]["generation"] == 102
+    assert recovered["shoonya"]["authentication"] == "AUTHENTICATED"
+    assert recovered["shoonya"]["transport"] == "OPEN"
+    assert recovered["angel_one"]["3:1"]["generation"] == 202
+    assert recovered["angel_one"]["3:1"]["transport"] == "OPEN"
+
+
+def test_angel_socket_group_failure_does_not_close_other_group():
+    bridge = ProviderReadinessBridge()
+    first = SimpleNamespace(mode=1, shard=0)
+    second = SimpleNamespace(mode=3, shard=0)
+    bridge.angel_transport_event("OPEN", first, 11, 100)
+    bridge.angel_transport_event("OPEN", second, 21, 200)
+    bridge.angel_transport_event("CLOSED", first, 11, 300)
+
+    states = bridge.snapshot()["angel_one"]
+    assert states["1:0"]["transport"] == "CLOSED"
+    assert states["3:0"]["transport"] == "OPEN"
+    assert states["3:0"]["generation"] == 21
