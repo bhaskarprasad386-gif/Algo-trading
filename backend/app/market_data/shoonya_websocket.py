@@ -294,9 +294,8 @@ class ShoonyaWebSocket:
         return guarded
 
     def _on_open(self, ws: Any) -> None:
-        # Keep socket identity validation and the auth write atomic with epoch
-        # replacement. A delayed open callback from an old socket must not
-        # authenticate or otherwise mutate the replacement connection.
+        # Validate socket identity before writing, then release the lifecycle
+        # lock around network I/O so stop() can close a stalled transport.
         try:
             with self._lock:
                 if ws is not self._ws or self._stop.is_set():
@@ -374,8 +373,8 @@ class ShoonyaWebSocket:
         if self._on_order_update is None:
             return
         try:
-            # Keep the identity/auth check and send atomic with respect to
-            # connection-epoch replacement; never send an auth frame to a stale socket.
+            # Snapshot current ownership under the lifecycle lock, but never
+            # hold that lock across network I/O; stop() must remain able to close.
             with self._lock:
                 if ws is not self._ws or self._stop.is_set() or not self._authenticated:
                     return
@@ -395,8 +394,8 @@ class ShoonyaWebSocket:
     def _send_subscriptions_locked(self, ws: Any) -> None:
         """Send desired subscriptions only to the currently authenticated socket."""
         try:
-            # The lock prevents reconnect epoch replacement between validation
-            # and the actual wire write.
+            # The subscription lock preserves wire ordering; the lifecycle
+            # lock is used only to snapshot current socket/auth/desired state.
             with self._lock:
                 if ws is not self._ws or self._stop.is_set() or not self._authenticated:
                     return
