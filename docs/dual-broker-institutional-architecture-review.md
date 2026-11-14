@@ -878,3 +878,27 @@ merge, and deployment remain outstanding.
 - Tests remain committed but unexecuted in this session. Exact-head CI,
   full regression, broker validation, PR merge, and deployment remain
   outstanding.
+
+
+## Batch 36 — Shoonya partial worker-start rollback
+
+- Audited the Shoonya adapter's start/stop/restart path and supervisor rollback
+  behavior. The supervisor already attempted cleanup when adapter startup
+  raised, but a direct adapter caller could still leave earlier dispatcher or
+  heartbeat workers running if a later Thread.start() failed.
+- Made adapter startup transactional: workers are started in a tracked order;
+  on any startup exception, the stop event is set and already-started workers
+  are joined against one shared three-second cleanup budget.
+- If cleanup completes, worker references are cleared so a later explicit
+  start can create one fresh worker generation. If a worker remains alive
+  after the bounded wait, its reference and name are retained so duplicate
+  workers cannot be started over it.
+- Added a deterministic regression test that fails the third worker start and
+  verifies the first two workers are stopped and all worker references are
+  cleared.
+- The change is isolated to Shoonya worker lifecycle. Angel One manager,
+  Box Spread and IV Scanner callbacks/subscriptions/calculations, broker
+  selection, parity pairing, persistence, and order routing are unchanged.
+- Tests are committed but have not been executed in this session. Exact-head
+  CI, full regression, live broker validation, merge, and deployment remain
+  outstanding.
