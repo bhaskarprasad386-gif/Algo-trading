@@ -138,3 +138,21 @@ def test_disk_fallback_expires_after_36_hours_even_for_already_loaded_instance(
     with pytest.raises(TradingAppException, match="InstrumentMasterDownloadCooldown"):
         master.search(tradingsymbol="NIFTY", exchange="NSE")
     assert master.instruments == []
+
+
+def test_unsupported_disk_snapshot_schema_is_rejected(isolated_master_cache, monkeypatch):
+    isolated_master_cache.write_text(
+        json.dumps({
+            "schema_version": 2,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "instruments": _rows(),
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        instruments_module,
+        "download_master_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("provider timeout")),
+    )
+    with pytest.raises(TradingAppException, match="InstrumentMasterDownloadError"):
+        InstrumentMaster().download(force=True)
