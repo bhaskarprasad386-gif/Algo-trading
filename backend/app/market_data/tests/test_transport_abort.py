@@ -108,3 +108,48 @@ def test_sdk_close_callback_path_is_bounded_and_aborts_low_level_socket():
     assert low_level.abort_called is True
     assert not transport.is_alive()
 
+
+
+
+def test_late_connect_completion_cannot_resurrect_socket_after_close():
+    entered = Event()
+    release = Event()
+
+    class BlockingConnectSocket:
+        _transport_thread = None
+
+        def connect(self):
+            entered.set()
+            release.wait(timeout=5.0)
+
+        def close_connection(self):
+            release.set()
+
+    sdk_socket = BlockingConnectSocket()
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client._build_socket = lambda: sdk_socket
+    errors = []
+
+    def run_connect():
+        try:
+            client.connect(
+                subscriptions={1: ["123"]},
+                reconnect_attempts=0,
+                reconnect_delay_seconds=0,
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = Thread(target=run_connect, daemon=True)
+    worker.start()
+    assert entered.wait(timeout=2.0)
+
+    client.close()
+    release.set()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert client.websocket is None
+    assert client.health["stopping"] is True
+    assert client.health["connected"] is False
