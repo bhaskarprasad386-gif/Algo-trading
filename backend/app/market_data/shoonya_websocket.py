@@ -364,6 +364,7 @@ class ShoonyaWebSocket:
             except Exception: pass
 
     def _handle_tick(self, message: dict[str, Any]) -> None:
+        received_at_monotonic_ns = monotonic_ns()
         exchange, token = str(message.get("e") or "").upper(), str(message.get("tk") or "")
         key = (exchange, token)
         if not exchange or not token: return
@@ -387,19 +388,18 @@ class ShoonyaWebSocket:
             if record.timestamp_ns < previous_timestamp:
                 self._out_of_order_ticks += 1
                 return
-            # Commit the merged snapshot only after normalization and ordering
-            # checks; a delayed frame must not poison later incremental updates.
+            # Recheck session identity before mutating any snapshot state;
+            # reconnect may have superseded this tick during normalization.
+            if epoch != self._feed_epoch or not self._authenticated:
+                return
+            # Commit only after normalization, ordering, and epoch checks so
+            # an old socket cannot poison the replacement session's snapshot.
             self._snapshots[key] = merged
             if is_snapshot:
                 self._initialized.add(key)
-            # Recheck session identity after normalization; reconnect may have
-            # superseded this tick while normalization was running.
-            if epoch != self._feed_epoch or not self._authenticated:
-                return
             self._last_exchange_timestamp_ns[key] = record.timestamp_ns
             self._ticks_received += 1
             self._last_tick_at = time.time()
-            received_at_monotonic_ns = monotonic_ns()
         self._enqueue("tick", record.as_dict(), observation=(record, epoch, True, received_at_monotonic_ns))
 
     def _enqueue(self, kind: str, payload: dict[str, Any], *, observation: tuple[MarketDataRecord, int, bool, int] | None = None) -> None:
@@ -433,7 +433,10 @@ class ShoonyaWebSocket:
             except queue.Empty: continue
             try:
                 _, payload, *metadata = item
-                if self._on_tick: self._on_tick(payload)
+                try:
+                    if self._on_tick: self._on_tick(payload)
+                except Exception:
+                    app_logger.exception("Shoonya tick callback failed")
                 if metadata and self._on_tick_observation:
                     record, epoch, authenticated, received_at_monotonic_ns = metadata[0]
                     with self._lock:
@@ -444,7 +447,7 @@ class ShoonyaWebSocket:
                         except Exception:
                             app_logger.exception('Shoonya read-only tick observation callback failed')
                 with self._lock: self._ticks_dispatched += 1
-            except Exception: app_logger.exception("Shoonya tick callback failed")
+            except Exception: app_logger.exception("Shoonya tick dispatch failed")
             finally: self._queue.task_done()
 
     def _order_dispatch_loop(self) -> None:
