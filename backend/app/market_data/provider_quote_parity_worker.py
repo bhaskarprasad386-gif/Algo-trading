@@ -6,8 +6,9 @@ analysis or SQLite I/O. This worker never publishes executable quotes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import deque
 from queue import Empty, Full, Queue
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, current_thread
 from time import monotonic_ns
 from typing import Any
 
@@ -61,7 +62,10 @@ class BoundedQuoteParityWorker:
         self._fault_reason: str | None = None
         self._active_generation: dict[str, int] = {}
         self._last_pair_time: dict[tuple[str, str, str], int] = {}
-        self._seen_pair_keys: set[tuple[str, str, str, int, int]] = set()
+        self._dedupe_capacity = max(1024, capacity * 4)
+        self._seen_pair_keys: set[tuple] = set()
+        self._seen_pair_order: deque[tuple] = deque()
+        self._drain_on_stop = True
         self._counters = {
             "submitted": 0, "processed": 0, "persisted": 0,
             "duplicates": 0, "stale_generation": 0,
@@ -124,6 +128,10 @@ class BoundedQuoteParityWorker:
                 self._counters["queue_overflow"] += 1
                 return False
             self._seen_pair_keys.add(event_key)
+            self._seen_pair_order.append(event_key)
+            while len(self._seen_pair_order) > self._dedupe_capacity:
+                expired = self._seen_pair_order.popleft()
+                self._seen_pair_keys.discard(expired)
             self._last_pair_time[pair_key] = envelope.received_monotonic_ns
             self._counters["submitted"] += 1
             return True
@@ -138,7 +146,7 @@ class BoundedQuoteParityWorker:
                 continue
             try:
                 with self._lock:
-                    if self._closed and self._stop.is_set():
+                    if self._stop.is_set() and not self._drain_on_stop:
                         self._counters["discarded_on_shutdown"] += 1
                         continue
                     if self._integrity_fault:
@@ -175,6 +183,7 @@ class BoundedQuoteParityWorker:
             raise ValueError("timeout_seconds must be non-negative")
         with self._lock:
             self._closed = True
+            self._drain_on_stop = drain
             thread = self._thread
             if not drain:
                 while True:
@@ -185,7 +194,7 @@ class BoundedQuoteParityWorker:
                     except Empty:
                         break
             self._stop.set()
-        if thread is not None and thread is not __import__("threading").current_thread():
+        if thread is not None and thread is not current_thread():
             thread.join(timeout_seconds)
         return thread is None or not thread.is_alive()
 
@@ -195,6 +204,8 @@ class BoundedQuoteParityWorker:
                 **self._counters,
                 "queue_depth": self._queue.qsize(),
                 "queue_capacity": self._queue.maxsize,
+                "dedupe_entries": len(self._seen_pair_keys),
+                "dedupe_capacity": self._dedupe_capacity,
                 "running": self._thread is not None and self._thread.is_alive(),
                 "closed": self._closed,
                 "integrity_fault": self._integrity_fault,
