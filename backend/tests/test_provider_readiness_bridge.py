@@ -698,34 +698,36 @@ def test_manager_observer_concurrent_three_shard_recovery_storm_isolated():
     def drive_group(group):
         try:
             barrier.wait(timeout=2)
-            for generation in range(1, generations + 1):
+            for cycle in range(1, generations + 1):
+                generation = cycle * 2 - 1
+                replacement = generation + 1
                 # Publish a new active manager generation before its OPEN event.
                 with manager._lock:
                     manager._sockets[group] = object()
                     manager._socket_generation[group] = generation
                     manager._socket_generation_counter[group] = generation
                 manager._notify_transport_observers(
-                    "OPEN", group, generation, generation * 10 + group.shard
+                    "OPEN", group, generation, cycle * 10 + group.shard
                 )
                 manager._notify_transport_observers(
-                    "ERROR", group, generation, generation * 10 + 1 + group.shard
+                    "ERROR", group, generation, cycle * 10 + 1 + group.shard
                 )
                 # ERROR is terminal for this generation; same-generation OPEN
                 # must not resurrect it.
                 manager._notify_transport_observers(
-                    "OPEN", group, generation, generation * 10 + 2 + group.shard
+                    "OPEN", group, generation, cycle * 10 + 2 + group.shard
                 )
                 # Retire the generation in the manager and publish its successor.
                 with manager._lock:
                     manager._sockets[group] = object()
-                    manager._socket_generation[group] = generation + 100
-                    manager._socket_generation_counter[group] = generation + 100
+                    manager._socket_generation[group] = replacement
+                    manager._socket_generation_counter[group] = replacement
                 manager._notify_transport_observers(
-                    "OPEN", group, generation + 100, generation * 10 + 3 + group.shard
+                    "OPEN", group, replacement, cycle * 10 + 3 + group.shard
                 )
                 # The manager's observer gate must suppress this retired close.
                 manager._notify_transport_observers(
-                    "CLOSED", group, generation, generation * 10 + 4 + group.shard
+                    "CLOSED", group, generation, cycle * 10 + 4 + group.shard
                 )
         except BaseException as exc:
             failures.append(exc)
@@ -745,7 +747,7 @@ def test_manager_observer_concurrent_three_shard_recovery_storm_isolated():
         for group in groups:
             key = f"{group.mode}:{group.shard}"
             shard = state["angel_one"][key]
-            assert shard["generation"] == generations + 100
+            assert shard["generation"] == generations * 2
             assert shard["transport"] == "OPEN"
             assert shard["authentication"] == "NOT_VERIFIABLE"
             assert shard["feed_ready"] is False
