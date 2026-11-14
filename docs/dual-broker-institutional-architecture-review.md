@@ -1244,3 +1244,21 @@ merge, and deployment remain outstanding.
   coverage, not broker authentication, subscription-ACK, network, or market-feed
   validation. No production runtime code changed; existing Box Spread and IV
   Scanner behavior remains untouched.
+
+
+## Batch 60 — transport observer delivery is fenced by manager shutdown
+
+- Lifecycle review found that _notify_transport_observers copied callbacks under
+  the manager lock, released it, and then invoked them. A callback admitted just
+  before close() could still be executing after manager shutdown returned.
+- Added a dedicated observer-dispatch lock. Admission and callback completion
+  are serialized through it; shutdown marks the manager closed, completes
+  socket retirement, and then crosses the same dispatch barrier. Callbacks are
+  not invoked while holding the manager's main state lock. Matching retired
+  generation CLOSED events remain supported.
+- Added a deterministic threaded regression that blocks an admitted OPEN
+  observer, starts shutdown, verifies shutdown waits, releases the observer,
+  and confirms no new OPEN observer is admitted after close.
+- This is lifecycle ordering hardening only, not SDK/network shutdown proof or
+  broker authentication. Tests committed but not executed here. Box Spread and
+  IV Scanner runtime behavior is unchanged.
