@@ -66,6 +66,11 @@ class BoundedMarketDataCache:
         entry = CacheEntry(deepcopy(value), timestamp, now + self.ttl_seconds)
         with self._lock:
             self._purge_expired_locked(now)
+            current = self._entries.get(key)
+            # Never let a delayed/out-of-order broker frame replace a newer
+            # normalized snapshot for the same instrument.
+            if current is not None and timestamp < current.timestamp_ns:
+                return
             self._entries.pop(key, None)
             self._entries[key] = entry
             while len(self._entries) > self.max_entries:
@@ -111,6 +116,31 @@ _SHARED_CACHE = BoundedMarketDataCache(
     max_entries=settings.MARKET_DATA_CACHE_MAX_ENTRIES,
     ttl_seconds=settings.MARKET_DATA_CACHE_TTL_SECONDS,
 )
+
+
+def cache_key_for_instrument(instrument: Any) -> str:
+    """Use the canonical exchange/segment/token identity for cache keys."""
+    key = str(getattr(instrument, "value", "")).strip()
+    if not key:
+        raise ValueError("instrument must expose a non-empty canonical value")
+    return key
+
+
+def put_market_data_record(record: Any, cache: MarketDataCache | None = None) -> str:
+    """Publish a normalized market-data record as a bounded latest snapshot."""
+    instrument = getattr(record, "instrument", None)
+    if instrument is None:
+        raise TypeError("record must expose an instrument")
+    key = cache_key_for_instrument(instrument)
+    payload = record.as_dict()
+    if not isinstance(payload, dict):
+        raise TypeError("record.as_dict() must return a dict")
+    # Raw provider payload is diagnostic-only; keep the normalized fields.
+    payload.pop("payload", None)
+    (cache or get_shared_market_data_cache()).put(
+        key, payload, timestamp_ns=int(record.timestamp_ns)
+    )
+    return key
 
 
 def get_shared_market_data_cache() -> BoundedMarketDataCache:
