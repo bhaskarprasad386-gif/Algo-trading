@@ -598,3 +598,17 @@ Snapshots must expose raw evidence and derived state separately so operators can
 - Existing Box Spread and IV Scanner paths and subscriptions remain unchanged.
 - The implementation follow-up must add pure state-transition tests for acknowledgement, rejection, timeout, stale generation, heartbeat-only liveness, subscription-send-only, stale market data, and queue-integrity fault before any runtime integration.
 - Tests, exact-head CI, live broker validation, merge, and deployment are not claimed by this documentation-only change.
+
+
+## Batch 27 — fail-closed provider readiness state machine
+
+- Added an isolated provider readiness reducer for Angel One and Shoonya. It is not wired to broker callbacks, the quote pairer/worker, scanner fan-out, source selection, or order routing.
+- Tracks transport, authentication evidence and generation, subscription request/acknowledgement coverage, heartbeat liveness, valid fresh market events, and sticky integrity faults independently.
+- Shoonya can become authenticated only from an explicit current-generation `shoonya_ak_ack` evidence event while transport is open. Rejection and timeout remain non-authenticated.
+- Angel One remains `NOT_VERIFIABLE`; transport-open, arbitrary acknowledgement-shaped input, and market ticks cannot authenticate it.
+- Subscription request-sent is not acknowledgement. If the protocol acknowledgement capability is unavailable, subscription state is `NOT_VERIFIABLE`, never ready.
+- Feed readiness requires current transport, authenticated session, full desired-token acknowledgement, fresh valid market event, valid canonical identity/timestamp, and no integrity fault. Heartbeats alone do not count.
+- Generation replacement clears all generation-scoped evidence. Transport close invalidates auth/freshness and subscription acknowledgement without incorrectly latching an integrity fault.
+- Order eligibility is always false; parity eligibility is derived from feed readiness only. No scanner, Box Spread, IV Scanner, subscriptions, live broker sessions, or order route were changed.
+- Added focused tests for positive/negative auth acknowledgement, timeout, Angel fail-closed behavior, heartbeat-only liveness, subscription-send-only, unsupported subscription acknowledgement, stale/invalid market data, generation fencing/reset, integrity fault, transport close, and strict evidence types.
+- Tests have been added but not executed in this environment. Exact-head Actions and full regression remain required before runtime integration.
