@@ -115,6 +115,39 @@ def load_shoonya_nfo(raw_zip: bytes) -> tuple[bytes, str, str]:
     return output.getvalue().encode("utf-8"), hashlib.sha256(raw_zip).hexdigest(), name
 
 
+def contract_key_summary(key: Any) -> dict[str, Any]:
+    return {
+        "exchange": key.exchange,
+        "segment": key.segment,
+        "underlying": key.underlying,
+        "instrument_type": key.instrument_type,
+        "expiry": key.expiry.isoformat() if key.expiry else None,
+        "strike": str(key.strike) if key.strike is not None else None,
+        "option_type": key.option_type,
+    }
+
+
+def mapping_breakdown(report: Any) -> dict[str, Any]:
+    by_type: dict[str, int] = {}
+    expiries = []
+    expired = 0
+    today = datetime.now(timezone.utc).date()
+    for item in report.mappings:
+        by_type[item.key.instrument_type] = by_type.get(item.key.instrument_type, 0) + 1
+        if item.key.expiry is not None:
+            expiries.append(item.key.expiry)
+            if item.key.expiry < today:
+                expired += 1
+    return {
+        "by_instrument_type": dict(sorted(by_type.items())),
+        "unique_expiries": len(set(expiries)),
+        "earliest_expiry": min(expiries).isoformat() if expiries else None,
+        "latest_expiry": max(expiries).isoformat() if expiries else None,
+        "expired_contracts_at_validation_date": expired,
+        "non_expired_contracts_at_validation_date": len(report.mappings) - expired,
+    }
+
+
 def report_summary(report: Any) -> dict[str, Any]:
     return {
         "broker": report.broker,
@@ -173,7 +206,7 @@ def main() -> int:
             "shoonya_only_ratio": round(audit.shoonya_only_ratio, 8),
             "metadata_mismatch_count": len(audit.metadata_mismatches),
             "metadata_mismatch_sample": [str(key) for key in audit.metadata_mismatches[:25]],
-            "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
+            "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),\n            "angel_only_sample": [contract_key_summary(key) for key in audit.angel_only[:15]],\n            "shoonya_only_sample": [contract_key_summary(key) for key in audit.shoonya_only[:15]],
         },
     }
     Path(args.report).write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
