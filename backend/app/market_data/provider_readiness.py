@@ -81,6 +81,9 @@ class ProviderReadiness:
             self._auth_evidence = None
             self._auth_generation = None
             self._market_event_fresh = False
+            self._market_identity_valid = False
+            self._market_timestamp_valid = False
+            self._last_market_event_generation = None
             self._last_liveness = "NONE"
             self._requested = False
             self._acknowledged_tokens = frozenset()
@@ -148,7 +151,7 @@ class ProviderReadiness:
                 return False
             if not normalized.issubset(self._desired_tokens):
                 return False
-            self._acknowledged_tokens = normalized
+            self._acknowledged_tokens = self._acknowledged_tokens.union(normalized)
             return True
 
     def record_heartbeat(self, generation: int) -> bool:
