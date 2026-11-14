@@ -678,3 +678,79 @@ def test_manager_shutdown_serializes_with_inflight_recovery_and_closes_replaceme
     finally:
         release_recovery_close.set()
         manager.close()
+
+def test_manager_observer_concurrent_three_shard_recovery_storm_isolated():
+    """Drive three manager observer streams concurrently through 40 generations."""
+    from threading import Barrier, Thread
+
+    from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+
+    bridge = ProviderReadinessBridge()
+    manager = CommonWebSocketManager()
+    manager.register_transport_observer(
+        "three-shard-concurrency-regression", bridge.angel_transport_event
+    )
+    groups = [SocketGroup(1, shard) for shard in range(3)]
+    failures = []
+    barrier = Barrier(len(groups))
+    generations = 40
+
+    def drive_group(group):
+        try:
+            barrier.wait(timeout=2)
+            for generation in range(1, generations + 1):
+                # Publish a new active manager generation before its OPEN event.
+                with manager._lock:
+                    manager._sockets[group] = object()
+                    manager._socket_generation[group] = generation
+                    manager._socket_generation_counter[group] = generation
+                manager._notify_transport_observers(
+                    "OPEN", group, generation, generation * 10 + group.shard
+                )
+                manager._notify_transport_observers(
+                    "ERROR", group, generation, generation * 10 + 1 + group.shard
+                )
+                # ERROR is terminal for this generation; same-generation OPEN
+                # must not resurrect it.
+                manager._notify_transport_observers(
+                    "OPEN", group, generation, generation * 10 + 2 + group.shard
+                )
+                # Retire the generation in the manager and publish its successor.
+                with manager._lock:
+                    manager._sockets[group] = object()
+                    manager._socket_generation[group] = generation + 100
+                    manager._socket_generation_counter[group] = generation + 100
+                manager._notify_transport_observers(
+                    "OPEN", group, generation + 100, generation * 10 + 3 + group.shard
+                )
+                # The manager's observer gate must suppress this retired close.
+                manager._notify_transport_observers(
+                    "CLOSED", group, generation, generation * 10 + 4 + group.shard
+                )
+        except BaseException as exc:
+            failures.append(exc)
+
+    workers = [
+        Thread(target=drive_group, args=(group,), name=f"angel-shard-{group.shard}")
+        for group in groups
+    ]
+    try:
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5)
+        assert all(not worker.is_alive() for worker in workers), "shard lifecycle worker deadlocked"
+        assert failures == []
+        state = bridge.snapshot()
+        for group in groups:
+            key = f"{group.mode}:{group.shard}"
+            shard = state["angel_one"][key]
+            assert shard["generation"] == generations + 100
+            assert shard["transport"] == "OPEN"
+            assert shard["authentication"] == "NOT_VERIFIABLE"
+            assert shard["feed_ready"] is False
+        assert state["pairing_enabled"] is False
+        assert state["scanner_fanout_enabled"] is False
+        assert state["order_eligible"] is False
+    finally:
+        manager.close()
