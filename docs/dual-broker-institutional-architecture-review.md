@@ -612,3 +612,5 @@ Snapshots must expose raw evidence and derived state separately so operators can
 - Order eligibility is always false; parity eligibility is derived from feed readiness only. No scanner, Box Spread, IV Scanner, subscriptions, live broker sessions, or order route were changed.
 - Added focused tests for positive/negative auth acknowledgement, timeout, Angel fail-closed behavior, heartbeat-only liveness, subscription-send-only, unsupported subscription acknowledgement, stale/invalid market data, generation fencing/reset, integrity fault, transport close, and strict evidence types.
 - Tests have been added but not executed in this environment. Exact-head Actions and full regression remain required before runtime integration.
+
+- Follow-up hardening accumulates partial per-token subscription acknowledgements until the complete desired set is covered; transport close clears generation-scoped acknowledgement and market-validity evidence without converting a normal close into an integrity fault. Regression cases cover partial coverage, close reset, and strict token input types.
