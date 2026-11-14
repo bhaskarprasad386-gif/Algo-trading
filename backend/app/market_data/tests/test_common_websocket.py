@@ -101,7 +101,8 @@ def test_normalized_common_feed_publishes_shared_snapshot():
         manager._on_data(SocketGroup(1, 0), {
             "token": item.key.token,
             "exchange_type": 1,
-            "ltp": 123.45,
+            # Angel One wire prices are paise; the normalizer publishes rupees.
+            "ltp": 12345,
             "timestamp_ns": "1792386000000000000",
         })
         snapshot = cache.get(item.key.value)
