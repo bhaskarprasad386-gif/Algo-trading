@@ -70,6 +70,9 @@ def test_angel_normalized_observer_receives_generation_but_auth_fails_closed():
         "state": "NOT_VERIFIABLE",
         "authenticated": False,
         "evidence": "NO_BROKER_AUTH_ACKNOWLEDGEMENT",
+        "transport_open_is_authentication": False,
+        "subscription_send_is_authentication": False,
+        "authentication_acknowledgement_observed": False,
         "parity_generation_activation_allowed": False,
     }
 
