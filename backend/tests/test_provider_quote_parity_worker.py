@@ -193,3 +193,57 @@ def test_worker_rejects_unregistered_provider_generation(tmp_path):
     assert worker.snapshot()["stale_generation"] == 1
     worker.stop(drain=False)
     store.close()
+
+def test_generation_change_fences_already_queued_old_pair(tmp_path):
+    store = _store(tmp_path)
+    worker = _worker(store)
+    assert worker.submit(_envelope(received=100))
+    worker.activate_generation("angel_one", 2)
+    assert worker.stop(drain=True, timeout_seconds=2.0)
+    snapshot = worker.snapshot()
+    assert snapshot["stale_generation"] == 1
+    assert snapshot["persisted"] == 0
+    store.close()
+
+
+def test_timestamp_less_pairs_use_receive_time_for_duplicate_identity(tmp_path):
+    store = _store(tmp_path)
+    worker = _worker(store)
+    first = _envelope(received=100)
+    first = QuoteParityEnvelope(
+        left=ProviderQuoteObservation(
+            provider="angel_one", contract=first.left.contract, generation=1,
+            authenticated=True, connection_current=True, exchange_timestamp_ns=None,
+            received_monotonic_ns=100, bid="100", ask="100.1", bid_size=10, ask_size=10,
+            depth_complete=True,
+        ),
+        right=ProviderQuoteObservation(
+            provider="shoonya", contract=first.right.contract, generation=1,
+            authenticated=True, connection_current=True, exchange_timestamp_ns=None,
+            received_monotonic_ns=100, bid="100", ask="100.1", bid_size=10, ask_size=10,
+            depth_complete=True,
+        ),
+        received_monotonic_ns=100, observed_at_utc_ns=EXCHANGE_NOW + 100,
+        now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=5_000_000_000,
+    )
+    second = QuoteParityEnvelope(
+        left=ProviderQuoteObservation(
+            provider="angel_one", contract=first.left.contract, generation=1,
+            authenticated=True, connection_current=True, exchange_timestamp_ns=None,
+            received_monotonic_ns=101, bid="100", ask="100.1", bid_size=10, ask_size=10,
+            depth_complete=True,
+        ),
+        right=ProviderQuoteObservation(
+            provider="shoonya", contract=first.right.contract, generation=1,
+            authenticated=True, connection_current=True, exchange_timestamp_ns=None,
+            received_monotonic_ns=101, bid="100", ask="100.1", bid_size=10, ask_size=10,
+            depth_complete=True,
+        ),
+        received_monotonic_ns=101, observed_at_utc_ns=EXCHANGE_NOW + 101,
+        now_exchange_timestamp_ns=EXCHANGE_NOW, max_age_ns=5_000_000_000,
+    )
+    assert worker.submit(first)
+    assert worker.submit(second)
+    worker.stop(drain=False)
+    assert worker.snapshot()["duplicates"] == 0
+    store.close()
