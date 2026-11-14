@@ -72,3 +72,53 @@ def test_bridge_exposes_no_pairing_scanner_or_order_activation():
     assert snapshot["pairing_enabled"] is False
     assert snapshot["scanner_fanout_enabled"] is False
     assert snapshot["order_eligible"] is False
+
+
+
+def test_shoonya_out_of_order_session_callback_cannot_revoke_newer_auth_state():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 9, True, False, 100)
+    bridge.shoonya_state("LIVE", None, 9, True, True, 200)
+    bridge.shoonya_state("AUTH_FAILED", "late callback", 9, True, False, 150)
+    state = bridge.snapshot()["shoonya"]
+    assert state["authentication"] == "AUTHENTICATED"
+    assert state["transport"] == "OPEN"
+    assert state["stale_observations_rejected"] == 1
+
+
+def test_shoonya_auth_rejection_closes_transport_but_preserves_rejection_evidence():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 3, True, False, 100)
+    bridge.shoonya_state("AUTH_FAILED", "bad credentials", 3, True, False, 200)
+    state = bridge.snapshot()["shoonya"]
+    assert state["transport"] == "CLOSED"
+    assert state["authentication"] == "REJECTED"
+    assert state["authenticated"] is False
+
+
+def test_shoonya_out_of_order_market_observation_is_rejected():
+    bridge = ProviderReadinessBridge()
+    bridge.shoonya_state("AUTHENTICATING", None, 6, True, False, 100)
+    bridge.shoonya_state("LIVE", None, 6, True, True, 200)
+    bridge.shoonya_market_event(_record(), 6, True, 300)
+    bridge.shoonya_market_event(_record(), 6, True, 250)
+    state = bridge.snapshot()["shoonya"]
+    assert state["market_event_age_ns"] is not None
+    assert state["stale_observations_rejected"] == 1
+
+
+def test_angel_out_of_order_observation_is_rejected_per_socket_group():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=3, shard=2)
+    bridge.angel_market_event(_record(), group, 8, False, True, 300)
+    bridge.angel_market_event(_record(), group, 8, False, True, 250)
+    state = bridge.snapshot()["angel_one"]["3:2"]
+    assert state["stale_observations_rejected"] == 1
+    assert state["authentication"] == "NOT_VERIFIABLE"
+
+
+def test_angel_non_current_connection_observation_is_ignored():
+    bridge = ProviderReadinessBridge()
+    group = SimpleNamespace(mode=3, shard=0)
+    bridge.angel_market_event(_record(), group, 8, False, False, monotonic_ns())
+    assert bridge.snapshot()["angel_one"] == {}
