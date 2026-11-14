@@ -32,28 +32,30 @@ def test_common_strategy_feed_warm_starts_then_accepts_newer_live_tick():
         exchange="NSE", token="cache-warm-start-101", symbol="TEST-EQ",
         instrument_type="equity", segment="NSE",
     )
-    cache.put(descriptor.key.value, {"timestamp_ns": 1000, "ltp": 100.0}, timestamp_ns=1000)
+    from time import time_ns
+    base_timestamp = time_ns() - 1_000_000_000
+    cache.put(descriptor.key.value, {"timestamp_ns": base_timestamp, "ltp": 100.0}, timestamp_ns=base_timestamp)
     manager = CommonWebSocketManager(socket_factory=FakeSocket)
     manager._recovery_interval_seconds = 60.0
-    feed = CommonStrategyMarketFeed("cache-warm-start-test", manager=manager)
+    feed = CommonStrategyMarketFeed("cache-warm-start-test", manager=manager, warm_start=True)
     received = []
     try:
         feed.start([descriptor], received.append)
-        assert [(r.timestamp_ns, r.ltp) for r in received] == [(1000, 100.0)]
+        assert [(r.timestamp_ns, r.ltp) for r in received] == [(base_timestamp, 100.0)]
         manager._on_data(SocketGroup(1, 0), {
             "token": descriptor.key.token, "exchange_type": 1,
-            "timestamp_ns": 2000, "last_traded_price": 12345,
+            "timestamp_ns": base_timestamp + 1_000_000, "last_traded_price": 12345,
         })
-        assert [(r.timestamp_ns, r.ltp) for r in received] == [(1000, 100.0), (2000, 123.45)]
-        assert cache.get(descriptor.key.value)["timestamp_ns"] == 2000
+        assert [(r.timestamp_ns, r.ltp) for r in received] == [(base_timestamp, 100.0), (base_timestamp + 1_000_000, 123.45)]
+        assert cache.get(descriptor.key.value)["timestamp_ns"] == base_timestamp + 1_000_000
 
         # A delayed broker frame must not overwrite the newer scanner snapshot.
         manager._on_data(SocketGroup(1, 0), {
             "token": descriptor.key.token, "exchange_type": 1,
-            "timestamp_ns": 1500, "last_traded_price": 11000,
+            "timestamp_ns": base_timestamp + 500_000, "last_traded_price": 11000,
         })
-        assert [(r.timestamp_ns, r.ltp) for r in received] == [(1000, 100.0), (2000, 123.45)]
-        assert cache.get(descriptor.key.value)["timestamp_ns"] == 2000
+        assert [(r.timestamp_ns, r.ltp) for r in received] == [(base_timestamp, 100.0), (base_timestamp + 1_000_000, 123.45)]
+        assert cache.get(descriptor.key.value)["timestamp_ns"] == base_timestamp + 1_000_000
     finally:
         feed.stop()
         manager.close()
@@ -91,21 +93,23 @@ def test_option_warm_start_preserves_box_contract_metadata():
         strike=26000, option_type="CE", lot_size=65, tick_size=0.05,
         underlying="NIFTY",
     )
+    from time import time_ns
+    snapshot_timestamp = time_ns() - 1_000_000_000
     cache.put(
         descriptor.key.value,
-        {"timestamp_ns": 3000, "ltp": 125.5, "bid": 125.0, "ask": 126.0,
+        {"timestamp_ns": snapshot_timestamp, "ltp": 125.5, "bid": 125.0, "ask": 126.0,
          "bid_qty": 130, "ask_qty": 195, "oi": 250000},
-        timestamp_ns=3000,
+        timestamp_ns=snapshot_timestamp,
     )
     manager = CommonWebSocketManager(socket_factory=FakeSocket)
     manager._recovery_interval_seconds = 60.0
-    feed = CommonStrategyMarketFeed("box-option-warm-start-test", manager=manager)
+    feed = CommonStrategyMarketFeed("box-option-warm-start-test", manager=manager, warm_start=True)
     received = []
     try:
         feed.start([descriptor], received.append)
         assert len(received) == 1
         record = received[0]
-        assert record.timestamp_ns == 3000
+        assert record.timestamp_ns == snapshot_timestamp
         assert record.ltp == 125.5
         assert record.bid == 125.0 and record.ask == 126.0
         assert record.bid_qty == 130 and record.ask_qty == 195
@@ -118,5 +122,38 @@ def test_option_warm_start_preserves_box_contract_metadata():
         assert record.underlying == "NIFTY"
     finally:
         feed.stop()
+        manager.close()
+        cache.clear()
+
+
+def test_warm_start_is_opt_in_and_stale_cache_is_never_replayed():
+    from time import time_ns
+
+    cache = get_shared_market_data_cache()
+    cache.clear()
+    descriptor = CommonStrategyMarketFeed.descriptor(
+        exchange="NSE", token="cache-warm-start-103", symbol="TEST-EQ-3",
+        instrument_type="equity", segment="NSE",
+    )
+    stale_timestamp = time_ns() - 10_000_000_000
+    cache.put(
+        descriptor.key.value,
+        {"timestamp_ns": stale_timestamp, "ltp": 90.0},
+        timestamp_ns=stale_timestamp,
+    )
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    default_feed = CommonStrategyMarketFeed("default-no-warm-start", manager=manager)
+    opt_in_feed = CommonStrategyMarketFeed("stale-warm-start", manager=manager, warm_start=True)
+    default_received = []
+    opt_in_received = []
+    try:
+        default_feed.start([descriptor], default_received.append)
+        opt_in_feed.start([descriptor], opt_in_received.append)
+        assert default_received == []
+        assert opt_in_received == []
+    finally:
+        default_feed.stop()
+        opt_in_feed.stop()
         manager.close()
         cache.clear()

@@ -6,6 +6,7 @@ values. No strategy opens or owns a broker WebSocket directly.
 from __future__ import annotations
 
 from threading import Lock
+from time import time_ns
 from typing import Any, Callable, Iterable
 
 from app.algo.auth import AngelOneAuth
@@ -86,7 +87,19 @@ def _record_from_snapshot(descriptor: InstrumentDescriptor, snapshot: dict[str, 
         return None
 
 
-def replay_cached_snapshots(descriptors: Iterable[InstrumentDescriptor], callback: Callable[[MarketDataRecord], None]) -> int:
+def replay_cached_snapshots(
+    descriptors: Iterable[InstrumentDescriptor],
+    callback: Callable[[MarketDataRecord], None],
+    *,
+    max_age_seconds: float = 5.0,
+    max_future_skew_seconds: float = 1.0,
+) -> int:
+    """Replay only exchange-timestamp-fresh snapshots into an opted-in consumer."""
+    if max_age_seconds <= 0 or max_future_skew_seconds < 0:
+        raise ValueError("snapshot freshness bounds are invalid")
+    now_ns = time_ns()
+    max_age_ns = int(max_age_seconds * 1_000_000_000)
+    max_future_ns = int(max_future_skew_seconds * 1_000_000_000)
     cache = get_shared_market_data_cache()
     replayed = 0
     for descriptor in descriptors:
@@ -95,6 +108,9 @@ def replay_cached_snapshots(descriptors: Iterable[InstrumentDescriptor], callbac
             continue
         record = _record_from_snapshot(descriptor, snapshot)
         if record is None:
+            continue
+        age_ns = now_ns - record.timestamp_ns
+        if age_ns > max_age_ns or age_ns < -max_future_ns:
             continue
         callback(record)
         replayed += 1
@@ -112,6 +128,7 @@ class CommonStrategyMarketFeed:
         manager: CommonWebSocketManager | None = None,
         socket_factory: Callable[[], Any] | None = None,
         mode: int = 3,
+        warm_start: bool = False,
     ) -> None:
         self.consumer = str(consumer).strip()
         if not self.consumer:
@@ -119,6 +136,7 @@ class CommonStrategyMarketFeed:
         if not isinstance(mode, int) or isinstance(mode, bool) or mode not in {1, 2, 3, 4}:
             raise ValueError("mode must be one of 1, 2, 3 or 4")
         self.mode = mode
+        self.warm_start = bool(warm_start)
         self.manager = manager or shared_common_manager(auth, socket_factory=socket_factory)
         self._started = False
         self._last_timestamp_ns: dict[str, int] = {}
@@ -194,7 +212,8 @@ class CommonStrategyMarketFeed:
                 callback(record)
 
         self.manager.register_normalized_callback(self.consumer, ordered_callback)
-        replay_cached_snapshots(descriptors, ordered_callback)
+        if self.warm_start:
+            replay_cached_snapshots(descriptors, ordered_callback)
         keys = tuple(d.key for d in descriptors)
         self.manager.subscribe(self.consumer, list(keys), mode=self.mode)
         self._started = True

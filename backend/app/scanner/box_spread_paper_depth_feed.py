@@ -34,7 +34,7 @@ class BoxPaperDepthFeed:
 
     def __init__(self, *, mode: int = 3, max_age_seconds: float = 5.0,
                  max_skew_seconds: float = 5.0) -> None:
-        self._feed = CommonStrategyMarketFeed(_CONSUMER, mode=mode)
+        self._feed = CommonStrategyMarketFeed(_CONSUMER, mode=mode, warm_start=True)
         self._max_age = float(max_age_seconds)
         self._max_skew = float(max_skew_seconds)
         self._condition = Condition(RLock())
