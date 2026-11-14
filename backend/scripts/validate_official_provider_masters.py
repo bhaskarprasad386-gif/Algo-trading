@@ -206,6 +206,13 @@ def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[st
         expiries = sorted({key.expiry.isoformat() for key in common if key.expiry is not None})
         angel_only = sorted(angel - shoonya, key=lambda key: (key.expiry.isoformat() if key.expiry else "", str(key.strike), key.option_type or ""))
         shoonya_only = sorted(shoonya - angel, key=lambda key: (key.expiry.isoformat() if key.expiry else "", str(key.strike), key.option_type or ""))
+        def expiry_counts(keys: set[Any]) -> dict[str, int]:
+            counts: dict[str, int] = {}
+            for key in keys:
+                if key.expiry is not None:
+                    expiry = key.expiry.isoformat()
+                    counts[expiry] = counts.get(expiry, 0) + 1
+            return dict(sorted(counts.items()))
         result[underlying] = {
             "angel_contracts": len(angel),
             "shoonya_contracts": len(shoonya),
@@ -217,6 +224,8 @@ def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[st
             "angel_expiries": sorted({key.expiry.isoformat() for key in angel if key.expiry is not None}),
             "shoonya_expiries": sorted({key.expiry.isoformat() for key in shoonya if key.expiry is not None}),
             "common_expiries": expiries,
+            "angel_only_by_expiry": expiry_counts(set(angel_only)),
+            "shoonya_only_by_expiry": expiry_counts(set(shoonya_only)),
             "angel_only_sample": [contract_key_summary(key) for key in angel_only[:10]],
             "shoonya_only_sample": [contract_key_summary(key) for key in shoonya_only[:10]],
         }
