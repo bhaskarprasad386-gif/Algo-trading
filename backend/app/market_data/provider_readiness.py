@@ -108,7 +108,9 @@ class ProviderReadiness:
         if type(accepted) is not bool or not isinstance(evidence_kind, str):
             raise TypeError("authentication evidence must be explicitly typed")
         with self._lock:
-            if not self._current(generation) or self._transport != "OPEN":
+            if not self._current(generation):
+                return False
+            if self._transport != "OPEN":
                 self._counters["ignored_stale_generation"] += 1
                 return False
             if self._auth != "UNKNOWN":
