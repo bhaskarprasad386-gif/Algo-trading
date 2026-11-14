@@ -312,6 +312,20 @@ def test_websocket_reconnect_scheduler_start_failure_releases_guard(monkeypatch)
     assert client.health["reconnect_count"] == 0
 
 
+def test_sdk_transport_error_preserves_original_error_and_disables_nested_retry(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    socket = client._build_socket()
+    socket.on_error = lambda wsapp, error: failures.append(error)
+
+    original_error = OSError("remote closed websocket with code 1006")
+    socket._on_error(socket, original_error)
+
+    assert failures == [original_error]
+    assert socket.MAX_RETRY_ATTEMPT == 0
+
+
 def test_marking_auth_stale_forces_token_refresh_even_for_young_session():
     from threading import RLock
     import time
