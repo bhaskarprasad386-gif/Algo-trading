@@ -840,75 +840,74 @@ class CommonWebSocketManager:
                 # Keep broker-wide admission through handshake success/failure.
                 # MarketDataWebSocket.connect now starts run_forever in a tracked
                 # thread and returns once the handshake outcome is known.
+                def _still_current() -> bool:
+                    with self._lock:
+                        return (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                            and not self._closed
+                        )
+                if not _still_current():
+                    self._close_socket_bounded(socket)
+                    return
+                # A replacement worker may already be queued for admission
+                # while another shard's close is still in flight. Re-check
+                # retirement after acquiring the global lock, not only when
+                # creating the placeholder socket.
+                while _still_current():
+                    with self._lock:
+                        retirement_pending = bool(self._retired_transports)
+                    if not retirement_pending:
+                        break
+                    time.sleep(0.05)
+                if not _still_current():
+                    self._close_socket_bounded(socket)
+                    return
+                # Admission is process-wide, not merely a timestamp check:
+                # hold the same lock through handshake completion and orphan
+                # retirement so another manager/collector cannot overlap it.
                 with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
-                    def _still_current() -> bool:
+                    if not _wait_for_shared_broker_connect_admission(
+                        should_stop=lambda: not _still_current()
+                    ):
+                        self._close_socket_bounded(socket)
+                        return
+                    if not _still_current():
+                        self._close_socket_bounded(socket)
+                        return
+                    try:
+                        socket.connect(**connect_kwargs)
+                    except Exception as connect_exc:
+                        # A timed-out/retired connect worker may fail after a
+                        # newer generation has replaced it. Only the current
+                        # generation is allowed to affect shared broker cooldown
+                        # or authentication state.
                         with self._lock:
-                            return (
+                            is_current_failure = (
                                 self._sockets.get(group) is socket
                                 and self._socket_generation.get(group) == generation
                                 and not self._closed
                             )
-                    if not _still_current():
-                        self._close_socket_bounded(socket)
+                            if is_current_failure and self._apply_broker_cooldown(connect_exc):
+                                _mark_socket_auth_stale(socket)
+                        raise
+                    # Check and retire a late successful handshake before
+                    # releasing admission; its broker session still consumes
+                    # one connection slot until the transport actually exits.
+                    with self._lock:
+                        is_current_after_connect = (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                        )
+                    if not is_current_after_connect:
+                        close_worker = self._close_socket_tracked(
+                            socket, group=group, generation=generation,
+                            reason="late_connect_success",
+                            on_finished=lambda: self._reconcile_after_retirement(group),
+                        )
+                        if not close_worker.is_alive():
+                            self._reconcile_after_retirement(group)
                         return
-                    # A replacement worker may already be queued for admission
-                    # while another shard's close is still in flight. Re-check
-                    # retirement after acquiring the global lock, not only when
-                    # creating the placeholder socket.
-                    while _still_current():
-                        with self._lock:
-                            retirement_pending = bool(self._retired_transports)
-                        if not retirement_pending:
-                            break
-                        time.sleep(0.05)
-                    if not _still_current():
-                        self._close_socket_bounded(socket)
-                        return
-                    # Admission is process-wide, not merely a timestamp check:
-                    # hold the same lock through handshake completion and orphan
-                    # retirement so another manager/collector cannot overlap it.
-                    with _SHARED_BROKER_CONNECT_ADMISSION_LOCK:
-                        if not _wait_for_shared_broker_connect_admission(
-                            should_stop=lambda: not _still_current()
-                        ):
-                            self._close_socket_bounded(socket)
-                            return
-                        if not _still_current():
-                            self._close_socket_bounded(socket)
-                            return
-                        try:
-                            socket.connect(**connect_kwargs)
-                        except Exception as connect_exc:
-                            # A timed-out/retired connect worker may fail after a
-                            # newer generation has replaced it. Only the current
-                            # generation is allowed to affect shared broker cooldown
-                            # or authentication state.
-                            with self._lock:
-                                is_current_failure = (
-                                    self._sockets.get(group) is socket
-                                    and self._socket_generation.get(group) == generation
-                                    and not self._closed
-                                )
-                                if is_current_failure and self._apply_broker_cooldown(connect_exc):
-                                    _mark_socket_auth_stale(socket)
-                            raise
-                        # Check and retire a late successful handshake before
-                        # releasing admission; its broker session still consumes
-                        # one connection slot until the transport actually exits.
-                        with self._lock:
-                            is_current_after_connect = (
-                                self._sockets.get(group) is socket
-                                and self._socket_generation.get(group) == generation
-                            )
-                        if not is_current_after_connect:
-                            close_worker = self._close_socket_tracked(
-                                socket, group=group, generation=generation,
-                                reason="late_connect_success",
-                                on_finished=lambda: self._reconcile_after_retirement(group),
-                            )
-                            if not close_worker.is_alive():
-                                self._reconcile_after_retirement(group)
-                            return
             except Exception as exc:
                 failure["exception"] = exc
                 # Surface failed handshakes even when the SDK raises before
