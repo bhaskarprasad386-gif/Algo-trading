@@ -9,6 +9,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -130,12 +131,29 @@ def _mapping(
         # BANKEXFUT, whereas NFO uses the bare underlying (for example NIFTY).
         # Strip only the instrument suffix for derivative rows; never infer
         # the root from TradingSymbol because that also contains expiry/strike.
+        raw_underlying = str(underlying_value or "").strip().upper()
         if broker.upper() == "SHOONYA" and kind in {"OPTION", "FUTURE"}:
-            raw_underlying = str(underlying_value or "").strip().upper()
+            # Shoonya BFO Symbol aliases are commonly suffixed with OPT/FUT.
             for suffix in ("OPT", "FUT"):
                 if raw_underlying.endswith(suffix):
                     raw_underlying = raw_underlying[:-len(suffix)]
                     break
+            underlying_value = raw_underlying
+        elif broker.upper() == "ANGELONE" and exchange == "BFO" and kind in {"OPTION", "FUTURE"}:
+            # Angel BFO rows may omit the separate root/name field and carry
+            # the full contract in symbol. Recover only the well-formed
+            # expiry/strike/right suffix; do not guess from arbitrary symbols.
+            option_match = re.match(
+                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}\\d+(?:\\.\\d+)?(?:CE|PE)$",
+                raw_underlying,
+            )
+            future_match = re.match(
+                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}FUT$",
+                raw_underlying,
+            )
+            match = option_match or future_match
+            if match:
+                raw_underlying = match.group(1)
             underlying_value = raw_underlying
     underlying = str(underlying_value or "").strip().upper()
     if not underlying:
