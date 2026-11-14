@@ -929,3 +929,31 @@ merge, and deployment remain outstanding.
 - Tests are committed but have not been executed in this session. Exact-head
   CI, full regression, live broker validation, merge, and deployment remain
   outstanding.
+
+
+
+## Batch 38 — Angel One late connect completion fencing
+
+- Audited the Angel One wrapper's connect/close overlap. A connect attempt
+  previously assigned the SDK socket outside the lifecycle lock and, after
+  its blocking handshake returned, unconditionally copied transport-thread
+  state from the wrapper's mutable `self.websocket` reference. If close or a
+  replacement attempt had already detached that socket, the late completion
+  could lose ownership of the retired transport thread or publish stale
+  connection bookkeeping.
+- Each connect attempt now retains its own local SDK socket reference. Socket
+  publication is guarded by the lifecycle lock and refuses to publish after
+  stop. On handshake completion or exception, the attempt rechecks both the
+  stop flag and socket identity before mutating shared state.
+- A superseded attempt is cleaned up against its own SDK socket and returns
+  without changing the replacement wrapper state. Exception accounting and
+  retry behavior are likewise suppressed for stale attempts.
+- Added a deterministic blocking-connect regression: close the wrapper while
+  the SDK connect call is paused, then release the old attempt and assert it
+  cannot republish a socket or connected state.
+- This change does not switch Angel authentication from
+  NOT_VERIFIABLE, alter manager generation ownership, add subscriptions, or
+  change Box Spread / IV Scanner callbacks, calculations, or source selection.
+- The focused test is committed but has not been executed in this session.
+  Exact-head CI, full regression, live broker validation, PR merge, and
+  deployment remain outstanding.
