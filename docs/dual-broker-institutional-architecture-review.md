@@ -1225,3 +1225,22 @@ merge, and deployment remain outstanding.
 - No production runtime code changed. Shoonya remains isolated/read-only;
   Box Spread and IV Scanner subscriptions, callbacks, calculations, feed
   selection and order behavior are unchanged.
+
+
+## Batch 59 — concurrent three-shard manager-to-readiness recovery storm
+
+- Added a threaded integration regression using the real
+  CommonWebSocketManager transport-observer admission gate and the dual-provider
+  ProviderReadinessBridge. Three Angel socket groups run concurrently through
+  40 lifecycle generations each.
+- Each generation exercises OPEN, ERROR, a forbidden same-generation OPEN,
+  replacement-generation OPEN, and a delayed CLOSED from the retired generation.
+  The assertions require all three groups to retain only their newest
+  replacement generation, independently and without cross-shard interference.
+- The test deliberately keeps Angel authentication NOT_VERIFIABLE and asserts
+  feed readiness, pairing, scanner fanout, and order eligibility remain false.
+  It uses synthetic lifecycle events and no broker credentials or live sockets.
+- Test committed but not executed in this session. It is concurrency regression
+  coverage, not broker authentication, subscription-ACK, network, or market-feed
+  validation. No production runtime code changed; existing Box Spread and IV
+  Scanner behavior remains untouched.
