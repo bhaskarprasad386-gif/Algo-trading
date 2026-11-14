@@ -39,9 +39,17 @@ jobs:
           printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
-          ssh-keyscan -T 5 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          keyscan_ok=0
+          for attempt in 1 2 3; do
+            if timeout 10 ssh-keyscan -T 8 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/offmarket-keyscan.err; then
+              keyscan_ok=1
+              break
+            fi
+            sleep 3
+          done
+          test "$keyscan_ok" -eq 1
 
-          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          REMOTE_SCRIPT=$(cat <<'REMOTE'
           set -euo pipefail
           cd /opt/Algo-Trading
 
@@ -118,6 +126,20 @@ jobs:
             grep -Ei 'error|exception|failed|timeout|429|sqlite|websocket' |
             tail -40 || true
           REMOTE
+          )
+          ssh_status=1
+          for attempt in 1 2 3; do
+            if printf '%s\\n' "$REMOTE_SCRIPT" | timeout 120 ssh -i /tmp/vps_key \\
+              -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \\
+              -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \\
+              "$VPS_USER@$VPS_HOST" 'bash -s'; then
+              ssh_status=0
+              break
+            fi
+            echo "VPS_SSH_ATTEMPT=$attempt FAILED"
+            sleep 5
+          done
+          test "$ssh_status" -eq 0
 
   test-offmarket-contracts:
     runs-on: ubuntu-latest
