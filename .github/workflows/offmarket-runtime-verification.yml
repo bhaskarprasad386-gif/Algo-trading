@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   verify-vps-runtime:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
