@@ -469,3 +469,23 @@ Added `backend/app/market_data/provider_quote_pairer.py` and focused tests in
 - No scanner, order, broker source-selection, failover, or live subscription
   behavior was changed. Shadow mode remains default-off.
 
+## Batch 21 — Shoonya authenticated normalized-observation hook
+
+- Added an optional `on_tick_observation` callback to `ShoonyaWebSocket` and
+  surfaced the same optional hook through `ShoonyaMarketDataSupervisor`.
+- The hook receives the existing immutable `MarketDataRecord`, current
+  `_feed_epoch`, explicit authenticated state, and local monotonic receive
+  timestamp. It is dispatched on the existing market tick dispatcher thread,
+  not the transport callback thread.
+- Legacy `on_tick(dict)` payload and the separate order queue remain unchanged.
+  No second market queue was added.
+- The observation is rechecked against the current authenticated epoch immediately
+  before observer delivery. Reconnect/epoch replacement fences queued observer
+  callbacks; observer exceptions are isolated from the dispatcher.
+- Added two focused regression tests for metadata delivery and retired-epoch
+  rejection. Tests are committed but not executed here.
+- This is only the Shoonya side of the metadata bridge. Angel's manager still
+  needs an equally explicit trusted authentication/session-current signal before
+  a parity producer may activate its generation. No provider pairer, parity
+  worker, scanner, subscription, source selection, failover or order path is
+  connected by this batch.
