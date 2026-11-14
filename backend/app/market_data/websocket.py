@@ -305,6 +305,26 @@ class MarketDataWebSocket:
             if self.exchange_type is not None and self.tokens:
                 self._subscribe_initial_bounded(socket)
 
+        # The SDK can emit on_error followed by on_close for one disconnect.
+        # Notify the shared manager only once, so it requests one recovery.
+        failure_notification_lock = Lock()
+        failure_notification_sent = False
+
+        def notify_failure_once(reason: str) -> bool:
+            nonlocal failure_notification_sent
+            with failure_notification_lock:
+                if failure_notification_sent:
+                    return False
+                failure_notification_sent = True
+            with self._lock:
+                failure_callback = self.on_failure
+            if failure_callback is not None:
+                try:
+                    failure_callback(reason)
+                except Exception as exc:
+                    app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
+            return True
+
         def handle_data(wsapp, message):
             with self._lock:
                 current = not self._stopping and self.websocket is socket
@@ -329,12 +349,8 @@ class MarketDataWebSocket:
                 failure_callback = self.on_failure
             app_logger.error(f"Angel One WebSocket error: {error_detail}")
             emit_lifecycle("ERROR")
-            if failure_callback is not None:
-                try:
-                    failure_callback(error_detail)
-                except Exception as exc:
-                    app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
-            if self._auto_reconnect:
+            first_failure = notify_failure_once(error_detail)
+            if first_failure and self._auto_reconnect:
                 self._schedule_reconnect()
 
         def handle_close(wsapp):
@@ -344,19 +360,16 @@ class MarketDataWebSocket:
                     self._connected = False
                     self._connecting = False
                 stopping = self._stopping or not current
-                failure_callback = self.on_failure if current else None
             close_code = getattr(wsapp, "close_status_code", None)
             close_reason = getattr(wsapp, "close_reason", None)
             app_logger.warning(
                 f"Angel One WebSocket connection closed code={close_code} reason={close_reason}"
             )
             emit_lifecycle("CLOSED")
-            if not stopping and failure_callback is not None:
-                try:
-                    failure_callback("socket closed")
-                except Exception as exc:
-                    app_logger.error(f"Angel One WebSocket close notification failed: {exc}")
-            if not stopping and self._auto_reconnect:
+            first_failure = False
+            if not stopping:
+                first_failure = notify_failure_once("socket closed")
+            if first_failure and self._auto_reconnect:
                 self._schedule_reconnect()
 
         socket.on_open = handle_open
@@ -419,13 +432,20 @@ class MarketDataWebSocket:
             if self._is_reconnecting:
                 return
             self._is_reconnecting = True
-            self._reconnect_count += 1
-            self._reconnect_thread = Thread(
+            worker = Thread(
                 target=self._reconnect_after_disconnect,
                 name="angel-ws-reconnect",
                 daemon=True,
             )
-            self._reconnect_thread.start()
+            self._reconnect_thread = worker
+            self._reconnect_count += 1
+            try:
+                worker.start()
+            except Exception as exc:
+                self._reconnect_thread = None
+                self._is_reconnecting = False
+                self._reconnect_count -= 1
+                app_logger.error(f"Unable to start Angel WebSocket reconnect worker: {exc}")
 
     def _reconnect_after_disconnect(self) -> None:
         retry_after_exit = False
