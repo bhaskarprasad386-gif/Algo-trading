@@ -52,6 +52,7 @@ from app.market_data.shoonya_supervisor import ShoonyaMarketDataSupervisor
 from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
 from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store, configure_worker as configure_provider_quote_parity_worker
 from app.market_data.provider_quote_parity_worker import BoundedQuoteParityWorker
+from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
@@ -109,6 +110,7 @@ instrument_master = InstrumentMaster()
 shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
+provider_readiness_bridge = ProviderReadinessBridge()
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
@@ -422,6 +424,8 @@ async def lifespan(app: FastAPI):
             reconnect_max_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS,
             frame_timeout_seconds=settings.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS,
             auth_timeout_seconds=settings.SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS,
+            on_session_observation=provider_readiness_bridge.shoonya_state,
+            on_tick_observation=provider_readiness_bridge.shoonya_market_event,
         )
         configure_shoonya_snapshot(shoonya_market_data_supervisor.snapshot)
         configure_shoonya_supervisor(lambda: shoonya_market_data_supervisor)
@@ -1811,6 +1815,11 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
 def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
     manager = shared_common_manager()
+    # Additive read-only observer; does not add/remove subscriptions or replace
+    # any Box Spread / IV Scanner consumer callback.
+    manager.register_normalized_observer(
+        "provider-readiness-shadow", provider_readiness_bridge.angel_market_event
+    )
     cash_runner = live_cash_future_runner
     calendar_runner = live_calendar_spread_runner
     synthetic_runner = live_synthetic_runner
@@ -1828,6 +1837,7 @@ def market_data_runtime_health():
         "status": "ok",
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
         "common_feed": common_feed,
+        "provider_readiness": provider_readiness_bridge.snapshot(),
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
             "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
