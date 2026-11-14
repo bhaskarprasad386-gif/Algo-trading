@@ -166,6 +166,8 @@ class CommonWebSocketManager:
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._record_observers: dict[str, Callable[..., None]] = {}
         self._transport_observers: dict[str, Callable[..., None]] = {}
+        # Serialize observer delivery with the final shutdown barrier.
+        self._transport_observer_dispatch_lock = RLock()
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._reconcile_lock = RLock()
@@ -359,31 +361,34 @@ class CommonWebSocketManager:
             self._transport_observers.pop(self._consumer_name(consumer), None)
 
     def _notify_transport_observers(self, event: str, group: SocketGroup, generation: int, received_ns: int) -> None:
-        with self._lock:
-            active_generation = (
-                not self._closed
-                and self._socket_generation.get(group) == generation
-                and group in self._sockets
-            )
-            retiring_generation = (
-                event == "CLOSED"
-                and self._socket_generation_counter.get(group) == generation
-            )
-            current = active_generation or retiring_generation
-            observers = tuple(self._transport_observers.values()) if current else ()
-        for observer in observers:
-            try:
-                observer(event, group, generation, received_ns)
-            except Exception as exc:
-                with self._lock:
-                    self._delivery_errors += 1
-                    self._last_delivery_error = f"transport observer {type(exc).__name__}: {exc}"
-                runtime_diagnostics.record(
-                    component="Common Market Feed",
-                    error_type="TransportObserverError",
-                    message=str(exc),
-                    context={"event": "transport_observer", "group": f"{group.mode}:{group.shard}", "generation": generation},
+        # Hold the dispatch gate through callback completion. close() takes the
+        # same gate after marking the manager closed, without holding _lock.
+        with self._transport_observer_dispatch_lock:
+            with self._lock:
+                active_generation = (
+                    not self._closed
+                    and self._socket_generation.get(group) == generation
+                    and group in self._sockets
                 )
+                retiring_generation = (
+                    event == "CLOSED"
+                    and self._socket_generation_counter.get(group) == generation
+                )
+                current = active_generation or retiring_generation
+                observers = tuple(self._transport_observers.values()) if current else ()
+            for observer in observers:
+                try:
+                    observer(event, group, generation, received_ns)
+                except Exception as exc:
+                    with self._lock:
+                        self._delivery_errors += 1
+                        self._last_delivery_error = f"transport observer {type(exc).__name__}: {exc}"
+                    runtime_diagnostics.record(
+                        component="Common Market Feed",
+                        error_type="TransportObserverError",
+                        message=str(exc),
+                        context={"event": "transport_observer", "group": f"{group.mode}:{group.shard}", "generation": generation},
+                    )
 
     def subscribe(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
         consumer = self._consumer_name(consumer)
@@ -2175,3 +2180,7 @@ class CommonWebSocketManager:
             )
         if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)
+        # Wait for callbacks admitted before closure; new OPEN/ERROR callbacks
+        # are rejected after _closed is set. Retired CLOSED remains admissible.
+        with self._transport_observer_dispatch_lock:
+            pass
