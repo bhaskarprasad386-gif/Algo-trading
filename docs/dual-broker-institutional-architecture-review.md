@@ -948,6 +948,11 @@ merge, and deployment remain outstanding.
 - A superseded attempt is cleaned up against its own SDK socket and returns
   without changing the replacement wrapper state. Exception accounting and
   retry behavior are likewise suppressed for stale attempts.
+- Socket callbacks are also identity-fenced: a retired socket's late OPEN,
+  ERROR, or market-data callback cannot mutate the current wrapper state or
+  reach the existing data consumer. A retired CLOSED event may still report
+  lifecycle closure for its own manager generation, but cannot mark a newer
+  wrapper session disconnected or trigger replacement recovery.
 - Added a deterministic blocking-connect regression: close the wrapper while
   the SDK connect call is paused, then release the old attempt and assert it
   cannot republish a socket or connected state.
