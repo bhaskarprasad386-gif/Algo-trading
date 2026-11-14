@@ -16,8 +16,12 @@ class ProviderReadinessBridge:
         self._lock = RLock()
         self._shoonya = ProviderReadiness("shoonya", subscription_ack_supported=False)
         self._shoonya_generation = 0
+        self._shoonya_last_observation_ns = 0
+        self._shoonya_stale_observations = 0
         self._angel: dict[str, ProviderReadiness] = {}
         self._angel_generations: dict[str, int] = {}
+        self._angel_last_observation_ns: dict[str, int] = {}
+        self._angel_stale_observations: dict[str, int] = {}
 
     @staticmethod
     def _valid_record(record: Any) -> tuple[bool, bool, bool]:
@@ -38,15 +42,23 @@ class ProviderReadinessBridge:
         self, state: str, reason: str | None, generation: int,
         connected: bool, authenticated: bool, received_monotonic_ns: int,
     ) -> None:
-        if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        if (isinstance(generation, bool) or not isinstance(generation, int) or generation < 1
+                or isinstance(received_monotonic_ns, bool)
+                or not isinstance(received_monotonic_ns, int) or received_monotonic_ns <= 0):
             return
         with self._lock:
             if generation > self._shoonya_generation:
                 self._shoonya.begin_generation(generation)
                 self._shoonya_generation = generation
+                self._shoonya_last_observation_ns = 0
             current = self._shoonya_generation
             if generation != current:
+                self._shoonya_stale_observations += 1
                 return
+            if received_monotonic_ns <= self._shoonya_last_observation_ns:
+                self._shoonya_stale_observations += 1
+                return
+            self._shoonya_last_observation_ns = received_monotonic_ns
             if state == "AUTHENTICATING":
                 self._shoonya.transport_open(current)
             elif state == "LIVE" and authenticated:
@@ -69,8 +81,12 @@ class ProviderReadinessBridge:
 
     def shoonya_market_event(self, record: Any, generation: int, authenticated: bool, received_at: int) -> None:
         with self._lock:
-            if generation != self._shoonya_generation or not authenticated:
+            if (generation != self._shoonya_generation or not authenticated
+                    or isinstance(received_at, bool) or not isinstance(received_at, int)
+                    or received_at <= 0 or received_at <= self._shoonya_last_observation_ns):
+                self._shoonya_stale_observations += 1
                 return
+            self._shoonya_last_observation_ns = received_at
             identity, timestamp_valid, fresh = self._valid_record(record)
             self._shoonya.record_market_event(
                 generation, canonical_identity_valid=identity,
@@ -84,7 +100,9 @@ class ProviderReadinessBridge:
     ) -> None:
         # SmartAPI currently has no verified auth ACK. Ignore the callback's
         # auth-shaped value unless a future reviewed adapter changes the contract.
-        if not connection_current:
+        if (not connection_current or isinstance(received_at, bool)
+                or not isinstance(received_at, int) or received_at <= 0
+                or isinstance(generation, bool) or not isinstance(generation, int) or generation < 1):
             return
         key = f"{getattr(group, 'mode', 'unknown')}:{getattr(group, 'shard', 'unknown')}"
         with self._lock:
@@ -94,9 +112,16 @@ class ProviderReadinessBridge:
                 state.begin_generation(generation)
                 self._angel[key] = state
                 self._angel_generations[key] = generation
+                self._angel_last_observation_ns[key] = 0
+                self._angel_stale_observations[key] = 0
             state = self._angel.get(key)
             if state is None or self._angel_generations.get(key) != generation:
+                self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
                 return
+            if received_at <= self._angel_last_observation_ns.get(key, 0):
+                self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
+                return
+            self._angel_last_observation_ns[key] = received_at
             state.transport_open(generation)
             identity, timestamp_valid, fresh = self._valid_record(record)
             state.record_market_event(
@@ -109,9 +134,16 @@ class ProviderReadinessBridge:
         with self._lock:
             return {
                 "mode": "read_only_diagnostics",
-                "shoonya": self._shoonya.snapshot(),
+                "shoonya": {
+                    **self._shoonya.snapshot(),
+                    "stale_observations_rejected": self._shoonya_stale_observations,
+                },
                 "angel_one": {
-                    key: state.snapshot() for key, state in sorted(self._angel.items())
+                    key: {
+                        **state.snapshot(),
+                        "stale_observations_rejected": self._angel_stale_observations.get(key, 0),
+                    }
+                    for key, state in sorted(self._angel.items())
                 },
                 "pairing_enabled": False,
                 "scanner_fanout_enabled": False,
