@@ -443,3 +443,29 @@ The opt-in application lifespan now starts/stops the worker with the parity stor
 Eleven focused worker tests cover persistence, explicit generation gating, duplicate and out-of-order rejection, overflow fail-closed, bounded dedupe state, canonical identity validation, graceful drain, queued generation fencing, and timestamp-less duplicate identity. Tests have been committed but not executed in this session; exact-head CI and full regression remain required.
 
 No changes to Box Spread or IV Scanner strategy logic, WebSocket subscriptions, source selection, failover, or order routing.
+
+## Batch 20 — bounded provider quote pairing boundary
+
+Added `backend/app/market_data/provider_quote_pairer.py` and focused tests in
+`backend/tests/test_provider_quote_pairer.py`.
+
+- Accepts only normalized `ProviderQuoteObservation` values; it never reads
+  broker SDK payloads, opens sockets, mutates subscriptions, or calls scanners.
+- Requires explicit authenticated/current flags and an already activated
+  provider generation. Generation advancement clears that provider's pending
+  observations and is also forwarded to the parity worker.
+- Holds at most two provider observations per bounded contract slot and bounds
+  emitted pair identities separately. No unbounded per-tick history is retained.
+- Emits only same-canonical-contract Angel One/Shoonya pairs. The worker remains
+  responsible for its own generation fence, freshness evaluation, diagnostics,
+  and durable write.
+- A pair identity is marked emitted only after the worker accepts it. Worker
+  rejection is counted and is not reported as successful submission.
+- This is a pure pairing boundary, not live broker integration. Existing Angel
+  normalized callbacks and Shoonya's current dispatch queue have not been wired
+  to it. In particular, trustworthy socket/session generation and authentication
+  metadata still need to be threaded into a dedicated read-only observer path.
+- Five focused tests were added. They have not been executed in this environment.
+- No scanner, order, broker source-selection, failover, or live subscription
+  behavior was changed. Shadow mode remains default-off.
+
