@@ -1055,3 +1055,11 @@ merge, and deployment remain outstanding.
 - The dispatcher now checks epoch equality and current authenticated state before either callback. Stale items are discarded and counted as stale_dispatch_drops; valid current-epoch items retain the existing callback order and delivery behavior.
 - Added regression coverage for seven queued retired epochs being drained after an eighth epoch becomes current, and for a ten-epoch burst respecting a deliberately small queue capacity (3) while recording overflow drops.
 - Production queue limits and reconnect policy are unchanged. Tests committed but not executed. This is deterministic queue/epoch stress coverage, not a live-market throughput or memory benchmark.
+
+
+### Batch 47 — Angel shard callback retirement fence
+
+- Audited the opt-in Angel per-shard callback queue. Queued batches were generation-checked when dequeued, but a multi-invocation batch could continue invoking later consumers if retirement happened while an earlier callback was executing. Also, stop() did not invalidate the adapter generation.
+- Adapter stop now advances its generation. The worker rechecks both closed state and batch generation immediately before every callback invocation, so retirement fences remaining invocations in an already-dequeued batch. A callback already executing cannot be cancelled safely and is allowed to finish.
+- Added a deterministic regression test with a blocked first callback, concurrent non-draining retirement, and a second callback that must never execute.
+- Existing Angel callback dispatch remains opt-in; no scanner subscriptions, callback dispatch mode, or broker routing behavior was changed. Test committed but not executed. This is a deterministic lifecycle race test, not a throughput or live-market test.
