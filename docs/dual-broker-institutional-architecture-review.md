@@ -1028,3 +1028,12 @@ merge, and deployment remain outstanding.
 - Explicit caller-initiated `connect()` remains the supported way to intentionally restart a previously closed wrapper; it advances the lifecycle generation, clears `_stopping`, and supersedes any older in-flight reconnect worker.
 - Added tests for close winning the reconnect race, stale reconnect rejection without subscription mutation, and explicit manual restart after close.
 - No scanner feed selection, subscription intent, provider readiness, strategy, or order-routing behavior changed. Tests committed but not executed in this environment.
+
+
+### Batch 44 — simultaneous broker failure/recovery isolation
+
+- Added bridge-level regression coverage for simultaneous Shoonya authentication rejection and Angel transport failure, followed by independent recovery into new generations.
+- The test asserts Angel recovery cannot reopen or authenticate the rejected Shoonya epoch; Shoonya recovery cannot alter Angel's replacement generation; delayed failure callbacks from retired generations cannot close the replacements.
+- Added a second test proving an Angel socket-group failure closes only that group and leaves another active group unchanged.
+- This verifies the readiness evidence boundary, not live broker reconnection or provider parity. Angel authentication and subscription acknowledgement remain `NOT_VERIFIABLE`; Shoonya subscription acknowledgement remains `NOT_VERIFIABLE`; scanner fanout, pairing and order eligibility remain disabled.
+- Tests committed but not executed. No production scanner, subscription, or reconnect policy was changed in this batch.
