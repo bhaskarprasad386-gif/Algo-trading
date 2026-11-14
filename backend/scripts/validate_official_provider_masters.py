@@ -302,6 +302,17 @@ def main() -> int:
     angel_report = combine_segment_reports("ANGELONE", angel_segment_reports)
     shoonya_report = combine_segment_reports("SHOONYA", shoonya_segment_reports)
     audit = audit_master_coverage((angel_report, shoonya_report))
+    index_coverage = index_underlying_coverage(angel_report, shoonya_report)
+    index_coverage_gaps = [
+        {
+            "underlying": underlying,
+            "angel_only_contracts": values["angel_only_contracts"],
+            "angel_only_by_expiry": values["angel_only_by_expiry"],
+            "shoonya_only_contracts": values["shoonya_only_contracts"],
+        }
+        for underlying, values in index_coverage.items()
+        if values["angel_only_contracts"] or values["shoonya_only_contracts"]
+    ]
 
     output = {
         "schema_version": 1,
@@ -323,7 +334,9 @@ def main() -> int:
             "metadata_mismatch_count": len(audit.metadata_mismatches),
             "metadata_mismatch_sample": [str(key) for key in audit.metadata_mismatches[:25]],
             "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
-            "index_underlying_coverage": index_underlying_coverage(angel_report, shoonya_report),
+            "index_underlying_coverage": index_coverage,
+            "index_coverage_status": "PASS" if not index_coverage_gaps else "PASS_WITH_COVERAGE_GAPS",
+            "index_coverage_gaps": index_coverage_gaps,
             "underlying_inventory": underlying_inventory(angel_report, shoonya_report),
             "bse_index_symbol_diagnostics": {
                 "angel_one": bse_index_symbol_diagnostics(angel_report),
@@ -353,7 +366,7 @@ def main() -> int:
         for failure in failures:
             print(f"- {failure}", file=sys.stderr)
         return 1
-    print("OFFICIAL MASTER VALIDATION: PASS")
+    print("OFFICIAL MASTER VALIDATION: PASS_WITH_COVERAGE_GAPS" if index_coverage_gaps else "OFFICIAL MASTER VALIDATION: PASS")
     return 0
 
 
