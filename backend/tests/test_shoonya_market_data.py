@@ -1051,3 +1051,63 @@ def test_read_only_tick_observer_does_not_receive_retired_generation():
     dispatcher.join(timeout=1)
     assert not dispatcher.is_alive()
     assert observed == []
+
+
+
+def test_superseded_epoch_cannot_mutate_snapshot_after_normalization(monkeypatch):
+    feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    original_normalize = feed._normalizer.normalize
+
+    def normalize_then_reconnect(instrument, payload):
+        record = original_normalize(instrument, payload)
+        feed._reset_feed_epoch()
+        feed._authenticated = True
+        return record
+
+    monkeypatch.setattr(feed._normalizer, "normalize", normalize_then_reconnect)
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55", "ft": "1794551794",
+    })
+
+    assert ("NFO", "12345") not in feed._snapshots
+    assert feed.snapshot()["ticks_received"] == 0
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
+
+
+def test_observer_runs_even_if_legacy_tick_callback_raises():
+    observed = []
+    delivered = threading.Event()
+
+    def observer(record, generation, authenticated, received_monotonic_ns):
+        observed.append((record, generation, authenticated, received_monotonic_ns))
+        delivered.set()
+
+    def broken_legacy(_payload):
+        raise RuntimeError("legacy consumer failure")
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=broken_legacy,
+        on_tick_observation=observer,
+    )
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    feed._feed_epoch = 11
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+
+    dispatcher = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    dispatcher.start()
+    assert delivered.wait(timeout=1)
+    feed._stop.set()
+    dispatcher.join(timeout=1)
+
+    assert not dispatcher.is_alive()
+    assert len(observed) == 1
+    assert observed[0][1:3] == (11, True)
