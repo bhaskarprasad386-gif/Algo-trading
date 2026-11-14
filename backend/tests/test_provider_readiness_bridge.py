@@ -519,3 +519,61 @@ def test_threaded_dual_broker_lifecycle_updates_are_isolated_and_generation_fenc
     assert snapshot["pairing_enabled"] is False
     assert snapshot["scanner_fanout_enabled"] is False
     assert snapshot["order_eligible"] is False
+
+
+def test_manager_shutdown_fences_concurrent_late_transport_open_callback():
+    """A callback racing manager.close cannot resurrect readiness after shutdown."""
+    from threading import Event, Thread
+
+    from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+
+    bridge = ProviderReadinessBridge()
+    close_entered = Event()
+    release_close = Event()
+    observed = []
+    group = SocketGroup(3, 9)
+
+    class BlockingCloseSocket:
+        def close(self):
+            close_entered.set()
+            assert release_close.wait(timeout=3)
+
+    manager = CommonWebSocketManager()
+    manager.register_transport_observer(
+        "shutdown-race-readiness", bridge.angel_transport_event
+    )
+    manager._transport_observers["shutdown-race-observed"] = (
+        lambda *args: observed.append(args)
+    )
+    socket = BlockingCloseSocket()
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 77
+        manager._socket_generation_counter[group] = 77
+
+    manager._notify_transport_observers("OPEN", group, 77, 100)
+    assert bridge.snapshot()["angel_one"]["3:9"]["transport"] == "OPEN"
+
+    shutdown = Thread(target=manager.close, name="manager-shutdown-race")
+    shutdown.start()
+    try:
+        assert close_entered.wait(timeout=1), "manager did not begin socket retirement"
+        # close() has atomically marked the manager closed and removed the
+        # active generation before waiting for the SDK close worker.
+        manager._notify_transport_observers("OPEN", group, 77, 200)
+        manager._notify_transport_observers("CLOSED", group, 77, 300)
+        during_shutdown = bridge.snapshot()
+        assert during_shutdown["angel_one"]["3:9"]["transport"] == "CLOSED"
+        assert during_shutdown["angel_one"]["3:9"]["generation"] == 77
+        assert observed == [("OPEN", group, 77, 100), ("CLOSED", group, 77, 300)]
+    finally:
+        release_close.set()
+        shutdown.join(timeout=3)
+
+    assert not shutdown.is_alive(), "manager shutdown worker did not terminate"
+    final = bridge.snapshot()
+    assert final["angel_one"]["3:9"]["transport"] == "CLOSED"
+    assert final["angel_one"]["3:9"]["feed_ready"] is False
+    assert final["pairing_enabled"] is False
+    assert final["scanner_fanout_enabled"] is False
+    assert final["order_eligible"] is False
