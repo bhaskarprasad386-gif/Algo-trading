@@ -131,11 +131,42 @@ class ShoonyaWebSocket:
             self._dispatch_thread = threading.Thread(target=self._dispatch_loop, name="shoonya-tick-dispatch", daemon=True)
             self._order_dispatch_thread = threading.Thread(target=self._order_dispatch_loop, name="shoonya-order-dispatch", daemon=True)
             self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="shoonya-heartbeat", daemon=True)
-            self._dispatch_thread.start()
-            self._order_dispatch_thread.start()
-            self._heartbeat_thread.start()
             self._thread = threading.Thread(target=self._run_loop, name="shoonya-ws-supervisor", daemon=True)
-            self._thread.start()
+            started: list[threading.Thread] = []
+            try:
+                # Thread.start() can fail independently (resource exhaustion,
+                # interpreter shutdown, or an injected runtime failure). Treat
+                # startup as one transaction: never leave earlier workers
+                # running when a later worker cannot be created.
+                for worker in (
+                    self._dispatch_thread,
+                    self._order_dispatch_thread,
+                    self._heartbeat_thread,
+                    self._thread,
+                ):
+                    worker.start()
+                    started.append(worker)
+            except Exception:
+                self._stop.set()
+                deadline = time.monotonic() + 3.0
+                for worker in started:
+                    if worker is threading.current_thread():
+                        continue
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    worker.join(timeout=remaining)
+                with self._lock:
+                    alive = [worker for worker in started if worker.is_alive()]
+                    self._shutdown_workers_alive = [worker.name for worker in alive]
+                    self._connected = self._authenticated = False
+                    if not alive:
+                        self._thread = None
+                        self._dispatch_thread = None
+                        self._order_dispatch_thread = None
+                        self._heartbeat_thread = None
+                        self._ws = None
+                raise
 
     def stop(self) -> None:
         self._stop.set()
