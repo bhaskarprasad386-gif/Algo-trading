@@ -374,7 +374,14 @@ class ShoonyaWebSocket:
             with self._lock: self._last_error = "invalid JSON frame"
             return
         if not isinstance(message, dict): return
-        with self._lock: self._last_frame_at = time.time()
+        with self._lock:
+            # The outer guarded callback can lose a race to reconnect after
+            # its initial identity check. Capture and fence the source epoch
+            # here before any frame can mutate replacement-session state.
+            if ws is not self._ws or self._stop.is_set():
+                return
+            message_epoch = self._feed_epoch
+            self._last_frame_at = time.time()
         kind = str(message.get("t") or "").lower()
         if kind == "h":
             try: ws.send(json.dumps({"t": "h"}, separators=(",", ":")))
@@ -409,13 +416,18 @@ class ShoonyaWebSocket:
         # acknowledged this socket's authentication. A transport-open socket is
         # not an authenticated feed and must never publish apparently-live data.
         with self._lock:
-            authenticated = self._authenticated
+            authenticated = (
+                ws is self._ws
+                and not self._stop.is_set()
+                and message_epoch == self._feed_epoch
+                and self._authenticated
+            )
         if not authenticated:
             return
         if kind in {"tk", "tf"}:
-            self._handle_tick(message)
+            self._handle_tick(message, source_epoch=message_epoch)
         elif kind == "om" and self._on_order_update:
-            self._enqueue("order", message)
+            self._enqueue("order", message, feed_epoch=message_epoch)
 
     def _send_order_subscription(self, ws: Any) -> None:
         """Subscribe to this account's order lifecycle feed after auth, if requested."""
@@ -460,15 +472,17 @@ class ShoonyaWebSocket:
             try: ws.close()
             except Exception: pass
 
-    def _handle_tick(self, message: dict[str, Any]) -> None:
+    def _handle_tick(self, message: dict[str, Any], *, source_epoch: int | None = None) -> None:
         received_at_monotonic_ns = monotonic_ns()
         exchange, token = str(message.get("e") or "").upper(), str(message.get("tk") or "")
         key = (exchange, token)
         if not exchange or not token: return
         with self._lock:
             descriptor = self._descriptors.get(key)
-            if descriptor is None or not self._authenticated: return
-            epoch = self._feed_epoch
+            if (descriptor is None or not self._authenticated
+                    or (source_epoch is not None and source_epoch != self._feed_epoch)):
+                return
+            epoch = self._feed_epoch if source_epoch is None else source_epoch
             is_snapshot = str(message.get("t") or "").lower() == "tk"
             if not is_snapshot and key not in self._initialized:
                 return
@@ -499,13 +513,14 @@ class ShoonyaWebSocket:
             self._last_tick_at = time.time()
         self._enqueue("tick", record.as_dict(), observation=(record, epoch, True, received_at_monotonic_ns))
 
-    def _enqueue(self, kind: str, payload: dict[str, Any], *, observation: tuple[MarketDataRecord, int, bool, int] | None = None) -> None:
+    def _enqueue(self, kind: str, payload: dict[str, Any], *, observation: tuple[MarketDataRecord, int, bool, int] | None = None, feed_epoch: int | None = None) -> None:
         target = self._order_queue if kind == "order" else self._queue
         try:
             if kind == "order":
-                with self._lock:
-                    epoch = self._feed_epoch
-                item = (kind, payload, epoch)
+                if feed_epoch is None:
+                    with self._lock:
+                        feed_epoch = self._feed_epoch
+                item = (kind, payload, feed_epoch)
             else:
                 item = (kind, payload) if observation is None else (kind, payload, observation)
             target.put_nowait(item)
