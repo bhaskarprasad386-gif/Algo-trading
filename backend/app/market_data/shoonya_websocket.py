@@ -570,6 +570,11 @@ class ShoonyaWebSocket:
 
     def _on_close(self, ws: Any, status_code: Any, message: Any) -> None:
         with self._lock:
+            # A callback can pass the epoch guard and then lose a race to
+            # reconnect before acquiring this lock. Recheck socket identity
+            # atomically here so a retired socket cannot close its replacement.
+            if ws is not None and ws is not self._ws:
+                return
             self._connected = self._authenticated = False
             preserved_faults = (
                 ("Shoonya authentication rejected", "AUTH_FAILED"),
