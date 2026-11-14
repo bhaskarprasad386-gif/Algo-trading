@@ -105,14 +105,16 @@ class BoundedQuoteParityWorker:
                 return False
             for observation in (left, right):
                 current = self._active_generation.get(observation.provider)
-                if current is not None and current != observation.generation:
+                if current is None or current != observation.generation:
                     self._counters["stale_generation"] += 1
                     return False
             pair = tuple(sorted((left.provider, right.provider)))
             pair_key = (left.contract, pair[0], pair[1])
-            event_key = (pair_key[0], pair_key[1], pair_key[2],
-                         min(left.exchange_timestamp_ns or 0, right.exchange_timestamp_ns or 0),
-                         max(left.exchange_timestamp_ns or 0, right.exchange_timestamp_ns or 0))
+            event_identity = tuple(sorted((
+                (left.provider, left.generation, left.exchange_timestamp_ns or 0),
+                (right.provider, right.generation, right.exchange_timestamp_ns or 0),
+            )))
+            event_key = (pair_key[0], event_identity)
             if event_key in self._seen_pair_keys:
                 self._counters["duplicates"] += 1
                 return False
