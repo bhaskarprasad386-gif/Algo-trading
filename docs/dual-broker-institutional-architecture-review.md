@@ -615,3 +615,61 @@ Snapshots must expose raw evidence and derived state separately so operators can
 
 - Follow-up hardening accumulates partial per-token subscription acknowledgements until the complete desired set is covered; transport close clears generation-scoped acknowledgement and market-validity evidence without converting a normal close into an integrity fault. Regression cases cover partial coverage, close reset, and strict token input types.
 - Readiness freshness is re-evaluated against monotonic receive age at snapshot time (5-second default), so a previously fresh tick cannot keep FEED_READY true indefinitely. Authentication timeout/rejection is terminal for that generation; late success cannot revive the same epoch. Added deterministic regressions for both cases.
+
+
+## Batch 28 — live callback evidence integration review (fail-closed gate)
+
+A source-level integration review was performed against the current branch implementations of
+`ShoonyaWebSocket`, `ShoonyaMarketDataSupervisor`, `CommonWebSocketManager`,
+and the application lifespan wiring.
+
+### Confirmed callback evidence
+
+- Shoonya's `ak` response is processed once per active feed epoch. A positive
+  `s=OK` response sets the adapter's authenticated state; rejection closes the
+  socket. The existing optional normalized observation hook is delivered by the
+  existing market dispatch worker with the feed epoch, authenticated flag, and
+  monotonic receive timestamp. This is suitable raw evidence for a later
+  readiness bridge; it is not yet connected to `ProviderReadiness`.
+- Shoonya's supervisor currently passes through the optional observation hook,
+  but the application does not register one. The supervisor's state callback
+  currently exposes state/reason only, while the adapter snapshot contains the
+  epoch and auth state.
+- Shoonya subscription code sends `t=t` and `t=u` frames and tracks the
+  locally desired descriptor set. The inspected implementation does not expose
+  a distinct per-token broker subscription acknowledgement. Therefore the
+  readiness reducer must use subscription capability=false and report
+  `NOT_VERIFIABLE`; local registration or successful socket send cannot be
+  upgraded to acknowledged coverage.
+- Angel's normalized observer exposes SocketGroup, manager generation,
+  connection-current flag, and monotonic receive timestamp. Its documented
+  authentication field is intentionally always false because the current
+  SmartAPI manager has no verified authentication acknowledgement callback.
+
+### Integration decision
+
+No live readiness bridge was wired in this batch. The evidence contract cannot
+produce `FEED_READY` or `PARITY_ELIGIBLE` from the currently verified sources:
+Shoonya lacks independently verified subscription ACK coverage, and Angel lacks
+verified authentication ACK evidence. Wiring the reducer while fabricating either
+signal would create misleading operational health and could allow untrusted
+observations into parity analysis.
+
+### Safe next implementation gate
+
+1. Add a read-only session-evidence observer that forwards actual Shoonya state,
+   epoch, auth ACK/rejection/timeout, desired subscription changes, and normalized
+   market observations into the reducer. Keep subscription state
+   `NOT_VERIFIABLE` unless an official protocol ACK is established.
+2. Feed Angel transport/generation/normalized-event evidence into its reducer,
+   with authentication permanently `NOT_VERIFIABLE` until a documented,
+   independently verified SDK/broker acknowledgement exists.
+3. Expose per-provider raw evidence and derived readiness in diagnostics only.
+4. Keep the pairer/worker disconnected while either provider is ineligible.
+5. Add deterministic reconnect, close, late-callback, stale-tick, and existing
+   scanner callback compatibility tests before considering any opt-in integration.
+
+No scanner, Box Spread, IV Scanner, subscription universe, order routing, or
+production runtime behavior was changed. No tests were executed or claimed as
+passing; exact-head CI, official protocol confirmation, live broker validation,
+merge, and deployment remain outstanding.
