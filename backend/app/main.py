@@ -374,18 +374,27 @@ async def lifespan(app: FastAPI):
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
-        provider_quote_parity_store = SQLiteQuoteParityStore(settings.PROVIDER_QUOTE_PARITY_DB)
         parity_retention_days = settings.PROVIDER_QUOTE_PARITY_RETENTION_DAYS
+        parity_queue_capacity = settings.PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY
         if isinstance(parity_retention_days, bool) or not isinstance(parity_retention_days, int) or parity_retention_days < 1:
             raise ValueError("PROVIDER_QUOTE_PARITY_RETENTION_DAYS must be a positive integer")
-        parity_cutoff_ns = time_module.time_ns() - parity_retention_days * 24 * 60 * 60 * 1_000_000_000
-        provider_quote_parity_store.prune_before(cutoff_utc_ns=parity_cutoff_ns)
+        if isinstance(parity_queue_capacity, bool) or not isinstance(parity_queue_capacity, int) or parity_queue_capacity < 1:
+            raise ValueError("PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY must be a positive integer")
+        provider_quote_parity_store = SQLiteQuoteParityStore(settings.PROVIDER_QUOTE_PARITY_DB)
+        try:
+            parity_cutoff_ns = time_module.time_ns() - parity_retention_days * 24 * 60 * 60 * 1_000_000_000
+            provider_quote_parity_store.prune_before(cutoff_utc_ns=parity_cutoff_ns)
+            provider_quote_parity_worker = BoundedQuoteParityWorker(
+                provider_quote_parity_store,
+                capacity=parity_queue_capacity,
+            )
+            provider_quote_parity_worker.start()
+        except Exception:
+            provider_quote_parity_store.close()
+            provider_quote_parity_store = None
+            provider_quote_parity_worker = None
+            raise
         configure_provider_quote_parity_store(provider_quote_parity_store)
-        provider_quote_parity_worker = BoundedQuoteParityWorker(
-            provider_quote_parity_store,
-            capacity=settings.PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY,
-        )
-        provider_quote_parity_worker.start()
         configure_provider_quote_parity_worker(provider_quote_parity_worker)
     else:
         configure_provider_quote_parity_store(None)
