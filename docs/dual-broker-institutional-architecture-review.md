@@ -1047,3 +1047,11 @@ merge, and deployment remain outstanding.
 - Added a delayed-factory regression test: hold the factory during shutdown, release it after stop, and assert the socket was closed, `run_forever` never ran, and the supervisor exited.
 - Reviewed existing resource safeguards: bounded tick/order queues, shared shutdown join deadline, worker-alive diagnostics, and Angel tracked retirement watchers. No new queue capacity, broker cooldown, or reconnect-policy changes in this batch.
 - The new test was committed but not executed; repeated-cycle thread/memory profiling and live dual-broker recovery remain unverified. No scanner, pairing, or order-routing changes.
+
+
+### Batch 46 — stale queued tick fence across Shoonya reconnect epochs
+
+- Found that the tick dispatcher checked the queued tick epoch only before the shadow readiness observer; the legacy on_tick callback ran first without an epoch check. A tick queued by a retired socket could therefore reach a legacy consumer after reconnect.
+- The dispatcher now checks epoch equality and current authenticated state before either callback. Stale items are discarded and counted as stale_dispatch_drops; valid current-epoch items retain the existing callback order and delivery behavior.
+- Added regression coverage for seven queued retired epochs being drained after an eighth epoch becomes current, and for a ten-epoch burst respecting a deliberately small queue capacity (3) while recording overflow drops.
+- Production queue limits and reconnect policy are unchanged. Tests committed but not executed. This is deterministic queue/epoch stress coverage, not a live-market throughput or memory benchmark.
