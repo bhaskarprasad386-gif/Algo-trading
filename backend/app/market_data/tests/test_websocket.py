@@ -111,6 +111,7 @@ def test_websocket_unexpected_close_schedules_reconnect(monkeypatch):
     scheduled = []
     monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
     socket = client._build_socket()
+    client.websocket = socket
     socket.on_close(socket)
     assert scheduled == [True]
 
@@ -119,6 +120,7 @@ def test_websocket_health_tracks_errors_and_resets_on_connect(monkeypatch):
     monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
     client = MarketDataWebSocket(auth=make_auth())
     socket = client._build_socket()
+    client.websocket = socket
     socket.on_error(socket, "temporary")
     health = client.health
     assert health["error_count"] == 1
@@ -206,6 +208,7 @@ def test_sdk_internal_error_handler_forwards_original_error_without_retrying(mon
     failures = []
     client.on_failure = failures.append
     socket = client._build_socket()
+    client.websocket = socket
 
     socket._on_error(socket, RuntimeError("transport reset"))
 
