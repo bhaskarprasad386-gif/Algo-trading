@@ -1088,3 +1088,11 @@ merge, and deployment remain outstanding.
 - Added a single deduplicated shutdown watcher. It waits for the timed-out worker set, then recomputes actual liveness from the adapter's current worker references and clears the socket reference once the supervisor has exited. Snapshot now exposes whether the watcher itself is alive.
 - Added a deterministic worker-release test confirming timeout diagnostics remain visible while blocked and clear after worker termination.
 - This is shutdown observability/cleanup only; no socket reconnect, feed routing, subscription, scanner, or order behavior changed. Test committed but not executed.
+
+
+### Batch 51 — Shoonya inbound socket-origin epoch binding
+
+- A deeper callback-entry race remained: `_guard_callback` can validate a socket and then lose the lock before `_on_message` begins. If reconnect replaces the socket in that interval, an old market/order frame could otherwise be associated with the replacement's current epoch.
+- `_on_message` now independently validates socket ownership and stop state while capturing the source epoch before updating frame freshness. It rechecks ownership/authentication/epoch before dispatch. Tick normalization receives the captured source epoch; order queue entries carry that same source epoch instead of sampling the current epoch later.
+- Added parameterized regression coverage for stale old-socket order and tick frames reaching `_on_message` after replacement; they must not update frame freshness or either queue.
+- No broker protocol, scanner, subscriptions, feed selection, or order execution logic changed. Tests committed but not executed.
