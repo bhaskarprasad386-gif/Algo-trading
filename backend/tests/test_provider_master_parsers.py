@@ -208,3 +208,24 @@ def test_angel_bfo_contract_symbol_recovers_underlying_when_name_missing(
     report = AngelOneMasterParser.parse([row])
     assert report.accepted_rows == 1
     assert report.mappings[0].key.underlying == expected
+
+
+@pytest.mark.parametrize(
+    ("symbol_alias", "trading_symbol", "expected"),
+    [
+        ("BKX", "BANKEX26NOV63800PE", "BANKEX"),
+        ("SX50", "SENSEX26NOV79800CE", "SENSEX"),
+        ("SX50", "SENSEX5026NOV25900PE", "SENSEX50"),
+    ],
+)
+def test_shoonya_bfo_short_alias_uses_trading_symbol_root(
+    symbol_alias, trading_symbol, expected,
+):
+    text = (
+        "Exchange,Token,LotSize,Symbol,TradingSymbol,Instrument,OptionType,"
+        "StrikePrice,TickSize,Expiry\n"
+        f"BFO,9101,20,{symbol_alias},{trading_symbol},OPTIDX,CE,100000,0.05,26-Nov-2026\n"
+    )
+    report = ShoonyaMasterParser.parse(text, delimiter=",")
+    assert report.accepted_rows == 1
+    assert report.mappings[0].key.underlying == expected
