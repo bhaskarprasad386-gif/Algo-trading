@@ -65,8 +65,6 @@ def _wait_for(predicate, timeout=2.0):
 def test_worker_persists_submitted_pair_off_submit_path(tmp_path):
     store = _store(tmp_path)
     worker = _worker(store, capacity=4)
-    worker.activate_generation("angel_one", 1)
-    worker.activate_generation("shoonya", 1)
     worker.start()
     assert worker.submit(_envelope())
     assert _wait_for(lambda: worker.snapshot()["persisted"] == 1)
