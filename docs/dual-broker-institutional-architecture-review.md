@@ -400,3 +400,26 @@ Safety and limitations:
 - This batch measures quote parity; it does not decide which broker is better or eligible to execute.
 - No cross-broker bid/ask mixing, source promotion, failover, or order routing.
 - Seven focused parity/history test functions are committed but have not been executed here. Exact-head CI and full backend regression remain required.
+
+
+## 23. Batch 18 — durable parity diagnostics and read-only API
+
+Added `SQLiteQuoteParityStore` for derived provider-parity diagnostics only:
+- Stores canonical contract key, observation UTC timestamp, provider labels, quality state, identity match, per-provider valid/fresh flags, and JSON metrics/reasons.
+- Decimal metrics are serialized as decimal strings to avoid binary-float precision loss.
+- Uses a dedicated SQLite table and indexes; WAL and a busy timeout are enabled for file-backed databases.
+- Supports bounded reads (1–1000 rows) and explicit UTC-cutoff pruning.
+- Reopen tests verify durability; mismatch tests verify that suppressed price metrics stay null.
+
+Added read-only endpoint:
+- `GET /api/v1/market-data/provider-quote-parity?contract_key=<canonical-json>&limit=100`
+- Returns derived diagnostic rows only; raw bid/ask, credentials, and executable quote payloads are not exposed.
+- Returns HTTP 503 while disabled.
+- Opt-in settings: `PROVIDER_QUOTE_PARITY_ENABLED=false`, `PROVIDER_QUOTE_PARITY_DB=./provider_quote_parity.db`, `PROVIDER_QUOTE_PARITY_RETENTION_DAYS=7`.
+- On startup, enabled store is opened and rows older than the configured UTC retention window are pruned; store is closed on application shutdown.
+
+Important boundaries:
+- Feature is disabled by default. No live producer currently writes parity observations into this store, so enabling it creates the table/API but does not itself create observations.
+- No broker callback, scanner, Box Spread, IV Scanner, strategy, or order path is connected.
+- SQLite store and API tests are committed but have not been executed in this session. Full backend tests and exact-head CI are still required.
+- This is a diagnostics foundation, not production feed validation or broker failover approval.
