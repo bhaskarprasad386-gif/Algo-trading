@@ -517,3 +517,25 @@ Added `backend/app/market_data/provider_quote_pairer.py` and focused tests in
   observers and legacy callbacks are now grouped by instrument without collapsing
   multiple consumers subscribed to the same contract. A dedicated regression
   test covers two legacy consumers plus an observer on one instrument.
+
+
+## Batch 23 — complete Angel observer registration and ingress metadata
+
+Completed the Angel observer boundary that was documented in Batch 22 but had
+an incomplete implementation:
+- Added the dedicated observer registry and public register/unregister methods.
+- Captures the monotonic receive timestamp at accepted callback ingress and
+  associates each normalized observer with the exact matched instrument.
+- Counts observer-only consumers as valid callback routes and exposes them in
+  the manager's consumer diagnostics.
+- Removes observer registrations when a consumer is cleared.
+- Preserves the legacy normalized callback API and all existing callback fan-out.
+- Angel authentication remains explicitly false because the current SmartAPI
+  manager has no separately verified broker-auth acknowledgement. The observer
+  cannot activate the Angel parity generation; this is an intentional fail-closed
+  boundary, not a live readiness claim.
+- The existing focused telemetry tests exercise metadata, stale generation,
+  observer exception isolation, and multiple legacy consumers on one instrument.
+  They remain unexecuted in this session; exact-head CI is required.
+- No scanner, Box Spread, IV Scanner, broker subscription, source selection,
+  failover, or order-routing behavior changed.
