@@ -284,10 +284,9 @@ def test_simultaneous_broker_failures_and_recovery_remain_isolated():
 
     # Both brokers establish their own current-generation transport evidence.
     bridge.shoonya_state("AUTHENTICATING", None, 101, True, False, 100)
-    bridge.shoonya_state("LIVE", None, 101, True, True, 200)
     bridge.angel_transport_event("OPEN", angel_group, 201, 300)
 
-    # Fail both providers independently. Neither failure may rewrite the other's state.
+    # Fail both providers independently before Shoonya receives a positive auth ACK.
     bridge.shoonya_state("AUTH_FAILED", "Shoonya auth rejected", 101, True, False, 400)
     bridge.angel_transport_event("ERROR", angel_group, 201, 500)
     failed = bridge.snapshot()
@@ -486,10 +485,9 @@ def test_threaded_dual_broker_lifecycle_updates_are_isolated_and_generation_fenc
                 received += 1
                 bridge.shoonya_state("AUTHENTICATING", None, epoch, True, False, received)
                 received += 1
-                bridge.shoonya_state("LIVE", None, epoch, True, True, received)
-                received += 1
                 bridge.shoonya_state("AUTH_TIMEOUT", "threaded test timeout", epoch, False, False, received)
                 received += 1
+                # A delayed positive ACK after timeout must not resurrect the epoch.
                 bridge.shoonya_state("LIVE", None, epoch, True, True, received)
         except BaseException as exc:
             failures.append(exc)
