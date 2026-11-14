@@ -186,10 +186,11 @@ class AngelShardCallbackAdapter:
         deadline = monotonic() + timeout
         with self._lock:
             self._closed = True
-            # Fence a batch that was already dequeued but has not yet entered
-            # its consumer callback. An already-running callback cannot be
-            # safely cancelled; the next invocation in its batch will be.
-            self._generation += 1
+            # A draining stop rejects new publishes via _closed but preserves
+            # the active generation so already-accepted FIFO batches can run.
+            # A non-draining stop retires the generation and fences queued work.
+            if not drain:
+                self._generation += 1
             thread = self._thread
         if not drain:
             discarded = 0
