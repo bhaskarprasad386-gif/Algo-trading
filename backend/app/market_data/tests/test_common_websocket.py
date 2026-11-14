@@ -1972,6 +1972,10 @@ def test_shared_broker_admission_serializes_connects_across_manager_instances():
             self.connected = True
 
     class SecondSocket(FakeSocket):
+        # FakeSocket.instances is inherited by subclasses; keep this test's
+        # instance accounting isolated from FirstBlockingSocket.
+        instances = []
+
         def connect(self, **kwargs):
             self.connect_calls.append(kwargs)
             self.connecting = False
