@@ -852,3 +852,29 @@ merge, and deployment remain outstanding.
 - Tests remain committed but unexecuted in this session. Exact-head CI,
   full regression, broker validation, PR merge, and deployment remain
   outstanding.
+
+
+## Batch 35 — Shoonya terminal authentication epoch fencing
+
+- Reviewed the Shoonya session-observation bridge against adapter callback
+  ordering, reconnect epoch replacement, authentication watchdog timeout,
+  explicit stop, and delayed callback delivery.
+- Found that a delayed `LIVE` / connected callback with a newer monotonic
+  observation time could reopen the transport state after `AUTH_FAILED` or
+  `AUTH_TIMEOUT`. The authentication reducer itself remained fail-closed
+  (REJECTED/TIMED_OUT), but the transport diagnostic could misleadingly return
+  to OPEN within the same epoch.
+- The bridge now treats a CLOSED Shoonya epoch as terminal for subsequent
+  `AUTHENTICATING`, `LIVE`, or connected callbacks. It rejects those
+  observations and increments stale-observation diagnostics. A higher feed
+  epoch still begins with fresh state and can recover normally.
+- Added regression coverage for delayed LIVE after both AUTH_FAILED and
+  AUTH_TIMEOUT. The tests assert transport remains CLOSED, authentication
+  remains REJECTED/TIMED_OUT, and the late observation is counted as stale.
+- Existing monotonic ordering guard, adapter socket identity guard, Angel
+  generation fencing, and shadow-only boundary remain intact.
+- No scanner subscriptions, calculations, callbacks, provider selection,
+  pairing, persistence, or order routing changed.
+- Tests remain committed but unexecuted in this session. Exact-head CI,
+  full regression, broker validation, PR merge, and deployment remain
+  outstanding.
