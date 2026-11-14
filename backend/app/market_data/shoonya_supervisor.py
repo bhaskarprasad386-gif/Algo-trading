@@ -41,6 +41,7 @@ class ShoonyaMarketDataSupervisor:
         self._lock = RLock()
         self._operation_lock = RLock()
         self._enabled = True
+        self._adapter_running = False
         self._max_tokens = int(max_tokens)
         self._descriptors: dict[Any, InstrumentDescriptor] = {}
         self._last_tick_at: float | None = None
@@ -113,6 +114,8 @@ class ShoonyaMarketDataSupervisor:
                 adapter_subscribed = True
                 start_attempted = True
                 self._adapter.start()
+                with self._lock:
+                    self._adapter_running = True
                 return count
             except Exception:
                 # A thread may have started before a later Thread.start() fails.
@@ -120,6 +123,8 @@ class ShoonyaMarketDataSupervisor:
                 if start_attempted:
                     try:
                         self._adapter.stop()
+                        with self._lock:
+                            self._adapter_running = False
                     except Exception as cleanup_error:
                         app_logger.error("Shoonya start-failure stop cleanup failed: {}", self._safe_reason(str(cleanup_error)))
                 # Roll back only instruments introduced by this operation.
@@ -168,6 +173,7 @@ class ShoonyaMarketDataSupervisor:
                 # enabled so a later explicit subscribe can start a fresh session.
                 self._adapter.stop()
                 with self._lock:
+                    self._adapter_running = False
                     self._last_state = "IDLE_NO_SUBSCRIPTIONS"
                     self._last_state_reason = None
             return removed
@@ -181,6 +187,8 @@ class ShoonyaMarketDataSupervisor:
                 has_subscriptions = bool(self._adapter.snapshot()["subscriptions"])
             if has_subscriptions:
                 self._adapter.start()
+                with self._lock:
+                    self._adapter_running = True
 
     def stop(self) -> None:
         with self._operation_lock:
@@ -188,7 +196,10 @@ class ShoonyaMarketDataSupervisor:
                 if not self._enabled:
                     return
                 self._enabled = False
-            self._adapter.stop()
+                should_stop = self._adapter_running
+                self._adapter_running = False
+            if should_stop:
+                self._adapter.stop()
 
     def _observe_tick(self, record: dict[str, Any]) -> None:
         # Shadow-only telemetry: intentionally no strategy, persistence, or order side effect.
