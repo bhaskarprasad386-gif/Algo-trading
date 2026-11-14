@@ -80,14 +80,23 @@ class ProviderReadiness:
             if not self._current(generation):
                 return False
             self._transport = "CLOSED"
-            if self.provider == "shoonya" and self._auth == "AUTHENTICATED":
-                self._auth = "UNKNOWN"
-            self._auth_evidence = None
-            self._auth_generation = None
+            # Preserve terminal authentication outcomes for diagnostics.
+            # A transport close invalidates a successful session, but must not
+            # erase an explicit broker rejection or timeout from this epoch.
+            if self.provider == "shoonya":
+                if self._auth == "AUTHENTICATED":
+                    self._auth = "UNKNOWN"
+                if self._auth not in {"REJECTED", "TIMED_OUT"}:
+                    self._auth_evidence = None
+                    self._auth_generation = None
+            else:
+                self._auth_evidence = None
+                self._auth_generation = None
             self._market_event_fresh = False
             self._market_identity_valid = False
             self._market_timestamp_valid = False
             self._last_market_event_generation = None
+            self._market_event_received_monotonic_ns = None
             self._last_liveness = "NONE"
             self._requested = False
             self._acknowledged_tokens = frozenset()
