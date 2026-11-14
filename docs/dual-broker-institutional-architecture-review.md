@@ -825,3 +825,30 @@ merge, and deployment remain outstanding.
 - Tests remain committed but unexecuted in this session. Exact-head CI,
   full regression, broker validation, PR merge, and deployment remain
   outstanding.
+
+
+## Batch 34 — Shoonya retired-socket close race
+
+- Found a narrow reconnect race in the Shoonya adapter: a WebSocket callback
+  could pass the epoch/socket guard, pause before entering `_on_close`, and
+  then resume after a replacement socket had become current. Unlike
+  `_on_error`, `_on_close` did not recheck socket identity while holding the
+  adapter lock, so the retired socket could clear the replacement session's
+  connected/authenticated flags.
+- Added an atomic active-socket identity check inside `_on_close`. A close
+  from a retired socket is now ignored before it can mutate current session
+  state or emit a disconnect observation.
+- Added a regression test that simulates a retired socket close after a
+  replacement session is authenticated, and asserts the replacement remains
+  connected/authenticated with no state callback.
+- Updated the existing direct timeout-close test to attach its fake socket as
+  the active socket, matching the real callback ownership contract.
+- Existing lifecycle remains unchanged for the current socket: auth rejection,
+  watchdog timeout, normal disconnect, and explicit stop still flow through
+  their established state transitions.
+- No Angel One, Box Spread, IV Scanner, subscription universe, scanner
+  calculation, provider selection, pairing, persistence, or order routing
+  behavior changed.
+- Tests remain committed but unexecuted in this session. Exact-head CI,
+  full regression, broker validation, PR merge, and deployment remain
+  outstanding.
