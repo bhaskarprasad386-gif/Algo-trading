@@ -768,3 +768,34 @@ merge, and deployment remain outstanding.
 - Tests have been added but not executed in this session. Exact-head CI,
   full regression, broker validation, PR merge, and deployment remain
   outstanding.
+
+
+## Batch 32 — Angel One socket lifecycle evidence
+
+- Added an optional lifecycle observer to `MarketDataWebSocket`. The real
+  SmartAPI wrapper reports OPEN, ERROR, and CLOSED with monotonic receive time;
+  observer exceptions are isolated from broker callbacks and scanner delivery.
+- `CommonWebSocketManager` now exposes an additive transport-observer registry
+  and passes a generation-bound lifecycle callback only to its managed
+  `MarketDataWebSocket` adapter. Existing raw/normalized scanner callbacks,
+  subscriptions, and reconnect ownership remain unchanged.
+- Lifecycle notifications are checked against the current socket generation.
+  A CLOSED event is also accepted for the matching retiring generation after
+  the manager has detached the socket, but a late close from an older
+  generation cannot close a replacement.
+- Connect/handshake exceptions are surfaced as ERROR evidence even if the SDK
+  throws before delivering its normal error/close callback.
+- Runtime health installs both normalized-tick and transport-lifecycle
+  observers. Angel diagnostics can now distinguish OPEN transport from CLOSED
+  transport, while authentication remains NOT_VERIFIABLE and subscription
+  acknowledgement remains NOT_VERIFIABLE.
+- The readiness bridge rejects late Angel market callbacks after a generation
+  is closed; a late tick cannot reopen the transport state.
+- Added tests for adapter lifecycle callbacks and exception isolation,
+  manager observer fan-out/retirement semantics, and bridge lifecycle ordering,
+  generation fencing, close invalidation, and late-tick rejection.
+- No Box Spread or IV Scanner behavior, source selection, subscriptions,
+  calculations, pairer, persistence, or order routing was changed.
+- Tests are committed but have not been executed in this session. Exact-head
+  CI, full regression, real broker validation, merge, and deployment remain
+  outstanding.
