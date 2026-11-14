@@ -71,7 +71,7 @@ jobs:
           REMOTE_LAUNCH_CMD="set -eu; run_dir='$REMOTE_RUN_DIR'; if test -d \"\$run_dir\"; then echo REMOTE_DEPLOY_RUN_ALREADY_EXISTS; exit 99; fi; umask 077; mkdir \"\$run_dir\"; cat > \"\$run_dir/deploy.sh\"; nohup setsid bash -c 'set +e; bash \"\$1\"; rc=\$?; printf \"DEPLOY_EXIT_CODE=%s\\\\n\" \"\$rc\" > \"\$2/exit.tmp\"; mv \"\$2/exit.tmp\" \"\$2/exit\"; exit 0' _ \"\$run_dir/deploy.sh\" \"\$run_dir\" > \"\$run_dir/deploy.log\" 2>&1 < /dev/null & echo REMOTE_DEPLOY_STARTED pid=\$!"
           if ! timeout 90s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "$REMOTE_LAUNCH_CMD" < /tmp/vps_remote_deploy.sh; then
             printf 'REMOTE_DEPLOY_LAUNCH_CONFIRMATION_TIMEOUT; checking existing run directory before deciding whether to continue\\n' >&2
-            if status="$(timeout 25s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "run_dir='$REMOTE_RUN_DIR'; if test -f \"\\$run_dir/deploy.log\"; then echo REMOTE_DEPLOY_RUN_PRESENT; if test -f \"\\$run_dir/exit\"; then cat \"\\$run_dir/exit\"; fi; tail -n 30 \"\\$run_dir/deploy.log\"; else echo REMOTE_DEPLOY_RUN_NOT_FOUND; fi" 2>&1)"; then
+            if status="$(timeout 25s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "run_dir='$REMOTE_RUN_DIR'; if test -f \"\$run_dir/deploy.log\"; then echo REMOTE_DEPLOY_RUN_PRESENT; if test -f \"\$run_dir/exit\"; then cat \"\$run_dir/exit\"; fi; tail -n 30 \"\$run_dir/deploy.log\"; else echo REMOTE_DEPLOY_RUN_NOT_FOUND; fi" 2>&1)"; then
               printf '%s\\n' "$status"
               if ! grep -q '^REMOTE_DEPLOY_RUN_PRESENT$' <<< "$status"; then
                 printf 'REMOTE_DEPLOY_NOT_CONFIRMED; no second launch attempted\\n' >&2
@@ -86,7 +86,7 @@ jobs:
           printf 'REMOTE_DEPLOY_STATUS_POLL_START\\n'
           DEPLOY_DONE=false
           for attempt in $(seq 1 150); do
-            if status="$(timeout 25s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "run_dir='$REMOTE_RUN_DIR'; if test -f \"\\$run_dir/exit\"; then cat \"\\$run_dir/exit\"; tail -n 100 \"\\$run_dir/deploy.log\"; else echo REMOTE_DEPLOY_RUNNING; fi" 2>&1)"; then
+            if status="$(timeout 25s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "run_dir='$REMOTE_RUN_DIR'; if test -f \"\$run_dir/exit\"; then cat \"\$run_dir/exit\"; tail -n 100 \"\$run_dir/deploy.log\"; else echo REMOTE_DEPLOY_RUNNING; fi" 2>&1)"; then
               printf '%s\\n' "$status"
               if grep -q '^DEPLOY_EXIT_CODE=0$' <<< "$status"; then
                 DEPLOY_DONE=true
