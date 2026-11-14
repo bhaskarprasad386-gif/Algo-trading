@@ -162,6 +162,7 @@ class CommonWebSocketManager:
         self._callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._record_observers: dict[str, Callable[..., None]] = {}
+        self._transport_observers: dict[str, Callable[..., None]] = {}
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._reconcile_lock = RLock()
@@ -341,6 +342,40 @@ class CommonWebSocketManager:
     def unregister_normalized_observer(self, consumer: str) -> None:
         with self._lock:
             self._record_observers.pop(self._consumer_name(consumer), None)
+
+    def register_transport_observer(self, consumer: str, callback: Callable[..., None]) -> None:
+        """Register additive transport lifecycle observer: (event, group, generation, received_ns)."""
+        consumer = self._consumer_name(consumer)
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        with self._lock:
+            self._transport_observers[consumer] = callback
+
+    def unregister_transport_observer(self, consumer: str) -> None:
+        with self._lock:
+            self._transport_observers.pop(self._consumer_name(consumer), None)
+
+    def _notify_transport_observers(self, event: str, group: SocketGroup, generation: int, received_ns: int) -> None:
+        with self._lock:
+            current = (
+                not self._closed
+                and self._socket_generation.get(group) == generation
+                and group in self._sockets
+            )
+            observers = tuple(self._transport_observers.values()) if current else ()
+        for observer in observers:
+            try:
+                observer(event, group, generation, received_ns)
+            except Exception as exc:
+                with self._lock:
+                    self._delivery_errors += 1
+                    self._last_delivery_error = f"transport observer {type(exc).__name__}: {exc}"
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type="TransportObserverError",
+                    message=str(exc),
+                    context={"event": "transport_observer", "group": f"{group.mode}:{group.shard}", "generation": generation},
+                )
 
     def subscribe(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
         consumer = self._consumer_name(consumer)
@@ -784,6 +819,11 @@ class CommonWebSocketManager:
                     # perform several hidden retries before supervisor recovery.
                     connect_kwargs["reconnect_attempts"] = 0
                     connect_kwargs["reconnect_delay_seconds"] = 0.0
+                    connect_kwargs["on_lifecycle"] = (
+                        lambda event, received_ns: self._notify_transport_observers(
+                            event, group, generation, received_ns
+                        )
+                    )
                 # Keep broker-wide admission through handshake success/failure.
                 # MarketDataWebSocket.connect now starts run_forever in a tracked
                 # thread and returns once the handshake outcome is known.
