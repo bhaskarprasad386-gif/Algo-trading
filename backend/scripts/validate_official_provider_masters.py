@@ -17,6 +17,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+# Running this file directly sets sys.path[0] to backend/scripts; add the
+# backend package root so the repository application modules are importable.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import requests
 
 from app.market_data.provider_master_audit import audit_master_coverage
