@@ -44,7 +44,8 @@ def test_same_contract_keeps_independent_broker_tokens_and_normalizes_strike():
 
 def test_duplicate_canonical_contract_for_same_broker_is_rejected_atomically():
     registry = ProviderContractRegistry()
-    original = _publish(registry, [_mapping("ANGELONE", "101")])
+    baseline = datetime.now(timezone.utc) - timedelta(days=1)
+    original = _publish(registry, [_mapping("ANGELONE", "101")], baseline)
     with pytest.raises(ValueError, match="duplicate broker mapping"):
         _publish(registry, [_mapping("ANGELONE", "101"), _mapping("ANGELONE", "102")],
                  original.fetched_at + timedelta(seconds=1))
