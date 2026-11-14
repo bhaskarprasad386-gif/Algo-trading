@@ -259,6 +259,44 @@ def bse_index_symbol_diagnostics(report: Any) -> dict[str, list[dict[str, Any]]]
     return result
 
 
+
+def shoonya_bfo_raw_sensex_diagnostics(payload: bytes) -> dict[str, Any]:
+    """Inspect raw Shoonya BFO rows before parser normalization/filtering."""
+    text = payload.decode("utf-8-sig")
+    delimiter = detect_delimiter(payload)
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+    by_symbol: dict[str, int] = {}
+    by_expiry: dict[str, dict[str, int]] = {}
+    samples: dict[str, list[dict[str, str]]] = {}
+    for row in reader:
+        trading_symbol = normalized(row, "TradingSymbol", "tradingsymbol", "tsym").upper()
+        symbol = normalized(row, "Symbol", "symbol", "name").upper()
+        if not (trading_symbol.startswith("SENSEX") or symbol.startswith("SENSEX")):
+            continue
+        root = symbol or "(blank)"
+        by_symbol[root] = by_symbol.get(root, 0) + 1
+        expiry = normalized(row, "Expiry", "expiry", "expdate") or "(blank)"
+        expiries = by_expiry.setdefault(root, {})
+        expiries[expiry] = expiries.get(expiry, 0) + 1
+        bucket = samples.setdefault(root, [])
+        if len(bucket) < 12:
+            bucket.append({
+                "symbol": symbol,
+                "trading_symbol": trading_symbol,
+                "instrument": normalized(row, "Instrument", "instrument"),
+                "expiry": expiry,
+                "option_type": normalized(row, "OptionType", "opttype"),
+                "strike_price": normalized(row, "StrikePrice", "strikeprice", "strike"),
+                "token": normalized(row, "Token", "token"),
+            })
+    return {
+        "matched_raw_rows": sum(by_symbol.values()),
+        "row_counts_by_symbol": dict(sorted(by_symbol.items())),
+        "expiry_counts_by_symbol": {key: dict(sorted(value.items())) for key, value in sorted(by_expiry.items())},
+        "samples_by_symbol": samples,
+    }
+
+
 def report_summary(report: Any) -> dict[str, Any]:
     return {
         "broker": report.broker,
@@ -285,6 +323,7 @@ def main() -> int:
     angel_raw = download(ANGEL_URL)
     angel_segment_reports = []
     shoonya_segment_reports = []
+    shoonya_bfo_raw_payload = b""
     source_report = {
         "angel_one": {
             "url": ANGEL_URL,
@@ -301,6 +340,8 @@ def main() -> int:
         shoonya_zip = download(shoonya_url)
         shoonya_payload, shoonya_source_sha, shoonya_member = load_shoonya_segment(shoonya_zip, exchange)
         shoonya_segment_reports.append(parse_delimited_shoonya(shoonya_payload))
+        if exchange == "BFO":
+            shoonya_bfo_raw_payload = shoonya_payload
         source_report["shoonya"][exchange] = {
             "url": shoonya_url,
             "zip_sha256": shoonya_source_sha,
@@ -352,6 +393,7 @@ def main() -> int:
             "missing_required_index_roots": missing_index_roots,
             "index_coverage_gaps": index_coverage_gaps,
             "underlying_inventory": underlying_inventory(angel_report, shoonya_report),
+            "shoonya_bfo_raw_sensex_diagnostics": shoonya_bfo_raw_sensex_diagnostics(shoonya_bfo_raw_payload),
             "bse_index_symbol_diagnostics": {
                 "angel_one": bse_index_symbol_diagnostics(angel_report),
                 "shoonya": bse_index_symbol_diagnostics(shoonya_report),
