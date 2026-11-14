@@ -115,12 +115,15 @@ class BoundedQuoteParityWorker:
                 (right.provider, right.generation, right.exchange_timestamp_ns or right.received_monotonic_ns),
             )))
             event_key = (pair_key[0], event_identity)
-            if event_key in self._seen_pair_keys:
-                self._counters["duplicates"] += 1
-                return False
+            # Monotonic receive ordering is a stronger integrity guard than
+            # duplicate identity: an older arrival must be diagnosed as
+            # out-of-order even when its exchange timestamps match a seen pair.
             previous_time = self._last_pair_time.get(pair_key)
             if previous_time is not None and envelope.received_monotonic_ns < previous_time:
                 self._counters["out_of_order"] += 1
+                return False
+            if event_key in self._seen_pair_keys:
+                self._counters["duplicates"] += 1
                 return False
             try:
                 self._queue.put_nowait(envelope)
