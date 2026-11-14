@@ -148,6 +148,22 @@ def mapping_breakdown(report: Any) -> dict[str, Any]:
     }
 
 
+def underlying_inventory(angel_report: Any, shoonya_report: Any) -> dict[str, Any]:
+    angel = {item.key.underlying for item in angel_report.mappings}
+    shoonya = {item.key.underlying for item in shoonya_report.mappings}
+    return {
+        "angel_unique_underlyings": len(angel),
+        "shoonya_unique_underlyings": len(shoonya),
+        "common_underlyings": len(angel & shoonya),
+        "angel_only_underlying_sample": sorted(angel - shoonya)[:40],
+        "shoonya_only_underlying_sample": sorted(shoonya - angel)[:40],
+        "360ONE": {
+            "angel_contracts": sum(1 for item in angel_report.mappings if item.key.underlying == "360ONE"),
+            "shoonya_contracts": sum(1 for item in shoonya_report.mappings if item.key.underlying == "360ONE"),
+        },
+    }
+
+
 def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[str, Any]:
     targets = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")
     result: dict[str, Any] = {}
@@ -230,6 +246,7 @@ def main() -> int:
             "metadata_mismatch_sample": [str(key) for key in audit.metadata_mismatches[:25]],
             "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
             "index_underlying_coverage": index_underlying_coverage(angel_report, shoonya_report),
+            "underlying_inventory": underlying_inventory(angel_report, shoonya_report),
             "angel_only_sample": [contract_key_summary(key) for key in audit.angel_only[:15]],
             "shoonya_only_sample": [contract_key_summary(key) for key in audit.shoonya_only[:15]],
         },
