@@ -12,6 +12,7 @@ from typing import Any, Iterable
 
 from app.core.logger import app_logger
 from .registry import InstrumentDescriptor, InstrumentRegistry
+from .contracts import MarketDataRecord
 from .shoonya_websocket import ShoonyaWebSocket
 
 
@@ -31,6 +32,7 @@ class ShoonyaMarketDataSupervisor:
         frame_timeout_seconds: float = 30.0,
         auth_timeout_seconds: float = 15.0,
         websocket_factory: Any | None = None,
+        on_tick_observation: Any | None = None,
     ) -> None:
         if not 1 <= int(max_tokens) <= 500:
             raise ValueError("max_tokens must be between 1 and 500")
@@ -53,6 +55,7 @@ class ShoonyaMarketDataSupervisor:
             on_tick=self._observe_tick,
             on_order_update=self._observe_order_update,
             on_state=self._observe_state,
+            on_tick_observation=on_tick_observation,
             websocket_factory=websocket_factory,
             max_dispatch_queue=max_dispatch_queue,
             reconnect_min_seconds=reconnect_min_seconds,
