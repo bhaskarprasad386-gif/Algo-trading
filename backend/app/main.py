@@ -49,6 +49,10 @@ from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSprea
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.shoonya_supervisor import ShoonyaMarketDataSupervisor
+from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
+from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store, configure_worker as configure_provider_quote_parity_worker
+from app.market_data.provider_quote_parity_worker import BoundedQuoteParityWorker
+from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
@@ -104,6 +108,11 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
+provider_quote_parity_store: SQLiteQuoteParityStore | None = None
+provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
+provider_readiness_bridge = ProviderReadinessBridge()
+_provider_readiness_observer_lock = threading.Lock()
+_provider_readiness_observer_manager_id: int | None = None
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
@@ -366,7 +375,34 @@ async def _iv_scanner_recovery_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor
+    global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
+    if settings.PROVIDER_QUOTE_PARITY_ENABLED:
+        parity_retention_days = settings.PROVIDER_QUOTE_PARITY_RETENTION_DAYS
+        parity_queue_capacity = settings.PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY
+        if isinstance(parity_retention_days, bool) or not isinstance(parity_retention_days, int) or parity_retention_days < 1:
+            raise ValueError("PROVIDER_QUOTE_PARITY_RETENTION_DAYS must be a positive integer")
+        if isinstance(parity_queue_capacity, bool) or not isinstance(parity_queue_capacity, int) or parity_queue_capacity < 1:
+            raise ValueError("PROVIDER_QUOTE_PARITY_QUEUE_CAPACITY must be a positive integer")
+        provider_quote_parity_store = SQLiteQuoteParityStore(settings.PROVIDER_QUOTE_PARITY_DB)
+        try:
+            parity_cutoff_ns = time_module.time_ns() - parity_retention_days * 24 * 60 * 60 * 1_000_000_000
+            provider_quote_parity_store.prune_before(cutoff_utc_ns=parity_cutoff_ns)
+            provider_quote_parity_worker = BoundedQuoteParityWorker(
+                provider_quote_parity_store,
+                capacity=parity_queue_capacity,
+            )
+            provider_quote_parity_worker.start()
+        except Exception:
+            provider_quote_parity_store.close()
+            provider_quote_parity_store = None
+            provider_quote_parity_worker = None
+            raise
+        configure_provider_quote_parity_store(provider_quote_parity_store)
+        configure_provider_quote_parity_worker(provider_quote_parity_worker)
+    else:
+        configure_provider_quote_parity_store(None)
+        configure_provider_quote_parity_worker(None)
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
     from app.scanner.backtest_jobs import recover_interrupted_jobs
@@ -390,6 +426,8 @@ async def lifespan(app: FastAPI):
             reconnect_max_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS,
             frame_timeout_seconds=settings.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS,
             auth_timeout_seconds=settings.SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS,
+            on_session_observation=provider_readiness_bridge.shoonya_state,
+            on_tick_observation=provider_readiness_bridge.shoonya_market_event,
         )
         configure_shoonya_snapshot(shoonya_market_data_supervisor.snapshot)
         configure_shoonya_supervisor(lambda: shoonya_market_data_supervisor)
@@ -471,6 +509,17 @@ async def lifespan(app: FastAPI):
         _weekly_swing_refresh_task = None
         _iv_option_snapshot_task = None
         _iv_scanner_recovery_task = None
+        parity_worker_stopped = True
+        if provider_quote_parity_worker is not None:
+            parity_worker_stopped = provider_quote_parity_worker.stop(drain=True, timeout_seconds=2.0)
+            if not parity_worker_stopped:
+                app_logger.error("Provider quote parity worker did not stop within shutdown budget; leaving SQLite handle open")
+            provider_quote_parity_worker = None
+            configure_provider_quote_parity_worker(None)
+        if provider_quote_parity_store is not None and parity_worker_stopped:
+            provider_quote_parity_store.close()
+            provider_quote_parity_store = None
+            configure_provider_quote_parity_store(None)
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
@@ -493,6 +542,7 @@ app.include_router(brokers_router)
 app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
+app.include_router(provider_quote_parity_router)
 app.include_router(scanner_router)
 app.include_router(weekly_swing_scanner_router)
 app.include_router(full_fno_router)
@@ -1766,7 +1816,20 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
 @app.get("/api/v1/market-data/runtime/health")
 def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
+    global _provider_readiness_observer_manager_id
     manager = shared_common_manager()
+    # Register exactly once per shared manager instance. This is an additive
+    # read-only observer; it never mutates subscriptions or scanner callbacks.
+    with _provider_readiness_observer_lock:
+        manager_identity = id(manager)
+        if _provider_readiness_observer_manager_id != manager_identity:
+            manager.register_normalized_observer(
+                "provider-readiness-shadow", provider_readiness_bridge.angel_market_event
+            )
+            manager.register_transport_observer(
+                "provider-readiness-transport-shadow", provider_readiness_bridge.angel_transport_event
+            )
+            _provider_readiness_observer_manager_id = manager_identity
     cash_runner = live_cash_future_runner
     calendar_runner = live_calendar_spread_runner
     synthetic_runner = live_synthetic_runner
@@ -1784,6 +1847,7 @@ def market_data_runtime_health():
         "status": "ok",
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
         "common_feed": common_feed,
+        "provider_readiness": provider_readiness_bridge.snapshot(),
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
             "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),

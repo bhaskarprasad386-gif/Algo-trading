@@ -16,7 +16,7 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - Health diagnostics expose an out-of-order tick counter for shadow validation.
 - 500-token hard cap with atomic batch validation.
 - Serialized subscription/unsubscription writes.
-- Independent bounded tick and order-event queues. Shoonya delivers account order lifecycle events automatically after the authenticated connection handshake; no separate order-subscription frame is sent. The adapter accepts `om` events only after positive authentication and dispatches them on the isolated order queue when an order callback is configured. Either queue overflow is treated as a feed-integrity fault, counted, surfaced in health state, and forces socket closure/reconnect. Order-event overflow additionally requires broker order-book reconciliation.
+- Independent bounded tick and order-event queues. Authenticated Shoonya sessions deliver `om` order updates automatically; this adapter does not send a separate `t: o` subscription. Either queue overflow is treated as a feed-integrity fault, counted, surfaced in health state, and forces socket closure/reconnect. Order-event overflow additionally requires broker order-book reconciliation.
 - Desired subscriptions survive reconnect epochs and are replayed only after the replacement socket receives a positive authentication acknowledgement.
 - Callback isolation, connection health counters, shutdown deadline, and stale-socket callback protection.
 - Authentication-handshake watchdog: configurable `SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS` (default 15 seconds); a transport-open socket without a positive `ak` acknowledgement is closed and reported as `AUTH_TIMEOUT`, then uses the existing bounded reconnect path.
@@ -30,7 +30,9 @@ The adapter must remain shadow/paper-only until the live validation checklist be
 - FastAPI lifespan creates a separate `ShoonyaMarketDataSupervisor`; it owns its own `InstrumentRegistry` and `ShoonyaWebSocket`, and is stopped during application shutdown.
 - The supervisor does not open a socket merely because the application starts. A separately registered/subscribed instrument set is required before it starts the adapter.
 - `GET /api/v1/market-data/shoonya-health` exposes sanitized state, queue/freshness diagnostics, and explicit `shadow_only`, `order_routing_enabled=false`, and `strategy_fanout_enabled=false` flags. It never returns credentials.
-- Tick and order callbacks currently update bounded process-local counters only. There is no strategy fan-out, persistence, provider selection, or order action.
+- The existing on_tick callback contract remains unchanged. An additional optional read-only normalized tick observer receives the immutable MarketDataRecord, feed epoch, authenticated flag, and monotonic receive timestamp from the existing bounded dispatch queue; it adds no second queue and is not wired to a parity worker by default.
+- The observer is invoked only if its captured feed epoch is still current and authentication remains valid at dispatch time. Observer exceptions are isolated from legacy tick delivery; a failing legacy consumer also cannot suppress the optional observer. A stale tick whose epoch changes during normalization is rejected before it mutates the replacement session snapshot.
+- Tick and order callbacks otherwise continue to update bounded process-local counters only. There is no strategy fan-out, persistence, provider selection, or order action.
 - `POST /api/v1/market-data/shoonya/subscriptions` and `DELETE /api/v1/market-data/shoonya/subscriptions` accept explicit instrument descriptors and require a separate short-lived Shoonya owner bearer session, obtained from `POST /api/v1/market-data/shoonya/owner-auth/login`. The POST is rejected unless the server-side Shoonya toggle is enabled; the DELETE remains available to release subscriptions while the supervisor exists.
 - Subscription requests are limited to 500 instruments, validate exchange/instrument types and complete option metadata, reject duplicate exchange/token identities before mutation, and are isolated from Angel One's registry and callbacks.
 - Adapter transport logs, public health diagnostics, and state reasons redact session credentials; subscription control requires the dedicated short-lived Shoonya owner bearer token and fails closed if the Shoonya server toggle is OFF.
@@ -44,6 +46,7 @@ The following remain intentionally out of scope until a separately reviewed prov
 - Backend and integration CI green on the exact PR head.
 - Unit tests cover auth success/rejection, pre-auth event rejection, tick merge, invalid identity/timestamps, epoch-unit conversion, canonical exchange timestamp propagation, out-of-order replay rejection and snapshot integrity, reconnect subscription replay after auth, tick and order queue overflow fail-closed behavior and fault-state preservation, subscription cap/atomicity, concurrent subscribe/unsubscribe, reconnect epochs, stale callbacks, authentication-ack timeout, silent-frame watchdog timeout/recovery, shutdown timeout, and worker restart safety.
 - Static review confirms no existing provider/scanner/order path is changed.
+- Focused regression tests cover optional observer metadata, retired-epoch suppression, stale-epoch snapshot mutation prevention, and observer isolation from a failing legacy consumer; these tests are committed but must still run in exact-head CI.
 - Verify logs redact credentials and access tokens.
 - Verify no test depends on a live broker, wall-clock sleeps, or network credentials.
 

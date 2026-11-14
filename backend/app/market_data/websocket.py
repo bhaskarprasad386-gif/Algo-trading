@@ -177,6 +177,7 @@ class MarketDataWebSocket:
         self.subscriptions: dict[int, list[str]] = {}
         self.on_data: Optional[Callable] = None
         self.on_failure: Optional[Callable[[str], None]] = None
+        self.on_lifecycle: Optional[Callable[[str, int], None]] = None
         self._lock = Lock()
         self._connected = False
         self._stopping = False
@@ -189,6 +190,8 @@ class MarketDataWebSocket:
         self._reconnect_count = 0
         self._last_error = None
         self._reconnect_lock = Lock()
+        # Invalidates reconnect workers that were queued before close().
+        self._lifecycle_generation = 0
         self._auto_reconnect = bool(auto_reconnect)
         # SDK subscribe calls can exceed a quarter-second under ordinary jitter.
         # Keep a bounded failure path without invalidating healthy sockets too eagerly.
@@ -280,24 +283,39 @@ class MarketDataWebSocket:
         )):
             socket.connect = lambda: _connect_sdk_socket_with_verified_tls(socket)
 
+        def emit_lifecycle(event: str) -> None:
+            callback = self.on_lifecycle
+            if callback is not None:
+                try:
+                    callback(event, time.monotonic_ns())
+                except Exception as exc:
+                    app_logger.error(f"Angel One lifecycle observer failed: {type(exc).__name__}: {exc}")
+
         def handle_open(wsapp):
             with self._lock:
+                if self._stopping or self.websocket is not socket:
+                    return
                 self._connected = True
                 self._connecting = False
                 self._initial_subscribe_success = None
-            with self._lock:
                 self._consecutive_failures = 0
                 self._last_error = None
             app_logger.info("Angel One WebSocket connected")
+            emit_lifecycle("OPEN")
             if self.exchange_type is not None and self.tokens:
                 self._subscribe_initial_bounded(socket)
 
         def handle_data(wsapp, message):
-            if self.on_data:
-                self.on_data(message)
+            with self._lock:
+                current = not self._stopping and self.websocket is socket
+                callback = self.on_data if current else None
+            if callback is not None:
+                callback(message)
 
         def handle_error(wsapp, error):
             with self._lock:
+                if self._stopping or self.websocket is not socket:
+                    return
                 self._connected = False
                 self._connecting = False
                 self._error_count += 1
@@ -310,6 +328,7 @@ class MarketDataWebSocket:
                 self._last_error = error_detail
                 failure_callback = self.on_failure
             app_logger.error(f"Angel One WebSocket error: {error_detail}")
+            emit_lifecycle("ERROR")
             if failure_callback is not None:
                 try:
                     failure_callback(error_detail)
@@ -320,15 +339,18 @@ class MarketDataWebSocket:
 
         def handle_close(wsapp):
             with self._lock:
-                self._connected = False
-                self._connecting = False
-                stopping = self._stopping
-                failure_callback = self.on_failure
+                current = self.websocket is socket
+                if current:
+                    self._connected = False
+                    self._connecting = False
+                stopping = self._stopping or not current
+                failure_callback = self.on_failure if current else None
             close_code = getattr(wsapp, "close_status_code", None)
             close_reason = getattr(wsapp, "close_reason", None)
             app_logger.warning(
                 f"Angel One WebSocket connection closed code={close_code} reason={close_reason}"
             )
+            emit_lifecycle("CLOSED")
             if not stopping and failure_callback is not None:
                 try:
                     failure_callback("socket closed")
@@ -420,9 +442,14 @@ class MarketDataWebSocket:
             # marked as reconnecting and future recovery signals are ignored.
             if exchange_type is None or not tokens:
                 return
+            with self._lock:
+                reconnect_generation = self._lifecycle_generation
+                if self._stopping:
+                    return
             reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
             self.connect(
                 subscriptions=reconnect_subscriptions,
+                _expected_lifecycle_generation=reconnect_generation,
                 mode=mode,
                 correlation_id=correlation_id,
                 on_data=on_data,
@@ -451,7 +478,7 @@ class MarketDataWebSocket:
             if should_retry:
                 self._schedule_reconnect()
 
-    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None):
+    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None, on_lifecycle: Optional[Callable[[str, int], None]] = None, _expected_lifecycle_generation: int | None = None):
         """Connect and retry failed starts while preserving validated subscriptions."""
         if exchange_type is not None and (not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0):
             raise ValueError("exchange_type must be a positive integer")
@@ -471,46 +498,89 @@ class MarketDataWebSocket:
             raise ValueError("use either subscriptions or exchange_type/tokens, not both")
         if on_data is not None and not callable(on_data):
             raise ValueError("on_data must be callable")
+        if on_lifecycle is not None and not callable(on_lifecycle):
+            raise ValueError("on_lifecycle must be callable")
         with self._lock:
+            if _expected_lifecycle_generation is not None and (
+                self._stopping or self._lifecycle_generation != _expected_lifecycle_generation
+            ):
+                return
             self._set_subscriptions(subscriptions)
             self.mode = mode
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
             self.on_failure = on_failure
-            self._stopping = False
+            self.on_lifecycle = on_lifecycle
+            # Only an explicit caller may reopen a stopped wrapper. Internal
+            # reconnect workers must match the lifecycle generation they captured.
+            if _expected_lifecycle_generation is None:
+                # An explicit new lifecycle supersedes any older reconnect worker.
+                self._lifecycle_generation += 1
+                self._stopping = False
             self._connecting = True
             self._reconnect_attempts = reconnect_attempts
             self._reconnect_delay_seconds = reconnect_delay_seconds
         last_error = None
         for attempt in range(reconnect_attempts + 1):
             with self._lock:
-                if self._stopping:
+                if self._stopping or (
+                    _expected_lifecycle_generation is not None
+                    and self._lifecycle_generation != _expected_lifecycle_generation
+                ):
                     return
+            sdk_socket = None
             try:
-                self.websocket = self._build_socket()
-                self._transport_thread = None
-                self._transport_close_timed_out = False
-                self.websocket.connect()
-                # The SDK transport belongs to the underlying SmartWebSocketV2
-                # instance, while this wrapper owns its lifecycle. Retain the
-                # actual thread reference so close() can verify termination.
+                sdk_socket = self._build_socket()
                 with self._lock:
-                    self._transport_thread = getattr(self.websocket, "_transport_thread", None)
-                    # on_open may report initial-subscription failure before connect returns.
-                    if self._connected and self._last_error is None:
-                        self._consecutive_failures = 0
+                    # close() or a newer connect() may have superseded this
+                    # attempt while authentication/socket construction ran.
+                    if self._stopping:
+                        return
+                    self.websocket = sdk_socket
+                    self._transport_thread = None
+                    self._transport_close_timed_out = False
+                sdk_socket.connect()
+                # Never let a late connect completion publish thread/state for
+                # a socket that close() or a replacement attempt has retired.
+                with self._lock:
+                    stale_attempt = self._stopping or self.websocket is not sdk_socket or (
+                        _expected_lifecycle_generation is not None
+                        and self._lifecycle_generation != _expected_lifecycle_generation
+                    )
+                    if not stale_attempt:
+                        self._transport_thread = getattr(sdk_socket, "_transport_thread", None)
+                        # on_open may report initial-subscription failure before connect returns.
+                        if self._connected and self._last_error is None:
+                            self._consecutive_failures = 0
+                if stale_attempt:
+                    _close_sdk_connection_bounded(
+                        sdk_socket, phase=f"superseded-connect-attempt-{attempt + 1}"
+                    )
+                    return
                 return
             except Exception as exc:
                 last_error = exc
-                sdk_socket = self.websocket
                 transport_thread = getattr(sdk_socket, "_transport_thread", None) if sdk_socket else None
                 with self._lock:
-                    self._transport_thread = transport_thread
-                    self._connected = False
-                    self._connecting = False
-                    self._error_count += 1
-                    self._consecutive_failures += 1
-                    self._last_error = str(exc)
+                    stale_attempt = self._stopping or (
+                        sdk_socket is not None and self.websocket is not sdk_socket
+                    ) or (
+                        _expected_lifecycle_generation is not None
+                        and self._lifecycle_generation != _expected_lifecycle_generation
+                    )
+                    if not stale_attempt:
+                        self._transport_thread = transport_thread
+                        self._connected = False
+                        self._connecting = False
+                        self._error_count += 1
+                        self._consecutive_failures += 1
+                        self._last_error = str(exc)
+                if stale_attempt:
+                    if sdk_socket is not None:
+                        _close_sdk_connection_bounded(
+                            sdk_socket, phase=f"stale-connect-failure-{attempt + 1}"
+                        )
+                    return
                 # Failed handshakes can leave run_forever unwinding after connect()
                 # raises. Request SDK close and wait boundedly before another attempt.
                 if sdk_socket is not None:
@@ -662,6 +732,7 @@ class MarketDataWebSocket:
         """Stop reconnects, close the SDK socket, and verify transport termination."""
         with self._lock:
             self._stopping = True
+            self._lifecycle_generation += 1
             self._connected = False
             self._connecting = False
             socket = self.websocket

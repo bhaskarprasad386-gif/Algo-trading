@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from threading import RLock
 from time import time
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from app.core.logger import app_logger
 from .registry import InstrumentDescriptor, InstrumentRegistry
+from .contracts import MarketDataRecord
 from .shoonya_websocket import ShoonyaWebSocket
 
 
@@ -31,6 +32,8 @@ class ShoonyaMarketDataSupervisor:
         frame_timeout_seconds: float = 30.0,
         auth_timeout_seconds: float = 15.0,
         websocket_factory: Any | None = None,
+        on_tick_observation: Callable[[MarketDataRecord, int, bool, int], None] | None = None,
+        on_session_observation: Callable[[str, str | None, int, bool, bool, int], None] | None = None,
     ) -> None:
         if not 1 <= int(max_tokens) <= 500:
             raise ValueError("max_tokens must be between 1 and 500")
@@ -53,6 +56,8 @@ class ShoonyaMarketDataSupervisor:
             on_tick=self._observe_tick,
             on_order_update=self._observe_order_update,
             on_state=self._observe_state,
+            on_session_observation=on_session_observation,
+            on_tick_observation=on_tick_observation,
             websocket_factory=websocket_factory,
             max_dispatch_queue=max_dispatch_queue,
             reconnect_min_seconds=reconnect_min_seconds,
@@ -102,12 +107,21 @@ class ShoonyaMarketDataSupervisor:
             added_descriptors = tuple(item for item in batch if item.key not in previous)
             self.register(batch)
             adapter_subscribed = False
+            start_attempted = False
             try:
                 count = self._adapter.subscribe(batch)
                 adapter_subscribed = True
+                start_attempted = True
                 self._adapter.start()
                 return count
             except Exception:
+                # A thread may have started before a later Thread.start() fails.
+                # Stop any partially-created workers before rolling back state.
+                if start_attempted:
+                    try:
+                        self._adapter.stop()
+                    except Exception as cleanup_error:
+                        app_logger.error("Shoonya start-failure stop cleanup failed: {}", self._safe_reason(str(cleanup_error)))
                 # Roll back only instruments introduced by this operation.
                 # The request may mix existing subscriptions with new ones;
                 # removing the full batch here would silently drop valid feeds.
@@ -147,8 +161,15 @@ class ShoonyaMarketDataSupervisor:
                 for item in stored:
                     self._descriptors.pop(item.key, None)
                 self.registry.unregister_many(item.key for item in stored)
-                if not self._descriptors:
+                became_idle = not self._descriptors
+            if became_idle:
+                # Release the broker socket and all adapter workers as soon as
+                # the final desired subscription is removed. Keep the supervisor
+                # enabled so a later explicit subscribe can start a fresh session.
+                self._adapter.stop()
+                with self._lock:
                     self._last_state = "IDLE_NO_SUBSCRIPTIONS"
+                    self._last_state_reason = None
             return removed
 
     def start(self) -> None:
