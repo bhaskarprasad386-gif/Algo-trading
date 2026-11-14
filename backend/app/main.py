@@ -494,11 +494,14 @@ async def lifespan(app: FastAPI):
         _weekly_swing_refresh_task = None
         _iv_option_snapshot_task = None
         _iv_scanner_recovery_task = None
+        parity_worker_stopped = True
         if provider_quote_parity_worker is not None:
-            provider_quote_parity_worker.stop(drain=True, timeout_seconds=2.0)
+            parity_worker_stopped = provider_quote_parity_worker.stop(drain=True, timeout_seconds=2.0)
+            if not parity_worker_stopped:
+                app_logger.error("Provider quote parity worker did not stop within shutdown budget; leaving SQLite handle open")
             provider_quote_parity_worker = None
             configure_provider_quote_parity_worker(None)
-        if provider_quote_parity_store is not None:
+        if provider_quote_parity_store is not None and parity_worker_stopped:
             provider_quote_parity_store.close()
             provider_quote_parity_store = None
             configure_provider_quote_parity_store(None)
