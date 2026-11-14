@@ -1514,8 +1514,14 @@ class CommonWebSocketManager:
                     message="Raw market-data consumer callback failed.",
                     context={"event": "delivery", "group": f"{group.mode}:{group.shard}", "token": token},
                 )
-        for callback, key in record_callbacks:
-            if callback is None:
+        observers_by_key: dict[InstrumentKey, list[Callable[..., None]]] = defaultdict(list)
+        for observer, observer_key in record_observers:
+            if observer is not None:
+                observers_by_key[observer_key].append(observer)
+        callback_by_key = {key: callback for callback, key in record_callbacks}
+        for key in dict.fromkeys([key for _, key in record_callbacks] + [key for _, key in record_observers]):
+            callback = callback_by_key.get(key)
+            if callback is None and not observers_by_key.get(key):
                 continue
             descriptor = self.registry.get(key)
             if descriptor is None:
@@ -1576,11 +1582,34 @@ class CommonWebSocketManager:
                                     (group, incoming_exchange_type)
                                 ] = incoming_timestamp_ns
                             self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
-                callback(record)
-                with self._lock:
-                    self._normalized_records_delivered += 1
-                    self._last_data_at[group] = time.monotonic()
-                    self._last_successful_delivery_at[group] = self._last_data_at[group]
+                if callback is not None:
+                    callback(record)
+                    with self._lock:
+                        self._normalized_records_delivered += 1
+                        self._last_data_at[group] = time.monotonic()
+                        self._last_successful_delivery_at[group] = self._last_data_at[group]
+                for observer in observers_by_key.get(key, ()):
+                    with self._lock:
+                        connection_current = (
+                            generation is not None
+                            and group in self._sockets
+                            and self._socket_generation.get(group) == generation
+                        )
+                    try:
+                        # SmartAPI's current adapter exposes transport-open but
+                        # no independently verified auth acknowledgement.
+                        # Fail closed so parity workers cannot accept this quote.
+                        observer(record, group, generation or 0, False, connection_current, received_monotonic_ns)
+                    except Exception as observer_error:
+                        with self._lock:
+                            self._delivery_errors += 1
+                            self._last_delivery_error = f"observer {type(observer_error).__name__}: {observer_error}"
+                        runtime_diagnostics.record(
+                            component="Common Market Feed",
+                            error_type=type(observer_error).__name__,
+                            message=str(observer_error),
+                            context={"event": "normalized_observer", "group": f"{group.mode}:{group.shard}", "token": token},
+                        )
             except (TypeError, ValueError, OverflowError) as exc:
                 with self._lock:
                     self._normalizer_errors += 1
