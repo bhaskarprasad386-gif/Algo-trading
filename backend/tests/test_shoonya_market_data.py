@@ -341,19 +341,21 @@ def test_stale_socket_cannot_receive_subscription_replay_after_reconnect():
     assert sent == []
 
 
-def test_stale_socket_cannot_receive_order_subscription_after_reconnect():
-    sent = []
+def test_order_updates_use_inbound_om_frames_without_separate_subscription():
+    sent, received = [], []
     feed = ShoonyaWebSocket(
         uid="U1", actid="ACT123", access_token="token",
-        on_order_update=lambda event: None,
+        on_order_update=received.append,
     )
-    old_ws = SimpleNamespace(send=sent.append, close=lambda: None)
-    new_ws = SimpleNamespace(send=sent.append, close=lambda: None)
-    feed._ws = new_ws
+    current_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = current_ws
     feed._authenticated = True
+    feed._on_message(current_ws, json.dumps({"t": "om", "status": "COMPLETE"}))
 
-    feed._send_order_subscription(old_ws)
+    # Shoonya delivers order updates through the authenticated order stream;
+    # this adapter must not send the obsolete t:o subscription frame.
     assert sent == []
+    assert feed.snapshot()["order_queue_depth"] == 1
 
 
 def test_stale_socket_callbacks_are_ignored_after_reconnect():
@@ -1222,7 +1224,7 @@ def test_partial_worker_start_failure_rolls_back_all_started_workers(monkeypatch
 
 @pytest.mark.parametrize(
     "operation",
-    ["open", "heartbeat", "market_subscription", "order_subscription"],
+    ["open", "heartbeat", "market_subscription"],
 )
 def test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock(operation):
     send_entered = threading.Event()
@@ -1241,7 +1243,7 @@ def test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock(operation):
             close_called.set()
             release_send.set()
 
-    order_callback = (lambda _event: None) if operation == "order_subscription" else None
+    order_callback = None
     feed = ShoonyaWebSocket(
         uid="U1", actid="ACT123", access_token="token",
         on_order_update=order_callback,
@@ -1250,7 +1252,7 @@ def test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock(operation):
     feed._ws = socket
     if operation != "open":
         feed._authenticated = True
-    if operation in {"market_subscription", "order_subscription"}:
+    if operation == "market_subscription":
         feed.subscribe([descriptor()])
 
     def write():
@@ -1261,7 +1263,7 @@ def test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock(operation):
         elif operation == "market_subscription":
             feed._send_subscriptions(socket)
         else:
-            feed._send_order_subscription(socket)
+            feed._send_subscriptions(socket)
 
     writer = threading.Thread(target=write, name=f"blocked-{operation}-write")
     writer.start()
