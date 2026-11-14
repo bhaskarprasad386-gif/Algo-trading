@@ -1209,3 +1209,67 @@ def test_partial_worker_start_failure_rolls_back_all_started_workers(monkeypatch
     assert feed._dispatch_thread is None
     assert feed._order_dispatch_thread is None
     assert feed._heartbeat_thread is None
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["open", "heartbeat", "market_subscription", "order_subscription"],
+)
+def test_blocked_shoonya_socket_write_does_not_hold_lifecycle_lock(operation):
+    send_entered = threading.Event()
+    release_send = threading.Event()
+    close_called = threading.Event()
+
+    def blocked_send(_frame):
+        send_entered.set()
+        assert release_send.wait(timeout=2.0)
+
+    class BlockingWriteSocket:
+        def send(self, frame):
+            blocked_send(frame)
+
+        def close(self):
+            close_called.set()
+            release_send.set()
+
+    order_callback = (lambda _event: None) if operation == "order_subscription" else None
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="ACT123", access_token="token",
+        on_order_update=order_callback,
+    )
+    socket = BlockingWriteSocket()
+    feed._ws = socket
+    if operation != "open":
+        feed._authenticated = True
+    if operation in {"market_subscription", "order_subscription"}:
+        feed.subscribe([descriptor()])
+
+    def write():
+        if operation == "open":
+            feed._on_open(socket)
+        elif operation == "heartbeat":
+            feed._send_heartbeat(socket)
+        elif operation == "market_subscription":
+            feed._send_subscriptions(socket)
+        else:
+            feed._send_order_subscription(socket)
+
+    writer = threading.Thread(target=write, name=f"blocked-{operation}-write")
+    writer.start()
+    assert send_entered.wait(timeout=1.0)
+
+    stopper = threading.Thread(target=feed.stop, name=f"stop-during-{operation}-write")
+    stopper.start()
+    try:
+        assert close_called.wait(timeout=0.5), (
+            f"stop() could not close the socket while {operation} send was blocked; "
+            "network I/O must not hold the lifecycle lock"
+        )
+    finally:
+        release_send.set()
+        writer.join(timeout=1.0)
+        stopper.join(timeout=1.0)
+
+    assert not writer.is_alive()
+    assert not stopper.is_alive()
+    assert feed.snapshot()["shutdown_workers_alive"] == []
