@@ -1206,3 +1206,22 @@ merge, and deployment remain outstanding.
   feed behavior. The test is committed but has not been executed in this session.
 - No production code changed. Box Spread and IV Scanner subscriptions,
   calculations, callback contracts, feed selection and order routing are unchanged.
+
+
+## Batch 58 — repeated Shoonya worker lifecycle and concurrent health snapshots
+
+- Added a twelve-cycle start/stop regression using the real Shoonya adapter
+  worker set and a blocking fake WebSocket transport. Each cycle waits until
+  the transport loop is actually running, stops the adapter, and verifies the
+  transport is closed, each worker generation has terminated, and no duplicate
+  run_forever invocation occurred.
+- A separate real thread continuously reads adapter health snapshots during
+  all lifecycle transitions and validates the snapshot field types. The reader
+  and all adapter workers have bounded joins so a lifecycle hang fails rather
+  than silently leaving test threads behind.
+- This is local threaded lifecycle stress with a fake transport, not broker
+  authentication, network resilience, throughput, or live-market validation.
+  The test is committed but has not been executed in this session.
+- No production runtime code changed. Shoonya remains isolated/read-only;
+  Box Spread and IV Scanner subscriptions, callbacks, calculations, feed
+  selection and order behavior are unchanged.
