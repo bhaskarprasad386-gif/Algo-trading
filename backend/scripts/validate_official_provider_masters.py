@@ -24,10 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import requests
 
 from app.market_data.provider_master_audit import audit_master_coverage
-from app.market_data.provider_master_parsers import AngelOneMasterParser, ShoonyaMasterParser
+from app.market_data.provider_master_parsers import AngelOneMasterParser, MasterParseReport, QuarantinedMasterRow, ShoonyaMasterParser
 
 ANGEL_URL = "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
-SHOONYA_URL = "https://api.shoonya.com/NFO_symbols.txt.zip"
+SHOONYA_URLS = {\n    "NFO": "https://api.shoonya.com/NFO_symbols.txt.zip",\n    "BFO": "https://api.shoonya.com/BFO_symbols.txt.zip",\n}
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 TIMEOUT = (15, 120)
 
@@ -67,53 +67,82 @@ def normalized(row: dict[str, Any], *names: str) -> str:
     return ""
 
 
-def load_angel_nfo(raw: bytes) -> tuple[list[dict[str, Any]], str]:
+def load_angel_segment(raw: bytes, exchange: str) -> tuple[list[dict[str, Any]], str]:
     rows = json.loads(raw.decode("utf-8"))
     if not isinstance(rows, list) or not rows:
         raise ValueError("Angel One official master is not a non-empty JSON array")
-    nfo = [row for row in rows if isinstance(row, dict) and normalized(row, "exch_seg", "exchange", "exch").upper() == "NFO"]
-    if not nfo:
-        raise ValueError("Angel One official master contains no NFO rows")
-    return nfo, hashlib.sha256(raw).hexdigest()
+    selected = [
+        row for row in rows
+        if isinstance(row, dict)
+        and normalized(row, "exch_seg", "exchange", "exch").upper() == exchange
+    ]
+    if not selected:
+        raise ValueError(f"Angel One official master contains no {exchange} rows")
+    return selected, hashlib.sha256(raw).hexdigest()
 
 
-def load_shoonya_nfo(raw_zip: bytes) -> tuple[bytes, str, str]:
+def load_shoonya_segment(raw_zip: bytes, exchange: str) -> tuple[bytes, str, str]:
     if not zipfile.is_zipfile(io.BytesIO(raw_zip)):
-        raise ValueError("Shoonya official NFO download is not a ZIP archive")
+        raise ValueError(f"Shoonya official {exchange} download is not a ZIP archive")
     with zipfile.ZipFile(io.BytesIO(raw_zip)) as archive:
         candidates = [n for n in archive.namelist() if n.lower().endswith((".txt", ".csv")) and not n.endswith("/")]
         if len(candidates) != 1:
-            raise ValueError(f"expected one text master in Shoonya ZIP, found {len(candidates)}")
+            raise ValueError(f"expected one text master in Shoonya {exchange} ZIP, found {len(candidates)}")
         name = candidates[0]
         info = archive.getinfo(name)
         if info.file_size > MAX_DOWNLOAD_BYTES:
-            raise ValueError("Shoonya extracted master exceeds size limit")
+            raise ValueError(f"Shoonya {exchange} extracted master exceeds size limit")
         payload = archive.read(name)
     text = payload.decode("utf-8-sig")
     first_line = next((line for line in text.splitlines() if line.strip()), "")
     counts = {delimiter: first_line.count(delimiter) for delimiter in (",", "|", "\t")}
     delimiter = max(counts, key=counts.get)
     if counts[delimiter] == 0:
-        raise ValueError("cannot detect Shoonya master delimiter from header")
+        raise ValueError(f"cannot detect Shoonya {exchange} delimiter from header")
     reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
     if not reader.fieldnames:
-        raise ValueError("Shoonya official master has no header")
+        raise ValueError(f"Shoonya {exchange} official master has no header")
     required = {"exchange", "token", "lotsize", "tradingsymbol", "instrument"}
     actual = {str(x).strip().lower().replace("_", "").replace(" ", "") for x in reader.fieldnames}
     missing = required - actual
     if missing:
-        raise ValueError(f"Shoonya NFO header missing required columns: {sorted(missing)}")
+        raise ValueError(f"Shoonya {exchange} header missing required columns: {sorted(missing)}")
     rows = list(reader)
-    nfo = [row for row in rows if normalized(row, "Exchange", "exch").upper() == "NFO"]
-    if not nfo:
-        raise ValueError("Shoonya official master contains no NFO rows")
-    # Re-serialize only selected NFO rows using the source header/delimiter.
+    selected = [row for row in rows if normalized(row, "Exchange", "exch").upper() == exchange]
+    if not selected:
+        raise ValueError(f"Shoonya official master contains no {exchange} rows")
     output = io.StringIO(newline="")
     writer = csv.DictWriter(output, fieldnames=reader.fieldnames, delimiter=delimiter, lineterminator="\n")
     writer.writeheader()
-    writer.writerows(nfo)
+    writer.writerows(selected)
     return output.getvalue().encode("utf-8"), hashlib.sha256(raw_zip).hexdigest(), name
 
+
+def combine_segment_reports(broker: str, reports: list[MasterParseReport]) -> MasterParseReport:
+    mappings = tuple(item for report in reports for item in report.mappings)
+    quarantined = []
+    offset = 0
+    for report in reports:
+        quarantined.extend(
+            QuarantinedMasterRow(offset + item.row_number, item.reason)
+            for item in report.quarantined
+        )
+        offset += report.total_rows
+    digest = hashlib.sha256("|".join(report.source_sha256 for report in reports).encode()).hexdigest()
+    return MasterParseReport(
+        broker=broker,
+        source_sha256=digest,
+        mappings=mappings,
+        quarantined=tuple(quarantined),
+        total_rows=sum(report.total_rows for report in reports),
+    )
+
+
+def parse_delimited_shoonya(payload: bytes) -> MasterParseReport:
+    return ShoonyaMasterParser.parse(
+        payload, delimiter=detect_delimiter(payload),
+        strike_scale=Decimal("1"), tick_scale=Decimal("1"),
+    )
 
 def contract_key_summary(key: Any) -> dict[str, Any]:
     return {
@@ -165,7 +194,7 @@ def underlying_inventory(angel_report: Any, shoonya_report: Any) -> dict[str, An
 
 
 def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[str, Any]:
-    targets = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")
+    targets = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
     result: dict[str, Any] = {}
     for underlying in targets:
         angel = {item.key for item in angel_report.mappings if item.key.underlying == underlying}
@@ -209,27 +238,40 @@ def main() -> int:
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     angel_raw = download(ANGEL_URL)
-    shoonya_zip = download(SHOONYA_URL)
-    angel_rows, angel_source_sha = load_angel_nfo(angel_raw)
-    shoonya_payload, shoonya_source_sha, shoonya_member = load_shoonya_nfo(shoonya_zip)
+    angel_segment_reports = []
+    shoonya_segment_reports = []
+    source_report = {
+        "angel_one": {
+            "url": ANGEL_URL,
+            "sha256": hashlib.sha256(angel_raw).hexdigest(),
+            "download_bytes": len(angel_raw),
+        },
+        "shoonya": {},
+    }
 
-    angel_report = AngelOneMasterParser.parse(angel_rows)
-    # Shoonya scale is intentionally explicit. Official NFO master expresses
-    # StrikePrice and TickSize in rupees, unlike Angel's paise-scaled fields.
-    shoonya_report = ShoonyaMasterParser.parse(
-        shoonya_payload, delimiter=detect_delimiter(shoonya_payload),
-        strike_scale=Decimal("1"), tick_scale=Decimal("1"),
-    )
+    for exchange, shoonya_url in SHOONYA_URLS.items():
+        angel_rows, _ = load_angel_segment(angel_raw, exchange)
+        angel_segment_reports.append(AngelOneMasterParser.parse(angel_rows))
+
+        shoonya_zip = download(shoonya_url)
+        shoonya_payload, shoonya_source_sha, shoonya_member = load_shoonya_segment(shoonya_zip, exchange)
+        shoonya_segment_reports.append(parse_delimited_shoonya(shoonya_payload))
+        source_report["shoonya"][exchange] = {
+            "url": shoonya_url,
+            "zip_sha256": shoonya_source_sha,
+            "download_bytes": len(shoonya_zip),
+            "member": shoonya_member,
+        }
+
+    angel_report = combine_segment_reports("ANGELONE", angel_segment_reports)
+    shoonya_report = combine_segment_reports("SHOONYA", shoonya_segment_reports)
     audit = audit_master_coverage((angel_report, shoonya_report))
 
     output = {
         "schema_version": 1,
         "fetched_at_utc": fetched_at,
         "mode": "read_only_official_source_validation",
-        "sources": {
-            "angel_one": {"url": ANGEL_URL, "sha256": angel_source_sha, "download_bytes": len(angel_raw), "nfo_rows_selected": len(angel_rows)},
-            "shoonya": {"url": SHOONYA_URL, "zip_sha256": shoonya_source_sha, "download_bytes": len(shoonya_zip), "member": shoonya_member},
-        },
+        "sources": source_report,
         "parse": {
             "angel_one": report_summary(angel_report),
             "shoonya": report_summary(shoonya_report),
