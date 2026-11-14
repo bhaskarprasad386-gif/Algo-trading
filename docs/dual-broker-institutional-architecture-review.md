@@ -1001,3 +1001,12 @@ merge, and deployment remain outstanding.
 - This is deliberately conservative: a hung SDK handshake can delay new broker sessions rather than risk overlapping sessions and consuming the broker connection limit. The test does not claim the underlying SDK call can be forcibly cancelled.
 - Added test_shared_broker_admission_serializes_connects_across_manager_instances.
 - Tests committed but not executed in this environment. No scanner feed, subscription, runner, pairing, or order behavior changed.
+
+
+### Batch 41 — retirement follows the actual Angel transport thread
+
+- Confirmed a lifecycle gap: `MarketDataWebSocket.close()` can return after its bounded abort attempt while the SDK `run_forever` transport thread remains alive and reports `transport_close_timed_out`. The manager previously considered retirement complete when its wrapper `close()` worker exited, which could release the replacement gate too early.
+- Updated `CommonWebSocketManager._close_socket_bounded`: after invoking `socket.close()`, the tracked close worker now also waits for the socket's `_transport_thread` to terminate. The existing retirement watcher therefore keeps the broker slot occupied and blocks replacement admission until the actual transport exits. Alternate wrappers exposing only `health.transport_thread_alive` are handled conservatively when no thread handle exists.
+- Added `test_retired_slot_waits_for_actual_transport_thread_after_close_returns`, which simulates a wrapper close returning while the transport thread remains alive and verifies no replacement socket is opened until that thread exits.
+- Existing bounded SDK close/abort behavior remains unchanged. This does not claim Python can forcibly kill a stuck thread; it makes the unresolved transport visible and prevents an unsafe overlapping replacement.
+- Tests committed but not executed in this environment. No scanner, strategy, subscription intent, pairing, or order-routing behavior changed.
