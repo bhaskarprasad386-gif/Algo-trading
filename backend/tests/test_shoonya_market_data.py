@@ -61,6 +61,7 @@ def test_application_heartbeat_is_answered():
     sent = []
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = fake_ws
     feed._on_message(fake_ws, json.dumps({"t":"h"}))
     assert json.loads(sent[0]) == {"t":"h"}
 
@@ -100,6 +101,7 @@ def test_authentication_ack_is_required_before_market_subscription():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: None)
+    feed._ws = fake_ws
     feed._on_open(fake_ws)
     assert json.loads(sent[-1])["t"] == "a"
     assert not feed.snapshot()["authenticated"]
@@ -137,6 +139,7 @@ def test_rejected_authentication_never_subscribes_and_state_survives_close():
     )
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=sent.append, close=lambda: closed.append(True))
+    feed._ws = fake_ws
     feed._on_open(fake_ws)
     feed._on_message(fake_ws, json.dumps({"t": "ak", "s": "Not_Ok"}))
     assert not feed.snapshot()["authenticated"]
@@ -167,6 +170,7 @@ def test_reconnect_clears_previous_snapshot_before_new_incremental_frames():
     feed.subscribe([descriptor()])
     fake_ws = SimpleNamespace(send=lambda frame: None, close=lambda: None)
     # The first socket has completed authentication before market frames.
+    feed._ws = fake_ws
     feed._authenticated = True
     feed._on_message(fake_ws, json.dumps({"t": "tk", "e": "NFO", "tk": "12345",
         "lp": "100.00", "oi": "777", "ft": "1794551794"}))
@@ -191,6 +195,7 @@ def test_subscription_send_failure_marks_error_and_closes_socket():
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
     fake_ws = SimpleNamespace(send=fail_send, close=lambda: closed.append(True))
     feed.subscribe([descriptor()])
+    feed._ws, feed._authenticated = fake_ws, True
     feed._send_subscriptions(fake_ws)
     assert closed
     assert "socket unavailable" in feed.snapshot()["last_error"]
@@ -277,6 +282,7 @@ def test_stop_uses_one_shared_deadline_for_all_workers(monkeypatch):
     # Advance monotonic time deterministically on each read so the test proves
     # later workers receive only the remaining budget, without sleeping.
     clock = iter((0.0, 1.0, 2.0, 3.0))
+    monkeypatch.setattr(ShoonyaWebSocket, "_start_shutdown_watcher", lambda self, workers: None)
     monkeypatch.setattr("app.market_data.shoonya_websocket.time.monotonic", lambda: next(clock))
 
     feed = ShoonyaWebSocket(uid="U1", actid="U1", access_token="token")
@@ -953,6 +959,7 @@ def test_stale_auth_ack_cannot_mark_replacement_socket_live():
 def test_repeated_start_is_idempotent_and_restart_creates_one_new_worker_generation():
     created = []
     opened = []
+    created_event = threading.Event()
     class BlockingSocket:
         def __init__(self, **callbacks):
             self.callbacks = callbacks
@@ -968,6 +975,7 @@ def test_repeated_start_is_idempotent_and_restart_creates_one_new_worker_generat
     def factory(url, **callbacks):
         socket = BlockingSocket(**callbacks)
         created.append(socket)
+        created_event.set()
         return socket
 
     feed = ShoonyaWebSocket(
@@ -978,6 +986,7 @@ def test_repeated_start_is_idempotent_and_restart_creates_one_new_worker_generat
     )
 
     feed.start()
+    assert created_event.wait(timeout=1)
     assert created[0].opened.wait(timeout=1)
     first_supervisor = feed._thread
     first_dispatcher = feed._dispatch_thread
