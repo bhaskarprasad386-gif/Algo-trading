@@ -1496,3 +1496,83 @@ def test_shoonya_retired_socket_message_cannot_be_retagged_with_new_epoch(messag
     assert feed.snapshot()["dispatch_queue_depth"] == 0
     assert feed.snapshot()["order_queue_depth"] == 0
     assert delivered_orders == []
+
+
+def test_repeated_shoonya_start_stop_cycles_keep_one_worker_generation_and_snapshots_consistent():
+    """Exercise repeated real worker creation/retirement with a concurrent health reader."""
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        reconnect_min_seconds=0.01, reconnect_max_seconds=0.02,
+    )
+    factory_lock = threading.Lock()
+    factory_apps = []
+    reader_stop = threading.Event()
+    reader_failures = []
+    snapshots = []
+
+    class BlockingApp:
+        def __init__(self, url, **callbacks):
+            self.callbacks = callbacks
+            self.started = threading.Event()
+            self.closed = threading.Event()
+            self.run_count = 0
+
+        def run_forever(self, **kwargs):
+            self.run_count += 1
+            self.started.set()
+            self.closed.wait(timeout=2)
+
+        def close(self):
+            self.closed.set()
+
+    def factory(url, **callbacks):
+        app = BlockingApp(url, **callbacks)
+        with factory_lock:
+            factory_apps.append(app)
+        return app
+
+    feed._factory = factory
+
+    def snapshot_reader():
+        try:
+            while not reader_stop.is_set():
+                state = feed.snapshot()
+                assert isinstance(state["shutdown_workers_alive"], list)
+                assert isinstance(state["shutdown_watcher_alive"], bool)
+                assert isinstance(state["connected"], bool)
+                snapshots.append(state)
+        except BaseException as exc:
+            reader_failures.append(exc)
+
+    reader = threading.Thread(target=snapshot_reader, name="shoonya-health-snapshot-reader")
+    reader.start()
+    try:
+        for cycle in range(12):
+            feed.start()
+            deadline = time.monotonic() + 1.0
+            app = None
+            while time.monotonic() < deadline:
+                with factory_lock:
+                    if len(factory_apps) > cycle:
+                        app = factory_apps[cycle]
+                if app is not None and app.started.wait(timeout=0.01):
+                    break
+            assert app is not None and app.started.is_set(), f"cycle {cycle} transport did not start"
+            feed.stop()
+            state = feed.snapshot()
+            assert state["shutdown_workers_alive"] == [], f"cycle {cycle} leaked workers: {state}"
+            assert app.closed.is_set()
+            assert app.run_count == 1
+    finally:
+        feed.stop()
+        reader_stop.set()
+        reader.join(timeout=2)
+
+    assert not reader.is_alive(), "snapshot reader did not terminate"
+    assert reader_failures == []
+    assert len(factory_apps) == 12
+    assert all(app.run_count == 1 and app.closed.is_set() for app in factory_apps)
+    assert snapshots, "concurrent health reader did not capture any snapshots"
+    final = feed.snapshot()
+    assert final["shutdown_workers_alive"] == []
+    assert final["shutdown_watcher_alive"] is False
