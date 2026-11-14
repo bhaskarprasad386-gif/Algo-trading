@@ -2089,7 +2089,7 @@ class CommonWebSocketManager:
                 self._closed = True
                 recovery_thread = self._recovery_thread
                 self._recovery_thread = None
-                sockets = list(self._sockets.values())
+                socket_items = list(self._sockets.items())
                 callback_adapters = list(self._callback_adapters.items())
                 self._callback_adapters.clear()
                 self._sockets.clear()
@@ -2105,16 +2105,13 @@ class CommonWebSocketManager:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
             self._stop_retired_callback_adapter(adapter, group, generation)
-        for socket in sockets:
+        for group, socket in socket_items:
             # Shutdown must retain visibility of close calls that outlive the
             # bounded wait. Otherwise the manager can return while an orphaned
             # SDK close worker is still running with no retirement diagnostic.
             self._close_socket_tracked(
                 socket,
-                group=next(
-                    (group for group, candidate in self._sockets.items() if candidate is socket),
-                    SocketGroup(mode=0, shard=0),
-                ),
+                group=group,
                 generation=None,
                 reason="manager_shutdown",
                 timeout=2.0,
