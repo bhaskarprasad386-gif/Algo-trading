@@ -111,6 +111,8 @@ shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
 provider_readiness_bridge = ProviderReadinessBridge()
+_provider_readiness_observer_lock = threading.Lock()
+_provider_readiness_observer_manager_id: int | None = None
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
@@ -1814,12 +1816,17 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
 @app.get("/api/v1/market-data/runtime/health")
 def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
+    global _provider_readiness_observer_manager_id
     manager = shared_common_manager()
-    # Additive read-only observer; does not add/remove subscriptions or replace
-    # any Box Spread / IV Scanner consumer callback.
-    manager.register_normalized_observer(
-        "provider-readiness-shadow", provider_readiness_bridge.angel_market_event
-    )
+    # Register exactly once per shared manager instance. This is an additive
+    # read-only observer; it never mutates subscriptions or scanner callbacks.
+    with _provider_readiness_observer_lock:
+        manager_identity = id(manager)
+        if _provider_readiness_observer_manager_id != manager_identity:
+            manager.register_normalized_observer(
+                "provider-readiness-shadow", provider_readiness_bridge.angel_market_event
+            )
+            _provider_readiness_observer_manager_id = manager_identity
     cash_runner = live_cash_future_runner
     calendar_runner = live_calendar_spread_runner
     synthetic_runner = live_synthetic_runner
