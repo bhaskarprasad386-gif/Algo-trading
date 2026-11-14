@@ -1096,3 +1096,25 @@ merge, and deployment remain outstanding.
 - `_on_message` now independently validates socket ownership and stop state while capturing the source epoch before updating frame freshness. It rechecks ownership/authentication/epoch before dispatch. Tick normalization receives the captured source epoch; order queue entries carry that same source epoch instead of sampling the current epoch later.
 - Added parameterized regression coverage for stale old-socket order and tick frames reaching `_on_message` after replacement; they must not update frame freshness or either queue.
 - No broker protocol, scanner, subscriptions, feed selection, or order execution logic changed. Tests committed but not executed.
+
+
+## Batch 52 — integrated manager-to-readiness lifecycle regression
+
+- Added an integration-level test that registers the actual CommonWebSocketManager
+  transport observer against the dual-provider readiness bridge and drives active
+  socket generations through the manager's own observer gate (without broker
+  credentials or real network sockets).
+- The scenario replaces an Angel shard socket, injects the retired generation's
+  delayed close, then closes the current generation and injects a delayed OPEN.
+  The readiness bridge must retain the current generation and must not
+  resurrect a terminal socket epoch.
+- In the same scenario, Shoonya authentication rejection is followed by a new
+  authenticated epoch. Its recovery must remain independent of Angel's shard
+  lifecycle. The test also asserts pairing, scanner fanout, and order
+  eligibility remain disabled.
+- This is deterministic integration coverage of callback plumbing and
+  generation fencing only. It does not prove broker authentication,
+  subscription acknowledgement, feed readiness, parity, live-market behavior,
+  or scanner cutover. Existing Box Spread and IV Scanner behavior is untouched.
+- Test is committed but has not been executed in this session; exact-head CI,
+  full regression, live broker validation, merge, and deployment remain open.
