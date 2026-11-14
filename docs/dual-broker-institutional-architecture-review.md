@@ -742,3 +742,29 @@ merge, and deployment remain outstanding.
   source selection, pairer, or order path was changed. Tests are committed but
   not run here; exact-head CI, full regression, live broker validation, merge,
   and deployment remain outstanding.
+
+
+## Batch 31 — verified-session gating and timestamp integrity
+
+- Shoonya `LIVE` is now accepted as authentication evidence only when the
+  adapter reports both `connected=true` and `authenticated=true` for the
+  current feed epoch. A contradictory LIVE callback cannot authenticate a
+  closed transport.
+- Shoonya quote evidence is now accepted only after the bridge's own reducer
+  confirms the same current generation is OPEN and AUTHENTICATED. A callback's
+  boolean alone cannot create market-event evidence before the Noren auth ACK,
+  or after a rejection/close.
+- Added tests for contradictory LIVE state, unauthenticated quote callbacks,
+  quotes after auth rejection, future exchange timestamps, and missing
+  canonical symbol identity.
+- Exchange timestamp freshness remains fail-closed: valid identity and a
+  positive timestamp are insufficient if the source timestamp is outside the
+  five-second wall-clock tolerance. Heartbeats remain excluded as market data.
+- No Angel authentication ACK or Shoonya per-token subscription ACK was
+  introduced. Neither provider can become parity eligible or order eligible
+  from these changes.
+- No Box Spread / IV Scanner subscription, calculation, consumer callback,
+  pairer, strategy fan-out, persistence, or order routing was modified.
+- Tests have been added but not executed in this session. Exact-head CI,
+  full regression, broker validation, PR merge, and deployment remain
+  outstanding.
