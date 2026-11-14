@@ -902,6 +902,9 @@ class CommonWebSocketManager:
                         return
             except Exception as exc:
                 failure["exception"] = exc
+                # Surface failed handshakes even when the SDK raises before
+                # delivering its on_error/on_close callback.
+                self._notify_transport_observers("ERROR", group, generation, time.monotonic_ns())
                 # Keep this exception path non-blocking: _start_socket_connect
                 # waits briefly for immediate failures, so waiting here for the
                 # reconcile lock would hide the original broker error from its
