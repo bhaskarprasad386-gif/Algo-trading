@@ -559,3 +559,42 @@ an incomplete implementation:
 - Extended the regression assertion for these explicit fail-closed fields.
 - No SDK monkey-patching, scanner, Box Spread, IV Scanner, subscription, source-selection, failover, or order-routing changes.
 - Tests remain unexecuted in this session; exact-head CI is required.
+
+
+## Batch 26 — shared auditable session and feed-readiness evidence contract
+
+This batch defines the common evidence vocabulary for the two broker observers. It is an additive architecture contract; it does not wire either observer into the parity pairer or worker.
+
+### Required evidence dimensions
+
+Every provider session snapshot must keep these dimensions independent:
+
+- **Transport:** socket lifecycle only (CLOSED, OPENING, OPEN, CLOSING, ERROR). Transport-open proves only that a WebSocket transport opened.
+- **Authentication:** UNKNOWN, AUTHENTICATED, REJECTED, TIMED_OUT, NOT_VERIFIABLE, plus evidence kind, event time, and connection generation. A boolean without evidence provenance is insufficient.
+- **Subscription:** desired, request-sent, broker-acknowledged (only where the protocol actually acknowledges it), and active instrument/token coverage. Sending a request is not proof that the broker accepted it.
+- **Feed liveness:** last raw frame and last valid normalized market event, each with wall-clock and monotonic receive timestamps and age. Heartbeats count as transport liveness, never as market-data freshness.
+- **Integrity:** current generation, stale-generation rejects, malformed-frame rejects, queue depth/capacity, overflow latch, callback/worker errors, and last integrity fault.
+- **Quote quality:** canonical identity, exchange timestamp validity/age, receive age, bid/ask validity, crossed-market status, and depth completeness.
+
+### Provider evidence mapping
+
+- **Shoonya:** its protocol authentication acknowledgement (t=ck, s=OK) is the authentication evidence. It is scoped to the active feed epoch. Authentication rejection, missing-ack timeout, or epoch replacement invalidates the authenticated state. A heartbeat or market tick cannot manufacture an authentication acknowledgement.
+- **Angel One SmartWebSocketV2:** current reviewed SDK callbacks establish transport-open and control/market traffic, but the manager has no separately verified broker-authentication acknowledgement. Its state therefore remains NOT_VERIFIABLE / authenticated=false; do not infer authentication from on_open, ping/pong, subscription send, or receipt of a tick.
+
+### Derived readiness rules
+
+- TRANSPORT_OPEN is a transport fact, not an authenticated session.
+- AUTHENTICATED requires provider-specific positive acknowledgement tied to the current generation/epoch; stale or unproven evidence fails closed.
+- SUBSCRIPTION_READY requires protocol-level acknowledgement where the protocol defines one, plus validated desired-token coverage. If no acknowledgement exists, report that limitation rather than silently upgrading request-sent to active.
+- FEED_READY additionally requires a fresh valid normalized market event, valid canonical identity/timestamps, and no latched integrity fault. Heartbeats alone do not satisfy it.
+- PARITY_ELIGIBLE requires both providers independently authenticated, current-generation, feed-ready, identity-compatible observations. A provider that is NOT_VERIFIABLE cannot activate its parity generation.
+- ORDER_ELIGIBLE is out of scope and must never be inferred from any of these market-data readiness states.
+
+Snapshots must expose raw evidence and derived state separately so operators can audit why a provider is or is not ready. Missing evidence is unknown/not-verifiable, never success. Generation changes clear all generation-scoped authentication, subscription acknowledgements, freshness, and integrity state before a replacement session can become ready.
+
+### Scope and validation boundary
+
+- This is a contract/documentation batch only; no runtime readiness aggregator, broker callback wiring, pairer activation, source selection, failover, scanner/UI integration, or order routing is introduced.
+- Existing Box Spread and IV Scanner paths and subscriptions remain unchanged.
+- The implementation follow-up must add pure state-transition tests for acknowledgement, rejection, timeout, stale generation, heartbeat-only liveness, subscription-send-only, stale market data, and queue-integrity fault before any runtime integration.
+- Tests, exact-head CI, live broker validation, merge, and deployment are not claimed by this documentation-only change.
