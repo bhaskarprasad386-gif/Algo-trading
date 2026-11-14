@@ -121,6 +121,12 @@ class ProviderReadinessBridge:
             if received_at <= self._angel_last_observation_ns.get(key, 0):
                 self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
                 return
+            # ERROR/CLOSED is terminal for this socket generation. A delayed
+            # OPEN callback must not resurrect a failed transport; only a higher
+            # generation may establish a new OPEN state.
+            if event == "OPEN" and state.snapshot()["transport"] == "CLOSED":
+                self._angel_stale_observations[key] = self._angel_stale_observations.get(key, 0) + 1
+                return
             self._angel_last_observation_ns[key] = received_at
             if event == "OPEN":
                 state.transport_open(generation)
