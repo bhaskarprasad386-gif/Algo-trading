@@ -72,6 +72,7 @@ class ShoonyaWebSocket:
         self._auth_started_at = None
         self._feed_epoch = 0
         self._shutdown_workers_alive: list[str] = []
+        self._shutdown_watcher: threading.Thread | None = None
         self._normalizer = ShoonyaTickNormalizer()
 
     def subscribe(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
@@ -199,9 +200,39 @@ class ShoonyaWebSocket:
         if alive:
             reason = "workers did not stop before timeout: " + ", ".join(alive)
             with self._lock: self._last_error = reason
+            self._start_shutdown_watcher(workers)
             self._emit_state("STOP_TIMEOUT", reason)
         else:
             self._emit_state("STOPPED", None)
+
+    def _start_shutdown_watcher(self, workers: tuple[Any, ...]) -> None:
+        """Refresh timed-out worker diagnostics when the last worker eventually exits."""
+        with self._lock:
+            existing = self._shutdown_watcher
+            if existing is not None and existing.is_alive():
+                return
+
+            def watch() -> None:
+                for worker in workers:
+                    if worker is not None and worker is not threading.current_thread():
+                        worker.join()
+                with self._lock:
+                    current_workers = (
+                        self._thread, self._dispatch_thread,
+                        self._order_dispatch_thread, self._heartbeat_thread,
+                    )
+                    self._shutdown_workers_alive = [
+                        worker.name for worker in current_workers
+                        if worker is not None and worker.is_alive()
+                    ]
+                    if not (self._thread and self._thread.is_alive()):
+                        self._ws = None
+
+            watcher = threading.Thread(
+                target=watch, name="shoonya-shutdown-watch", daemon=True
+            )
+            self._shutdown_watcher = watcher
+            watcher.start()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -213,6 +244,7 @@ class ShoonyaWebSocket:
                     "reconnect_count": self._reconnect_count, "out_of_order_ticks": self._out_of_order_ticks,
                     "last_error": self._last_error,
                     "shutdown_workers_alive": list(self._shutdown_workers_alive),
+                    "shutdown_watcher_alive": bool(self._shutdown_watcher and self._shutdown_watcher.is_alive()),
                     "last_frame_at": self._last_frame_at, "last_frame_age_seconds": max(0.0, time.time() - self._last_frame_at) if self._last_frame_at else None,
                     "frame_timeout_seconds": self._frame_timeout_seconds,
                     "auth_timeout_seconds": self._auth_timeout_seconds,
