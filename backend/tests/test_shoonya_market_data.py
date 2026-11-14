@@ -1461,3 +1461,38 @@ def test_shoonya_shutdown_timeout_diagnostics_clear_after_worker_exits():
     state = feed.snapshot()
     assert state["shutdown_watcher_alive"] is False
     assert state["shutdown_workers_alive"] == []
+
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"t": "om", "status": "COMPLETE"},
+        {
+            "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+            "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+            "bq1": "100", "sq1": "120", "ft": "1794551794",
+        },
+    ],
+)
+def test_shoonya_retired_socket_message_cannot_be_retagged_with_new_epoch(message):
+    delivered_orders = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_order_update=delivered_orders.append,
+    )
+    feed.subscribe([descriptor()])
+    retired_socket = SimpleNamespace()
+    current_socket = SimpleNamespace()
+    feed._ws = current_socket
+    feed._feed_epoch = 32
+    feed._authenticated = True
+
+    # Model the narrow race where the outer callback guard already returned,
+    # then the old socket callback reaches _on_message after replacement.
+    feed._on_message(retired_socket, json.dumps(message))
+
+    assert feed.snapshot()["last_frame_at"] is None
+    assert feed.snapshot()["dispatch_queue_depth"] == 0
+    assert feed.snapshot()["order_queue_depth"] == 0
+    assert delivered_orders == []
