@@ -962,3 +962,33 @@ merge, and deployment remain outstanding.
 - The focused test is committed but has not been executed in this session.
   Exact-head CI, full regression, live broker validation, PR merge, and
   deployment remain outstanding.
+
+
+
+## Batch 39 — manager shutdown versus late connect failure
+
+- Reviewed the manager's asynchronous connect worker across broker admission
+  wait, handshake success/failure, generation replacement, and shutdown.
+  Successful late handshakes were already fenced and retired against their
+  local socket; failed handshakes, however, still incremented global
+  `connect_failures` and overwrote `last_connect_failure` even after that
+  socket's generation had been retired or the manager had closed.
+- The connect exception path now treats a failure as current only when the
+  manager is not closed and both socket identity and generation still match.
+  Only a current failure can invalidate a shard, update failure telemetry,
+  record a runtime diagnostic, or initiate recovery. A late exception from a
+  retired worker is ignored for current manager health and cannot overwrite a
+  replacement generation's failure details.
+- Added a deterministic regression that blocks a connect worker, closes the
+  manager, then releases the worker to raise. It verifies the late failure
+  cannot republish a socket or pollute connect-failure health.
+- Existing safeguards remain: manager close clears active socket registries
+  under reconciliation serialization; the connect worker rechecks current
+  identity before and after broker admission; late successful sockets are
+  retired before global admission is released; pending-generation cleanup is
+  conditional on matching generation.
+- No Box Spread or IV Scanner subscriptions, callbacks, calculations, feed
+  selection, pairing, persistence, or order routing changed.
+- The regression is committed but has not been executed in this session.
+  Exact-head CI, full regression, live broker validation, PR merge, and
+  deployment remain outstanding.
