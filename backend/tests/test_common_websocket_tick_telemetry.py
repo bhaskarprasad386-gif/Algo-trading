@@ -111,3 +111,31 @@ def test_angel_observer_failure_does_not_break_legacy_normalized_callback():
     assert len(delivered) == 1
     assert delivered[0].symbol == "TEST"
     assert manager.snapshot()["normalized_records_delivered"] == 1
+
+
+def test_angel_observer_keeps_all_legacy_consumers_on_same_instrument():
+    key = InstrumentKey("NSE", "NSE", "123")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="TEST", instrument_type="equity", exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("first", key, mode=3)
+    manager.registry.subscribe("second", key, mode=3)
+    group = SocketGroup(3, 0)
+    manager._route_index = {group: {(1, "123"): [("first", key), ("second", key)]}}
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 3
+    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
+    )
+    first, second = [], []
+    manager.register_normalized_callback("first", first.append)
+    manager.register_normalized_callback("second", second.append)
+    manager.register_normalized_observer("second", lambda *_: None)
+
+    manager._on_data(group, {"token": "123", "exchange_type": 1}, generation=3)
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert manager.snapshot()["normalized_records_delivered"] == 2
