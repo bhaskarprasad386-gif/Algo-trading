@@ -243,3 +243,43 @@ def test_overflow_retires_generation_and_discards_queued_work_while_inflight_fin
     release.set()
     adapter.stop(timeout=2.0, drain=True)
     assert seen == ["inflight"]
+
+
+
+def test_retirement_fences_remaining_callbacks_in_already_dequeued_batch():
+    from threading import Event, Thread
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    entered = Event()
+    release = Event()
+    seen = []
+
+    def blocked(value):
+        entered.set()
+        release.wait(timeout=2.0)
+        seen.append(value)
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(blocked, "inflight", "raw"),
+            CallbackInvocation(seen.append, "must-not-run-after-retire", "record"),
+        ),
+    )
+    assert entered.wait(timeout=1.0)
+
+    # stop invalidates the generation even though one consumer callback is
+    # already executing and cannot be cancelled safely.
+    with pytest.raises(TimeoutError):
+        adapter.stop(timeout=0.05, drain=False)
+    release.set()
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert seen == ["inflight"]
+    assert adapter.snapshot()["callback_attempts"] == 1
+    assert adapter.snapshot()["closed"] is True
