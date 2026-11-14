@@ -1134,3 +1134,22 @@ merge, and deployment remain outstanding.
   returns no runs. Therefore the tests remain unexecuted/unverified; no pass is
   claimed. The visible Vercel status is a deployment-rate-limit failure and is
   not evidence about backend test results.
+
+
+## Batch 54 — deterministic dual-broker reconnect-storm regression
+
+- Added a deterministic callback-storm regression covering 64 Shoonya authentication
+  epochs and 64 Angel lifecycle generations across three independent socket groups.
+- Each Angel generation receives OPEN, ERROR, a forbidden same-generation OPEN,
+  a replacement generation OPEN, and a delayed retired-generation CLOSED. The
+  assertions require only the newest generation to remain open.
+- Each Shoonya epoch authenticates and then times out; a delayed LIVE callback
+  from that terminal epoch must not resurrect it. A fresh epoch 65 is then
+  authenticated and must remain authoritative after a delayed epoch-64 failure.
+- Assertions explicitly keep feed readiness, parity, scanner fanout, pairing,
+  and order eligibility fail-closed because real subscription ACK and Angel
+  authentication evidence are still unavailable.
+- This is deterministic reducer/bridge stress coverage, not a threaded race
+  proof, broker integration, or live-market validation. The test is included
+  in the targeted CI workflow added in Batch 53, but has not been executed
+  locally or confirmed by an exact-head CI run.
