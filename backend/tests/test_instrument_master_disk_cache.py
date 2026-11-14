@@ -140,10 +140,13 @@ def test_disk_fallback_expires_after_36_hours_even_for_already_loaded_instance(
     assert master.instruments == []
 
 
-def test_unsupported_disk_snapshot_schema_is_rejected(isolated_master_cache, monkeypatch):
+@pytest.mark.parametrize("schema_version", [2, True, "1"])
+def test_unsupported_disk_snapshot_schema_is_rejected(
+    isolated_master_cache, monkeypatch, schema_version
+):
     isolated_master_cache.write_text(
         json.dumps({
-            "schema_version": 2,
+            "schema_version": schema_version,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "instruments": _rows(),
         }),

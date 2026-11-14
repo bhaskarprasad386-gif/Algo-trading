@@ -69,7 +69,11 @@ class InstrumentMaster:
         path = cls._disk_cache_path()
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+            if (
+                not isinstance(payload, dict)
+                or type(payload.get("schema_version")) is not int
+                or payload.get("schema_version") != 1
+            ):
                 return None
             rows = payload.get("instruments")
             fetched_at = payload.get("fetched_at")
