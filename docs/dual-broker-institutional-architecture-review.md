@@ -706,3 +706,39 @@ merge, and deployment remain outstanding.
   CI, callback compatibility regression, live broker validation, merge, and
   deployment are not claimed. Existing scanner subscriptions and order paths
   were not modified.
+
+
+## Batch 30 — callback ordering and legacy compatibility hardening
+
+- The readiness bridge now rejects out-of-order session and market observations
+  using per-generation monotonic receive ordering. Older same-generation events
+  cannot roll back a newer Shoonya authentication state or replace a newer quote
+  observation. Angel ordering is isolated by socket group and generation.
+- Added bounded scalar rejection counters to readiness diagnostics; no callback
+  payload history is retained.
+- Corrected the Shoonya rejection transition so an `AUTH_FAILED` event records
+  the rejection evidence and closes transport readiness while preserving the
+  `REJECTED` authentication result.
+- Angel transport evidence is now explicitly labelled as a current-generation
+  normalized market callback only; the current observer does not receive the
+  manager's socket-open/socket-close lifecycle, so it must not be represented
+  as full lifecycle telemetry.
+- Runtime health registers the Angel observer once per shared manager instance
+  rather than re-registering it on every health request. It remains additive
+  and does not mutate subscriptions or scanner callbacks.
+- Added regressions for out-of-order Shoonya state/tick events, auth rejection
+  close behavior, out-of-order Angel group observations, and non-current
+  connection callbacks.
+- Added Shoonya adapter/supervisor tests proving the new session observer is
+  additive: legacy state callback still runs, either observer's exception is
+  isolated, and the supervisor passes the callback without replacing existing
+  callbacks.
+- Existing common-feed regression coverage already verifies Angel observer
+  delivery, retired-generation suppression, observer exception isolation,
+  preservation of multiple legacy consumers on one instrument, observer-only
+  routing, and unregister behavior. These tests were reviewed but not executed
+  in this session.
+- No Box Spread or IV Scanner callback, subscription, scanner calculation,
+  source selection, pairer, or order path was changed. Tests are committed but
+  not run here; exact-head CI, full regression, live broker validation, merge,
+  and deployment remain outstanding.
