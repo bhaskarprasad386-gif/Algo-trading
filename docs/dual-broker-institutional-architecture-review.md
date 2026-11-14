@@ -489,3 +489,26 @@ Added `backend/app/market_data/provider_quote_pairer.py` and focused tests in
   a parity producer may activate its generation. No provider pairer, parity
   worker, scanner, subscription, source selection, failover or order path is
   connected by this batch.
+
+
+## Batch 22 — Angel normalized observer boundary (authentication fail-closed)
+
+- Added additive register/unregister methods for normalized diagnostics observers
+  on CommonWebSocketManager; existing raw and normalized callback signatures
+  and registration paths are unchanged.
+- Observer metadata includes the immutable normalized record, SocketGroup,
+  manager socket generation, current-connection check, and monotonic receive
+  timestamp captured at callback ingress.
+- Critical limitation: the current SmartAPI adapter exposes transport-open and
+  failure callbacks but no verified broker authentication acknowledgement in
+  this manager contract. Therefore the observer always supplies
+  authenticated=false. It is intentionally impossible for this hook alone
+  to activate an Angel generation in the parity worker or pairer.
+- Retired/unknown generations are rejected by the manager before routing; the
+  observer rechecks that its socket generation remains current before delivery.
+  Observer exceptions are isolated from existing scanner/consumer callbacks.
+- Added three focused tests for metadata/fail-closed auth, retired-generation
+  suppression, and observer exception isolation.
+- No parity worker wiring, scanner change, Box/IV behavior change, subscription
+  change, source selection, failover, or order route was added. Exact-head CI
+  and tests remain unverified.
