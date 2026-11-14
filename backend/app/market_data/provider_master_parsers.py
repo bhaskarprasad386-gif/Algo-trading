@@ -144,11 +144,11 @@ def _mapping(
             # the full contract in symbol. Recover only the well-formed
             # expiry/strike/right suffix; do not guess from arbitrary symbols.
             option_match = re.match(
-                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}\\d+(?:\\.\\d+)?(?:CE|PE)$",
+                r"^(.+?)\d{1,2}[A-Z]{3}\d{2,4}\d+(?:\.\d+)?(?:CE|PE)$",
                 raw_underlying,
             )
             future_match = re.match(
-                r"^(.+?)\\d{1,2}[A-Z]{3}\\d{2,4}FUT$",
+                r"^(.+?)\d{1,2}[A-Z]{3}\d{2,4}FUT$",
                 raw_underlying,
             )
             match = option_match or future_match
