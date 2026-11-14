@@ -190,6 +190,8 @@ class MarketDataWebSocket:
         self._reconnect_count = 0
         self._last_error = None
         self._reconnect_lock = Lock()
+        # Invalidates reconnect workers that were queued before close().
+        self._lifecycle_generation = 0
         self._auto_reconnect = bool(auto_reconnect)
         # SDK subscribe calls can exceed a quarter-second under ordinary jitter.
         # Keep a bounded failure path without invalidating healthy sockets too eagerly.
@@ -440,9 +442,14 @@ class MarketDataWebSocket:
             # marked as reconnecting and future recovery signals are ignored.
             if exchange_type is None or not tokens:
                 return
+            with self._lock:
+                reconnect_generation = self._lifecycle_generation
+                if self._stopping:
+                    return
             reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
             self.connect(
                 subscriptions=reconnect_subscriptions,
+                _expected_lifecycle_generation=reconnect_generation,
                 mode=mode,
                 correlation_id=correlation_id,
                 on_data=on_data,
@@ -471,7 +478,7 @@ class MarketDataWebSocket:
             if should_retry:
                 self._schedule_reconnect()
 
-    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None, on_lifecycle: Optional[Callable[[str, int], None]] = None):
+    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None, on_lifecycle: Optional[Callable[[str, int], None]] = None, _expected_lifecycle_generation: int | None = None):
         """Connect and retry failed starts while preserving validated subscriptions."""
         if exchange_type is not None and (not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0):
             raise ValueError("exchange_type must be a positive integer")
@@ -500,7 +507,14 @@ class MarketDataWebSocket:
             self.on_data = on_data
             self.on_failure = on_failure
             self.on_lifecycle = on_lifecycle
-            self._stopping = False
+            if _expected_lifecycle_generation is not None and (
+                self._stopping or self._lifecycle_generation != _expected_lifecycle_generation
+            ):
+                return
+            # Only an explicit caller may reopen a stopped wrapper. Internal
+            # reconnect workers must match the lifecycle generation they captured.
+            if _expected_lifecycle_generation is None:
+                self._stopping = False
             self._connecting = True
             self._reconnect_attempts = reconnect_attempts
             self._reconnect_delay_seconds = reconnect_delay_seconds
@@ -707,6 +721,7 @@ class MarketDataWebSocket:
         """Stop reconnects, close the SDK socket, and verify transport termination."""
         with self._lock:
             self._stopping = True
+            self._lifecycle_generation += 1
             self._connected = False
             self._connecting = False
             socket = self.websocket
