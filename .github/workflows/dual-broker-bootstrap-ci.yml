@@ -11,7 +11,6 @@ on:
       - "backend/tests/test_provider_readiness.py"
       - "backend/tests/test_provider_readiness_bridge.py"
       - "backend/tests/test_shoonya_market_data.py"
-      - ".github/workflows/dual-broker-bootstrap-ci.yml"
   workflow_dispatch:
 
 permissions:
