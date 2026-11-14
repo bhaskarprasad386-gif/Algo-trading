@@ -18,7 +18,7 @@ class FakeSocket:
         self.closed = False
         self.connected = False
         self.connecting = False
-        FakeSocket.instances.append(self)
+        type(self).instances.append(self)
 
     def connect(self, **kwargs):
         self.connect_calls.append(kwargs)
