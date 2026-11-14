@@ -1374,3 +1374,62 @@ def test_shoonya_dispatch_queue_remains_bounded_during_reconnect_burst():
     assert state["dispatch_queue_depth"] == 3
     assert state["dispatch_drops"] == 7
     assert len(close_calls) == 7
+
+
+
+def test_shoonya_order_updates_from_retired_epoch_are_dropped():
+    delivered = []
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_order_update=delivered.append,
+    )
+    feed._feed_epoch = 4
+    feed._authenticated = True
+    feed._enqueue("order", {"t": "om", "status": "OLD"})
+    feed._feed_epoch = 5
+    feed._authenticated = True
+    feed._stop.set()
+    worker = threading.Thread(target=feed._order_dispatch_loop, daemon=True)
+    worker.start()
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert delivered == []
+    assert feed.snapshot()["stale_dispatch_drops"] == 1
+    assert feed.snapshot()["order_queue_depth"] == 0
+
+
+def test_shoonya_shadow_observer_is_fenced_if_epoch_changes_during_legacy_callback():
+    entered = threading.Event()
+    release = threading.Event()
+    observed = []
+
+    def legacy(_payload):
+        entered.set()
+        assert release.wait(timeout=2.0)
+
+    feed = ShoonyaWebSocket(
+        uid="U1", actid="U1", access_token="token",
+        on_tick=legacy,
+        on_tick_observation=lambda *args: observed.append(args),
+    )
+    feed.subscribe([descriptor()])
+    feed._authenticated = True
+    feed._feed_epoch = 21
+    feed._handle_tick({
+        "t": "tk", "e": "NFO", "tk": "12345", "ts": "NIFTY26NOV25000CE",
+        "lp": "125.50", "bp1": "125.45", "sp1": "125.55",
+        "bq1": "100", "sq1": "120", "ft": "1794551794",
+    })
+    worker = threading.Thread(target=feed._dispatch_loop, daemon=True)
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    feed._reset_feed_epoch()
+    feed._authenticated = True
+    release.set()
+    feed._stop.set()
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert observed == []
+    assert feed.snapshot()["stale_dispatch_drops"] == 1
