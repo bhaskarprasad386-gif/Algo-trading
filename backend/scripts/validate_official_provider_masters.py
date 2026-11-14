@@ -204,15 +204,21 @@ def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[st
         shoonya = {item.key for item in shoonya_report.mappings if item.key.underlying == underlying}
         common = angel & shoonya
         expiries = sorted({key.expiry.isoformat() for key in common if key.expiry is not None})
+        angel_only = sorted(angel - shoonya, key=lambda key: (key.expiry.isoformat() if key.expiry else "", str(key.strike), key.option_type or ""))
+        shoonya_only = sorted(shoonya - angel, key=lambda key: (key.expiry.isoformat() if key.expiry else "", str(key.strike), key.option_type or ""))
         result[underlying] = {
             "angel_contracts": len(angel),
             "shoonya_contracts": len(shoonya),
             "common_contracts": len(common),
-            "angel_only_contracts": len(angel - shoonya),
-            "shoonya_only_contracts": len(shoonya - angel),
+            "angel_only_contracts": len(angel_only),
+            "shoonya_only_contracts": len(shoonya_only),
             "common_option_contracts": sum(1 for key in common if key.instrument_type == "OPTION"),
             "common_future_contracts": sum(1 for key in common if key.instrument_type == "FUTURE"),
+            "angel_expiries": sorted({key.expiry.isoformat() for key in angel if key.expiry is not None}),
+            "shoonya_expiries": sorted({key.expiry.isoformat() for key in shoonya if key.expiry is not None}),
             "common_expiries": expiries,
+            "angel_only_sample": [contract_key_summary(key) for key in angel_only[:10]],
+            "shoonya_only_sample": [contract_key_summary(key) for key in shoonya_only[:10]],
         }
     return result
 
