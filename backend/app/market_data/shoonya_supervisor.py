@@ -33,6 +33,7 @@ class ShoonyaMarketDataSupervisor:
         auth_timeout_seconds: float = 15.0,
         websocket_factory: Any | None = None,
         on_tick_observation: Callable[[MarketDataRecord, int, bool, int], None] | None = None,
+        on_session_observation: Callable[[str, str | None, int, bool, bool, int], None] | None = None,
     ) -> None:
         if not 1 <= int(max_tokens) <= 500:
             raise ValueError("max_tokens must be between 1 and 500")
@@ -55,6 +56,7 @@ class ShoonyaMarketDataSupervisor:
             on_tick=self._observe_tick,
             on_order_update=self._observe_order_update,
             on_state=self._observe_state,
+            on_session_observation=on_session_observation,
             on_tick_observation=on_tick_observation,
             websocket_factory=websocket_factory,
             max_dispatch_queue=max_dispatch_queue,
