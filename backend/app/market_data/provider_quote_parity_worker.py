@@ -111,8 +111,8 @@ class BoundedQuoteParityWorker:
             pair = tuple(sorted((left.provider, right.provider)))
             pair_key = (left.contract, pair[0], pair[1])
             event_identity = tuple(sorted((
-                (left.provider, left.generation, left.exchange_timestamp_ns or 0),
-                (right.provider, right.generation, right.exchange_timestamp_ns or 0),
+                (left.provider, left.generation, left.exchange_timestamp_ns or left.received_monotonic_ns),
+                (right.provider, right.generation, right.exchange_timestamp_ns or right.received_monotonic_ns),
             )))
             event_key = (pair_key[0], event_identity)
             if event_key in self._seen_pair_keys:
