@@ -217,6 +217,24 @@ def index_underlying_coverage(angel_report: Any, shoonya_report: Any) -> dict[st
     return result
 
 
+def bse_index_symbol_diagnostics(report: Any) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {"SENSEX": [], "BANKEX": []}
+    for item in report.mappings:
+        key = item.key
+        for target in result:
+            if target in key.underlying or target in item.trading_symbol.upper():
+                if len(result[target]) < 20:
+                    result[target].append({
+                        "underlying": key.underlying,
+                        "trading_symbol": item.trading_symbol,
+                        "instrument_type": key.instrument_type,
+                        "expiry": key.expiry.isoformat() if key.expiry else None,
+                        "strike": str(key.strike) if key.strike is not None else None,
+                        "token": item.provider.token,
+                    })
+    return result
+
+
 def report_summary(report: Any) -> dict[str, Any]:
     return {
         "broker": report.broker,
@@ -292,6 +310,7 @@ def main() -> int:
             "duplicate_canonical_keys": len(audit.duplicate_canonical_keys),
             "index_underlying_coverage": index_underlying_coverage(angel_report, shoonya_report),
             "underlying_inventory": underlying_inventory(angel_report, shoonya_report),
+            "bse_index_symbol_diagnostics": {\n                "angel_one": bse_index_symbol_diagnostics(angel_report),\n                "shoonya": bse_index_symbol_diagnostics(shoonya_report),\n            },
             "angel_only_sample": [contract_key_summary(key) for key in audit.angel_only[:15]],
             "shoonya_only_sample": [contract_key_summary(key) for key in audit.shoonya_only[:15]],
         },
