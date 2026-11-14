@@ -912,7 +912,8 @@ class CommonWebSocketManager:
                 # replacement; the recovery supervisor serializes the rebuild.
                 with self._lock:
                     is_current = (
-                        self._sockets.get(group) is socket
+                        not self._closed
+                        and self._sockets.get(group) is socket
                         and self._socket_generation.get(group) == generation
                     )
                     if is_current:
@@ -926,28 +927,29 @@ class CommonWebSocketManager:
                         self._last_successful_delivery_at.pop(group, None)
                         self._retire_callback_adapter_locked(group)
                         self._socket_generation.pop(group, None)
-                    self._connect_failures += 1
-                    self._last_connect_failure = {
-                        "group": f"{group.mode}:{group.shard}",
-                        "error_type": type(exc).__name__,
-                        "error": str(exc),
-                        "failed_at_ns": time.time_ns(),
-                        "subscriptions": len(pairs),
-                    }
-                runtime_diagnostics.record(
-                    component="Common Market Feed",
-                    error_type=type(exc).__name__,
-                    message=str(exc),
-                    context={
-                        "event": "socket_connect",
-                        "group": f"{group.mode}:{group.shard}",
-                        "subscriptions": len(pairs),
-                    },
-                )
-                app_logger.warning(
-                    "Common feed socket connect failed group=%s error=%s: %s",
-                    group, type(exc).__name__, exc,
-                )
+                        self._connect_failures += 1
+                        self._last_connect_failure = {
+                            "group": f"{group.mode}:{group.shard}",
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                            "failed_at_ns": time.time_ns(),
+                            "subscriptions": len(pairs),
+                        }
+                if is_current:
+                    runtime_diagnostics.record(
+                        component="Common Market Feed",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        context={
+                            "event": "socket_connect",
+                            "group": f"{group.mode}:{group.shard}",
+                            "subscriptions": len(pairs),
+                        },
+                    )
+                    app_logger.warning(
+                        "Common feed socket connect failed group=%s error=%s: %s",
+                        group, type(exc).__name__, exc,
+                    )
                 if is_current:
                     def _resume_after_connect_failure(failed_group=group):
                         # This callback can run while _reconcile is waiting for
