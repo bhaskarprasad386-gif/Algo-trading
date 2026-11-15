@@ -247,6 +247,7 @@ class MarketDataWebSocket:
                 "transport_thread_alive": bool(transport_thread and transport_thread.is_alive()),
                 "transport_close_timed_out": self._transport_close_timed_out,
                 "initial_subscribe_success": self._initial_subscribe_success,
+                "initial_subscribe_send_success": self._initial_subscribe_success,
                 "subscription_response_state": self._subscription_response_state,
                 "subscription_rejection_count": self._subscription_rejection_count,
                 "last_subscription_response": dict(self._last_subscription_response) if self._last_subscription_response else None,
@@ -453,7 +454,7 @@ class MarketDataWebSocket:
         return socket
 
     def _subscribe_initial_bounded(self, socket: Any) -> None:
-        """Bound the SDK subscribe call made from Angel's on_open callback."""
+        """Bound the local SDK send; this is not broker-side acceptance."""
         completed = Event()
         failure: dict[str, Exception] = {}
         payload = self._token_groups()
