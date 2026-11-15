@@ -60,7 +60,7 @@ const expiryLabel = (value: number | string) => {
 };
 
 export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryType: ExpiryType }) {
-  const symbols = expiryType === "WEEKLY" ? ["NIFTY", "SENSEX"] : ["NIFTY", "SENSEX", "BANKNIFTY"];
+  const symbols = useMemo(() => expiryType === "WEEKLY" ? ["NIFTY", "SENSEX"] : ["NIFTY", "SENSEX", "BANKNIFTY"], [expiryType]);
   const [payload, setPayload] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -96,7 +96,7 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
 
   const eligibleRows = useMemo(() => (payload?.results ?? []).filter(row =>
     row.expiry_type === expiryType && symbols.includes(String(row.underlying).toUpperCase())
-  ), [payload, expiryType, symbols.join("|")]);
+  ), [payload, expiryType, symbols]);
 
   const coverage = useMemo(() => (payload?.live_coverage ?? []).filter(row =>
     row.expiry_type === expiryType && symbols.includes(String(row.underlying).toUpperCase())
