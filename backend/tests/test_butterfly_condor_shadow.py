@@ -27,8 +27,8 @@ def _snapshot(prices, *, option_types=("CE",), depth=False):
         "quotes": {
             "captured_at_ns": now,
             "groups": [{
-                "underlying": "NIFTY", "expiry": 20261126, "atm_strike": 115,
-                "data": rows,
+                "underlying": "NIFTY", "expiry": 20261126, "expiry_type": "WEEKLY",
+                "atm_strike": 115, "data": rows,
             }],
         },
         "depth": {"records": depth_rows},
@@ -116,3 +116,74 @@ def test_invalid_freshness_and_fee_configuration_fail_closed():
         pass
     else:
         raise AssertionError("zero freshness must be rejected")
+
+
+
+def test_expiry_and_index_eligibility_matrix():
+    prices = {100: (5, 6), 110: (20, 21), 120: (5, 6)}
+    cases = [
+        ("NIFTY", "WEEKLY", True),
+        ("NIFTY", "MONTHLY", True),
+        ("SENSEX", "WEEKLY", True),
+        ("SENSEX", "MONTHLY", True),
+        ("BANKNIFTY", "MONTHLY", True),
+        ("BANKNIFTY", "WEEKLY", False),
+        ("FINNIFTY", "WEEKLY", False),
+        ("BANKEX", "MONTHLY", False),
+        ("NIFTY", "UNKNOWN", False),
+    ]
+    for symbol, expiry_type, expected in cases:
+        snapshot = _snapshot(prices)
+        group = snapshot["quotes"]["groups"][0]
+        group["underlying"] = symbol
+        group["expiry_type"] = expiry_type
+        result = evaluate_butterfly_condor_snapshot(snapshot)
+        assert bool(result["results"]) is expected, (symbol, expiry_type, result)
+
+
+def test_minimum_gross_expiry_profit_threshold_is_strictly_greater_than_five():
+    # Long butterfly credit is 2*10 - 7 - 8 = 5 exactly; reject it.
+    exact = _snapshot({100: (6, 7), 110: (10, 11), 120: (7, 8)})
+    exact_result = evaluate_butterfly_condor_snapshot(exact)
+    assert not any(
+        row["strategy"] == "LONG_CREDIT_BUTTERFLY"
+        and row["strikes"] == [100, 110, 120]
+        for row in exact_result["results"]
+    )
+
+    above = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
+    above_result = evaluate_butterfly_condor_snapshot(above)
+    row = _find(above_result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    assert row["minimum_gross_expiry_pnl_per_unit"] > 5
+    assert row["expiry_type"] == "WEEKLY"
+
+
+def test_negative_minimum_profit_threshold_is_rejected():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
+    try:
+        evaluate_butterfly_condor_snapshot(
+            snapshot, min_gross_expiry_profit_per_unit=-0.01
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("negative gross expiry threshold must be rejected")
+
+
+
+def test_expiry_type_missing_or_unknown_fails_closed():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
+    group = snapshot["quotes"]["groups"][0]
+    group.pop("expiry_type")
+    result = evaluate_butterfly_condor_snapshot(
+        snapshot, expiry_type_resolver=lambda _symbol, _expiry: "UNKNOWN"
+    )
+    assert result["result_count"] == 0
+    assert result["rejected_counts"]["INELIGIBLE_INDEX_OR_EXPIRY"] == 1
+
+
+def test_nanosecond_timestamp_integer_precision_is_preserved():
+    from app.scanner.butterfly_condor_shadow import _whole
+
+    timestamp = 1_800_000_000_000_000_123
+    assert _whole(timestamp) == timestamp

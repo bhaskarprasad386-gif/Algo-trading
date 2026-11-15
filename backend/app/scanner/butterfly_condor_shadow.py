@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from itertools import combinations
 from math import isfinite
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
 
@@ -27,8 +28,13 @@ def _number(value: Any) -> float | None:
 
 
 def _whole(value: Any) -> int | None:
-    number = _number(value)
-    if number is None or number < 0 or not number.is_integer():
+    # Preserve nanosecond timestamp precision; float conversion can silently
+    # round 64-bit epoch values and invalidate freshness/skew checks.
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
+        return None
+    if not number.is_finite() or number < 0 or number != number.to_integral_value():
         return None
     return int(number)
 
@@ -169,12 +175,31 @@ def _depth_result(plan, quotes, depth_by_identity, *, underlying, expiry, lot_si
     }
 
 
+def _known_expiry_type(underlying: str, expiry: int) -> str:
+    # Reuse classification already derived from the active Box Spread
+    # instrument master; never infer expiry type from weekday arithmetic.
+    from app.scanner.live_box_spread_routes import classify_expiry_type
+    return str(classify_expiry_type(underlying, expiry) or "UNKNOWN").strip().upper()
+
+
+def _eligible_index_expiry(underlying: str, expiry_type: str) -> bool:
+    symbol = str(underlying or "").strip().upper()
+    kind = str(expiry_type or "").strip().upper()
+    if symbol in {"NIFTY", "SENSEX"}:
+        return kind in {"WEEKLY", "MONTHLY"}
+    if symbol == "BANKNIFTY":
+        return kind == "MONTHLY"
+    return False
+
+
 def evaluate_butterfly_condor_snapshot(
     snapshot: Mapping[str, Any],
     *,
     fees_per_unit: float = 0.0,
     max_age_seconds: float = 5.0,
     max_leg_skew_seconds: float = 2.0,
+    expiry_type_resolver=None,
+    min_gross_expiry_profit_per_unit: float = 5.0,
 ) -> dict[str, Any]:
     """Evaluate four credit structures independently for CE and PE.
 
@@ -190,6 +215,10 @@ def evaluate_butterfly_condor_snapshot(
         raise ValueError("max_age_seconds must be in (0, 60]")
     if max_skew is None or not 0 < max_skew <= 30:
         raise ValueError("max_leg_skew_seconds must be in (0, 30]")
+    minimum_profit = _number(min_gross_expiry_profit_per_unit)
+    if minimum_profit is None or minimum_profit < 0:
+        raise ValueError("min_gross_expiry_profit_per_unit must be finite and non-negative")
+    resolver = expiry_type_resolver or _known_expiry_type
     quotes_snapshot = snapshot.get("quotes") if isinstance(snapshot, Mapping) else None
     if not isinstance(quotes_snapshot, Mapping):
         raise ValueError("shared market snapshot must contain quotes")
@@ -218,6 +247,15 @@ def evaluate_butterfly_condor_snapshot(
         rows = group.get("data") or []
         if not underlying or expiry is None or atm is None:
             rejected["INVALID_GROUP"] += 1
+            continue
+        try:
+            expiry_type = str(
+                group.get("expiry_type") or resolver(underlying, expiry) or "UNKNOWN"
+            ).strip().upper()
+        except Exception:
+            expiry_type = "UNKNOWN"
+        if not _eligible_index_expiry(underlying, expiry_type):
+            rejected["INELIGIBLE_INDEX_OR_EXPIRY"] = rejected.get("INELIGIBLE_INDEX_OR_EXPIRY", 0) + 1
             continue
         for option_type in ("CE", "PE"):
             by_strike = {}
@@ -253,6 +291,9 @@ def evaluate_butterfly_condor_snapshot(
                     if credit <= 0:
                         continue
                     minimum_expiry_pnl = credit if direction == "LONG" else credit - step
+                    # Strict threshold: exactly 5.00 points is not eligible.
+                    if minimum_expiry_pnl <= minimum_profit:
+                        continue
                     l1_lots = _l1_capacity(plan, leg_quotes, lot_size)
                     depth = _depth_result(
                         plan, leg_quotes, depth_by_identity, underlying=underlying,
@@ -265,6 +306,7 @@ def evaluate_butterfly_condor_snapshot(
                         "option_type": option_type,
                         "underlying": underlying,
                         "expiry": expiry,
+                        "expiry_type": expiry_type,
                         "strikes": list(strikes),
                         "step": step,
                         "lot_size": lot_size,
@@ -297,6 +339,14 @@ def evaluate_butterfly_condor_snapshot(
         "order_routing_enabled": False,
         "result_count": len(results),
         "rejected_counts": rejected,
+        "eligibility": {
+            "allowed_expiries": {
+                "NIFTY": ["WEEKLY", "MONTHLY"],
+                "SENSEX": ["WEEKLY", "MONTHLY"],
+                "BANKNIFTY": ["MONTHLY"],
+            },
+            "minimum_gross_expiry_profit_per_unit_exclusive": minimum_profit,
+        },
         "results": results,
     }
 
