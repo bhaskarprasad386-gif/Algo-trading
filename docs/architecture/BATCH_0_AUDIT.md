@@ -101,7 +101,6 @@ A migration needs explicit account ownership, account-scoped order uniqueness, p
 - The merged migration runner now serializes PostgreSQL startup migrations with a session-level advisory lock on the same connection used for DDL; isolated PostgreSQL tests cover two concurrent callers and failure/rollback/retry.
 - This lock does not replace a versioned migration ledger, a dedicated migration deployment stage, readiness gating, or a verified backup/restore process.
 
-- `main.py` runs schema migrations and `Base.metadata.create_all` during module import.
 - Lifespan recovery marks the persisted single-owner broker connection disconnected after restart; it does not restore broker sessions.
 - Shared page-push is a bounded, process-local fanout with explicit page channels and sequence numbers.
 - Butterfly/Condor page updates are derived from existing Box scanner callbacks; the page-push layer itself owns no market-data socket or subscription.
