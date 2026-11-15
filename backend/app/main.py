@@ -66,7 +66,7 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, set_expiry_types as set_live_box_expiry_types
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
@@ -78,7 +78,7 @@ from app.models.iv_signal_event import IVSignalEvent
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
-from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, set_expiry_types as set_live_box_websocket_expiry_types
+from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, _page_snapshot as box_opportunity_page_snapshot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
 from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
 from app.intelligence.routes import router as intelligence_router
@@ -329,6 +329,23 @@ configure_live_box_spread_websocket_depth(
         if live_box_spread_runner is not None else {}
     )
 )
+
+
+def _box_page_push_snapshot():
+    """Compose reconnect state from existing Box runner snapshots only."""
+    try:
+        payload = box_opportunity_page_snapshot()
+    except Exception:
+        payload = {"opportunities": []}
+    try:
+        spot_payload = get_live_box_index_spot_snapshot()
+        payload["index_spots"] = spot_payload.get("data", []) if isinstance(spot_payload, dict) else []
+    except Exception:
+        payload["index_spots"] = []
+    return payload
+
+
+configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 
 async def _iv_scanner_recovery_loop() -> None:
     """Retry a persisted IV Scanner ON state after transient startup failures.
@@ -1495,6 +1512,13 @@ def _update_live_box_spread_results(results: tuple) -> None:
         ):
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
+    try:
+        spot_payload = get_live_box_index_spot_snapshot()
+        publish_page_update("box-spread", "PATCH", {
+            "index_spots": spot_payload.get("data", []) if isinstance(spot_payload, dict) else []
+        })
+    except Exception:
+        pass
     _publish_credit_butterfly_condor_pages()
     if selected_results:
         publish_live_box_spread_opportunities(selected_results)
