@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timezone
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.scanner.page_push_websocket import configure_snapshot_provider, publish_page_update
 
 router = APIRouter(tags=["box-spread"])
 _subscribers = set()
@@ -176,6 +177,7 @@ def publish(results):
     message = {"type": "opportunities", "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "data": rows}
 
     def deliver():
+        publish_page_update("box-spread", "PATCH", {"opportunities": rows})
         for queue in tuple(_subscribers):
             if queue.full():
                 try:
@@ -218,3 +220,23 @@ async def live_opportunities(websocket: WebSocket):
         _subscribers.discard(queue)
         if not _subscribers:
             _loop = None
+
+
+
+def _page_snapshot():
+    """Return the latest safe Box opportunity rows for page-push reconnects."""
+    rows = []
+    if callable(_latest_getter):
+        try:
+            for item in (_latest_getter() or ()):
+                row = _row(item)
+                if row is not None and _passes_edge_threshold(row):
+                    rows.append(row)
+        except Exception:
+            return {"opportunities": []}
+    return {"opportunities": rows}
+
+
+# The shared page gateway reads this getter on subscribe/resync. It does not
+# start a runner or broker feed and uses the same quote validation as this WS.
+configure_snapshot_provider("box-spread", _page_snapshot)
