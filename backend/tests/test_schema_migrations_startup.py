@@ -57,10 +57,11 @@ def migration_engine(request):
 def _seed_minimal_legacy_schema(engine):
     # A legacy install has a users table, but can have only a subset of the
     # tables/columns that newer application versions expect.
+    generated_id_type = "SERIAL" if engine.dialect.name == "postgresql" else "INTEGER"
     with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY)"))
-        connection.execute(text("CREATE TABLE orders (id INTEGER PRIMARY KEY)"))
-        connection.execute(text("CREATE TABLE positions (id INTEGER PRIMARY KEY)"))
+        connection.execute(text(f"CREATE TABLE users (id {generated_id_type} PRIMARY KEY)"))
+        connection.execute(text(f"CREATE TABLE orders (id {generated_id_type} PRIMARY KEY)"))
+        connection.execute(text(f"CREATE TABLE positions (id {generated_id_type} PRIMARY KEY)"))
 
 
 def test_fresh_database_is_left_for_orm_create_all(migration_engine, monkeypatch):
