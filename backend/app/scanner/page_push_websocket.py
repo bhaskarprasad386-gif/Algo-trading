@@ -52,6 +52,20 @@ def _frame(page: str, event: str, data: dict[str, Any] | None = None) -> dict[st
     }
 
 
+def _snapshot_frame(page: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A resync snapshot aligns to the current sequence without advancing it."""
+    if page not in _sequences:
+        _sequences[page] = 1
+    return {
+        "type": "page_update",
+        "page": page,
+        "event": "SNAPSHOT",
+        "sequence": _sequences[page],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "data": data or {},
+    }
+
+
 def publish_page_update(page: str, event: str, data: dict[str, Any] | None = None) -> None:
     """Publish from any thread; slow clients are bounded and forced to resync."""
     if page not in PAGE_CHANNELS or event not in {"PATCH", "REMOVE", "SNAPSHOT"}:
@@ -174,7 +188,7 @@ async def page_updates(websocket: WebSocket) -> None:
                     snapshot = provider() if callable(provider) else {}
                 except Exception:
                     snapshot = {}
-                await websocket.send_json(_frame(page, "SNAPSHOT", snapshot if isinstance(snapshot, dict) else {}))
+                await websocket.send_json(_snapshot_frame(page, snapshot if isinstance(snapshot, dict) else {}))
     except WebSocketDisconnect:
         pass
     finally:
