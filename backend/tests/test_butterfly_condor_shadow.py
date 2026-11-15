@@ -306,3 +306,57 @@ def test_l1_depth_comparison_is_not_comparable_when_l1_size_is_smaller():
     assert row["l1_vs_depth_vwap"]["status"] == "L1_CAPACITY_BELOW_DEPTH"
     assert row["l1_vs_depth_vwap"]["l1_executable_lots"] == 5
     assert row["l1_vs_depth_vwap"]["depth_executable_lots"] == 10
+
+
+
+def test_burst_evaluation_is_deterministic_and_does_not_mutate_shared_snapshot():
+    from copy import deepcopy
+
+    base = _snapshot(
+        {100: (5, 6), 110: (20, 21), 120: (5, 6)},
+        option_types=("CE", "PE"),
+    )
+    # Simulate a busy existing Box Spread snapshot with many independent
+    # underlying/expiry groups while keeping the same selected-contract shape.
+    groups = []
+    for index in range(24):
+        group = deepcopy(base["quotes"]["groups"][0])
+        group["expiry"] = 20261126 + index
+        groups.append(group)
+    snapshot = {
+        "quotes": {"captured_at_ns": base["quotes"]["captured_at_ns"], "groups": groups},
+        "depth": {"records": []},
+    }
+    before = deepcopy(snapshot)
+
+    first = evaluate_butterfly_condor_snapshot(snapshot)
+    second = evaluate_butterfly_condor_snapshot(snapshot)
+
+    assert snapshot == before
+    assert first["result_count"] == second["result_count"]
+    assert first["diagnostics"] == second["diagnostics"]
+    assert first["live_coverage"] == second["live_coverage"]
+    assert first["result_count"] > 0
+
+
+def test_parallel_shadow_evaluations_are_isolated_under_concurrent_load():
+    from concurrent.futures import ThreadPoolExecutor
+
+    snapshot = _snapshot(
+        {100: (5, 6), 110: (20, 21), 120: (5, 6)},
+        option_types=("CE", "PE"),
+        depth=True,
+    )
+    expected = evaluate_butterfly_condor_snapshot(snapshot)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(
+            lambda _index: evaluate_butterfly_condor_snapshot(snapshot),
+            range(32),
+        ))
+
+    assert len(results) == 32
+    assert all(result["result_count"] == expected["result_count"] for result in results)
+    assert all(result["diagnostics"] == expected["diagnostics"] for result in results)
+    assert all(result["live_coverage"] == expected["live_coverage"] for result in results)
+    assert all(result["results"] == expected["results"] for result in results)
