@@ -25,6 +25,7 @@ def run_schema_migrations() -> None:
     boolean_true = "TRUE" if engine.dialect.name == "postgresql" else "1"
     boolean_false = "FALSE" if engine.dialect.name == "postgresql" else "0"
     generated_id_type = "SERIAL" if engine.dialect.name == "postgresql" else "INTEGER"
+    datetime_type = "TIMESTAMP" if engine.dialect.name == "postgresql" else "{datetime_type}"
     additions = {
         "email": "VARCHAR(320)",
         "mobile_number": "VARCHAR(20)",
@@ -64,8 +65,8 @@ def run_schema_migrations() -> None:
                     telegram_enabled BOOLEAN NOT NULL DEFAULT {boolean_false},
                     telegram_chat_id VARCHAR(128) NOT NULL DEFAULT '',
                     email_enabled BOOLEAN NOT NULL DEFAULT {boolean_false},
-                    created_at DATETIME NOT NULL,
-                    updated_at DATETIME NOT NULL
+                    created_at {datetime_type} NOT NULL,
+                    updated_at {datetime_type} NOT NULL
                 )
             """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_alert_contacts_user ON alert_contacts (user_id, id)"))
@@ -98,7 +99,7 @@ def run_schema_migrations() -> None:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN box_spread_auto_lots INTEGER DEFAULT 1"))
             if "initial_virtual_balance" not in account_columns:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN initial_virtual_balance FLOAT DEFAULT 10000000.0"))
-                connection.execute(text("""
+                connection.execute(text(f"""
                     UPDATE trading_accounts
                     SET initial_virtual_balance =
                         virtual_balance
@@ -107,7 +108,7 @@ def run_schema_migrations() -> None:
                             SELECT SUM(ABS(p.quantity) * p.average_price)
                             FROM positions p
                             WHERE p.user_id = trading_accounts.user_id
-                              AND p.is_paper = 1
+                              AND p.is_paper = {boolean_true}
                               AND p.quantity != 0
                         ), 0.0)
                 """))
@@ -153,8 +154,8 @@ def run_schema_migrations() -> None:
                     message TEXT,
                     result_json TEXT,
                     config_json TEXT,
-                    created_at DATETIME,
-                    updated_at DATETIME
+                    created_at {datetime_type},
+                    updated_at {datetime_type}
                 )
             """))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_status ON backtest_jobs (status)"))
@@ -173,7 +174,7 @@ def run_schema_migrations() -> None:
                     sequence INTEGER NOT NULL,
                     symbol VARCHAR(128) NOT NULL,
                     result_json TEXT NOT NULL,
-                    created_at DATETIME
+                    created_at {datetime_type}
                 )
             """))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_backtest_job_result_chunk ON backtest_job_result_chunks (job_id, sequence)"))
@@ -185,9 +186,9 @@ def run_schema_migrations() -> None:
                     id {generated_id_type} PRIMARY KEY,
                     user_id INTEGER NOT NULL,
                     token_hash VARCHAR(64) NOT NULL UNIQUE,
-                    expires_at DATETIME NOT NULL,
-                    used_at DATETIME,
-                    created_at DATETIME NOT NULL
+                    expires_at {datetime_type} NOT NULL,
+                    used_at {datetime_type},
+                    created_at {datetime_type} NOT NULL
                 )
             """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user ON password_reset_tokens (user_id)"))
@@ -262,7 +263,7 @@ def run_schema_migrations() -> None:
             connection.execute(text(f"""
                 CREATE TABLE live_synthetic_alert_history (
                     id {generated_id_type} PRIMARY KEY,
-                    observed_at DATETIME NOT NULL,
+                    observed_at {datetime_type} NOT NULL,
                     timestamp_ns BIGINT NOT NULL,
                     symbol VARCHAR(128) NOT NULL,
                     instrument_class VARCHAR(16) NOT NULL,
