@@ -1,7 +1,7 @@
 # Batch 0 — PostgreSQL Startup Migration Validation Audit
 
-**Status:** Source audit and test-plan baseline only. No migration was executed, no production database was queried, and no runtime code or CI workflow was changed.
-**Audited base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`.
+**Status:** Initial source audit superseded in part by merged PR #505. No production database was queried or migrated.
+**Audited base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`; hardening commit `196098587d1e26cc24ff6c29f0fc684da0e73a37`.
 **Related PR:** #504 — Batch 0 architecture audit.
 
 ## 1. Verified startup ordering
@@ -30,7 +30,7 @@ The transaction is useful for grouping the migration statements, but it does not
 
 ## 3. Concurrent-startup risk (requires a reproducer)
 
-A concrete race exists around inspection-then-alter operations:
+The original implementation had a concrete race around inspection-then-alter operations. PR #505 now serializes PostgreSQL migration calls before schema inspection; the original race scenario is covered by a two-thread PostgreSQL regression test.
 
 1. Process A and process B both inspect the schema and observe a column is absent.
 2. A adds the column and commits.
@@ -39,7 +39,7 @@ A concrete race exists around inspection-then-alter operations:
 
 Similar races can affect create-table/index and data-backfill paths. This is a risk inferred from the inspected control flow, not a claim that a production race has been observed.
 
-No PostgreSQL advisory-lock call was found by repository code search for `pg_advisory_lock` / `schema_migrations`; this search is not proof against dynamic SQL or external orchestration. The source module itself contains no visible lock acquisition.
+The merged implementation uses `pg_advisory_lock(74192831, 1)` and releases it in a `finally` block on the same SQLAlchemy connection. This is a PostgreSQL session-level lock, not a transaction-scoped lock. The test suite exercises two concurrent callers against the same isolated PostgreSQL schema.
 
 ## 4. CI coverage boundary
 
@@ -80,4 +80,4 @@ Test assertions should include schema introspection, row counts, stable key chec
 
 ## 7. Decision
 
-**PostgreSQL full-startup migration compatibility and concurrent-startup safety remain unverified.** The next implementation should be a separate, reviewable migration-hardening change with isolated PostgreSQL tests. This audit does not authorize production DDL, deployment, service restart, or Live enablement.
+**Concurrent PostgreSQL startup and injected DDL failure/rollback/retry are now covered by isolated tests in PR #505, and Backend plus Integration CI passed for head `291356de8a5ad1899fa8972d3740e88121bcd89e`.** Full production-schema rehearsal, backup/restore, explicit migration revision ledger, and decoupling schema changes from module import remain unverified. No production database migration was run as part of this audit.
