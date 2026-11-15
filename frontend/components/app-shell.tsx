@@ -13,6 +13,8 @@ const nav = [
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
+  { href: "/strategies/credit-butterfly-condor/weekly", label: "Credit Weekly", icon: Activity },
+  { href: "/strategies/credit-butterfly-condor/monthly", label: "Credit Monthly", icon: Activity },
   { href: "/strategies/box-spread-paper", label: "Box Paper Trading", icon: ShieldCheck },
   { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
   { href: "/strategies/weekly-swing", label: "Weekly Swing", icon: ChartNoAxesCombined },
