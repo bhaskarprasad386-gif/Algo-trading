@@ -91,15 +91,16 @@ def test_ce_and_pe_are_calculated_independently():
 
 
 def test_scope_is_limited_to_existing_atm_strike_radius():
-    snapshot = _snapshot({
-        50: (5, 6), 60: (20, 21), 70: (5, 6),
-        80: (5, 6), 90: (20, 21), 100: (5, 6),
-    })
-    # ATM=115 and INDEX radius=15 listed strikes on either side. All six
-    # supplied strikes are within this deliberately small existing chain.
+    strikes = list(range(10, 401, 10))
+    prices = {strike: (10, 11) for strike in strikes}
+    prices.update({180: (2, 3), 190: (30, 31), 200: (30, 31), 210: (2, 3)})
+    snapshot = _snapshot(prices)
+    snapshot["quotes"]["groups"][0]["atm_strike"] = 205
     result = evaluate_butterfly_condor_snapshot(snapshot)
-    assert all(len(row["strikes"]) in (3, 4) for row in result["results"])
-
+    assert result["result_count"] > 0
+    # Only the nearest 15 actual listed strikes on either side of ATM
+    # are eligible: 60..200 below and 210..350 above.
+    assert all(60 <= strike <= 350 for row in result["results"] for strike in row["strikes"])
 
 def test_invalid_freshness_and_fee_configuration_fail_closed():
     snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
