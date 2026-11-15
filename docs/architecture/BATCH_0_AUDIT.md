@@ -163,7 +163,8 @@ Before feature implementation, establish tests for:
 - Exact-symbol repository search found the generic `DualExecutionEngine`, in-memory idempotency/confirmation/safety helpers, watchdog, and fill-accounting helpers referenced only by their own modules and tests; no production order orchestration caller was found. Dynamic/reflection/external runtime use is not ruled out.
 - Broker trading-adapter readiness and market-data separation are now documented in `docs/architecture/BATCH_0_BROKER_ADAPTER_AUDIT.md`: Angel One is authentication-only (place/cancel deliberately disabled); Fyers, Shoonya, mStock, and Zerodha have no registered trading adapter. Shoonya's existing WebSocket is market-data/shadow diagnostics, not order execution.
 - Android navigation, auth storage, polling, manifest, and release workflows are now documented in `docs/architecture/BATCH_0_ANDROID_REMOTE_UI_AUDIT.md`. Current app has strategy metadata APIs but not a signed remote page renderer; release defaults still point to Render; owner token remains memory-only.
-- Still required: capture runtime scanner/API/WebSocket baselines and verify VPS deployment observability/state.
+- VPS/frontend hosting and deployment recovery findings are now documented in `docs/architecture/BATCH_0_HOSTING_DEPLOYMENT_AUDIT.md`: current VPS workflow deploys the backend only; no separate Next.js VPS service is defined; timed-out SSH deployment still needs read-only state reconciliation; Vercel must remain available.
+- Still required: capture runtime scanner/API/WebSocket baselines and perform the read-only VPS state reconciliation before any deployment retry.
 - Open a separate implementation PR only after these remaining runtime and integration audits are complete and reviewed.
 
 ## Safety decision
