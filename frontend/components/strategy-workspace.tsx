@@ -937,7 +937,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (slug !== "box-spread") { setIndexSpotRows([]); return; }
     const spots = pagePushData?.index_spots;
-    if (Array.isArray(spots)) setIndexSpotRows(spots as Row[]);
+    if (Array.isArray(spots)) setIndexSpotRows(spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>);
   }, [slug, pagePushData]);
 
   useEffect(() => {
