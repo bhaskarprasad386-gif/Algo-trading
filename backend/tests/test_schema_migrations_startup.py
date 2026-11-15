@@ -102,3 +102,28 @@ def test_legacy_schema_upgrade_is_repeatable(migration_engine, monkeypatch):
     schema_migrations.run_schema_migrations()
 
     assert "iv_option_observations" in inspect(migration_engine).get_table_names()
+
+
+
+def test_created_legacy_tables_generate_primary_keys(migration_engine, monkeypatch):
+    """Dialect-specific generated IDs must work on both supported test engines."""
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+
+    schema_migrations.run_schema_migrations()
+
+    with migration_engine.begin() as connection:
+        generated_id = connection.execute(
+            text(
+                """
+                INSERT INTO backtest_jobs (
+                    job_id, symbol, contract_month, requested_days
+                ) VALUES (
+                    'migration-id-check', 'NIFTY', '2026-11', 1
+                ) RETURNING id
+                """
+            )
+        ).scalar_one()
+
+    assert isinstance(generated_id, int)
+    assert generated_id > 0
