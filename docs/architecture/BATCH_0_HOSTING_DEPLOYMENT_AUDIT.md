@@ -1,7 +1,7 @@
 # Batch 0 — VPS, Frontend Hosting, and Deployment Recovery Audit
 
-**Status:** Workflow/source audit only. No VPS command, deployment, restart, DNS change, or workflow dispatch was performed.  
-**Audited base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`.
+**Status:** Workflow/source audit plus GitHub Actions log review. No direct VPS command, manual deployment, service restart, or DNS change was performed.  
+**Audited base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`; post-merge deployment attempt reviewed for `196098587d1e26cc24ff6c29f0fc684da0e73a37`.
 
 ## 1. Current hosting/deployment shape
 
@@ -21,7 +21,7 @@ Positive controls:
 - Pre/post health probes, service status, runtime diagnostics, and a Box spool path check are present in the deploy script.
 
 Limitations:
-- Deployment work runs synchronously inside one SSH session. The prior run reached SSH auth preflight but later timed out without a visible `REMOTE_DEPLOY_SCRIPT_STARTED` marker. The remote outcome therefore remains unknown from that run's logs.
+- Deployment work runs synchronously inside one SSH session. Post-merge VPS Deploy run `43727848249` reached `SSH_AUTH_PREFLIGHT_OK` (public-key authentication succeeded), then the synchronous SSH session timed out with `Timeout, server not responding` after approximately ten minutes. The log contains no `REMOTE_DEPLOY_SCRIPT_STARTED` marker, `PRE_FETCH_DISK`, `DEPLOYED_COMMIT`, or bootstrap output. This is an ambiguous remote outcome: it does not establish whether the remote shell received or began the deployment script, nor whether the VPS state changed.
 - The marker is written only when the remote script starts; absence of the marker is useful evidence but not a definitive proof about remote state if logging itself was interrupted.
 - There is no durable remote deployment job record with a lock, immutable commit, status, timestamps, and log path that can be queried after SSH disconnect.
 - GitHub concurrency serializes workflow runs but is not a remote host lock protecting against manual SSH deployments or another automation system.
@@ -32,7 +32,7 @@ Limitations:
 
 - `.github/workflows/vps-read-only-diagnostic.yml` is manual-only and runs read-only DNS, service state, local health, market-data health, scanner snapshots, and recent journal checks.
 - `.github/workflows/vps-health-probe.yml` runs scheduled/manual checks and reports app directory, current Git commit/worktree state, API runtime health, scanner snapshots, and Box Spread diagnostics.
-- Neither workflow was dispatched during this audit. No claim is made about the current VPS service state, current deployed commit, memory/disk state, or API health.
+- Neither read-only diagnostic workflow was run. No claim is made about the current VPS service state, current deployed commit, memory/disk state, or API health.
 
 Before retrying any deployment, run a read-only check that explicitly records:
 1. host identity and current time;
@@ -81,4 +81,4 @@ Implement this as a separate reviewed deployment change, not as an incidental sc
 
 ## 7. Safety decision
 
-No VPS state was queried in this audit and no remote workflow was run. No deployment, service restart, frontend hosting change, Cloudflare/DNS change, or Vercel removal occurred. Do not retry the previously timed-out deployment blindly. Keep Vercel and existing Android Render URL unchanged until a complete replacement path is verified.
+The post-merge GitHub VPS Deploy workflow attempted an SSH session and failed after authentication; the remote execution outcome remains unknown. No separate read-only VPS reconciliation was completed, and no manual deployment/restart, frontend hosting change, Cloudflare/DNS change, or Vercel removal was performed by this audit. Do not retry the deployment blindly. Keep Vercel and the existing Android Render URL unchanged until the VPS state is reconciled and a complete replacement path is verified.
