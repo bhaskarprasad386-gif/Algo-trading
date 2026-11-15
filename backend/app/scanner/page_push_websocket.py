@@ -97,10 +97,8 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     except ValueError:
         return False
     host = (parsed.hostname or "").lower()
-    return (
-        parsed.scheme in {"http", "https"}
-        and host == "localhost"
-        or host == "127.0.0.1"
+    return parsed.scheme in {"http", "https"} and (
+        host in {"localhost", "127.0.0.1"}
         or host.endswith(".vercel.app")
     )
 
