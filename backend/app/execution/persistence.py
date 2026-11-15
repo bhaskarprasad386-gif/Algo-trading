@@ -1,15 +1,17 @@
 """Database-backed execution lifecycle; no broker or scanner side effects."""
 from __future__ import annotations
 
+import hashlib
 import json
 import time
+from decimal import Decimal
 from dataclasses import dataclass
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide, validate_basket_legs
-from app.models.execution_intent import ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
+from app.models.execution_intent import ExecutionFillRecord, ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
 
 
 class IdempotencyConflict(ValueError):
@@ -137,3 +139,129 @@ def transition_intent(db: Session, *, account_id: str, intent_id: str,
             .options(selectinload(ExecutionIntentRecord.legs))
             .where(ExecutionIntentRecord.id == record.id)).scalar_one()
         return _snapshot(refreshed)
+
+
+def record_fill(
+    db: Session, *, account_id: str, intent_id: str, leg_id: str,
+    broker: str, broker_fill_id: str, broker_order_id: str,
+    quantity: int, fill_price: Decimal | str | float, occurred_at_ns: int,
+):
+    """Record one immutable broker fill and update leg/intent progress atomically.
+
+    Replayed identical broker fill IDs are idempotent. Reuse of a fill ID with
+    different execution data is rejected. This records broker-reported fills;
+    it does not submit, cancel, or reconcile orders with a broker.
+    """
+    broker = broker.strip().lower()
+    broker_fill_id = broker_fill_id.strip()
+    broker_order_id = broker_order_id.strip()
+    price = Decimal(str(fill_price))
+    if not account_id.strip() or not intent_id.strip() or not leg_id.strip():
+        raise ValueError("account_id, intent_id and leg_id are required")
+    if not broker or not broker_fill_id or not broker_order_id:
+        raise ValueError("broker and broker execution identifiers are required")
+    if quantity <= 0 or not price.is_finite() or price <= 0 or occurred_at_ns <= 0:
+        raise ValueError("fill quantity, price and timestamp must be positive")
+    canonical = json.dumps({
+        "intent_id": intent_id, "leg_id": leg_id, "broker": broker,
+        "broker_order_id": broker_order_id, "quantity": quantity,
+        "fill_price": format(price, "f"), "occurred_at_ns": occurred_at_ns,
+    }, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    with db.begin():
+        duplicate = db.execute(select(ExecutionFillRecord).where(
+            ExecutionFillRecord.account_id == account_id,
+            ExecutionFillRecord.broker == broker,
+            ExecutionFillRecord.broker_fill_id == broker_fill_id,
+        )).scalar_one_or_none()
+        if duplicate is not None:
+            if duplicate.payload_hash != digest:
+                raise IdempotencyConflict("broker fill ID was replayed with different execution data")
+            return {"created": False, "filled_quantity": None, "intent_status": None}
+
+        intent = db.execute(select(ExecutionIntentRecord).where(
+            ExecutionIntentRecord.account_id == account_id,
+            ExecutionIntentRecord.intent_id == intent_id,
+        ).with_for_update()).scalar_one_or_none()
+        if intent is None:
+            raise LookupError("execution intent not found for account")
+        leg = db.execute(select(ExecutionLegRecord).where(
+            ExecutionLegRecord.intent_record_id == intent.id,
+            ExecutionLegRecord.leg_id == leg_id,
+        ).with_for_update()).scalar_one_or_none()
+        if leg is None:
+            raise LookupError("execution leg not found for intent")
+        if intent.status not in {
+            IntentStatus.SUBMITTING.value, IntentStatus.WORKING.value,
+            IntentStatus.PARTIALLY_FILLED.value,
+            IntentStatus.RECONCILIATION_REQUIRED.value,
+        }:
+            raise ValueError(f"fills are not accepted while intent is {intent.status}")
+        if leg.filled_quantity + quantity > leg.quantity:
+            raise ValueError("broker fill would exceed requested leg quantity")
+
+        db.add(ExecutionFillRecord(
+            intent_record_id=intent.id, leg_record_id=leg.id, account_id=account_id,
+            broker=broker, broker_fill_id=broker_fill_id, broker_order_id=broker_order_id,
+            quantity=quantity, fill_price=price, occurred_at_ns=occurred_at_ns,
+            payload_hash=digest,
+        ))
+        leg.filled_quantity += quantity
+        leg.status = "FILLED" if leg.filled_quantity == leg.quantity else "PARTIALLY_FILLED"
+
+        legs = db.execute(select(ExecutionLegRecord).where(
+            ExecutionLegRecord.intent_record_id == intent.id,
+        ).with_for_update()).scalars().all()
+        all_filled = all(x.filled_quantity == x.quantity for x in legs)
+        any_filled = any(x.filled_quantity > 0 for x in legs)
+
+        current = IntentStatus(intent.status)
+        transitions = []
+        if current is IntentStatus.SUBMITTING:
+            transitions.append((IntentStatus.SUBMITTING, IntentStatus.WORKING))
+            current = IntentStatus.WORKING
+        if all_filled:
+            target = IntentStatus.FILLED
+        elif any_filled:
+            target = IntentStatus.PARTIALLY_FILLED
+        else:
+            target = current
+        if target is not current:
+            # A late fill after restart may only be applied after an explicit
+            # reconciliation gate; retain the same gate for state progression.
+            if current is IntentStatus.RECONCILIATION_REQUIRED:
+                raise ValueError("reconciliation must resolve intent before fill progress is applied")
+            transitions.append((current, target))
+
+        now = occurred_at_ns
+        sequence = intent.version
+        for from_status, to_status in transitions:
+            if to_status not in {
+                IntentStatus.WORKING, IntentStatus.PARTIALLY_FILLED, IntentStatus.FILLED,
+            }:
+                raise ValueError("unsupported fill-driven intent transition")
+            db.add(ExecutionIntentEventRecord(
+                intent_record_id=intent.id, sequence=sequence + 1,
+                from_status=from_status.value, to_status=to_status.value,
+                occurred_at_ns=now,
+                details_json=json.dumps({
+                    "event": "BROKER_FILL_RECORDED", "broker": broker,
+                    "broker_fill_id": broker_fill_id, "leg_id": leg_id,
+                    "fill_quantity": quantity,
+                }, sort_keys=True, separators=(",", ":")),
+            ))
+            sequence += 1
+        if transitions:
+            intent.status = transitions[-1][1].value
+            intent.version = sequence
+            intent.updated_at_ns = now
+        db.flush()
+        return {
+            "created": True,
+            "filled_quantity": leg.filled_quantity,
+            "leg_quantity": leg.quantity,
+            "leg_status": leg.status,
+            "intent_status": intent.status,
+            "version": intent.version,
+        }
