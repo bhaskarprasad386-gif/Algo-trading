@@ -6,26 +6,44 @@ from app.core.database import engine
 
 
 def run_schema_migrations() -> None:
-    """Apply small backward-compatible schema additions for existing installs."""
-    inspector = inspect(engine)
+    """Serialize startup migrations across PostgreSQL application workers."""
+    with engine.connect() as connection:
+        is_postgresql = connection.dialect.name == "postgresql"
+        if is_postgresql:
+            connection.execute(text("SELECT pg_advisory_lock(74192831, 1)"))
+            connection.commit()
+        try:
+            _run_schema_migrations(connection)
+        finally:
+            if is_postgresql:
+                connection.execute(text("SELECT pg_advisory_unlock(74192831, 1)"))
+                connection.commit()
+
+
+def _run_schema_migrations(connection) -> None:
+    """Apply backward-compatible schema additions using the locked connection."""
+    inspector = inspect(connection)
     tables = set(inspector.get_table_names())
+    connection.commit()
     if "users" not in tables:
         return
 
     if "box_spread_paper_trades" in tables:
         paper_columns = {column["name"] for column in inspector.get_columns("box_spread_paper_trades")}
-        with engine.begin() as connection:
+        connection.commit()
+        with connection.begin():
             if "entry_spot_price" not in paper_columns:
                 connection.execute(text("ALTER TABLE box_spread_paper_trades ADD COLUMN entry_spot_price NUMERIC(18, 4)"))
             if "alert_edge" not in paper_columns:
                 connection.execute(text("ALTER TABLE box_spread_paper_trades ADD COLUMN alert_edge NUMERIC(18, 6)"))
 
     columns = {column["name"] for column in inspector.get_columns("users")}
+    connection.commit()
     user_columns = columns
-    boolean_true = "TRUE" if engine.dialect.name == "postgresql" else "1"
-    boolean_false = "FALSE" if engine.dialect.name == "postgresql" else "0"
-    generated_id_type = "SERIAL" if engine.dialect.name == "postgresql" else "INTEGER"
-    datetime_type = "TIMESTAMP" if engine.dialect.name == "postgresql" else "DATETIME"
+    boolean_true = "TRUE" if connection.dialect.name == "postgresql" else "1"
+    boolean_false = "FALSE" if connection.dialect.name == "postgresql" else "0"
+    generated_id_type = "SERIAL" if connection.dialect.name == "postgresql" else "INTEGER"
+    datetime_type = "TIMESTAMP" if connection.dialect.name == "postgresql" else "DATETIME"
     additions = {
         "email": "VARCHAR(320)",
         "mobile_number": "VARCHAR(20)",
@@ -34,7 +52,7 @@ def run_schema_migrations() -> None:
         "is_active": f"BOOLEAN DEFAULT {boolean_true}",
     }
 
-    with engine.begin() as connection:
+    with connection.begin():
         for name, definition in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
