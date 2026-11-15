@@ -262,7 +262,17 @@ def evaluate_butterfly_condor_snapshot(
             depth_by_identity[key] = row
 
     results = []
-    rejected = {"STALE_OR_INVALID_QUOTE": 0, "INVALID_GROUP": 0}
+    rejected = {
+        "STALE_OR_INVALID_QUOTE": 0, "STALE_QUOTE": 0,
+        "INVALID_QUOTE": 0, "INVALID_GROUP": 0,
+    }
+    diagnostics = {
+        "valid_quotes": 0, "candidate_structures": 0,
+        "lot_size_mismatch": 0, "cross_leg_quote_timestamp_skew": 0,
+        "non_positive_credit": 0, "below_minimum_expiry_profit": 0,
+        "depth_ready": 0, "depth_incomplete": 0,
+        "depth_incomplete_reasons": {},
+    }
     for group in groups:
         if not isinstance(group, Mapping):
             rejected["INVALID_GROUP"] += 1
@@ -293,20 +303,36 @@ def evaluate_butterfly_condor_snapshot(
                 lot = _whole(row.get("lot_size"))
                 stamp = _whole(row.get("timestamp_ns"))
                 age = (captured_ns - stamp) / 1e9 if stamp is not None and captured_ns else float("inf")
-                if (strike is None or strike <= 0 or bid is None or ask is None or bid <= 0
-                        or ask < bid or lot is None or lot <= 0 or stamp is None
-                        or age < -1.0 or age > max_age or str(row.get("freshness") or "").upper() != "LIVE"):
+                invalid_quote = (
+                    strike is None or strike <= 0 or bid is None or ask is None
+                    or bid <= 0 or ask < bid or lot is None or lot <= 0 or stamp is None
+                )
+                stale_quote = (
+                    age < -1.0 or age > max_age
+                    or str(row.get("freshness") or "").upper() != "LIVE"
+                )
+                if invalid_quote or stale_quote:
                     rejected["STALE_OR_INVALID_QUOTE"] += 1
+                    if invalid_quote:
+                        rejected["INVALID_QUOTE"] += 1
+                    else:
+                        rejected["STALE_QUOTE"] += 1
                     continue
+                diagnostics["valid_quotes"] += 1
                 by_strike[strike] = dict(row, strike=strike, bid=bid, ask=ask,
                                           lot_size=lot, timestamp_ns=stamp)
             for kind, strikes, step in _structure_candidates(by_strike, atm, str(
                 (rows[0].get("instrument_class") if rows and isinstance(rows[0], Mapping) else "INDEX") or "INDEX"
             ).upper()):
+                diagnostics["candidate_structures"] += 1
                 leg_quotes = {strike: by_strike[strike] for strike in strikes}
                 lot_sizes = {row["lot_size"] for row in leg_quotes.values()}
                 stamps = [row["timestamp_ns"] for row in leg_quotes.values()]
-                if len(lot_sizes) != 1 or (max(stamps) - min(stamps)) > max_skew * 1e9:
+                if len(lot_sizes) != 1:
+                    diagnostics["lot_size_mismatch"] += 1
+                    continue
+                if (max(stamps) - min(stamps)) > max_skew * 1e9:
+                    diagnostics["cross_leg_quote_timestamp_skew"] += 1
                     continue
                 lot_size = next(iter(lot_sizes))
                 for strategy_name, (strategy_kind, direction) in _STRATEGIES.items():
@@ -315,10 +341,12 @@ def evaluate_butterfly_condor_snapshot(
                     plan = _leg_plan(kind, direction, strikes, option_type)
                     credit = _credit_from_prices(plan, leg_quotes)
                     if credit <= 0:
+                        diagnostics["non_positive_credit"] += 1
                         continue
                     minimum_expiry_pnl = credit if direction == "LONG" else credit - step
                     # Strict threshold: exactly 5.00 points is not eligible.
                     if minimum_expiry_pnl <= minimum_profit:
+                        diagnostics["below_minimum_expiry_profit"] += 1
                         continue
                     l1_lots = _l1_capacity(plan, leg_quotes, lot_size)
                     depth = _depth_result(
@@ -326,6 +354,13 @@ def evaluate_butterfly_condor_snapshot(
                         expiry=expiry, lot_size=lot_size, max_leg_skew_seconds=max_skew,
                         max_age_seconds=max_age, captured_ns=captured_ns,
                     )
+                    if depth.get("status") == "READY":
+                        diagnostics["depth_ready"] += 1
+                    else:
+                        diagnostics["depth_incomplete"] += 1
+                        reason = str(depth.get("reason") or "UNKNOWN")
+                        reasons = diagnostics["depth_incomplete_reasons"]
+                        reasons[reason] = reasons.get(reason, 0) + 1
                     results.append({
                         "strategy": strategy_name,
                         "strategy_type": kind,
@@ -366,6 +401,12 @@ def evaluate_butterfly_condor_snapshot(
         "order_routing_enabled": False,
         "result_count": len(results),
         "rejected_counts": rejected,
+        "diagnostics": diagnostics,
+        "depth_status": {
+            "complete": diagnostics["depth_ready"],
+            "incomplete": diagnostics["depth_incomplete"],
+            "incomplete_reasons": dict(diagnostics["depth_incomplete_reasons"]),
+        },
         "eligibility": {
             "allowed_expiries": {
                 "NIFTY": ["WEEKLY", "MONTHLY"],

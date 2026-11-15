@@ -224,3 +224,37 @@ def test_depth_rejects_unsorted_or_invalid_level_ladders():
     butterfly = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
     assert butterfly["depth"]["status"] == "INCOMPLETE"
     assert butterfly["depth"]["reason"] == "INVALID_DEPTH_LEVELS"
+
+
+def test_quote_diagnostics_separate_stale_and_invalid_records():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
+    rows = snapshot["quotes"]["groups"][0]["data"]
+    rows[0]["timestamp_ns"] -= 6_000_000_000
+    rows[1]["bid"] = -1
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    assert result["rejected_counts"]["STALE_QUOTE"] == 1
+    assert result["rejected_counts"]["INVALID_QUOTE"] == 1
+    assert result["rejected_counts"]["STALE_OR_INVALID_QUOTE"] == 2
+    assert result["diagnostics"]["valid_quotes"] == 1
+
+
+def test_cross_leg_quote_timestamp_skew_is_reported():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
+    snapshot["quotes"]["groups"][0]["data"][0]["timestamp_ns"] -= 3_000_000_000
+    result = evaluate_butterfly_condor_snapshot(snapshot, max_leg_skew_seconds=2)
+    assert result["result_count"] == 0
+    assert result["diagnostics"]["cross_leg_quote_timestamp_skew"] > 0
+
+
+def test_depth_complete_and_incomplete_counts_are_exposed():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)}, depth=True)
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    assert result["depth_status"]["complete"] > 0
+    assert result["depth_status"]["incomplete"] == 0
+    assert result["diagnostics"]["depth_ready"] == result["depth_status"]["complete"]
+
+    snapshot["depth"]["records"] = []
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    assert result["depth_status"]["complete"] == 0
+    assert result["depth_status"]["incomplete"] > 0
+    assert result["depth_status"]["incomplete_reasons"]["MISSING_OR_STALE_DEPTH"] > 0
