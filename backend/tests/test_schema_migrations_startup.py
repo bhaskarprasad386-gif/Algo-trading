@@ -142,6 +142,7 @@ def test_box_snapshot_expiry_backfill_preserves_only_known_classifications(
                 """
                 CREATE TABLE live_box_spread_snapshots (
                     id INTEGER PRIMARY KEY,
+                    symbol VARCHAR(32),
                     payload_json TEXT,
                     observed_at TIMESTAMP
                 )
@@ -151,12 +152,12 @@ def test_box_snapshot_expiry_backfill_preserves_only_known_classifications(
         connection.execute(
             text(
                 """
-                INSERT INTO live_box_spread_snapshots (id, payload_json)
+                INSERT INTO live_box_spread_snapshots (id, symbol, payload_json)
                 VALUES
-                    (1, '{"expiry_type":"weekly"}'),
-                    (2, '{"expiry_type":"MONTHLY"}'),
-                    (3, '{"expiry_type":"UNKNOWN"}'),
-                    (4, 'not-json')
+                    (1, 'NIFTY', '{"expiry_type":"weekly"}'),
+                    (2, 'NIFTY', '{"expiry_type":"MONTHLY"}'),
+                    (3, 'NIFTY', '{"expiry_type":"UNKNOWN"}'),
+                    (4, 'NIFTY', 'not-json')
                 """
             )
         )
