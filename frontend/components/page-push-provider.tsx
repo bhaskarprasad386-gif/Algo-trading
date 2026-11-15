@@ -62,11 +62,13 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       };
       socket.onmessage = (event) => {
         if (disposed) return;
-        setLastMessageAt(Date.now());
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(event.data)) as Record<string, unknown>; }
         catch { return; }
+        // Heartbeats prove transport liveness, not market-data freshness.
+        // Only timestamp actual page updates for the UI's "Last refresh" label.
         if (message.type !== "page_update" || message.page !== page) return;
+        setLastMessageAt(Date.now());
         const sequence = Number(message.sequence);
         const eventType = String(message.event || "");
         if (!Number.isSafeInteger(sequence) || sequence <= 0) return;
