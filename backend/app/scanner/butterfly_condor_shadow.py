@@ -243,7 +243,9 @@ def evaluate_butterfly_condor_snapshot(
             rejected["INVALID_GROUP"] += 1
             continue
         try:
-            expiry_type = str(resolver(underlying, expiry) or "UNKNOWN").strip().upper()
+            expiry_type = str(
+                group.get("expiry_type") or resolver(underlying, expiry) or "UNKNOWN"
+            ).strip().upper()
         except Exception:
             expiry_type = "UNKNOWN"
         if not _eligible_index_expiry(underlying, expiry_type):
