@@ -77,7 +77,7 @@ def publish_page_update(page: str, event: str, data: dict[str, Any] | None = Non
                     snapshot = provider() if callable(provider) else {}
                 except Exception:
                     snapshot = {}
-                frame_to_send = _frame(page, "SNAPSHOT", snapshot if isinstance(snapshot, dict) else {})
+                frame_to_send = {**frame, "event": "SNAPSHOT", "data": snapshot if isinstance(snapshot, dict) else {}}
             else:
                 frame_to_send = frame
             try:
@@ -98,7 +98,8 @@ def _origin_allowed(websocket: WebSocket) -> bool:
         return False
     host = (parsed.hostname or "").lower()
     return (
-        host == "localhost"
+        parsed.scheme in {"http", "https"}
+        and host == "localhost"
         or host == "127.0.0.1"
         or host.endswith(".vercel.app")
     )
