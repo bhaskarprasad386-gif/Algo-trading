@@ -895,8 +895,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
     };
     void loadSelection();
-    const timer = window.setInterval(() => void loadSelection(), 1500);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; };
   }, [slug]);
 
   const saveIndexSelection = async () => {
@@ -941,6 +940,41 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug, pagePushData]);
 
   useEffect(() => {
+    if (slug !== "box-spread" || !pagePushData) return;
+    const opportunities = pagePushData.opportunities;
+    if (Array.isArray(opportunities)) {
+      const nextRows = opportunities.filter((item: unknown): item is Row => !!item && typeof item === "object");
+      rowsRef.current = nextRows;
+      setRows(nextRows);
+      setRowsStale(false);
+      setLiveApiLastOkAt(Date.now());
+      setLiveApiStatus("RESPONDING");
+      setLoading(false);
+      setError(null);
+    }
+    const health = pagePushData.runtime_health;
+    if (health && typeof health === "object") {
+      const runtime = health as Record<string, any>;
+      const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
+      setFeedTicks(nullableNumber(feed.ticks_received));
+      setFeedAge(nullableNumber(feed.age_seconds));
+      setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
+      setFeedInstruments(nullableNumber(feed.active_instruments));
+      setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
+      setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
+      const selected = runtime.runners?.box_spread;
+      setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+      setBoxDepthShadow(selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
+    }
+    const selectionRuntime = pagePushData.index_selection_runtime;
+    if (selectionRuntime && typeof selectionRuntime === "object") {
+      const state = selectionRuntime as Record<string, any>;
+      setActiveIndexSymbols(Array.isArray(state.active_symbols) ? state.active_symbols.filter((item: unknown): item is string => typeof item === "string") : []);
+      setIndexHandoffState(String(state.handoff?.state ?? "UNKNOWN"));
+    }
+  }, [slug, pagePushData]);
+
+  useEffect(() => {
     if (isCustom) return;
     // History is a durable query, not a live feed. Refresh on filter/page
     // changes or explicit user action instead of polling it every 10 seconds.
@@ -982,7 +1016,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug]);
 
   useEffect(() => {
-    if (isCustom) return;
+    if (isCustom || slug === "box-spread") return;
     let cancelled = false;
     const loadRuntime = async () => {
       try {
@@ -1039,10 +1073,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setLoading(false);
       return;
     }
+    if (slug === "box-spread") {
+      // Box live rows arrive through the shared page WebSocket; REST remains
+      // available for explicit diagnostics, not a short-interval polling loop.
+      setLoading(true);
+      return;
+    }
     void load(true);
     const timer = window.setInterval(() => void load(), 1500);
     return () => window.clearInterval(timer);
-  }, [endpoint, isCustom]);
+  }, [endpoint, isCustom, slug]);
 
   const filteredRows = useMemo(() => {
     const indexOrder = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
