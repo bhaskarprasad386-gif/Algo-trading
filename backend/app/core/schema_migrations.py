@@ -182,7 +182,7 @@ def run_schema_migrations() -> None:
         if "password_reset_tokens" not in account_tables:
             connection.execute(text(f"""
                 CREATE TABLE password_reset_tokens (
-                    id INTEGER PRIMARY KEY,
+                    id {generated_id_type} PRIMARY KEY,
                     user_id INTEGER NOT NULL,
                     token_hash VARCHAR(64) NOT NULL UNIQUE,
                     expires_at DATETIME NOT NULL,
@@ -261,7 +261,7 @@ def run_schema_migrations() -> None:
         if "live_synthetic_alert_history" not in account_tables:
             connection.execute(text(f"""
                 CREATE TABLE live_synthetic_alert_history (
-                    id INTEGER PRIMARY KEY,
+                    id {generated_id_type} PRIMARY KEY,
                     observed_at DATETIME NOT NULL,
                     timestamp_ns BIGINT NOT NULL,
                     symbol VARCHAR(128) NOT NULL,
