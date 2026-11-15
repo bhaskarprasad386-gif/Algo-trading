@@ -132,8 +132,23 @@ def _l1_capacity(plan, quotes, lot_size: int) -> int:
     return min(capacities, default=0)
 
 
+def _validated_depth_levels(levels: Any, *, side: str) -> list[tuple[float, float]] | None:
+    if not isinstance(levels, (list, tuple)) or not levels:
+        return None
+    parsed = []
+    for level in levels:
+        price, quantity = _level_values(level)
+        if price is None or quantity is None or price <= 0 or quantity <= 0:
+            return None
+        parsed.append((price, quantity))
+    ordered = sorted(parsed, key=lambda item: item[0], reverse=(side == "BID"))
+    if parsed != ordered:
+        return None
+    return parsed
+
+
 def _depth_result(plan, quotes, depth_by_identity, *, underlying, expiry, lot_size,
-                  max_leg_skew_seconds):
+                  max_leg_skew_seconds, max_age_seconds, captured_ns):
     selected = {}
     timestamps = []
     capacities = []
@@ -141,13 +156,24 @@ def _depth_result(plan, quotes, depth_by_identity, *, underlying, expiry, lot_si
         item = depth_by_identity.get((underlying, expiry, strike, option_type))
         if not item or str(item.get("freshness") or "").upper() != "FRESH":
             return {"status": "INCOMPLETE", "reason": "MISSING_OR_STALE_DEPTH"}
-        quote_ts = int(quotes[strike]["timestamp_ns"])
-        depth_ts = int(item.get("timestamp_ns") or 0)
-        if depth_ts <= 0 or abs(depth_ts - quote_ts) > max_leg_skew_seconds * 1e9:
+        if str(item.get("depth_status") or "").upper() not in {"DEPTH_FULL", "DEPTH_PARTIAL"}:
+            return {"status": "INCOMPLETE", "reason": "INVALID_OR_INCOMPLETE_BOOK"}
+        quote_ts = _whole(quotes[strike].get("timestamp_ns"))
+        depth_ts = _whole(item.get("timestamp_ns"))
+        if quote_ts is None or depth_ts is None:
+            return {"status": "INCOMPLETE", "reason": "INVALID_DEPTH_TIMESTAMP"}
+        depth_age = (captured_ns - depth_ts) / 1e9
+        if depth_age < -1.0 or depth_age > max_age_seconds:
+            return {"status": "INCOMPLETE", "reason": "STALE_DEPTH_TIMESTAMP"}
+        if abs(depth_ts - quote_ts) > max_leg_skew_seconds * 1e9:
             return {"status": "INCOMPLETE", "reason": "QUOTE_DEPTH_TIMESTAMP_SKEW"}
-        levels = item.get("asks" if action == "BUY" else "bids") or []
-        if not levels:
-            return {"status": "INCOMPLETE", "reason": "MISSING_EXECUTION_SIDE_DEPTH"}
+        bids = _validated_depth_levels(item.get("bids"), side="BID")
+        asks = _validated_depth_levels(item.get("asks"), side="ASK")
+        if bids is None or asks is None:
+            return {"status": "INCOMPLETE", "reason": "INVALID_DEPTH_LEVELS"}
+        if bids[0][0] > asks[0][0]:
+            return {"status": "INCOMPLETE", "reason": "CROSSED_DEPTH_BOOK"}
+        levels = asks if action == "BUY" else bids
         total = _levels_quantity(levels)
         capacities.append(int(total // (lot_size * multiplier)))
         selected[(strike, option_type, action)] = levels
@@ -298,6 +324,7 @@ def evaluate_butterfly_condor_snapshot(
                     depth = _depth_result(
                         plan, leg_quotes, depth_by_identity, underlying=underlying,
                         expiry=expiry, lot_size=lot_size, max_leg_skew_seconds=max_skew,
+                        max_age_seconds=max_age, captured_ns=captured_ns,
                     )
                     results.append({
                         "strategy": strategy_name,
