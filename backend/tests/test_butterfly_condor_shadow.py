@@ -168,3 +168,22 @@ def test_negative_minimum_profit_threshold_is_rejected():
         pass
     else:
         raise AssertionError("negative gross expiry threshold must be rejected")
+
+
+
+def test_expiry_type_missing_or_unknown_fails_closed():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
+    group = snapshot["quotes"]["groups"][0]
+    group.pop("expiry_type")
+    result = evaluate_butterfly_condor_snapshot(
+        snapshot, expiry_type_resolver=lambda _symbol, _expiry: "UNKNOWN"
+    )
+    assert result["result_count"] == 0
+    assert result["rejected_counts"]["INELIGIBLE_INDEX_OR_EXPIRY"] == 1
+
+
+def test_nanosecond_timestamp_integer_precision_is_preserved():
+    from app.scanner.butterfly_condor_shadow import _whole
+
+    timestamp = 1_800_000_000_000_000_123
+    assert _whole(timestamp) == timestamp
