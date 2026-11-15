@@ -252,9 +252,19 @@ def evaluate_butterfly_condor_snapshot(
     for row in depth_rows:
         if not isinstance(row, Mapping):
             continue
-        key = (str(row.get("underlying") or "").upper(), int(row.get("expiry") or 0),
-               _number(row.get("strike")), str(row.get("option_type") or "").upper())
-        if key[2] is not None:
+        depth_expiry = _whole(row.get("expiry"))
+        depth_strike = _number(row.get("strike"))
+        # Malformed provider rows are diagnostics noise, not a reason to abort
+        # the entire shadow evaluation for otherwise valid quote groups.
+        if depth_expiry is None or depth_strike is None:
+            continue
+        key = (
+            str(row.get("underlying") or "").strip().upper(),
+            depth_expiry,
+            depth_strike,
+            str(row.get("option_type") or "").strip().upper(),
+        )
+        if key[0] and key[3] in {"CE", "PE"}:
             depth_by_identity[key] = row
 
     results = []

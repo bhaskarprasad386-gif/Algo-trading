@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
-import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type ExpiryType = "WEEKLY" | "MONTHLY";
 type ShadowRow = {
@@ -49,50 +49,41 @@ const SECTIONS = [
 ] as const;
 
 const fmt = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
   return Number.isFinite(number) ? number.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—";
 };
 const expiryLabel = (value: number | string) => {
   const raw = String(value);
-  const match = raw.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (!match) return raw;
   return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
 };
 
 export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryType: ExpiryType }) {
   const symbols = useMemo(() => expiryType === "WEEKLY" ? ["NIFTY", "SENSEX"] : ["NIFTY", "SENSEX", "BANKNIFTY"], [expiryType]);
+  const { status: connectionStatus, data: pageData, lastMessageAt, resync } = usePagePush(
+    expiryType === "WEEKLY" ? "credit-butterfly-condor-weekly" : "credit-butterfly-condor-monthly"
+  );
   const [payload, setPayload] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
 
-  const refresh = useCallback(async () => {
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + "/api/v1/scanner/box-spread/shadow/butterfly-condor?max_age_seconds=5&max_leg_skew_seconds=2", {
-        cache: "no-store",
-        signal: AbortSignal.timeout(12000),
-      });
-      if (!response.ok) throw new Error("Scanner API returned HTTP " + response.status);
-      const next = await response.json() as Payload;
-      if (next.execution_mode !== "SHADOW_ONLY" || next.order_routing_enabled !== false) {
-        throw new Error("Unsafe response: shadow-only execution contract missing");
-      }
-      setPayload(next);
-      setLastUpdated(new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
-      setError("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load live scanner snapshot");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const refresh = useCallback(() => resync(), [resync]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+    if (!pageData) return;
+    const next = pageData.payload;
+    if (next && typeof next === "object") {
+      setPayload(next as Payload);
+      setLoading(false);
+      setError("");
+    }
+    if (lastMessageAt !== null) {
+      setLastUpdated(new Date(lastMessageAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
+    }
+  }, [pageData, lastMessageAt]);
 
   const eligibleRows = useMemo(() => (payload?.results ?? []).filter(row =>
     row.expiry_type === expiryType && symbols.includes(String(row.underlying).toUpperCase())
@@ -124,7 +115,7 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
 
       <Card className="space-y-2 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed</div>
+          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed <span className="rounded border theme-border px-2 py-0.5 text-[10px]">{connectionStatus}</span></div>
           <div>Runtime: <b>{payload?.runtime_state ?? (loading ? "LOADING" : "UNAVAILABLE")}</b></div>
           <div>Quote contracts: <b>{fmt(payload?.shared_snapshot.quote_contract_count)}</b></div>
           <div>Depth records: <b>{fmt(payload?.shared_snapshot.depth_record_count)}</b></div>

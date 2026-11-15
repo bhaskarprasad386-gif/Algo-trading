@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type Row = Record<string, unknown>;
 type EarlyAlert = { id: number; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
@@ -402,6 +403,7 @@ export default function IVSkewFlipPage() {
   const [savedEnabled,setSavedEnabled]=useState(false);
   const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
+  const { data: pagePushData } = usePagePush("iv-skew-flip");
   const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
@@ -537,11 +539,13 @@ export default function IVSkewFlipPage() {
     setSettingDirty(false);
   },[base]);
   useEffect(()=>{
-    let active=true;
-    const poll=async()=>{try{const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});const body=await response.json();if(active&&response.ok){setRuntime(body.runtime??null);setSavedEnabled(body.saved_enabled===true);if(!settingDirty)setSelectedEnabled(body.saved_enabled===true);}}catch{/* keep last known state */}};
-    void poll();const timer=window.setInterval(()=>{if(active)void poll();},1000);
-    return()=>{active=false;window.clearInterval(timer);};
-  },[base,settingDirty]);
+    if(!pagePushData)return;
+    if(pagePushData.runtime&&typeof pagePushData.runtime==="object")setRuntime(pagePushData.runtime as Runtime);
+    if(typeof pagePushData.saved_enabled==="boolean"){
+      setSavedEnabled(pagePushData.saved_enabled);
+      if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
+    }
+  },[pagePushData,settingDirty]);
   async function saveRunnerSetting(){
     setBusy(true);setError("");
     try{

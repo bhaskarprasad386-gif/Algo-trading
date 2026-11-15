@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, ShieldCheck, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
+import { PagePushProvider } from "@/components/page-push-provider";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: Home },
@@ -13,8 +14,8 @@ const nav = [
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
-  { href: "/strategies/credit-butterfly-condor/weekly", label: "Weekly Credit", icon: Activity },
-  { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit", icon: Activity },
+  { href: "/strategies/credit-butterfly-condor/weekly", label: "Weekly Credit Butterfly / Condor", icon: Activity },
+  { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit Butterfly / Condor", icon: Activity },
   { href: "/strategies/box-spread-paper", label: "Box Paper Trading", icon: ShieldCheck },
   { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
   { href: "/strategies/weekly-swing", label: "Weekly Swing", icon: ChartNoAxesCombined },
@@ -23,6 +24,11 @@ const nav = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const pageChannel = (pathname === "/strategies/box-spread" || pathname.startsWith("/strategies/box-spread/")) ? "box-spread"
+    : pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
+    : pathname.startsWith("/strategies/credit-butterfly-condor/weekly") ? "credit-butterfly-condor-weekly"
+    : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
+    : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, setTheme } = useTheme();
 
@@ -66,7 +72,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         <main className="min-h-[calc(100vh-4rem)] min-h-[calc(100dvh-4rem)] w-full min-w-0 lg:ml-[236px]">
-          <div className="mx-auto w-full max-w-[1880px] p-3 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:p-5 sm:pb-5 lg:p-6">{children}</div>
+          <div className="mx-auto w-full max-w-[1880px] p-3 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:p-5 sm:pb-5 lg:p-6"><PagePushProvider page={pageChannel}>{children}</PagePushProvider></div>
         </main>
       </div>
 
