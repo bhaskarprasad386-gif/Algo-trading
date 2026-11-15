@@ -139,3 +139,22 @@ def test_publish_queue_overflow_replaces_backlog_with_fresh_snapshot():
 
     asyncio.run(scenario())
 
+def test_page_resync_preserves_other_subscribed_channel_events():
+    import asyncio
+
+    async def scenario():
+        queue = asyncio.Queue(maxsize=4)
+        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 8})
+        waiter = asyncio.create_task(queue.get())
+        await asyncio.sleep(0)
+        # The waiter has consumed the Box event; another page remains queued.
+        assert waiter.done()
+        next_waiter = await push._restart_event_waiter(queue, waiter, "box-spread")
+        preserved = await asyncio.wait_for(next_waiter, timeout=0.1)
+        assert preserved["page"] == "iv-skew-flip"
+        next_waiter.cancel()
+        await asyncio.gather(next_waiter, return_exceptions=True)
+
+    asyncio.run(scenario())
+
