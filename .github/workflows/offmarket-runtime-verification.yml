@@ -8,6 +8,7 @@ on:
       - 'backend/tests/test_off_market_runtime_verification.py'
       - 'backend/app/market_data/common_strategy_feed.py'
       - 'backend/app/market_data/live_box_spread_runner.py'
+      - 'backend/app/scanner/butterfly_condor_shadow.py'
   schedule:
     # 18:45 IST on weekdays: after the NSE/BSE cash and derivatives session.
     - cron: "15 13 * * 1-5"
@@ -127,6 +128,29 @@ jobs:
           print("SHOONYA_STRATEGY_FANOUT=OFF")
           print("OFFMARKET_RUNTIME_RESULT=PASS")
           PY
+
+          if git cat-file -e HEAD:backend/app/scanner/butterfly_condor_shadow.py 2>/dev/null; then
+            PYTHONPATH=backend python3 - <<'PY'
+          from time import time_ns
+          from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
+
+          result = evaluate_butterfly_condor_snapshot({
+              "quotes": {"captured_at_ns": time_ns(), "groups": []},
+              "depth": {"records": []},
+          })
+          assert result.get("source") == "box-spread-shared-snapshot"
+          assert result.get("read_only") is True
+          assert result.get("execution_mode") == "SHADOW_ONLY"
+          assert result.get("order_routing_enabled") is False
+          assert result.get("result_count") == 0
+          print("BUTTERFLY_CONDOR_SHADOW_RUNTIME=PASS")
+          print("BUTTERFLY_CONDOR_ORDER_ROUTING=OFF")
+          PY
+            echo "SHADOW_DEPLOYMENT_READINESS=MODULE_PRESENT"
+          else
+            echo "BUTTERFLY_CONDOR_SHADOW_RUNTIME=NOT_DEPLOYED"
+            echo "SHADOW_DEPLOYMENT_READINESS=BLOCKED_MODULE_NOT_IN_DEPLOYED_CHECKOUT"
+          fi
 
           integrity=$(sqlite3 backend/algo_trading.db "PRAGMA integrity_check;")
           test "$integrity" = "ok"
