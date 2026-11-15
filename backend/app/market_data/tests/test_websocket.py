@@ -698,3 +698,33 @@ def test_control_error_frame_marks_subscription_rejected_without_auth_success(mo
     assert health["subscription_rejection_count"] == 1
     assert health["last_subscription_response"]["errorCode"] == "E1002"
     client.close()
+
+
+
+def test_market_data_after_subscription_marks_data_seen(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    received = []
+    client.connect(1, ["101"], on_data=received.append)
+    socket = client.websocket
+    socket.on_data(socket, {"token": "101", "exchange_type": 1, "last_traded_price": 12345})
+    assert received
+    assert client.health["subscription_response_state"] == "DATA_SEEN"
+    client.close()
+
+
+def test_control_error_callback_is_observable_and_never_authenticates(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    observed = []
+    client.on_control_message = observed.append
+    client.connect(1, ["101"])
+    socket = client.websocket
+    socket.on_control_message(socket, {
+        "correlationID": client.health["subscription_response_state"],
+        "errorCode": "E1001",
+        "errorMessage": "Invalid Request Payload.",
+    })
+    assert observed[0]["errorCode"] == "E1001"
+    assert client.health["subscription_response_state"] == "REJECTED"
+    client.close()
