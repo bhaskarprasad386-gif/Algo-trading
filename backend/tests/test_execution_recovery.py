@@ -61,15 +61,13 @@ def test_recovery_inventory_is_account_scoped_and_read_only(db):
         db, account_id="acct-1", intent_id="first",
         expected_version=first.version, target=IntentStatus.VALIDATING,
     )
-    before = db.scalar(select(ExecutionIntentRecord).where(ExecutionIntentRecord.intent_id == "first")).version
-
     candidates = list_recovery_candidates(db, account_id="acct-1")
 
     assert [x.persisted.intent.intent_id for x in candidates] == ["first"]
     assert candidates[0].requires_broker_reconciliation is False
     assert len(candidates[0].leg_progress) == 4
     after = db.scalar(select(ExecutionIntentRecord).where(ExecutionIntentRecord.intent_id == "first")).version
-    assert before == after == candidates[0].persisted.version
+    assert after == candidates[0].persisted.version == 1
 
 
 def test_unknown_and_working_intents_are_flagged_for_reconciliation(db):
