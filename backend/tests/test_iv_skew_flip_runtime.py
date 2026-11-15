@@ -835,3 +835,20 @@ def test_runtime_snapshot_requires_nonblank_telegram_credentials(monkeypatch):
 
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
     assert runtime.snapshot()["telegram_configured"] is True
+
+
+
+def test_runtime_page_update_callback_is_best_effort_and_observational():
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_ns=lambda: 20_000_000_000,
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    updates = []
+    runtime.set_page_update_callback(updates.append)
+
+    snapshot = runtime.refresh_once()
+
+    assert updates == [snapshot]
+    runtime.set_page_update_callback(None)

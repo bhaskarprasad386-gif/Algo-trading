@@ -360,3 +360,22 @@ def test_parallel_shadow_evaluations_are_isolated_under_concurrent_load():
     assert all(result["diagnostics"] == expected["diagnostics"] for result in results)
     assert all(result["live_coverage"] == expected["live_coverage"] for result in results)
     assert all(result["results"] == expected["results"] for result in results)
+
+
+def test_malformed_depth_expiry_rows_are_ignored_without_aborting_evaluation():
+    snapshot = _snapshot(
+        {100: (5, 6), 110: (20, 21), 120: (5, 6)},
+        depth=True,
+    )
+    snapshot["depth"]["records"].append({
+        "underlying": "NIFTY",
+        "expiry": "not-an-expiry",
+        "strike": 100,
+        "option_type": "CE",
+        "timestamp_ns": "bad",
+        "bids": [],
+        "asks": [],
+    })
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    row = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    assert row["depth"]["status"] == "READY"
