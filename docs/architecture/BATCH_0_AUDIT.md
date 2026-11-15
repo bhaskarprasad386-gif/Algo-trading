@@ -23,8 +23,8 @@ No scanner strategy or market-data subscription changes are in scope for Batch 0
 - Audit snapshot: `8da655f0c287251cf1602cae484714a7c26fcf15`; subsequent migration hardening merged to main as `196098587d1e26cc24ff6c29f0fc684da0e73a37`.
 - On the merged migration commit, PostgreSQL startup migrations acquire a session-level advisory lock and execute through the same connection; isolated PostgreSQL tests cover concurrent startup and injected failure/rollback/retry.
 - Backend and Integration CI passed for the migration PR head `291356de8a5ad1899fa8972d3740e88121bcd89e`; main-branch post-merge workflows are tracked separately.
-- Latest Backend Tests workflow run for this commit: successful.
-- Combined commit status also reports a Vercel failure with a build-rate-limit target URL. This is separate from the Backend Tests result.
+- Post-merge Backend Tests, Integration Tests, and GitHub Pages build/deploy workflows for `196098587d1e26cc24ff6c29f0fc684da0e73a37` all completed successfully.
+- The same post-merge commit's VPS Deploy workflow `43727848249` failed after SSH authentication with a transport timeout; no remote start marker was logged, so the VPS deployment outcome remains unknown.
 - Main branch metadata currently reports branch protection disabled.
 - CI uses Python 3.11 and provisions PostgreSQL 16, but its primary test command sets `DATABASE_URL=sqlite:///:memory:`; a dedicated PostgreSQL URL is provided for selected tests. The test command also explicitly excludes several integration/historical suites. Therefore a green Backend Tests run is not a complete PostgreSQL or production-runtime certification.
 
@@ -119,9 +119,11 @@ A future hybrid architecture should retain a small native shell for auth, secure
 
 The Android `ApiService` stores the real-owner access token in a process-local `@Volatile` property. It is not restored from encrypted storage after process death. The Retrofit client injects the token for broker API requests and clears it on HTTP 401. No Android WebSocket client was found in the inspected API service. The future mobile account/session layer therefore needs secure token storage and refresh/re-auth design, plus a separate lifecycle-managed push client. Broker passwords, API secrets, and TOTP seeds must never be persisted in ordinary preferences.
 
-### B0-10 — VPS deployment run failed after SSH preflight; remote state remains unknown
+### B0-10 — Post-merge VPS deployment timed out; remote state remains unknown
 
-The latest VPS Deploy run for the audited main commit completed with failure. The SSH key scan and authentication preflight succeeded and printed `SSH_AUTH_PREFLIGHT_OK`. The subsequent synchronous SSH deployment session later reported `Timeout, server not responding` and `REMOTE_DEPLOY_FAILED_OR_SSH_DISCONNECTED`. The logs do not show a `REMOTE_DEPLOY_SCRIPT_STARTED` marker or deployment progress, so they do not establish whether the remote script began or whether the VPS service changed state. This is an ambiguous deployment outcome, not proof that the service is down.
+After PR #505 merged as `196098587d1e26cc24ff6c29f0fc684da0e73a37`, GitHub Actions run `43727848249` attempted the configured VPS deployment. SSH key scan and public-key authentication succeeded (`SSH_AUTH_PREFLIGHT_OK`), but the synchronous SSH session later reported `Timeout, server not responding`. The logs contain no `REMOTE_DEPLOY_SCRIPT_STARTED`, `PRE_FETCH_DISK`, `DEPLOYED_COMMIT`, or bootstrap output. Therefore the remote command's execution and the current VPS state remain unknown; this is not proof that the VPS is down or that the new commit was deployed.
+
+Post-merge Backend Tests, Integration Tests, and GitHub Pages build/deploy all passed. Only the VPS deployment workflow failed.
 
 The current bootstrap performs OS package updates, Python dependency installation, service restart, and up to 180 seconds of local health retries. Before any retry, inspect the VPS service, current Git HEAD, deployment marker, systemd journal, disk/memory, and API health. Future deployment automation should use a durable remote job/lock/log/status record so an SSH transport timeout can be reconciled without blindly launching a second deployment.
 
@@ -169,7 +171,7 @@ Before feature implementation, establish tests for:
 - Exact-symbol repository search found the generic `DualExecutionEngine`, in-memory idempotency/confirmation/safety helpers, watchdog, and fill-accounting helpers referenced only by their own modules and tests; no production order orchestration caller was found. Dynamic/reflection/external runtime use is not ruled out.
 - Broker trading-adapter readiness and market-data separation are now documented in `docs/architecture/BATCH_0_BROKER_ADAPTER_AUDIT.md`: Angel One is authentication-only (place/cancel deliberately disabled); Fyers, Shoonya, mStock, and Zerodha have no registered trading adapter. Shoonya's existing WebSocket is market-data/shadow diagnostics, not order execution.
 - Android navigation, auth storage, polling, manifest, and release workflows are now documented in `docs/architecture/BATCH_0_ANDROID_REMOTE_UI_AUDIT.md`. Current app has strategy metadata APIs but not a signed remote page renderer; release defaults still point to Render; owner token remains memory-only.
-- VPS/frontend hosting and deployment recovery findings are now documented in `docs/architecture/BATCH_0_HOSTING_DEPLOYMENT_AUDIT.md`: current VPS workflow deploys the backend only; no separate Next.js VPS service is defined; timed-out SSH deployment still needs read-only state reconciliation; Vercel must remain available.
+- VPS/frontend hosting and deployment recovery findings are documented in `docs/architecture/BATCH_0_HOSTING_DEPLOYMENT_AUDIT.md`: current VPS workflow deploys the backend only; no separate Next.js VPS service is defined; the post-merge SSH timeout still needs read-only state reconciliation; Vercel must remain available.
 - Still required: capture runtime scanner/API/WebSocket baselines and perform the read-only VPS state reconciliation before any deployment retry. The PostgreSQL startup concurrency and rollback test gaps identified in the initial audit have since been addressed by merged PR #505; version ledger and explicit deployment migration stage remain open.
 - Open a separate implementation PR only after these remaining runtime and integration audits are complete and reviewed.
 
