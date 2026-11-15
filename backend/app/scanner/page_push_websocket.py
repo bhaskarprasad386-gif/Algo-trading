@@ -134,68 +134,72 @@ async def page_updates(websocket: WebSocket) -> None:
             "server_time": datetime.now(timezone.utc).isoformat(),
             "available_pages": sorted(PAGE_CHANNELS),
         })
-        while True:
-            receive_task = asyncio.create_task(websocket.receive_text())
-            event_task = asyncio.create_task(queue.get())
-            done, pending = await asyncio.wait(
-                {receive_task, event_task},
-                timeout=HEARTBEAT_SECONDS,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            if not done:
-                await websocket.send_json({
-                    "type": "heartbeat",
-                    "server_time": datetime.now(timezone.utc).isoformat(),
-                    "subscribed_pages": sorted(channels),
-                })
-                continue
-            if event_task in done:
-                await websocket.send_json(event_task.result())
-            if receive_task in done:
-                raw = receive_task.result()
-                try:
-                    message = json.loads(raw)
-                except (TypeError, ValueError):
-                    await websocket.send_json({"type": "error", "code": "INVALID_JSON"})
+        receive_task = asyncio.create_task(websocket.receive_text())
+        event_task = asyncio.create_task(queue.get())
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {receive_task, event_task},
+                    timeout=HEARTBEAT_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    await websocket.send_json({
+                        "type": "heartbeat",
+                        "server_time": datetime.now(timezone.utc).isoformat(),
+                        "subscribed_pages": sorted(channels),
+                    })
                     continue
-                if not isinstance(message, dict) or message.get("action") not in {"subscribe", "unsubscribe", "resync"}:
-                    await websocket.send_json({"type": "error", "code": "INVALID_ACTION"})
-                    continue
-                page = str(message.get("page") or "")
-                if page not in PAGE_CHANNELS:
-                    await websocket.send_json({"type": "error", "code": "UNKNOWN_PAGE"})
-                    continue
-                if message["action"] == "subscribe":
-                    channels = frozenset((*channels, page))
-                    _subscribers.discard(entry)
-                    entry = (queue, channels)
-                    _subscribers.add(entry)
-                elif message["action"] == "unsubscribe":
-                    channels = frozenset(item for item in channels if item != page)
-                    _subscribers.discard(entry)
-                    entry = (queue, channels)
-                    _subscribers.add(entry)
-                    await websocket.send_json({"type": "unsubscribed", "page": page})
-                    continue
-                elif page not in channels:
-                    await websocket.send_json({"type": "error", "code": "NOT_SUBSCRIBED"})
-                    continue
-                else:
-                    # Discard queued deltas before sending a fresh snapshot;
-                    # otherwise an older queued patch could arrive after resync.
-                    while not queue.empty():
-                        try:
-                            queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                provider = _snapshot_providers.get(page)
-                try:
-                    snapshot = provider() if callable(provider) else {}
-                except Exception:
-                    snapshot = {}
-                await websocket.send_json(_snapshot_frame(page, snapshot if isinstance(snapshot, dict) else {}))
+                if event_task in done:
+                    await websocket.send_json(event_task.result())
+                    event_task = asyncio.create_task(queue.get())
+                if receive_task in done:
+                    raw = receive_task.result()
+                    receive_task = asyncio.create_task(websocket.receive_text())
+                    try:
+                        message = json.loads(raw)
+                    except (TypeError, ValueError):
+                        await websocket.send_json({"type": "error", "code": "INVALID_JSON"})
+                        continue
+                    if not isinstance(message, dict) or message.get("action") not in {"subscribe", "unsubscribe", "resync"}:
+                        await websocket.send_json({"type": "error", "code": "INVALID_ACTION"})
+                        continue
+                    page = str(message.get("page") or "")
+                    if page not in PAGE_CHANNELS:
+                        await websocket.send_json({"type": "error", "code": "UNKNOWN_PAGE"})
+                        continue
+                    if message["action"] == "subscribe":
+                        channels = frozenset((*channels, page))
+                        _subscribers.discard(entry)
+                        entry = (queue, channels)
+                        _subscribers.add(entry)
+                    elif message["action"] == "unsubscribe":
+                        channels = frozenset(item for item in channels if item != page)
+                        _subscribers.discard(entry)
+                        entry = (queue, channels)
+                        _subscribers.add(entry)
+                        await websocket.send_json({"type": "unsubscribed", "page": page})
+                        continue
+                    elif page not in channels:
+                        await websocket.send_json({"type": "error", "code": "NOT_SUBSCRIBED"})
+                        continue
+                    else:
+                        # Discard queued deltas before sending a fresh snapshot;
+                        # otherwise an older queued patch could arrive after resync.
+                        while not queue.empty():
+                            try:
+                                queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                    provider = _snapshot_providers.get(page)
+                    try:
+                        snapshot = provider() if callable(provider) else {}
+                    except Exception:
+                        snapshot = {}
+                    await websocket.send_json(_snapshot_frame(page, snapshot if isinstance(snapshot, dict) else {}))
+        finally:
+            receive_task.cancel()
+            event_task.cancel()
     except WebSocketDisconnect:
         pass
     finally:
