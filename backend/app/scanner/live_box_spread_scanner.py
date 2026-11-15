@@ -272,6 +272,98 @@ class LiveBoxSpreadScanner:
         if results and self.on_result is not None:self.on_result(results)
         return results
 
+    def shared_quote_snapshot(self, *, max_age_seconds: float = 5.0, now_ns: int | None = None):
+        """Return a read-only copy of validated quotes already assembled by Box Spread.
+
+        No subscriptions, instrument fetches, or bucket mutations occur here.
+        CE and PE records are exposed independently; neither side requires its
+        opposite option type to be present.
+        """
+        import time
+        from math import isfinite
+
+        try:
+            max_age = float(max_age_seconds)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("max_age_seconds must be a finite number in (0, 60]")
+        if not isfinite(max_age) or not 0.0 < max_age <= 60.0:
+            raise ValueError("max_age_seconds must be a finite number in (0, 60]")
+        wall_now = time.time_ns() if now_ns is None else int(now_ns)
+        max_age_ns = int(max_age * 1_000_000_000)
+
+        with self._lock:
+            copied = [(key, dict(bucket)) for key, bucket in self._buckets.items()]
+
+        latest = {}
+        for (symbol, bucket_anchor_ns, expiry), bucket in copied:
+            for (strike, option_type), raw in bucket.items():
+                if not isinstance(raw, dict):
+                    continue
+                stamp = self._positive_integer_timestamp(raw.get("source_timestamp_ns"))
+                bid = self._price(raw.get("bid"))
+                ask = self._price(raw.get("ask"))
+                lot_size = self._nonnegative_integer(raw.get("lot_size"))
+                if stamp is None or bid is None or ask is None or ask < bid or lot_size is None or lot_size <= 0:
+                    continue
+                age_ns = wall_now - stamp
+                if age_ns < -1_000_000_000 or age_ns > max_age_ns:
+                    continue
+                row = {
+                    "underlying": symbol,
+                    "instrument_class": str(raw.get("instrument_class") or "").strip().upper(),
+                    "expiry": int(expiry),
+                    "strike": float(strike),
+                    "option_type": option_type,
+                    "lot_size": lot_size,
+                    "timestamp_ns": stamp,
+                    "quote_age_seconds": round(max(0.0, age_ns / 1_000_000_000), 3),
+                    "freshness": "LIVE",
+                    "bid": bid,
+                    "ask": ask,
+                    "bid_qty": self._quantity(raw.get("bid_qty")),
+                    "ask_qty": self._quantity(raw.get("ask_qty")),
+                    "ltp": self._price(raw.get("ltp")),
+                    "volume": self._nonnegative_integer(raw.get("volume") or 0),
+                    "oi": self._nonnegative_integer(raw.get("oi") or 0),
+                    "bucket_timestamp_ns": int(bucket_anchor_ns),
+                }
+                identity = (symbol, int(expiry), float(strike), option_type)
+                previous = latest.get(identity)
+                if previous is None or stamp > previous["timestamp_ns"]:
+                    latest[identity] = row
+
+        rows = sorted(latest.values(), key=lambda row: (
+            row["underlying"], row["expiry"], row["strike"], row["option_type"]
+        ))
+        groups = {}
+        for row in rows:
+            groups.setdefault((row["underlying"], row["expiry"]), []).append(row)
+        snapshots = []
+        for (symbol, expiry), contracts in sorted(groups.items()):
+            latest_stamp = max(item["timestamp_ns"] for item in contracts)
+            try:
+                atm = self.atm_provider(symbol, latest_stamp)
+            except Exception:
+                atm = None
+            snapshots.append({
+                "underlying": symbol,
+                "expiry": expiry,
+                "atm_strike": float(atm) if atm is not None else None,
+                "updated_at_ns": latest_stamp,
+                "contract_count": len(contracts),
+                "ce_count": sum(item["option_type"] == "CE" for item in contracts),
+                "pe_count": sum(item["option_type"] == "PE" for item in contracts),
+                "data": contracts,
+            })
+        return {
+            "source": "box-spread-live-scanner",
+            "read_only": True,
+            "freshness_limit_seconds": max_age,
+            "captured_at_ns": wall_now,
+            "contract_count": len(rows),
+            "groups": snapshots,
+        }
+
     def monitor_snapshot(self):
         """Return latest all-edge results for independent open-position evaluation."""
         with self._lock:
