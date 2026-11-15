@@ -7,7 +7,9 @@ IV_TEST_POSTGRES_URL (CI provides a disposable PostgreSQL service).
 from __future__ import annotations
 
 import os
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
@@ -201,3 +203,31 @@ def test_order_fill_identity_index_prevents_duplicate_cash_mutations(
                     "VALUES (7, 'broker-fill-001')"
                 )
             )
+
+
+
+def test_concurrent_postgres_startup_migrations_are_serialized(
+    migration_engine, monkeypatch
+):
+    """Two workers upgrading the same legacy schema must not race on DDL."""
+    if migration_engine.dialect.name != "postgresql":
+        pytest.skip("Concurrent startup lock is PostgreSQL-specific")
+
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    start = threading.Barrier(2)
+
+    def migrate():
+        start.wait(timeout=10)
+        schema_migrations.run_schema_migrations()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(migrate) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=120)
+
+    inspector = inspect(migration_engine)
+    assert "alert_contacts" in inspector.get_table_names()
+    assert "fill_id" in {
+        column["name"] for column in inspector.get_columns("orders")
+    }
