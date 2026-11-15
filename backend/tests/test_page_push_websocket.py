@@ -46,3 +46,14 @@ def test_origin_policy_rejects_untrusted_hosts():
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://evil.example"}))
     assert push._origin_allowed(SimpleNamespace(headers={}))
+
+
+
+def test_resync_snapshot_does_not_advance_sequence_for_other_clients():
+    page = "iv-skew-flip"
+    push._sequences[page] = 41
+    snapshot = push._snapshot_frame(page, {"status": "RUNNING"})
+    next_patch = push._frame(page, "PATCH", {"status": "RUNNING"})
+
+    assert snapshot["sequence"] == 41
+    assert next_patch["sequence"] == 42
