@@ -98,17 +98,20 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
 
 def test_websocket_rejects_untrusted_origin():
+    import pytest
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
 
     app = FastAPI()
     app.include_router(push.router)
-    with TestClient(app).websocket_connect(
-        "/ws/page-updates",
-        headers={"origin": "https://untrusted.example"},
-    ) as websocket:
-        # A policy close must happen before the socket is accepted.
-        assert websocket.receive_text() == ""
+    with pytest.raises(WebSocketDisconnect) as disconnected:
+        with TestClient(app).websocket_connect(
+            "/ws/page-updates",
+            headers={"origin": "https://untrusted.example"},
+        ):
+            pass
+    assert disconnected.value.code == 1008
 
 
 def test_publish_queue_overflow_replaces_backlog_with_fresh_snapshot():
