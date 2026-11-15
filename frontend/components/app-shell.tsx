@@ -22,7 +22,7 @@ const nav = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const pageChannel = pathname.startsWith("/strategies/box-spread") ? "box-spread"
+  const pageChannel = (pathname === "/strategies/box-spread" || pathname.startsWith("/strategies/box-spread/")) ? "box-spread"
     : pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
     : pathname.startsWith("/strategies/credit-butterfly-condor/weekly") ? "credit-butterfly-condor-weekly"
     : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
