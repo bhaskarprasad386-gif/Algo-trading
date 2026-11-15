@@ -65,14 +65,6 @@ function fmt(value: unknown, digits = 2) {
 function quote(row: Opportunity, priceField: string, quantityField: string) {
   return { price: n(row, priceField), qty: n(row, quantityField) };
 }
-function makeWsUrl() {
-  const base = typeof window === "undefined" ? appConfig.wsUrl : new URL(appConfig.wsUrl, window.location.href).toString();
-  const url = new URL(base);
-  url.protocol = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/ws/live-opportunities";
-  url.search = "";
-  return url.toString();
-}
 function LegQuote({ row, name, price, qty, side, depthKey }: { row: Opportunity; name: string; price: string; qty: string; side: "BUY" | "SELL"; depthKey: string }) {
   const q = quote(row, price, qty);
   const buy = side === "BUY";
