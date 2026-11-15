@@ -231,3 +231,43 @@ def test_concurrent_postgres_startup_migrations_are_serialized(
     assert "fill_id" in {
         column["name"] for column in inspector.get_columns("orders")
     }
+
+
+
+def test_postgres_migration_failure_rolls_back_and_restart_recovers(
+    migration_engine, monkeypatch
+):
+    """A failed DDL batch rolls back, releases the lock, and can be retried."""
+    if migration_engine.dialect.name != "postgresql":
+        pytest.skip("Transactional DDL recovery assertion is PostgreSQL-specific")
+
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    original_text = schema_migrations.text
+
+    def fail_at_final_fill_index(statement):
+        if "uq_orders_user_fill_id" in str(statement):
+            return original_text("SELECT * FROM intentionally_missing_migration_table")
+        return original_text(statement)
+
+    monkeypatch.setattr(schema_migrations, "text", fail_at_final_fill_index)
+    with pytest.raises(Exception):
+        schema_migrations.run_schema_migrations()
+
+    # Earlier DDL in the same migration transaction must not be partially visible.
+    inspector = inspect(migration_engine)
+    assert "email" not in {
+        column["name"] for column in inspector.get_columns("users")
+    }
+    assert "alert_contacts" not in inspector.get_table_names()
+
+    # Simulate a fresh worker after the failed startup: lock is released and
+    # the migration can safely run again from the unchanged legacy schema.
+    monkeypatch.setattr(schema_migrations, "text", original_text)
+    schema_migrations.run_schema_migrations()
+
+    inspector = inspect(migration_engine)
+    assert "email" in {
+        column["name"] for column in inspector.get_columns("users")
+    }
+    assert "alert_contacts" in inspector.get_table_names()
