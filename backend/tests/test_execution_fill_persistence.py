@@ -153,10 +153,9 @@ def test_reconciliation_required_blocks_fill_mutation_until_review(db):
         db, account_id="acct-1", intent_id="intent-1",
         expected_version=saved.version, target=IntentStatus.UNKNOWN,
     )
-    unknown = get = db.scalar(select(ExecutionIntentRecord))
-    transition_intent(
+    unknown = transition_intent(
         db, account_id="acct-1", intent_id="intent-1",
-        expected_version=unknown.version, target=IntentStatus.RECONCILIATION_REQUIRED,
+        expected_version=saved.version + 1, target=IntentStatus.RECONCILIATION_REQUIRED,
     )
     with pytest.raises(ValueError, match="reconciliation must resolve"):
         fill(db, "cb", "trade-1", 10)
