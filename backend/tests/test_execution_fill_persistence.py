@@ -22,7 +22,7 @@ def db():
         engine.dispose()
 
 
-def create_working_intent(db):
+def create_working_intent(db, *, working=True):
     intent = ExecutionIntent("intent-1", "acct-1", "key-1", "corr-1", ExecutionMode.PAPER, created_at_ns=100)
     legs = tuple(
         ExecutionLeg(leg_id, symbol, side, 50, limit_price=price)
@@ -37,7 +37,8 @@ def create_working_intent(db):
     state = IntentStatus.CREATED
     for target in (
         IntentStatus.VALIDATING, IntentStatus.RISK_CHECK, IntentStatus.APPROVED,
-        IntentStatus.RESERVED, IntentStatus.SUBMITTING, IntentStatus.WORKING,
+        IntentStatus.RESERVED, IntentStatus.SUBMITTING,
+        *((IntentStatus.WORKING,) if working else ()),
     ):
         saved = transition_intent(
             db, account_id="acct-1", intent_id="intent-1",
@@ -54,6 +55,22 @@ def fill(db, leg_id, fill_id, quantity=25, price="101.25"):
         broker="Angel_One", broker_fill_id=fill_id, broker_order_id=f"order-{leg_id}",
         quantity=quantity, fill_price=Decimal(price), occurred_at_ns=1000 + len(fill_id),
     )
+
+
+def test_first_fill_from_submitting_records_both_valid_transitions(db):
+    saved = create_working_intent(db, working=False)
+    assert saved.intent.status is IntentStatus.SUBMITTING
+    result = fill(db, "cb", "trade-submitting", 10)
+    events = db.scalars(
+        select(ExecutionIntentEventRecord).where(
+            ExecutionIntentEventRecord.sequence > saved.version
+        ).order_by(ExecutionIntentEventRecord.sequence)
+    ).all()
+    assert result["intent_status"] == IntentStatus.PARTIALLY_FILLED.value
+    assert [(event.from_status, event.to_status) for event in events] == [
+        ("SUBMITTING", "WORKING"),
+        ("WORKING", "PARTIALLY_FILLED"),
+    ]
 
 
 def test_fill_is_persisted_and_partial_progress_is_atomic(db):
