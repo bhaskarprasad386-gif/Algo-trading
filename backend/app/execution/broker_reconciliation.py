@@ -69,6 +69,23 @@ class BrokerTradeSnapshot:
 
 
 @dataclass(frozen=True)
+class BrokerSnapshot:
+    """Order/trade evidence with explicit source account and broker identity."""
+
+    account_id: str
+    broker: str
+    orders: tuple[BrokerOrderSnapshot, ...]
+    trades: tuple[BrokerTradeSnapshot, ...]
+    complete: bool
+
+    def __post_init__(self) -> None:
+        if not self.account_id.strip() or not self.broker.strip():
+            raise ValueError("snapshot account_id and broker are required")
+        if not isinstance(self.complete, bool):
+            raise ValueError("snapshot completeness must be a boolean")
+
+
+@dataclass(frozen=True)
 class ReconciliationIssue:
     status: ReconciliationStatus
     identity: str
@@ -95,9 +112,7 @@ def reconcile_snapshot(
     broker: str,
     expected_orders: tuple[ExpectedOrder, ...],
     local_fill_quantities: dict[str, int],
-    broker_orders: tuple[BrokerOrderSnapshot, ...],
-    broker_trades: tuple[BrokerTradeSnapshot, ...],
-    snapshot_complete: bool,
+    snapshot: BrokerSnapshot,
 ) -> ReconciliationReport:
     """Compare a caller-supplied, account-scoped snapshot without side effects.
 
@@ -107,11 +122,11 @@ def reconcile_snapshot(
     """
     if not account_id.strip() or not broker.strip():
         raise ValueError("account_id and broker are required")
-    if not isinstance(snapshot_complete, bool):
-        raise ValueError("snapshot_complete must be a boolean")
+    if snapshot.account_id != account_id or snapshot.broker.strip().lower() != broker.strip().lower():
+        raise ValueError("broker snapshot account/broker scope does not match reconciliation request")
 
     issues: list[ReconciliationIssue] = []
-    if not snapshot_complete:
+    if not snapshot.complete:
         issues.append(ReconciliationIssue(
             ReconciliationStatus.INCOMPLETE_SNAPSHOT, account_id,
             "Broker order/trade history is not confirmed complete; absence is not evidence.",
@@ -120,14 +135,14 @@ def reconcile_snapshot(
     expected_ids = [x.broker_order_id for x in expected_orders]
     if len(expected_ids) != len(set(expected_ids)):
         raise ValueError("expected broker_order_id values must be unique")
-    broker_order_ids = [x.broker_order_id for x in broker_orders]
+    broker_order_ids = [x.broker_order_id for x in snapshot.orders]
     duplicate_orders = {x for x in broker_order_ids if broker_order_ids.count(x) > 1}
     for identity in sorted(duplicate_orders):
         issues.append(ReconciliationIssue(
             ReconciliationStatus.DUPLICATE_BROKER_ORDER_ID, identity,
             "Broker snapshot contains the same order identity more than once.",
         ))
-    broker_by_id = {x.broker_order_id: x for x in broker_orders}
+    broker_by_id = {x.broker_order_id: x for x in snapshot.orders}
 
     matched = 0
     for expected in expected_orders:
@@ -150,7 +165,7 @@ def reconcile_snapshot(
         else:
             matched += 1
 
-    broker_trade_ids = [x.broker_trade_id for x in broker_trades]
+    broker_trade_ids = [x.broker_trade_id for x in snapshot.trades]
     duplicate_trades = {x for x in broker_trade_ids if broker_trade_ids.count(x) > 1}
     for identity in sorted(duplicate_trades):
         issues.append(ReconciliationIssue(
@@ -158,7 +173,7 @@ def reconcile_snapshot(
             "Broker snapshot contains the same trade identity more than once.",
         ))
 
-    broker_trade_map = {x.broker_trade_id: x for x in broker_trades}
+    broker_trade_map = {x.broker_trade_id: x for x in snapshot.trades}
     for trade_id, local_qty in local_fill_quantities.items():
         if not trade_id.strip() or local_qty <= 0:
             raise ValueError("local fill identities and quantities must be positive")
@@ -174,7 +189,7 @@ def reconcile_snapshot(
                 f"Persisted fill quantity {local_qty} differs from broker quantity {broker_trade.quantity}.",
             ))
 
-    for trade in broker_trades:
+    for trade in snapshot.trades:
         if trade.broker_trade_id not in local_fill_quantities:
             issues.append(ReconciliationIssue(
                 ReconciliationStatus.UNRECORDED_BROKER_TRADE, trade.broker_trade_id,
@@ -184,7 +199,7 @@ def reconcile_snapshot(
     return ReconciliationReport(
         account_id=account_id,
         broker=broker.strip().lower(),
-        snapshot_complete=snapshot_complete,
+        snapshot_complete=snapshot.complete,
         matched_order_count=matched,
         issues=tuple(issues),
     )
