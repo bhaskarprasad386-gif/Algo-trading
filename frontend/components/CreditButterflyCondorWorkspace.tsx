@@ -106,7 +106,7 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
     <main className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <PageTitle title={expiryType === "WEEKLY" ? "Weekly Credit Butterfly & Condor" : "Monthly Credit Butterfly & Condor"} subtitle="Eight independent CE/PE strategy sections · existing Box Spread live market snapshot" />
+          <PageTitle title={expiryType === "WEEKLY" ? "Weekly Credit Butterfly & Condor" : "Monthly Credit Butterfly & Condor"} description="Eight independent CE/PE strategy sections · existing Box Spread live market snapshot" />
           <div className="mt-2 flex flex-wrap gap-2">
             {symbols.map(symbol => <span key={symbol} className="rounded-full border theme-border px-3 py-1 text-xs font-bold">{symbol}</span>)}
           </div>
