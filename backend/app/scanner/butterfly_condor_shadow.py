@@ -33,23 +33,29 @@ def _whole(value: Any) -> int | None:
     return int(number)
 
 
-def _levels_quantity(levels: Iterable[Mapping[str, Any]]) -> float:
+def _level_values(level: Any) -> tuple[float | None, float | None]:
+    if isinstance(level, Mapping):
+        return _number(level.get("price")), _number(level.get("quantity"))
+    if isinstance(level, (tuple, list)) and len(level) >= 2:
+        return _number(level[0]), _number(level[1])
+    return None, None
+
+
+def _levels_quantity(levels: Iterable[Any]) -> float:
     total = 0.0
     for level in levels:
-        price = _number(level.get("price"))
-        quantity = _number(level.get("quantity"))
+        price, quantity = _level_values(level)
         if price is not None and price > 0 and quantity is not None and quantity > 0:
             total += quantity
     return total
 
 
-def _vwap(levels: Iterable[Mapping[str, Any]], quantity: int) -> float | None:
+def _vwap(levels: Iterable[Any], quantity: int) -> float | None:
     remaining = float(quantity)
     notional = 0.0
     filled = 0.0
     for level in levels:
-        price = _number(level.get("price"))
-        available = _number(level.get("quantity"))
+        price, available = _level_values(level)
         if price is None or price <= 0 or available is None or available <= 0:
             continue
         take = min(remaining, available)
