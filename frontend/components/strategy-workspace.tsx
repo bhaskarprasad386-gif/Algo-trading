@@ -6,6 +6,7 @@ import { Activity, ArrowLeft, Bell, Filter, RefreshCw, Search, ShieldCheck, Zap 
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import LiveOpportunityGrid from "@/components/LiveOpportunityGrid";
+import { usePagePush } from "@/components/page-push-provider";
 
 export type WorkspaceConfig = {
   slug: string;
@@ -532,6 +533,7 @@ function runnerLabel(slug: string) {
 export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const c = configs[slug];
   const isCustom = slug === "custom-strategy";
+  const { data: pagePushData } = usePagePush("box-spread");
   const endpoint =
     slug === "calendar-spread" ? "/api/v1/scanner/calendar-spread/live?limit=50" :
     slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
@@ -934,22 +936,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (slug !== "box-spread") { setIndexSpotRows([]); return; }
-    let cancelled = false;
-    const loadIndexSpots = async () => {
-      try {
-        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/scanner/box-spread/index-spots", { cache: "no-store" });
-        if (!response.ok) throw new Error("index spot snapshot unavailable");
-        const body = await response.json();
-        if (!cancelled) setIndexSpotRows(Array.isArray(body?.data) ? body.data : []);
-      } catch {
-        if (!cancelled) setIndexSpotRows([]);
-      }
-    };
-    void loadIndexSpots();
-    const timer = window.setInterval(loadIndexSpots, 1000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [slug]);
+    const spots = pagePushData?.index_spots;
+    if (Array.isArray(spots)) setIndexSpotRows(spots as Row[]);
+  }, [slug, pagePushData]);
 
   useEffect(() => {
     if (isCustom) return;
