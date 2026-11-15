@@ -568,3 +568,163 @@ def test_explicit_connect_can_restart_wrapper_after_close(monkeypatch):
     assert client.connected is True
     assert client.tokens == ["202"]
     client.close()
+
+
+
+def test_sdk_text_subscription_rejection_frame_is_forwarded_and_recorded(monkeypatch):
+    import json
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_data"](
+                self,
+                json.dumps({
+                    "correlationID": "market-data",
+                    "errorCode": "E1002",
+                    "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+                }),
+                websocket_module.websocket_client.ABNF.OPCODE_TEXT,
+                False,
+            )
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt", api_key="api-key", client_code="client", feed_token="feed",
+        _on_open=lambda *_: None, _on_error=lambda *_: None, _on_close=lambda *_: None,
+        _on_data=lambda *_: (_ for _ in ()).throw(AssertionError("text must not reach binary parser")),
+        _on_ping=lambda *_: None, _on_pong=lambda *_: None,
+    )
+    control = []
+    sdk_socket.on_control_message = lambda _ws, payload: control.append(payload)
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert control == [{
+        "correlationID": "market-data",
+        "errorCode": "E1002",
+        "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+    }]
+
+
+def test_sdk_binary_market_frames_still_use_original_sdk_parser(monkeypatch):
+    calls = []
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_data"](self, b"binary-tick", 2, False)
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt", api_key="api-key", client_code="client", feed_token="feed",
+        _on_open=lambda *_: None, _on_error=lambda *_: None, _on_close=lambda *_: None,
+        _on_data=lambda *args: calls.append(args[1:]),
+        _on_ping=lambda *_: None, _on_pong=lambda *_: None,
+    )
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert calls == [(b"binary-tick", 2, False)]
+
+
+def test_control_rejection_is_exposed_in_health_without_authentication_claim(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    observed = []
+    client.on_control_message = observed.append
+    client.connect(1, ["101"])
+    socket = client.websocket
+
+    socket.on_control_message(socket, {
+        "correlationID": "market-data",
+        "errorCode": "E1002",
+        "errorMessage": "Subscription Limit Exceeded",
+    })
+
+    health = client.health
+    assert health["subscription_response_state"] == "REJECTED"
+    assert health["subscription_rejection_count"] == 1
+    assert health["last_subscription_response"]["errorCode"] == "E1002"
+    assert observed[0]["correlationID"] == "market-data"
+    assert health["initial_subscribe_send_success"] is True
+    client.close()
+
+
+def test_successful_local_subscribe_send_is_not_reported_as_broker_ack(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    health = client.health
+    assert health["initial_subscribe_send_success"] is True
+    assert health["subscription_response_state"] == "SENT_UNCONFIRMED"
+    client.close()
+
+
+
+def test_broker_correlation_id_is_ten_alphanumeric_characters(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], correlation_id="common-3-0")
+    sent_id = FakeSocket.instances[-1].subscriptions[0][0]
+    assert len(sent_id) == 10
+    assert sent_id.isalnum()
+    assert client.health["subscription_response_state"] == "SENT_UNCONFIRMED"
+    client.close()
+
+
+def test_control_error_frame_marks_subscription_rejected_without_auth_success(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], correlation_id="common-3-0")
+    socket = client.websocket
+
+    socket.on_control_message(socket, {
+        "correlationID": client.health["last_subscription_response"] or "response",
+        "errorCode": "E1002",
+        "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+    })
+
+    health = client.health
+    assert health["subscription_response_state"] == "REJECTED"
+    assert health["subscription_rejection_count"] == 1
+    assert health["last_subscription_response"]["errorCode"] == "E1002"
+    client.close()
+
+
+
+def test_market_data_after_subscription_marks_data_seen(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    received = []
+    client.connect(1, ["101"], on_data=received.append)
+    socket = client.websocket
+    socket.on_data(socket, {"token": "101", "exchange_type": 1, "last_traded_price": 12345})
+    assert received
+    assert client.health["subscription_response_state"] == "DATA_SEEN"
+    client.close()
+
+
+def test_control_error_callback_is_observable_and_never_authenticates(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    observed = []
+    client.on_control_message = observed.append
+    client.connect(1, ["101"])
+    socket = client.websocket
+    socket.on_control_message(socket, {
+        "correlationID": client.health["subscription_response_state"],
+        "errorCode": "E1001",
+        "errorMessage": "Invalid Request Payload.",
+    })
+    assert observed[0]["errorCode"] == "E1001"
+    assert client.health["subscription_response_state"] == "REJECTED"
+    client.close()

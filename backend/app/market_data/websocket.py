@@ -1,3 +1,5 @@
+import hashlib
+import json
 import math
 import ssl
 import sys
@@ -97,6 +99,7 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     original_open = getattr(socket, "_on_open", None)
     original_error = getattr(socket, "_on_error", None)
     original_close = getattr(socket, "_on_close", None)
+    original_data = getattr(socket, "_on_data", None)
 
     # websocket-client invokes on_close(wsapp, close_status_code, close_msg),
     # while some SmartWebSocketV2 releases define _on_close(self, wsapp).
@@ -123,8 +126,31 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
         finally:
             ready.set()
 
+    def on_data_with_text_control_frames(wsapp, data, data_type, continue_flag):
+        # websocket-client's on_data callback receives both text and binary
+        # frames. SmartAPI 1.5.5 _on_data only forwards binary market ticks;
+        # Angel's documented subscription rejection is JSON text, so without
+        # this boundary adapter it is silently discarded.
+        is_text = data_type == getattr(websocket_client.ABNF, "OPCODE_TEXT", 1) or isinstance(data, str)
+        if is_text:
+            try:
+                decoded = data.decode("utf-8") if isinstance(data, (bytes, bytearray)) else data
+                payload = json.loads(decoded)
+            except (UnicodeDecodeError, TypeError, ValueError):
+                return
+            if isinstance(payload, dict) and (
+                "errorCode" in payload or "errorMessage" in payload or "correlationID" in payload
+            ):
+                callback = getattr(socket, "on_control_message", None)
+                if callable(callback):
+                    callback(wsapp, payload)
+            return
+        if callable(original_data):
+            original_data(wsapp, data, data_type, continue_flag)
+
     socket._on_open = on_open_and_signal
     socket._on_error = on_error_and_signal
+    socket._on_data = on_data_with_text_control_frames
     socket.wsapp = websocket_client.WebSocketApp(
         socket.ROOT_URI,
         header=headers,
@@ -173,11 +199,13 @@ class MarketDataWebSocket:
         self.exchange_type: Optional[int] = None
         self.mode: int = 1
         self.correlation_id: str = "market-data"
+        self._wire_correlation_id: str = hashlib.sha256(b"market-data").hexdigest()[:10]
         self.tokens: list[str] = []
         self.subscriptions: dict[int, list[str]] = {}
         self.on_data: Optional[Callable] = None
         self.on_failure: Optional[Callable[[str], None]] = None
         self.on_lifecycle: Optional[Callable[[str, int], None]] = None
+        self.on_control_message: Optional[Callable[[dict[str, Any]], None]] = None
         self._lock = Lock()
         self._connected = False
         self._stopping = False
@@ -200,6 +228,12 @@ class MarketDataWebSocket:
         self._transport_thread: Thread | None = None
         self._transport_close_timed_out = False
         self._initial_subscribe_success: bool | None = None
+        # A successful SDK send is not a broker acknowledgement. Keep the
+        # broker response state explicit and fail closed until data or a
+        # documented rejection frame is observed.
+        self._subscription_response_state = "NOT_SENT"
+        self._subscription_rejection_count = 0
+        self._last_subscription_response: dict[str, Any] | None = None
 
     @property
     def health(self) -> dict:
@@ -216,6 +250,10 @@ class MarketDataWebSocket:
                 "transport_thread_alive": bool(transport_thread and transport_thread.is_alive()),
                 "transport_close_timed_out": self._transport_close_timed_out,
                 "initial_subscribe_success": self._initial_subscribe_success,
+                "initial_subscribe_send_success": self._initial_subscribe_success,
+                "subscription_response_state": self._subscription_response_state,
+                "subscription_rejection_count": self._subscription_rejection_count,
+                "last_subscription_response": dict(self._last_subscription_response) if self._last_subscription_response else None,
             }
 
     @property
@@ -300,6 +338,8 @@ class MarketDataWebSocket:
                 self._connected = True
                 self._connecting = False
                 self._initial_subscribe_success = None
+                self._subscription_response_state = "PENDING"
+                self._last_subscription_response = None
                 self._consecutive_failures = 0
                 self._last_error = None
             app_logger.info("Angel One WebSocket connected")
@@ -331,8 +371,43 @@ class MarketDataWebSocket:
             with self._lock:
                 current = not self._stopping and self.websocket is socket
                 callback = self.on_data if current else None
+                if current and isinstance(message, dict):
+                    token = str(message.get("token", "")).strip()
+                    exchange_type = message.get("exchange_type")
+                    expected = self.subscriptions.get(exchange_type, [])
+                    if token and token in expected and self._subscription_response_state in {"PENDING", "SENT_UNCONFIRMED"}:
+                        self._subscription_response_state = "DATA_SEEN"
             if callback is not None:
                 callback(message)
+
+        def handle_control_message(wsapp, message):
+            # Angel documents JSON text frames for subscription errors with
+            # correlationID/errorCode/errorMessage. Do not interpret a generic
+            # control frame or socket-open event as authentication success.
+            safe = {
+                key: str(message[key])[:256]
+                for key in ("correlationID", "errorCode", "errorMessage")
+                if key in message and message[key] is not None
+            }
+            with self._lock:
+                if self._stopping or self.websocket is not socket:
+                    return
+                self._last_subscription_response = safe
+                if "errorCode" in safe or "errorMessage" in safe:
+                    self._subscription_response_state = "REJECTED"
+                    self._subscription_rejection_count += 1
+                callback = self.on_control_message
+            app_logger.warning(
+                "Angel One WebSocket broker control response "
+                f"state={self._subscription_response_state} "
+                f"correlation_id={safe.get('correlationID', 'unknown')} "
+                f"error_code={safe.get('errorCode', 'none')}"
+            )
+            if callback is not None:
+                try:
+                    callback(dict(safe))
+                except Exception as exc:
+                    app_logger.error(f"Angel WebSocket control observer failed: {type(exc).__name__}: {exc}")
 
         def handle_error(wsapp, error):
             with self._lock:
@@ -376,16 +451,17 @@ class MarketDataWebSocket:
 
         socket.on_open = handle_open
         socket.on_data = handle_data
+        socket.on_control_message = handle_control_message
         socket.on_error = handle_error
         socket.on_close = handle_close
         return socket
 
     def _subscribe_initial_bounded(self, socket: Any) -> None:
-        """Bound the SDK subscribe call made from Angel's on_open callback."""
+        """Bound the local SDK send; this is not broker-side acceptance."""
         completed = Event()
         failure: dict[str, Exception] = {}
         payload = self._token_groups()
-        correlation_id = self.correlation_id
+        correlation_id = self._wire_correlation_id
         mode = self.mode
 
         def _subscribe() -> None:
@@ -402,9 +478,12 @@ class MarketDataWebSocket:
         if finished and error is None:
             with self._lock:
                 self._initial_subscribe_success = True
+                if self._subscription_response_state == "PENDING":
+                    self._subscription_response_state = "SENT_UNCONFIRMED"
             return
         with self._lock:
             self._initial_subscribe_success = False
+            self._subscription_response_state = "SEND_FAILED"
         if not finished:
             reason = f"initial subscribe exceeded {self._socket_operation_timeout_seconds:.2f}s"
         else:
@@ -530,6 +609,10 @@ class MarketDataWebSocket:
             self._set_subscriptions(subscriptions)
             self.mode = mode
             self.correlation_id = correlation_id.strip()
+            # Angel documents a maximum of 10 alphanumeric characters.
+            # Keep the caller label for diagnostics, but send a deterministic
+            # broker-safe ID so existing descriptive IDs remain compatible.
+            self._wire_correlation_id = hashlib.sha256(self.correlation_id.encode("utf-8")).hexdigest()[:10]
             self.on_data = on_data
             self.on_failure = on_failure
             self.on_lifecycle = on_lifecycle
@@ -669,7 +752,7 @@ class MarketDataWebSocket:
                 self.mode = mode
             socket = self.websocket
             connected = self._connected
-            correlation_id = self.correlation_id
+            correlation_id = self._wire_correlation_id
             current_mode = self.mode
             payload = self._token_groups()
         if socket and connected:
