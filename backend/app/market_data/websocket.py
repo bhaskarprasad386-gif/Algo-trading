@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import ssl
@@ -198,6 +199,7 @@ class MarketDataWebSocket:
         self.exchange_type: Optional[int] = None
         self.mode: int = 1
         self.correlation_id: str = "market-data"
+        self._wire_correlation_id: str = hashlib.sha256(b"market-data").hexdigest()[:10]
         self.tokens: list[str] = []
         self.subscriptions: dict[int, list[str]] = {}
         self.on_data: Optional[Callable] = None
@@ -459,7 +461,7 @@ class MarketDataWebSocket:
         completed = Event()
         failure: dict[str, Exception] = {}
         payload = self._token_groups()
-        correlation_id = self.correlation_id
+        correlation_id = self._wire_correlation_id
         mode = self.mode
 
         def _subscribe() -> None:
@@ -607,6 +609,10 @@ class MarketDataWebSocket:
             self._set_subscriptions(subscriptions)
             self.mode = mode
             self.correlation_id = correlation_id.strip()
+            # Angel documents a maximum of 10 alphanumeric characters.
+            # Keep the caller label for diagnostics, but send a deterministic
+            # broker-safe ID so existing descriptive IDs remain compatible.
+            self._wire_correlation_id = hashlib.sha256(self.correlation_id.encode("utf-8")).hexdigest()[:10]
             self.on_data = on_data
             self.on_failure = on_failure
             self.on_lifecycle = on_lifecycle
@@ -746,7 +752,7 @@ class MarketDataWebSocket:
                 self.mode = mode
             socket = self.websocket
             connected = self._connected
-            correlation_id = self.correlation_id
+            correlation_id = self._wire_correlation_id
             current_mode = self.mode
             payload = self._token_groups()
         if socket and connected:
