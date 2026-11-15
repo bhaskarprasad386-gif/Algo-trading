@@ -10,6 +10,7 @@ from app.core.database import SessionLocal
 router=APIRouter(prefix="/api/v1/scanner/box-spread",tags=["box-spread"])
 _latest=()
 _diagnostics_getter = None
+_shared_snapshot_getter = None
 _spot_provider = None
 _index_selection_provider = None
 _monitor_getter = None
@@ -98,6 +99,57 @@ def configure_diagnostics(getter):
     """Configure a read-only getter for the active Box Spread scanner diagnostics."""
     global _diagnostics_getter
     _diagnostics_getter = getter
+
+
+def configure_shared_snapshot(getter):
+    """Configure access to the existing Box runner snapshot; never starts a feed."""
+    global _shared_snapshot_getter
+    _shared_snapshot_getter = getter
+
+@router.get("/shadow/butterfly-condor")
+def butterfly_condor_shadow(
+    max_age_seconds: float = Query(5.0, gt=0, le=60),
+    max_leg_skew_seconds: float = Query(2.0, gt=0, le=30),
+):
+    """Evaluate Butterfly/Condor in shadow mode over Box Spread existing subscriptions."""
+    from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
+    snapshot = None
+    runtime_state = "WAITING_FOR_BOX_RUNNER"
+    if callable(_shared_snapshot_getter):
+        try:
+            snapshot = _shared_snapshot_getter(max_age_seconds=max_age_seconds)
+            runtime_state = "SNAPSHOT_AVAILABLE" if isinstance(snapshot, dict) else "WAITING_FOR_SNAPSHOT"
+        except Exception:
+            snapshot = None
+            runtime_state = "SNAPSHOT_UNAVAILABLE"
+    if not isinstance(snapshot, dict):
+        snapshot = {
+            "quotes": {"captured_at_ns": time.time_ns(), "groups": []},
+            "depth": {"records": []},
+        }
+    result = evaluate_butterfly_condor_snapshot(
+        snapshot,
+        max_age_seconds=max_age_seconds,
+        max_leg_skew_seconds=max_leg_skew_seconds,
+        expiry_type_resolver=classify_expiry_type,
+    )
+    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+    depth = snapshot.get("depth") if isinstance(snapshot.get("depth"), dict) else {}
+    shared_summary = {
+        "source": str(snapshot.get("source") or quotes.get("source") or "box-spread-shared-snapshot"),
+        "read_only": True,
+        "quote_contract_count": int(quotes.get("contract_count") or 0),
+        "quote_group_count": len(quotes.get("groups") or []),
+        "captured_at_ns": quotes.get("captured_at_ns"),
+        "freshness_limit_seconds": quotes.get("freshness_limit_seconds", max_age_seconds),
+        "depth_enabled": bool(depth.get("enabled", False)),
+        "depth_running": bool(depth.get("running", False)),
+        "depth_record_count": int(depth.get("record_count") or len(depth.get("records") or [])),
+        "depth_readiness_count": len(depth.get("readiness") or []),
+    }
+    return {"strategy": "box-spread-shadow", "runtime_state": runtime_state,
+            "shared_snapshot": shared_summary, **result}
+
 
 @router.get("/diagnostics")
 def diagnostics():
