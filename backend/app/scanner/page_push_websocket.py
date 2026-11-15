@@ -123,8 +123,26 @@ async def page_updates(websocket: WebSocket) -> None:
             "available_pages": sorted(PAGE_CHANNELS),
         })
         while True:
-            try:
-                raw = await asyncio.wait_for(websocket.receive_text(), timeout=HEARTBEAT_SECONDS)
+            receive_task = asyncio.create_task(websocket.receive_text())
+            event_task = asyncio.create_task(queue.get())
+            done, pending = await asyncio.wait(
+                {receive_task, event_task},
+                timeout=HEARTBEAT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if not done:
+                await websocket.send_json({
+                    "type": "heartbeat",
+                    "server_time": datetime.now(timezone.utc).isoformat(),
+                    "subscribed_pages": sorted(channels),
+                })
+                continue
+            if event_task in done:
+                await websocket.send_json(event_task.result())
+            if receive_task in done:
+                raw = receive_task.result()
                 try:
                     message = json.loads(raw)
                 except (TypeError, ValueError):
@@ -142,38 +160,22 @@ async def page_updates(websocket: WebSocket) -> None:
                     _subscribers.discard(entry)
                     entry = (queue, channels)
                     _subscribers.add(entry)
-                    provider = _snapshot_providers.get(page)
-                    try:
-                        snapshot = provider() if callable(provider) else {}
-                    except Exception:
-                        snapshot = {}
-                    await websocket.send_json(_frame(page, "SNAPSHOT", snapshot if isinstance(snapshot, dict) else {}))
                 elif message["action"] == "unsubscribe":
                     channels = frozenset(item for item in channels if item != page)
                     _subscribers.discard(entry)
                     entry = (queue, channels)
                     _subscribers.add(entry)
                     await websocket.send_json({"type": "unsubscribed", "page": page})
-                else:
-                    if page not in channels:
-                        await websocket.send_json({"type": "error", "code": "NOT_SUBSCRIBED"})
-                        continue
-                    provider = _snapshot_providers.get(page)
-                    try:
-                        snapshot = provider() if callable(provider) else {}
-                    except Exception:
-                        snapshot = {}
-                    await websocket.send_json(_frame(page, "SNAPSHOT", snapshot if isinstance(snapshot, dict) else {}))
-            except asyncio.TimeoutError:
-                await websocket.send_json({
-                    "type": "heartbeat",
-                    "server_time": datetime.now(timezone.utc).isoformat(),
-                    "subscribed_pages": sorted(channels),
-                })
-            # Drain at most one queued event per iteration; receive timeout keeps
-            # heartbeats flowing even when no scanner event is published.
-            if not queue.empty():
-                await websocket.send_json(queue.get_nowait())
+                    continue
+                elif page not in channels:
+                    await websocket.send_json({"type": "error", "code": "NOT_SUBSCRIBED"})
+                    continue
+                provider = _snapshot_providers.get(page)
+                try:
+                    snapshot = provider() if callable(provider) else {}
+                except Exception:
+                    snapshot = {}
+                await websocket.send_json(_frame(page, "SNAPSHOT", snapshot if isinstance(snapshot, dict) else {}))
     except WebSocketDisconnect:
         pass
     finally:
