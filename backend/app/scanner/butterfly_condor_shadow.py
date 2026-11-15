@@ -262,6 +262,7 @@ def evaluate_butterfly_condor_snapshot(
             depth_by_identity[key] = row
 
     results = []
+    live_coverage = []
     rejected = {
         "STALE_OR_INVALID_QUOTE": 0, "STALE_QUOTE": 0,
         "INVALID_QUOTE": 0, "INVALID_GROUP": 0,
@@ -294,10 +295,18 @@ def evaluate_butterfly_condor_snapshot(
             rejected["INELIGIBLE_INDEX_OR_EXPIRY"] = rejected.get("INELIGIBLE_INDEX_OR_EXPIRY", 0) + 1
             continue
         for option_type in ("CE", "PE"):
+            coverage = {
+                "underlying": underlying, "expiry": expiry,
+                "expiry_type": expiry_type, "option_type": option_type,
+                "listed_quote_rows": 0, "valid_quote_count": 0,
+                "candidate_structure_count": 0, "result_count": 0,
+                "depth_ready_count": 0, "depth_incomplete_count": 0,
+            }
             by_strike = {}
             for row in rows:
                 if not isinstance(row, Mapping) or str(row.get("option_type") or "").upper() != option_type:
                     continue
+                coverage["listed_quote_rows"] += 1
                 strike = _number(row.get("strike"))
                 bid, ask = _number(row.get("bid")), _number(row.get("ask"))
                 lot = _whole(row.get("lot_size"))
@@ -319,12 +328,14 @@ def evaluate_butterfly_condor_snapshot(
                         rejected["STALE_QUOTE"] += 1
                     continue
                 diagnostics["valid_quotes"] += 1
+                coverage["valid_quote_count"] += 1
                 by_strike[strike] = dict(row, strike=strike, bid=bid, ask=ask,
                                           lot_size=lot, timestamp_ns=stamp)
             for kind, strikes, step in _structure_candidates(by_strike, atm, str(
                 (rows[0].get("instrument_class") if rows and isinstance(rows[0], Mapping) else "INDEX") or "INDEX"
             ).upper()):
                 diagnostics["candidate_structures"] += 1
+                coverage["candidate_structure_count"] += 1
                 leg_quotes = {strike: by_strike[strike] for strike in strikes}
                 lot_sizes = {row["lot_size"] for row in leg_quotes.values()}
                 stamps = [row["timestamp_ns"] for row in leg_quotes.values()]
@@ -356,11 +367,31 @@ def evaluate_butterfly_condor_snapshot(
                     )
                     if depth.get("status") == "READY":
                         diagnostics["depth_ready"] += 1
+                        coverage["depth_ready_count"] += 1
                     else:
                         diagnostics["depth_incomplete"] += 1
+                        coverage["depth_incomplete_count"] += 1
                         reason = str(depth.get("reason") or "UNKNOWN")
                         reasons = diagnostics["depth_incomplete_reasons"]
                         reasons[reason] = reasons.get(reason, 0) + 1
+                    depth_comparison = {"status": "DEPTH_UNAVAILABLE"}
+                    if depth.get("status") == "READY":
+                        if l1_lots < depth["executable_lots"]:
+                            depth_comparison = {
+                                "status": "L1_CAPACITY_BELOW_DEPTH",
+                                "l1_executable_lots": l1_lots,
+                                "depth_executable_lots": depth["executable_lots"],
+                            }
+                        else:
+                            depth_credit = depth["credit_per_unit"]
+                            depth_comparison = {
+                                "status": "COMPARABLE",
+                                "comparison_basis": "same executable lot count",
+                                "executable_lots": depth["executable_lots"],
+                                "l1_top_of_book_credit_per_unit": credit,
+                                "depth_vwap_credit_per_unit": depth_credit,
+                                "l1_minus_depth_vwap_credit_per_unit": round(credit - depth_credit, 10),
+                            }
                     results.append({
                         "strategy": strategy_name,
                         "strategy_type": kind,
@@ -381,6 +412,7 @@ def evaluate_butterfly_condor_snapshot(
                         "maximum_gross_expiry_loss_per_unit": max(0.0, -minimum_expiry_pnl),
                         "l1_executable_lots": l1_lots,
                         "depth": depth,
+                        "l1_vs_depth_vwap": depth_comparison,
                         "legs": [
                             {"strike": strike, "option_type": option_type,
                              "action": action, "multiplier": multiplier,
@@ -391,6 +423,8 @@ def evaluate_butterfly_condor_snapshot(
                         "execution_mode": "SHADOW_ONLY",
                         "order_routing_enabled": False,
                     })
+                    coverage["result_count"] += 1
+            live_coverage.append(coverage)
     results.sort(key=lambda row: (row["underlying"], row["expiry"], row["option_type"],
                                   row["strategy"], -row["gross_credit_per_unit"]))
     return {
@@ -402,6 +436,7 @@ def evaluate_butterfly_condor_snapshot(
         "result_count": len(results),
         "rejected_counts": rejected,
         "diagnostics": diagnostics,
+        "live_coverage": live_coverage,
         "depth_status": {
             "complete": diagnostics["depth_ready"],
             "incomplete": diagnostics["depth_incomplete"],
