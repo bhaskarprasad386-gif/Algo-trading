@@ -129,3 +129,16 @@ Use an expand-and-contract sequence. Do not remove old columns or constraints in
 - Live remains fail-closed and OFF.
 
 **Batch 0 exit condition:** A versioned migration plan, a verified backup/restore, legacy ownership classification, and a PostgreSQL migration/concurrency report must exist before implementation of multi-account execution begins.
+
+## 8. TradingAccount model registration clarification
+
+A follow-up import-path trace narrows the earlier duplicate-definition finding:
+
+- The importable `app.models` package is the directory package `backend/app/models/`; its `__init__.py` explicitly exports `TradingAccount` from `app.models.account`.
+- The application entrypoint imports its primary models from `app.models`, so the package export is the registered `TradingAccount` model on that path.
+- A separate top-level file `backend/app/models.py` also declares a class named `TradingAccount` with the same table name, but the presence of the directory package means that file is not the normal `app.models` package import target.
+- Repository search found no direct `from app.models import TradingAccount` call resolving to the top-level module; the package initializer is the observed export path.
+
+**Interpretation:** do not treat these two source declarations as proof that two `TradingAccount` mappers are simultaneously registered in the same SQLAlchemy metadata. The top-level `models.py` is a shadowed/ambiguous legacy module path and should be classified before any refactor. Before deleting or consolidating it, enumerate all imports, test direct file/module loading assumptions, and inspect metadata registration in a clean process. The authoritative runtime model for the inspected package import is `backend/app/models/account.py`.
+
+No model was changed in this audit.
