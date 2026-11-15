@@ -568,3 +568,69 @@ def test_explicit_connect_can_restart_wrapper_after_close(monkeypatch):
     assert client.connected is True
     assert client.tokens == ["202"]
     client.close()
+
+
+
+def test_sdk_text_subscription_rejection_frame_is_forwarded_and_recorded(monkeypatch):
+    import json
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_data"](
+                self,
+                json.dumps({
+                    "correlationID": "market-data",
+                    "errorCode": "E1002",
+                    "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+                }),
+                websocket_module.websocket_client.ABNF.OPCODE_TEXT,
+                False,
+            )
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt", api_key="api-key", client_code="client", feed_token="feed",
+        _on_open=lambda *_: None, _on_error=lambda *_: None, _on_close=lambda *_: None,
+        _on_data=lambda *_: (_ for _ in ()).throw(AssertionError("text must not reach binary parser")),
+        _on_ping=lambda *_: None, _on_pong=lambda *_: None,
+    )
+    control = []
+    sdk_socket.on_control_message = lambda _ws, payload: control.append(payload)
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert control == [{
+        "correlationID": "market-data",
+        "errorCode": "E1002",
+        "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+    }]
+
+
+def test_sdk_binary_market_frames_still_use_original_sdk_parser(monkeypatch):
+    calls = []
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_data"](self, b"binary-tick", 2, False)
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt", api_key="api-key", client_code="client", feed_token="feed",
+        _on_open=lambda *_: None, _on_error=lambda *_: None, _on_close=lambda *_: None,
+        _on_data=lambda *args: calls.append(args[1:]),
+        _on_ping=lambda *_: None, _on_pong=lambda *_: None,
+    )
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert calls == [(b"binary-tick", 2, False)]
