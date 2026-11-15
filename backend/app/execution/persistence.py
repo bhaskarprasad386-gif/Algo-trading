@@ -218,9 +218,9 @@ def record_fill(
         any_filled = any(x.filled_quantity > 0 for x in legs)
 
         current = IntentStatus(intent.status)
-        targets = []
+        transitions = []
         if current is IntentStatus.SUBMITTING:
-            targets.append(IntentStatus.WORKING)
+            transitions.append((IntentStatus.SUBMITTING, IntentStatus.WORKING))
             current = IntentStatus.WORKING
         if all_filled:
             target = IntentStatus.FILLED
@@ -233,18 +233,18 @@ def record_fill(
             # reconciliation gate; retain the same gate for state progression.
             if current is IntentStatus.RECONCILIATION_REQUIRED:
                 raise ValueError("reconciliation must resolve intent before fill progress is applied")
-            targets.append(target)
+            transitions.append((current, target))
 
         now = occurred_at_ns
         sequence = intent.version
-        for next_status in targets:
-            if next_status not in {
+        for from_status, to_status in transitions:
+            if to_status not in {
                 IntentStatus.WORKING, IntentStatus.PARTIALLY_FILLED, IntentStatus.FILLED,
             }:
                 raise ValueError("unsupported fill-driven intent transition")
             db.add(ExecutionIntentEventRecord(
                 intent_record_id=intent.id, sequence=sequence + 1,
-                from_status=current.value, to_status=next_status.value,
+                from_status=from_status.value, to_status=to_status.value,
                 occurred_at_ns=now,
                 details_json=json.dumps({
                     "event": "BROKER_FILL_RECORDED", "broker": broker,
@@ -252,10 +252,9 @@ def record_fill(
                     "fill_quantity": quantity,
                 }, sort_keys=True, separators=(",", ":")),
             ))
-            current = next_status
             sequence += 1
-        if targets:
-            intent.status = current.value
+        if transitions:
+            intent.status = transitions[-1][1].value
             intent.version = sequence
             intent.updated_at_ns = now
         db.flush()
