@@ -1,7 +1,7 @@
 # Batch 0 — Architecture Audit and Regression Baseline
 
 **Status:** In progress — documentation baseline only; no runtime code changed.  
-**Audit base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`  
+**Audit base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`; PostgreSQL migration hardening subsequently merged in `196098587d1e26cc24ff6c29f0fc684da0e73a37`.  
 **Audit date:** 2026-11-15
 
 ## Scope and non-regression constraints
@@ -20,7 +20,9 @@ No scanner strategy or market-data subscription changes are in scope for Batch 0
 
 ## Repository baseline
 
-- Main HEAD: `8da655f0c287251cf1602cae484714a7c26fcf15`.
+- Audit snapshot: `8da655f0c287251cf1602cae484714a7c26fcf15`; subsequent migration hardening merged to main as `196098587d1e26cc24ff6c29f0fc684da0e73a37`.
+- On the merged migration commit, PostgreSQL startup migrations acquire a session-level advisory lock and execute through the same connection; isolated PostgreSQL tests cover concurrent startup and injected failure/rollback/retry.
+- Backend and Integration CI passed for the migration PR head `291356de8a5ad1899fa8972d3740e88121bcd89e`; main-branch post-merge workflows are tracked separately.
 - Latest Backend Tests workflow run for this commit: successful.
 - Combined commit status also reports a Vercel failure with a build-rate-limit target URL. This is separate from the Backend Tests result.
 - Main branch metadata currently reports branch protection disabled.
@@ -95,6 +97,10 @@ A migration needs explicit account ownership, account-scoped order uniqueness, p
 
 ### B0-06 — Startup and shared page-push constraints
 
+- `main.py` still runs schema migrations and `Base.metadata.create_all` during module import.
+- The merged migration runner now serializes PostgreSQL startup migrations with a session-level advisory lock on the same connection used for DDL; isolated PostgreSQL tests cover two concurrent callers and failure/rollback/retry.
+- This lock does not replace a versioned migration ledger, a dedicated migration deployment stage, readiness gating, or a verified backup/restore process.
+
 - `main.py` runs schema migrations and `Base.metadata.create_all` during module import.
 - Lifespan recovery marks the persisted single-owner broker connection disconnected after restart; it does not restore broker sessions.
 - Shared page-push is a bounded, process-local fanout with explicit page channels and sequence numbers.
@@ -164,7 +170,7 @@ Before feature implementation, establish tests for:
 - Broker trading-adapter readiness and market-data separation are now documented in `docs/architecture/BATCH_0_BROKER_ADAPTER_AUDIT.md`: Angel One is authentication-only (place/cancel deliberately disabled); Fyers, Shoonya, mStock, and Zerodha have no registered trading adapter. Shoonya's existing WebSocket is market-data/shadow diagnostics, not order execution.
 - Android navigation, auth storage, polling, manifest, and release workflows are now documented in `docs/architecture/BATCH_0_ANDROID_REMOTE_UI_AUDIT.md`. Current app has strategy metadata APIs but not a signed remote page renderer; release defaults still point to Render; owner token remains memory-only.
 - VPS/frontend hosting and deployment recovery findings are now documented in `docs/architecture/BATCH_0_HOSTING_DEPLOYMENT_AUDIT.md`: current VPS workflow deploys the backend only; no separate Next.js VPS service is defined; timed-out SSH deployment still needs read-only state reconciliation; Vercel must remain available.
-- Still required: capture runtime scanner/API/WebSocket baselines and perform the read-only VPS state reconciliation before any deployment retry.
+- Still required: capture runtime scanner/API/WebSocket baselines and perform the read-only VPS state reconciliation before any deployment retry. The PostgreSQL startup concurrency and rollback test gaps identified in the initial audit have since been addressed by merged PR #505; version ledger and explicit deployment migration stage remain open.
 - Open a separate implementation PR only after these remaining runtime and integration audits are complete and reviewed.
 
 ## Safety decision
