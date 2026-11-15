@@ -98,6 +98,7 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     original_open = getattr(socket, "_on_open", None)
     original_error = getattr(socket, "_on_error", None)
     original_close = getattr(socket, "_on_close", None)
+    original_data = getattr(socket, "_on_data", None)
 
     # websocket-client invokes on_close(wsapp, close_status_code, close_msg),
     # while some SmartWebSocketV2 releases define _on_close(self, wsapp).
