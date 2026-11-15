@@ -634,3 +634,36 @@ def test_sdk_binary_market_frames_still_use_original_sdk_parser(monkeypatch):
     websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
 
     assert calls == [(b"binary-tick", 2, False)]
+
+
+def test_control_rejection_is_exposed_in_health_without_authentication_claim(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    observed = []
+    client.on_control_message = observed.append
+    client.connect(1, ["101"])
+    socket = client.websocket
+
+    socket.on_control_message(socket, {
+        "correlationID": "market-data",
+        "errorCode": "E1002",
+        "errorMessage": "Subscription Limit Exceeded",
+    })
+
+    health = client.health
+    assert health["subscription_response_state"] == "REJECTED"
+    assert health["subscription_rejection_count"] == 1
+    assert health["last_subscription_response"]["errorCode"] == "E1002"
+    assert observed[0]["correlationID"] == "market-data"
+    assert health["initial_subscribe_send_success"] is True
+    client.close()
+
+
+def test_successful_local_subscribe_send_is_not_reported_as_broker_ack(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    health = client.health
+    assert health["initial_subscribe_send_success"] is True
+    assert health["subscription_response_state"] == "SENT_UNCONFIRMED"
+    client.close()
