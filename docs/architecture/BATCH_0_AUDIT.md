@@ -113,6 +113,12 @@ A future hybrid architecture should retain a small native shell for auth, secure
 
 The Android `ApiService` stores the real-owner access token in a process-local `@Volatile` property. It is not restored from encrypted storage after process death. The Retrofit client injects the token for broker API requests and clears it on HTTP 401. No Android WebSocket client was found in the inspected API service. The future mobile account/session layer therefore needs secure token storage and refresh/re-auth design, plus a separate lifecycle-managed push client. Broker passwords, API secrets, and TOTP seeds must never be persisted in ordinary preferences.
 
+### B0-10 — VPS deployment run failed after SSH preflight; remote state remains unknown
+
+The latest VPS Deploy run for the audited main commit completed with failure. The SSH key scan and authentication preflight succeeded and printed `SSH_AUTH_PREFLIGHT_OK`. The subsequent synchronous SSH deployment session later reported `Timeout, server not responding` and `REMOTE_DEPLOY_FAILED_OR_SSH_DISCONNECTED`. The logs do not show a `REMOTE_DEPLOY_SCRIPT_STARTED` marker or deployment progress, so they do not establish whether the remote script began or whether the VPS service changed state. This is an ambiguous deployment outcome, not proof that the service is down.
+
+The current bootstrap performs OS package updates, Python dependency installation, service restart, and up to 180 seconds of local health retries. Before any retry, inspect the VPS service, current Git HEAD, deployment marker, systemd journal, disk/memory, and API health. Future deployment automation should use a durable remote job/lock/log/status record so an SSH transport timeout can be reconciled without blindly launching a second deployment.
+
 ### B0-08 — Hosting migration is not ready to cut over
 
 The repository has a VPS backend deployment workflow, but this audit has not yet verified a production-ready frontend deployment service on the VPS/Cloudflare path. Vercel must remain available until frontend, API, WebSocket, TLS, auth, and Android end-to-end verification passes.
