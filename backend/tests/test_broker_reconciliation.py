@@ -27,7 +27,7 @@ def test_complete_matching_snapshot_is_consistent_but_not_trade_authorization():
         local_fill_quantities={"trade-1": 25}, broker_orders=(_order(),),
         broker_trades=(_trade(),), snapshot_complete=True,
     )
-    assert report.safe_to_resume is True
+    assert report.is_consistent is True
     assert report.matched_order_count == 1
     assert report.broker == "angel_one"
 
@@ -38,7 +38,7 @@ def test_incomplete_snapshot_blocks_resume_even_when_empty():
         local_fill_quantities={}, broker_orders=(), broker_trades=(),
         snapshot_complete=False,
     )
-    assert report.safe_to_resume is False
+    assert report.is_consistent is False
     assert report.issues[0].status is ReconciliationStatus.INCOMPLETE_SNAPSHOT
 
 
@@ -60,7 +60,7 @@ def test_order_identity_mismatch_blocks_resume():
         local_fill_quantities={}, broker_orders=(_order(side="SELL"),),
         broker_trades=(), snapshot_complete=True,
     )
-    assert report.safe_to_resume is False
+    assert report.is_consistent is False
     assert report.issues[0].status is ReconciliationStatus.BROKER_ORDER_MISMATCH
 
 
