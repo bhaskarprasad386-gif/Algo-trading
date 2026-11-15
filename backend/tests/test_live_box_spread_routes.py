@@ -440,8 +440,9 @@ def test_index_spot_snapshot_fails_closed_when_selection_provider_errors(monkeyp
 
 def test_butterfly_condor_shadow_endpoint_is_read_only_and_uses_shared_snapshot(monkeypatch):
     captured = {
-        "quotes": {"captured_at_ns": time.time_ns(), "groups": []},
-        "depth": {"records": []},
+        "source": "box-spread-live-runner",
+        "quotes": {"captured_at_ns": time.time_ns(), "contract_count": 12, "groups": []},
+        "depth": {"enabled": True, "running": True, "record_count": 7, "records": []},
     }
     monkeypatch.setattr(routes, "_shared_snapshot_getter", lambda **kwargs: captured)
 
@@ -450,6 +451,9 @@ def test_butterfly_condor_shadow_endpoint_is_read_only_and_uses_shared_snapshot(
     assert payload["strategy"] == "box-spread-shadow"
     assert payload["runtime_state"] == "SNAPSHOT_AVAILABLE"
     assert payload["source"] == "box-spread-shared-snapshot"
+    assert payload["shared_snapshot"]["read_only"] is True
+    assert payload["shared_snapshot"]["quote_contract_count"] == 12
+    assert payload["shared_snapshot"]["depth_record_count"] == 7
     assert payload["read_only"] is True
     assert payload["execution_mode"] == "SHADOW_ONLY"
     assert payload["order_routing_enabled"] is False
