@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 
 from app.core import schema_migrations
@@ -251,7 +251,7 @@ def test_postgres_migration_failure_rolls_back_and_restart_recovers(
         return original_text(statement)
 
     monkeypatch.setattr(schema_migrations, "text", fail_at_final_fill_index)
-    with pytest.raises(Exception):
+    with pytest.raises(SQLAlchemyError):
         schema_migrations.run_schema_migrations()
 
     # Earlier DDL in the same migration transaction must not be partially visible.
