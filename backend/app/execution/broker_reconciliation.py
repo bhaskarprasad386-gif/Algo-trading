@@ -6,7 +6,6 @@ database, changes an intent, retries an order, or enables Live execution.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from enum import Enum
 
 
@@ -85,8 +84,8 @@ class ReconciliationReport:
     issues: tuple[ReconciliationIssue, ...]
 
     @property
-    def safe_to_resume(self) -> bool:
-        # This is evidence classification only, never an authorization to trade.
+    def is_consistent(self) -> bool:
+        # Consistency is not an authorization to resume or trade.
         return self.snapshot_complete and not self.issues
 
 
