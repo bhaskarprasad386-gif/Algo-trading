@@ -109,6 +109,10 @@ Current Android project is a native Kotlin app using OkHttp, Retrofit, and corou
 
 A future hybrid architecture should retain a small native shell for auth, secure storage, notifications, and safety-critical native capabilities, while loading versioned remote page manifests/content. Routine page/layout changes must not require APK updates; new native permissions or SDK functionality still will. Existing pages must continue working during rollout, with cached last-known-good UI fallback.
 
+### B0-09 — Android owner token is memory-only; native session persistence is not implemented
+
+The Android `ApiService` stores the real-owner access token in a process-local `@Volatile` property. It is not restored from encrypted storage after process death. The Retrofit client injects the token for broker API requests and clears it on HTTP 401. No Android WebSocket client was found in the inspected API service. The future mobile account/session layer therefore needs secure token storage and refresh/re-auth design, plus a separate lifecycle-managed push client. Broker passwords, API secrets, and TOTP seeds must never be persisted in ordinary preferences.
+
 ### B0-08 — Hosting migration is not ready to cut over
 
 The repository has a VPS backend deployment workflow, but this audit has not yet verified a production-ready frontend deployment service on the VPS/Cloudflare path. Vercel must remain available until frontend, API, WebSocket, TLS, auth, and Android end-to-end verification passes.
