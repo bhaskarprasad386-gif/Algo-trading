@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -24,6 +24,7 @@ class ExecutionIntentRecord(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     legs: Mapped[list["ExecutionLegRecord"]] = relationship(back_populates="intent", cascade="all, delete-orphan", order_by="ExecutionLegRecord.id")
     events: Mapped[list["ExecutionIntentEventRecord"]] = relationship(back_populates="intent", cascade="all, delete-orphan", order_by="ExecutionIntentEventRecord.sequence")
+    fills: Mapped[list["ExecutionFillRecord"]] = relationship(back_populates="intent", cascade="all, delete-orphan", order_by="ExecutionFillRecord.id")
 
 
 class ExecutionLegRecord(Base):
@@ -59,3 +60,24 @@ class ExecutionIntentEventRecord(Base):
     occurred_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     details_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     intent: Mapped[ExecutionIntentRecord] = relationship(back_populates="events")
+
+
+class ExecutionFillRecord(Base):
+    """Immutable broker execution report, uniquely identified per account/broker."""
+    __tablename__ = "execution_intent_fills"
+    __table_args__ = (
+        UniqueConstraint("account_id", "broker", "broker_fill_id", name="uq_execution_fill_broker_identity"),
+        Index("ix_execution_intent_fills_intent", "intent_record_id", "leg_record_id"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    intent_record_id: Mapped[int] = mapped_column(ForeignKey("execution_intents.id", ondelete="CASCADE"), nullable=False)
+    leg_record_id: Mapped[int] = mapped_column(ForeignKey("execution_intent_legs.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    broker: Mapped[str] = mapped_column(String(32), nullable=False)
+    broker_fill_id: Mapped[str] = mapped_column(String(192), nullable=False)
+    broker_order_id: Mapped[str] = mapped_column(String(192), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    fill_price: Mapped[float] = mapped_column(Numeric(20, 8), nullable=False)
+    occurred_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    intent: Mapped[ExecutionIntentRecord] = relationship(back_populates="fills")
