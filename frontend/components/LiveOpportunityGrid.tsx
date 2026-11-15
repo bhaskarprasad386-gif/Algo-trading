@@ -121,7 +121,7 @@ export default function LiveOpportunityGrid() {
       if (edge === null || edge <= threshold) continue;
       const incomingRawTimestamp = row.last_update_timestamp_ns;
       const incomingTimestamp = incomingRawTimestamp == null ? "" : String(incomingRawTimestamp);
-      if (!/^\\d+$/.test(incomingTimestamp)) continue;
+      if (!/^\d+$/.test(incomingTimestamp)) continue;
       let incomingNs: bigint;
       try { incomingNs = BigInt(incomingTimestamp); } catch { continue; }
       if (incomingNs <= BigInt("0")) continue;
@@ -129,7 +129,7 @@ export default function LiveOpportunityGrid() {
       const existing = rowsRef.current.get(key);
       const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
       const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
-      if (/^\\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
+      if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
       rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
     }
     setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
