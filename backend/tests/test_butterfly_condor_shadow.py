@@ -187,3 +187,40 @@ def test_nanosecond_timestamp_integer_precision_is_preserved():
 
     timestamp = 1_800_000_000_000_000_123
     assert _whole(timestamp) == timestamp
+
+def test_depth_rejects_provider_timestamp_older_than_freshness_window():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)}, depth=True)
+    for row in snapshot["depth"]["records"]:
+        row["timestamp_ns"] -= 6_000_000_000
+    result = evaluate_butterfly_condor_snapshot(
+        snapshot, max_age_seconds=5, max_leg_skew_seconds=10
+    )
+    butterfly = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    assert butterfly["depth"]["status"] == "INCOMPLETE"
+    assert butterfly["depth"]["reason"] == "STALE_DEPTH_TIMESTAMP"
+
+
+def test_depth_rejects_crossed_book_even_when_marked_fresh():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)}, depth=True)
+    snapshot["depth"]["records"][0]["bids"] = [(30, 500)]
+    snapshot["depth"]["records"][0]["asks"] = [(20, 500)]
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    butterfly = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    assert butterfly["depth"]["status"] == "INCOMPLETE"
+    assert butterfly["depth"]["reason"] == "CROSSED_DEPTH_BOOK"
+
+
+def test_depth_rejects_unsorted_or_invalid_level_ladders():
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)}, depth=True)
+    snapshot["depth"]["records"][0]["bids"] = [(4, 500), (5, 500)]
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    butterfly = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    assert butterfly["depth"]["status"] == "INCOMPLETE"
+    assert butterfly["depth"]["reason"] == "INVALID_DEPTH_LEVELS"
+
+    snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)}, depth=True)
+    snapshot["depth"]["records"][0]["asks"] = [(6, 0)]
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    butterfly = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    assert butterfly["depth"]["status"] == "INCOMPLETE"
+    assert butterfly["depth"]["reason"] == "INVALID_DEPTH_LEVELS"
