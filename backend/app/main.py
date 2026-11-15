@@ -1393,6 +1393,13 @@ def _credit_butterfly_condor_page_snapshot(expiry_type: str) -> dict:
                 "depth": {"enabled": False, "running": False, "record_count": 0, "records": []},
             }
             runtime_state = "SNAPSHOT_UNAVAILABLE"
+    if not isinstance(snapshot, dict):
+        snapshot = {
+            "source": "box-spread-live-runner",
+            "quotes": {"captured_at_ns": time_module.time_ns(), "groups": [], "contract_count": 0},
+            "depth": {"enabled": False, "running": False, "record_count": 0, "records": []},
+        }
+        runtime_state = "SNAPSHOT_UNAVAILABLE"
     evaluated = evaluate_butterfly_condor_snapshot(
         snapshot, max_age_seconds=5.0, max_leg_skew_seconds=2.0,
     )
