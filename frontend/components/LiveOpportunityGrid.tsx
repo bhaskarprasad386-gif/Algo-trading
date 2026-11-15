@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePagePush } from "@/components/page-push-provider";
 import { Activity, ArrowDownUp, Radio, Wifi, WifiOff } from "lucide-react";
-import { appConfig } from "@/lib/config";
 
 type Opportunity = Record<string, unknown> & {
   symbol?: string; expiry?: string | number; expiry_type?: string; low_strike?: number; high_strike?: number;
@@ -105,19 +105,45 @@ function LegQuote({ row, name, price, qty, side, depthKey }: { row: Opportunity;
 }
 
 export default function LiveOpportunityGrid() {
+  const { status: pageStatus, data: pageData, lastMessageAt } = usePagePush("box-spread");
   const [rows, setRows] = useState<TrackedRow[]>([]);
-  const [connection, setConnection] = useState<"CONNECTING" | "LIVE" | "RECONNECTING">("CONNECTING");
-  const [lastMessageAt, setLastMessageAt] = useState<number | null>(null);
   const [expiryView, setExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
   const [sortByEdge, setSortByEdge] = useState(true);
   const rowsRef = useRef<Map<string, TrackedRow>>(new Map());
-  const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    let disposed = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let staleTimer: ReturnType<typeof setInterval> | undefined;
-    let retryMs = 1000;
+    if (!pageData) return;
+    const eventType = String(pageData.__event || "");
+    const incoming = eventType === "SNAPSHOT"
+      ? pageData.opportunities
+      : pageData.opportunity_updates;
+    if (!Array.isArray(incoming)) return;
+    if (eventType === "SNAPSHOT") rowsRef.current.clear();
+    const now = Date.now();
+    for (const raw of incoming) {
+      if (!raw || typeof raw !== "object") continue;
+      const row = raw as Opportunity;
+      const edge = n(row, "executable_edge");
+      const symbol = String(row.symbol || "").toUpperCase();
+      const threshold = symbol === "NIFTY" ? 5 : 10;
+      if (edge === null || edge <= threshold) continue;
+      const incomingRawTimestamp = row.last_update_timestamp_ns;
+      const incomingTimestamp = incomingRawTimestamp == null ? "" : String(incomingRawTimestamp);
+      if (!/^\\d+$/.test(incomingTimestamp)) continue;
+      let incomingNs: bigint;
+      try { incomingNs = BigInt(incomingTimestamp); } catch { continue; }
+      if (incomingNs <= BigInt("0")) continue;
+      const key = keyOf(row);
+      const existing = rowsRef.current.get(key);
+      const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
+      const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
+      if (/^\\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
+      rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
+    }
+    setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
+  }, [pageData]);
+
+  useEffect(() => {
     const publishRows = () => {
       const now = Date.now();
       for (const [key, tracked] of rowsRef.current) {
@@ -127,69 +153,11 @@ export default function LiveOpportunityGrid() {
       }
       setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
     };
-    const scheduleReconnect = () => {
-      if (disposed) return;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(connect, retryMs);
-      retryMs = Math.min(15000, retryMs * 2);
-    };
-    const connect = () => {
-      if (disposed) return;
-      setConnection(rowsRef.current.size ? "RECONNECTING" : "CONNECTING");
-      let socket: WebSocket;
-      try { socket = new WebSocket(makeWsUrl()); }
-      catch { setConnection("RECONNECTING"); scheduleReconnect(); return; }
-      socketRef.current = socket;
-      socket.onopen = () => { retryMs = 1000; setConnection("LIVE"); };
-      socket.onmessage = (event) => {
-        if (disposed) return;
-        setLastMessageAt(Date.now());
-        try {
-          const message = JSON.parse(String(event.data));
-          if (message.type !== "opportunities" || !Array.isArray(message.data)) return;
-          const now = Date.now();
-          for (const raw of message.data) {
-            if (!raw || typeof raw !== "object") continue;
-            const row = raw as Opportunity;
-            const edge = n(row, "executable_edge");
-            const symbol = String(row.symbol || "").toUpperCase();
-            const threshold = symbol === "NIFTY" ? 5 : 10;
-            if (edge === null || edge <= threshold) continue;
-            const incomingRawTimestamp = row.last_update_timestamp_ns;
-            const incomingTimestamp = incomingRawTimestamp == null ? "" : String(incomingRawTimestamp);
-            // Compare exchange nanosecond timestamps as integers, not JS Numbers.
-            // Number conversion can collapse distinct large timestamps at 1e18.
-            if (!/^\d+$/.test(incomingTimestamp)) continue;
-            let incomingNs: bigint;
-            try { incomingNs = BigInt(incomingTimestamp); } catch { continue; }
-            if (incomingNs <= BigInt("0")) continue;
-            const key = keyOf(row);
-            const existing = rowsRef.current.get(key);
-            const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
-            const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
-            // Ignore duplicate and out-of-order frames. Replayed snapshots must
-            // not keep an old opportunity looking live by refreshing lastSeen.
-            if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
-            rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
-          }
-          publishRows();
-        } catch { /* Ignore malformed frames without breaking the stream. */ }
-      };
-      socket.onerror = () => socket.close();
-      socket.onclose = () => { if (!disposed) { setConnection("RECONNECTING"); scheduleReconnect(); } };
-    };
-    staleTimer = setInterval(publishRows, 200);
-    connect();
-    return () => {
-      disposed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (staleTimer) clearInterval(staleTimer);
-      socketRef.current?.close();
-      socketRef.current = null;
-      rowsRef.current.clear();
-    };
+    const staleTimer = setInterval(publishRows, 200);
+    return () => clearInterval(staleTimer);
   }, []);
 
+  const connection = pageStatus === "LIVE" ? "LIVE" : pageStatus === "CONNECTING" ? "CONNECTING" : "RECONNECTING";
   const expiryRows = useMemo(() => rows.filter((item) => String(item.row.expiry_type || "").toUpperCase() === expiryView), [rows, expiryView]);
   const orderedRows = useMemo(() => [...expiryRows].sort((a, b) => sortByEdge
     ? (n(b.row, "executable_edge") ?? -Infinity) - (n(a.row, "executable_edge") ?? -Infinity)
