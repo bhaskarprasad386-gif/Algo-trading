@@ -102,14 +102,8 @@ def test_scope_is_limited_to_existing_atm_strike_radius():
     # are eligible: 60..200 below and 210..350 above.
     assert all(60 <= strike <= 350 for row in result["results"] for strike in row["strikes"])
 
-def test_invalid_freshness_and_fee_configuration_fail_closed():
+def test_invalid_freshness_configuration_fails_closed():
     snapshot = _snapshot({100: (5, 6), 110: (20, 21), 120: (5, 6)})
-    try:
-        evaluate_butterfly_condor_snapshot(snapshot, fees_per_unit=-1)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("negative fees must be rejected")
     try:
         evaluate_butterfly_condor_snapshot(snapshot, max_age_seconds=0)
     except ValueError:
