@@ -457,3 +457,24 @@ def test_four_leg_edge_rejects_one_lot_even_when_all_four_legs_have_depth():
     result = shadow.compare_opportunity(opportunity, now_ns=now)
     assert result["status"] == "INCOMPLETE"
     assert result["reason"] == "INSUFFICIENT_TWO_LOT_FOUR_LEG_DEPTH"
+
+def test_depth_snapshot_exposes_contract_identity_for_shared_snapshot_join():
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, feed=feed)
+    descriptor = _descriptor()
+    shadow.start([descriptor])
+    now = __import__("time").time_ns()
+    feed.started[0][1](_record(
+        timestamp_ns=now,
+        payload={
+            "best_5_buy_data": _five_levels(95),
+            "best_5_sell_data": _five_levels(101),
+        },
+    ))
+
+    row = shadow.snapshot(now_ns=now)["records"][0]
+    assert row["underlying"] == "NIFTY"
+    assert row["expiry"] == 20261106
+    assert row["strike"] == 25000
+    assert row["option_type"] == "CE"
+    assert row["lot_size"] == 65
