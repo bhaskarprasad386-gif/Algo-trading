@@ -49,12 +49,13 @@ const SECTIONS = [
 ] as const;
 
 const fmt = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
   return Number.isFinite(number) ? number.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—";
 };
 const expiryLabel = (value: number | string) => {
   const raw = String(value);
-  const match = raw.match(/^(\\d{4})(\\d{2})(\\d{2})$/);
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (!match) return raw;
   return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
 };
