@@ -478,3 +478,31 @@ def test_depth_snapshot_exposes_contract_identity_for_shared_snapshot_join():
     assert row["strike"] == 25000
     assert row["option_type"] == "CE"
     assert row["lot_size"] == 65
+
+
+
+def test_depth_cache_stays_bounded_during_high_rate_callback_burst():
+    """A burst may update the shadow cache but cannot grow it without bound."""
+    feed = FakeFeed()
+    shadow = BoxLiveDepthShadowFeed(enabled=True, max_records=128, feed=feed)
+    shadow.start([_descriptor("0000")])
+    callback = feed.started[0][1]
+    now = __import__("time").time_ns()
+
+    for index in range(2000):
+        callback(_record(
+            timestamp_ns=now + index,
+            token=f"{index:04d}",
+            payload={
+                "best_5_buy_data": _five_levels(95),
+                "best_5_sell_data": _five_levels(101),
+            },
+        ))
+
+    snapshot = shadow.snapshot(now_ns=now + 2000)
+    assert snapshot["counts"]["received"] == 2000
+    assert snapshot["record_count"] == 128
+    retained_tokens = {row["instrument"].split(":")[-1] for row in snapshot["records"]}
+    assert "1999" in retained_tokens
+    assert "0000" not in retained_tokens
+    assert len(retained_tokens) == 128
