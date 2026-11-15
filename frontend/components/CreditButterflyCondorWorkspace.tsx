@@ -68,7 +68,7 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
 
   const refresh = useCallback(async () => {
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + "/api/v1/scanner/box-spread/shadow/butterfly-condor?max_age_seconds=5&max_leg_skew_seconds=2", {
         cache: "no-store",
         signal: AbortSignal.timeout(12000),
