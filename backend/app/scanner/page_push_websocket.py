@@ -184,13 +184,18 @@ async def page_updates(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "error", "code": "NOT_SUBSCRIBED"})
                         continue
                     else:
-                        # Discard queued deltas before sending a fresh snapshot;
-                        # otherwise an older queued patch could arrive after resync.
+                        # Cancel the outstanding queue.get as well as draining the
+                        # queue. It may already have consumed a delta when the
+                        # resync request arrives; allowing that task to complete
+                        # after this snapshot would replay an older patch.
+                        event_task.cancel()
+                        await asyncio.gather(event_task, return_exceptions=True)
                         while not queue.empty():
                             try:
                                 queue.get_nowait()
                             except asyncio.QueueEmpty:
                                 break
+                        event_task = asyncio.create_task(queue.get())
                     provider = _snapshot_providers.get(page)
                     try:
                         snapshot = provider() if callable(provider) else {}
@@ -200,6 +205,7 @@ async def page_updates(websocket: WebSocket) -> None:
         finally:
             receive_task.cancel()
             event_task.cancel()
+            await asyncio.gather(receive_task, event_task, return_exceptions=True)
     except WebSocketDisconnect:
         pass
     finally:
