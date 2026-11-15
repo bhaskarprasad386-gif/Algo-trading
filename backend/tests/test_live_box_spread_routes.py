@@ -446,7 +446,7 @@ def test_butterfly_condor_shadow_endpoint_is_read_only_and_uses_shared_snapshot(
     }
     monkeypatch.setattr(routes, "_shared_snapshot_getter", lambda **kwargs: captured)
 
-    payload = routes.butterfly_condor_shadow()
+    payload = routes.butterfly_condor_shadow(max_age_seconds=5.0, max_leg_skew_seconds=2.0)
 
     assert payload["strategy"] == "box-spread-shadow"
     assert payload["runtime_state"] == "SNAPSHOT_AVAILABLE"
