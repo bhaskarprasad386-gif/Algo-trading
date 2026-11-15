@@ -159,10 +159,7 @@ def _passes_edge_threshold(row):
 
 
 def publish(results):
-    """Call from scanner callback threads; queues are touched on the event loop only."""
-    loop = _loop
-    if loop is None or not loop.is_running():
-        return
+    """Publish to the shared page channel and legacy socket without owning a feed."""
     rows = []
     for result in results or ():
         try:
@@ -171,13 +168,20 @@ def publish(results):
                 rows.append(row)
         except (AttributeError, TypeError, ValueError, OverflowError):
             continue
+    # The shared page gateway owns its own browser-facing event loop. Publish
+    # directly from this callback so the new UI does not depend on a legacy
+    # /ws/live-opportunities client keeping that socket's loop registered.
+    publish_page_update("box-spread", "PATCH", {"opportunity_updates": rows})
+    loop = _loop
+    if loop is None or not loop.is_running():
+        return
+
     # Publish an empty frame too. The scanner callback itself is the heartbeat:
     # an empty result means the scan ran but found no qualifying executable box.
     # Silently dropping it makes a healthy, quiet scanner look like a dead stream.
     message = {"type": "opportunities", "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "data": rows}
 
     def deliver():
-        publish_page_update("box-spread", "PATCH", {"opportunity_updates": rows})
         for queue in tuple(_subscribers):
             if queue.full():
                 try:
