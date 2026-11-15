@@ -347,8 +347,13 @@ def _box_page_push_snapshot():
     try:
         runner = live_box_spread_runner
         runner_snapshot = None if runner is None else runner.snapshot()
+        common_feed = shared_common_manager().snapshot()
+        feed_health = _summarize_primary_exchange_feed(common_feed)
+        common_feed["age_seconds"] = feed_health["age_seconds"]
+        common_feed["status"] = feed_health["status"]
+        common_feed["exchange_freshness"] = feed_health["exchange_freshness"]
         payload["runtime_health"] = {
-            "common_feed": shared_common_manager().snapshot(),
+            "common_feed": common_feed,
             "runners": {"box_spread": runner_snapshot},
         }
     except Exception:
@@ -1502,8 +1507,11 @@ configure_page_push_snapshot(
 )
 
 
+_last_box_page_push_at = 0.0
+
+
 def _update_live_box_spread_results(results: tuple) -> None:
-    global live_box_spread_latest_results
+    global live_box_spread_latest_results, _last_box_page_push_at
     # Each scanner callback is scoped to a single quote bucket. Merge fresh
     # rows across symbols instead of letting one symbol erase every other one.
     selected_symbols = set(_get_box_spread_active_index_symbols())
@@ -1528,11 +1536,14 @@ def _update_live_box_spread_results(results: tuple) -> None:
         ):
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
-    try:
-        page_snapshot = _box_page_push_snapshot()
-        publish_page_update("box-spread", "PATCH", page_snapshot)
-    except Exception:
-        pass
+    now = time_module.monotonic()
+    if now - _last_box_page_push_at >= 1.0:
+        _last_box_page_push_at = now
+        try:
+            page_snapshot = _box_page_push_snapshot()
+            publish_page_update("box-spread", "PATCH", page_snapshot)
+        except Exception:
+            pass
     _publish_credit_butterfly_condor_pages()
     if selected_results:
         publish_live_box_spread_opportunities(selected_results)
