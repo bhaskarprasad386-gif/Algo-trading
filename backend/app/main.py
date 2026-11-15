@@ -79,6 +79,7 @@ from app.scanner.box_spread_paper_routes import router as box_spread_paper_route
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, set_expiry_types as set_live_box_websocket_expiry_types
+from app.scanner.page_push_websocket import router as page_push_websocket_router
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -554,6 +555,7 @@ app.include_router(live_box_spread_router)
 app.include_router(box_spread_paper_router)
 app.include_router(box_spread_paper_rule_router)
 app.include_router(live_box_spread_websocket_router)
+app.include_router(page_push_websocket_router)
 app.include_router(intelligence_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(monthly_results_router)
