@@ -801,6 +801,36 @@ class LiveBoxSpreadRunner:
             },
         }
 
+    def shared_market_snapshot(self, *, max_age_seconds: float = 5.0):
+        """Return read-only quotes and depth from this runner's existing subscriptions."""
+        scanner = self.scanner
+        quotes = (
+            scanner.shared_quote_snapshot(max_age_seconds=max_age_seconds)
+            if scanner is not None
+            else {
+                "source": "box-spread-live-scanner",
+                "read_only": True,
+                "freshness_limit_seconds": max_age_seconds,
+                "captured_at_ns": time_ns(),
+                "contract_count": 0,
+                "groups": [],
+            }
+        )
+        depth = self.depth_shadow.snapshot()
+        return {
+            "schema_version": 1,
+            "source": "box-spread-live-runner",
+            "read_only": True,
+            "quotes": quotes,
+            "depth": {
+                "enabled": self.depth_shadow.enabled,
+                "running": bool(depth.get("running", False)),
+                "record_count": int(depth.get("record_count") or 0),
+                "readiness": list(depth.get("readiness") or []),
+                "records": list(depth.get("records") or []),
+            },
+        }
+
     def stop(self):
         self.stop_event.set()
         if self.feed:self.feed.stop()
