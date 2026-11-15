@@ -25,7 +25,7 @@ def run_schema_migrations() -> None:
     boolean_true = "TRUE" if engine.dialect.name == "postgresql" else "1"
     boolean_false = "FALSE" if engine.dialect.name == "postgresql" else "0"
     generated_id_type = "SERIAL" if engine.dialect.name == "postgresql" else "INTEGER"
-    datetime_type = "TIMESTAMP" if engine.dialect.name == "postgresql" else "{datetime_type}"
+    datetime_type = "TIMESTAMP" if engine.dialect.name == "postgresql" else "DATETIME"
     additions = {
         "email": "VARCHAR(320)",
         "mobile_number": "VARCHAR(20)",
