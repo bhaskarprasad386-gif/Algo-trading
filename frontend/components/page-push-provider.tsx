@@ -73,7 +73,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (eventType === "SNAPSHOT") {
           sequenceRef.current = sequence;
           resyncPendingRef.current = false;
-          setData(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {});
+          setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
           return;
         }
         if (sequenceRef.current && sequence !== sequenceRef.current + 1) {
@@ -82,9 +82,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         }
         sequenceRef.current = sequence;
         if (eventType === "PATCH" && message.data && typeof message.data === "object") {
-          setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>) }));
+          setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>), __event: "PATCH" }));
         } else if (eventType === "REMOVE" && message.data && typeof message.data === "object") {
-          setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>) }));
+          setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>), __event: "REMOVE" }));
         }
       };
       socket.onerror = () => socket.close();
