@@ -463,7 +463,7 @@ def test_butterfly_condor_shadow_endpoint_is_read_only_and_uses_shared_snapshot(
 def test_butterfly_condor_shadow_endpoint_fails_closed_without_runner(monkeypatch):
     monkeypatch.setattr(routes, "_shared_snapshot_getter", None)
 
-    payload = routes.butterfly_condor_shadow()
+    payload = routes.butterfly_condor_shadow(max_age_seconds=5.0, max_leg_skew_seconds=2.0)
 
     assert payload["runtime_state"] == "WAITING_FOR_BOX_RUNNER"
     assert payload["read_only"] is True
