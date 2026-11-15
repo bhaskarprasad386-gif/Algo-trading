@@ -33,6 +33,7 @@ def test_snapshot_provider_is_read_only_and_page_scoped():
 
     assert provider() == {"rows": []}
     assert observed == ["read"]
+    push.configure_snapshot_provider("credit-butterfly-condor-weekly", None)
     try:
         push.configure_snapshot_provider("unknown-page", lambda: {})
     except ValueError as exc:
