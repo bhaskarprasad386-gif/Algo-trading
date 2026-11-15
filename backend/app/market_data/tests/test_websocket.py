@@ -667,3 +667,34 @@ def test_successful_local_subscribe_send_is_not_reported_as_broker_ack(monkeypat
     assert health["initial_subscribe_send_success"] is True
     assert health["subscription_response_state"] == "SENT_UNCONFIRMED"
     client.close()
+
+
+
+def test_broker_correlation_id_is_ten_alphanumeric_characters(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], correlation_id="common-3-0")
+    sent_id = FakeSocket.instances[-1].subscriptions[0][0]
+    assert len(sent_id) == 10
+    assert sent_id.isalnum()
+    assert client.health["subscription_response_state"] == "SENT_UNCONFIRMED"
+    client.close()
+
+
+def test_control_error_frame_marks_subscription_rejected_without_auth_success(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], correlation_id="common-3-0")
+    socket = client.websocket
+
+    socket.on_control_message(socket, {
+        "correlationID": client.health["last_subscription_response"] or "response",
+        "errorCode": "E1002",
+        "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+    })
+
+    health = client.health
+    assert health["subscription_response_state"] == "REJECTED"
+    assert health["subscription_rejection_count"] == 1
+    assert health["last_subscription_response"]["errorCode"] == "E1002"
+    client.close()
