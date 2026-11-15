@@ -893,3 +893,41 @@ def test_weekly_only_without_weekly_expiry_never_calls_selector_or_falls_back_to
     assert runner._readiness["unavailable_symbols"] == [
         {"symbol": "NIFTY", "reason": "WEEKLY_EXPIRY_UNAVAILABLE"}
     ]
+
+def test_runner_shared_market_snapshot_reuses_scanner_and_depth_without_new_feed(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+
+    class Scanner:
+        def shared_quote_snapshot(self, *, max_age_seconds):
+            return {
+                "source": "box-spread-live-scanner",
+                "read_only": True,
+                "freshness_limit_seconds": max_age_seconds,
+                "contract_count": 1,
+                "groups": [{"underlying": "NIFTY", "expiry": 20261106, "data": []}],
+            }
+
+    class Shadow:
+        enabled = True
+        def snapshot(self):
+            return {
+                "running": True,
+                "record_count": 1,
+                "readiness": [{"underlying": "NIFTY", "state": "READY"}],
+                "records": [{"underlying": "NIFTY", "expiry": 20261106, "strike": 25000, "option_type": "CE"}],
+            }
+
+    runner = mod.LiveBoxSpreadRunner(
+        object(), [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(), future_master=object(), auth=object(),
+    )
+    runner.scanner = Scanner()
+    runner.depth_shadow = Shadow()
+    snapshot = runner.shared_market_snapshot(max_age_seconds=3)
+
+    assert snapshot["read_only"] is True
+    assert snapshot["quotes"]["contract_count"] == 1
+    assert snapshot["quotes"]["freshness_limit_seconds"] == 3
+    assert snapshot["depth"]["enabled"] is True
+    assert snapshot["depth"]["running"] is True
+    assert snapshot["depth"]["records"][0]["option_type"] == "CE"
