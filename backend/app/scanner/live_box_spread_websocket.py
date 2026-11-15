@@ -177,7 +177,7 @@ def publish(results):
     message = {"type": "opportunities", "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "data": rows}
 
     def deliver():
-        publish_page_update("box-spread", "PATCH", {"opportunities": rows})
+        publish_page_update("box-spread", "PATCH", {"opportunity_updates": rows})
         for queue in tuple(_subscribers):
             if queue.full():
                 try:
