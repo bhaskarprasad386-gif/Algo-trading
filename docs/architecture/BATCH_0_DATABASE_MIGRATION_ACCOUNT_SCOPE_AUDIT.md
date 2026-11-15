@@ -1,7 +1,7 @@
 # Batch 0 — Database Migration and Account-Scope Readiness Audit
 
-**Status:** Source audit only; no schema was changed and no production database was queried.  
-**Audited base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`.  
+**Status:** Source audit baseline; PR #505 subsequently hardened PostgreSQL startup migration locking and added isolated PostgreSQL regression tests. No production database was queried.  
+**Audited base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`; migration hardening merged at `196098587d1e26cc24ff6c29f0fc684da0e73a37`.  
 **Decision:** The current schema bootstrap is not yet a safe foundation for the multi-user, multi-account Paper/Live execution model. Preserve it for compatibility while introducing a versioned, additive migration path.
 
 ## 1. Current schema lifecycle
@@ -14,7 +14,7 @@ The inspected `backend/app/main.py` executes these operations at module import:
 
 The custom migration function is in `backend/app/core/schema_migrations.py`. It is an imperative collection of table/column existence checks and raw SQL DDL/DML. The inspected implementation has no migration revision ledger, explicit target revision, downgrade path, or per-migration deployment record.
 
-**Operational consequence:** importing the API can mutate the database. Starting multiple workers or multiple application versions during a rolling deployment can cause concurrent schema inspection/DDL races. A database migration should instead be an explicit, serialized deployment step, completed before application workers start.
+**Operational consequence:** importing the API can mutate the database. The merged PR #505 now serializes PostgreSQL startup migration work with a session-level advisory lock held on the same connection as the DDL. This addresses the concurrent inspect/DDL race covered by the new isolated PostgreSQL test; it does not decouple migrations from application import or replace an explicit deployment migration stage.
 
 ## 2. Current account identity constraints
 
@@ -60,7 +60,7 @@ Risks requiring verification before multi-account migrations:
 3. **Mixed dialect behavior:** the migration has dialect-specific handling for selected generated IDs, but the full DDL/DML path needs a real PostgreSQL migration test; SQLite success is not proof of PostgreSQL compatibility.
 4. **Data-dependent indexes:** unique indexes can fail on legacy duplicates. A preflight duplicate report and explicit remediation policy are required before applying new account-scoped unique constraints.
 5. **Backfill semantics:** inferred balances and legacy rows need a recorded provenance; do not silently attach ambiguous historical orders/positions to a new broker account.
-6. **Locking/rolling deployment:** no migration advisory lock or deployment-level single-run guarantee was identified in this file.
+6. **Locking/rolling deployment:** PR #505 adds a PostgreSQL session-level advisory lock around startup migration DDL and a two-caller concurrency regression test. SQLite does not use that PostgreSQL lock. Deployment-level single-run guarantees and cross-version rolling-deployment compatibility still require separate validation.
 7. **Rollback:** raw DDL and data backfills have no paired downgrade. Rollback must be expand/contract and application-version compatible, not a destructive reverse script.
 
 ## 4. CI database coverage: what it proves and what it does not
@@ -112,7 +112,7 @@ Use an expand-and-contract sequence. Do not remove old columns or constraints in
 | Empty PostgreSQL database | Schema creation/migrations complete deterministically |
 | Legacy SQLite-derived fixture imported into PostgreSQL | Existing records preserved; no guessed ownership |
 | Migration run twice | Second run is a no-op with same schema/data |
-| Two migration processes race | One acquires migration lock; the other waits/fails safely |
+| Two migration processes race | PostgreSQL advisory lock serializes the startup migration; the dedicated concurrent-startup test passes |
 | Duplicate legacy fill identity | Preflight reports conflict; migration does not silently discard or merge |
 | Two accounts for one user, same broker | Both identities coexist and remain isolated |
 | Same broker account reference attached to two users | Rejected unless explicit shared-account ownership model is approved |
