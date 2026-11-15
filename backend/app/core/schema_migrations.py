@@ -22,12 +22,15 @@ def run_schema_migrations() -> None:
 
     columns = {column["name"] for column in inspector.get_columns("users")}
     user_columns = columns
+    boolean_true = "TRUE" if engine.dialect.name == "postgresql" else "1"
+    boolean_false = "FALSE" if engine.dialect.name == "postgresql" else "0"
+    generated_id_type = "SERIAL" if engine.dialect.name == "postgresql" else "INTEGER"
     additions = {
         "email": "VARCHAR(320)",
         "mobile_number": "VARCHAR(20)",
         "hashed_password": "VARCHAR(256) DEFAULT ''",
         "full_name": "VARCHAR(256)",
-        "is_active": "BOOLEAN DEFAULT 1",
+        "is_active": f"BOOLEAN DEFAULT {boolean_true}",
     }
 
     with engine.begin() as connection:
@@ -35,11 +38,11 @@ def run_schema_migrations() -> None:
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
         if "alerts_enabled" not in user_columns:
-            connection.execute(text("ALTER TABLE users ADD COLUMN alerts_enabled BOOLEAN DEFAULT 1"))
+            connection.execute(text(f"ALTER TABLE users ADD COLUMN alerts_enabled BOOLEAN DEFAULT {boolean_true}"))
         for name, definition in {
-            "whatsapp_alerts_enabled": "BOOLEAN DEFAULT 1",
-            "telegram_alerts_enabled": "BOOLEAN DEFAULT 1",
-            "email_alerts_enabled": "BOOLEAN DEFAULT 1",
+            "whatsapp_alerts_enabled": f"BOOLEAN DEFAULT {boolean_true}",
+            "telegram_alerts_enabled": f"BOOLEAN DEFAULT {boolean_true}",
+            "email_alerts_enabled": f"BOOLEAN DEFAULT {boolean_true}",
             "alert_email": "VARCHAR(320)",
         }.items():
             if name not in columns:
@@ -47,20 +50,20 @@ def run_schema_migrations() -> None:
 
         alert_tables = set(inspect(connection).get_table_names())
         if "alert_contacts" not in alert_tables:
-            connection.execute(text("""
+            connection.execute(text(f"""
                 CREATE TABLE alert_contacts (
-                    id INTEGER PRIMARY KEY,
+                    id {generated_id_type} PRIMARY KEY,
                     user_id INTEGER NOT NULL,
                     label VARCHAR(64) NOT NULL DEFAULT 'Primary',
                     mobile_number VARCHAR(32) NOT NULL DEFAULT '',
                     email_address VARCHAR(320),
-                    enabled BOOLEAN NOT NULL DEFAULT 1,
-                    sms_enabled BOOLEAN NOT NULL DEFAULT 0,
-                    app_enabled BOOLEAN NOT NULL DEFAULT 1,
-                    whatsapp_enabled BOOLEAN NOT NULL DEFAULT 0,
-                    telegram_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    enabled BOOLEAN NOT NULL DEFAULT {boolean_true},
+                    sms_enabled BOOLEAN NOT NULL DEFAULT {boolean_false},
+                    app_enabled BOOLEAN NOT NULL DEFAULT {boolean_true},
+                    whatsapp_enabled BOOLEAN NOT NULL DEFAULT {boolean_false},
+                    telegram_enabled BOOLEAN NOT NULL DEFAULT {boolean_false},
                     telegram_chat_id VARCHAR(128) NOT NULL DEFAULT '',
-                    email_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    email_enabled BOOLEAN NOT NULL DEFAULT {boolean_false},
                     created_at DATETIME NOT NULL,
                     updated_at DATETIME NOT NULL
                 )
@@ -69,7 +72,7 @@ def run_schema_migrations() -> None:
         alert_contact_columns = {column["name"] for column in inspect(connection).get_columns("alert_contacts")}
         for name, definition in {
             "email_address": "VARCHAR(320)",
-            "telegram_enabled": "BOOLEAN DEFAULT 0",
+            "telegram_enabled": f"BOOLEAN DEFAULT {boolean_false}",
             "telegram_chat_id": "VARCHAR(128) DEFAULT ''",
         }.items():
             if name not in alert_contact_columns:
@@ -136,9 +139,9 @@ def run_schema_migrations() -> None:
                     connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
 
         if "backtest_jobs" not in account_tables:
-            connection.execute(text("""
+            connection.execute(text(f"""
                 CREATE TABLE backtest_jobs (
-                    id INTEGER PRIMARY KEY,
+                    id {generated_id_type} PRIMARY KEY,
                     job_id VARCHAR(64) NOT NULL UNIQUE,
                     status VARCHAR(16) NOT NULL DEFAULT 'queued',
                     symbol VARCHAR(128) NOT NULL,
@@ -163,7 +166,7 @@ def run_schema_migrations() -> None:
                 connection.execute(text("ALTER TABLE backtest_jobs ADD COLUMN config_json TEXT"))
 
         if "backtest_job_result_chunks" not in account_tables:
-            connection.execute(text("""
+            connection.execute(text(f"""
                 CREATE TABLE backtest_job_result_chunks (
                     id INTEGER PRIMARY KEY,
                     job_id VARCHAR(64) NOT NULL,
@@ -177,7 +180,7 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_job_result_chunks_job ON backtest_job_result_chunks (job_id, sequence)"))
 
         if "password_reset_tokens" not in account_tables:
-            connection.execute(text("""
+            connection.execute(text(f"""
                 CREATE TABLE password_reset_tokens (
                     id INTEGER PRIMARY KEY,
                     user_id INTEGER NOT NULL,
@@ -256,7 +259,7 @@ def run_schema_migrations() -> None:
         if "live_cash_future_alert_history" in account_tables:
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_cf_alert_identity ON live_cash_future_alert_history (symbol, contract_month, timestamp_ns, event)"))
         if "live_synthetic_alert_history" not in account_tables:
-            connection.execute(text("""
+            connection.execute(text(f"""
                 CREATE TABLE live_synthetic_alert_history (
                     id INTEGER PRIMARY KEY,
                     observed_at DATETIME NOT NULL,
@@ -374,11 +377,14 @@ def run_schema_migrations() -> None:
 
         # A broker fill can be retried, but the same user/fill identity must
         # never create a second cash/P&L mutation. Nullable keeps legacy orders valid.
-        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_audit_hash ON orders (audit_hash)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_audit_chain ON orders (user_id, id, audit_hash, previous_audit_hash)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
+        final_tables = set(inspect(connection).get_table_names())
+        if "orders" in final_tables:
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_audit_hash ON orders (audit_hash)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_audit_chain ON orders (user_id, id, audit_hash, previous_audit_hash)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
+        if "positions" in final_tables:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
 
 
         # Notification lease ownership is nullable for safe upgrades of existing outbox rows.
