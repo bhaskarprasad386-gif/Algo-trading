@@ -58,3 +58,81 @@ def test_resync_snapshot_does_not_advance_sequence_for_other_clients():
 
     assert snapshot["sequence"] == 41
     assert next_patch["sequence"] == 42
+
+def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.include_router(push.router)
+    page = "box-spread"
+    provider_calls = []
+    push.configure_snapshot_provider(page, lambda: provider_calls.append("snapshot") or {"opportunities": [{"id": "initial"}]})
+    monkeypatch.setattr(push, "_subscribers", set())
+    monkeypatch.setattr(push, "_sequences", {})
+    monkeypatch.setattr(push, "_loop", None)
+
+    try:
+        with TestClient(app).websocket_connect(
+            "/ws/page-updates",
+            headers={"origin": "https://algo-trading.vercel.app"},
+        ) as websocket:
+            assert websocket.receive_json()["type"] == "connected"
+            websocket.send_json({"action": "subscribe", "page": page})
+            initial = websocket.receive_json()
+            assert initial["event"] == "SNAPSHOT"
+            assert initial["data"]["opportunities"][0]["id"] == "initial"
+
+            push.publish_page_update(page, "PATCH", {"opportunities": [{"id": "fresh"}]})
+            patch = websocket.receive_json()
+            assert patch["event"] == "PATCH"
+            assert patch["sequence"] == initial["sequence"] + 1
+
+            websocket.send_json({"action": "resync", "page": page})
+            resynced = websocket.receive_json()
+            assert resynced["event"] == "SNAPSHOT"
+            assert resynced["sequence"] == patch["sequence"]
+            assert len(provider_calls) == 2
+    finally:
+        push.configure_snapshot_provider(page, None)
+
+
+def test_websocket_rejects_untrusted_origin():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.include_router(push.router)
+    with TestClient(app).websocket_connect(
+        "/ws/page-updates",
+        headers={"origin": "https://untrusted.example"},
+    ) as websocket:
+        # A policy close must happen before the socket is accepted.
+        assert websocket.receive_text() == ""
+
+
+def test_publish_queue_overflow_replaces_backlog_with_fresh_snapshot():
+    import asyncio
+
+    async def scenario():
+        page = "credit-butterfly-condor-weekly"
+        loop = asyncio.get_running_loop()
+        queue = asyncio.Queue(maxsize=1)
+        push._loop = loop
+        push._subscribers = {(queue, frozenset({page}))}
+        push._sequences = {page: 0}
+        push.configure_snapshot_provider(page, lambda: {"rows": [{"id": "latest"}]})
+
+        push.publish_page_update(page, "PATCH", {"rows": [{"id": "old"}]})
+        push.publish_page_update(page, "PATCH", {"rows": [{"id": "new"}]})
+        await asyncio.sleep(0)
+
+        frame = queue.get_nowait()
+        assert frame["event"] == "SNAPSHOT"
+        assert frame["data"]["rows"][0]["id"] == "latest"
+        push._subscribers.clear()
+        push._loop = None
+        push.configure_snapshot_provider(page, None)
+
+    asyncio.run(scenario())
+
