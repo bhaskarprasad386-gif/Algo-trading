@@ -168,7 +168,7 @@ def run_schema_migrations() -> None:
         if "backtest_job_result_chunks" not in account_tables:
             connection.execute(text(f"""
                 CREATE TABLE backtest_job_result_chunks (
-                    id INTEGER PRIMARY KEY,
+                    id {generated_id_type} PRIMARY KEY,
                     job_id VARCHAR(64) NOT NULL,
                     sequence INTEGER NOT NULL,
                     symbol VARCHAR(128) NOT NULL,
