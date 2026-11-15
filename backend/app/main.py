@@ -80,6 +80,7 @@ from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSp
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, set_expiry_types as set_live_box_websocket_expiry_types
 from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
+from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -1365,6 +1366,102 @@ def _fresh_live_box_spread_results(results: tuple, max_age_seconds: float = 5.0)
     return tuple(fresh)
 
 
+_last_credit_butterfly_condor_push_at = 0.0
+
+
+def _credit_butterfly_condor_page_snapshot(expiry_type: str) -> dict:
+    """Evaluate both CE/PE shadow pages from Box's already-owned shared snapshot."""
+    kind = str(expiry_type or "").strip().upper()
+    symbols = {"NIFTY", "SENSEX"} if kind == "WEEKLY" else {"NIFTY", "SENSEX", "BANKNIFTY"}
+    runner = live_box_spread_runner
+    runtime_state = "WAITING_FOR_BOX_RUNNER"
+    if runner is None:
+        snapshot = {
+            "source": "box-spread-live-runner",
+            "quotes": {"captured_at_ns": time_module.time_ns(), "groups": [], "contract_count": 0},
+            "depth": {"enabled": False, "running": False, "record_count": 0, "records": []},
+        }
+    else:
+        try:
+            snapshot = runner.shared_market_snapshot(max_age_seconds=5.0)
+            runtime_state = "SNAPSHOT_AVAILABLE"
+        except Exception as exc:
+            app_logger.warning("Credit Butterfly/Condor snapshot unavailable: {}", exc)
+            snapshot = {
+                "source": "box-spread-live-runner",
+                "quotes": {"captured_at_ns": time_module.time_ns(), "groups": [], "contract_count": 0},
+                "depth": {"enabled": False, "running": False, "record_count": 0, "records": []},
+            }
+            runtime_state = "SNAPSHOT_UNAVAILABLE"
+    evaluated = evaluate_butterfly_condor_snapshot(
+        snapshot, max_age_seconds=5.0, max_leg_skew_seconds=2.0,
+    )
+    results = [
+        row for row in evaluated.get("results", [])
+        if str(row.get("expiry_type") or "").upper() == kind
+        and str(row.get("underlying") or "").upper() in symbols
+    ]
+    coverage = [
+        row for row in evaluated.get("live_coverage", [])
+        if str(row.get("expiry_type") or "").upper() == kind
+        and str(row.get("underlying") or "").upper() in symbols
+    ]
+    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+    depth = snapshot.get("depth") if isinstance(snapshot.get("depth"), dict) else {}
+    return {
+        **evaluated,
+        "strategy": "credit-butterfly-condor",
+        "runtime_state": runtime_state,
+        "execution_mode": "SHADOW_ONLY",
+        "order_routing_enabled": False,
+        "expiry_type": kind,
+        "allowed_underlyings": sorted(symbols),
+        "shared_snapshot": {
+            "source": str(snapshot.get("source") or "box-spread-live-runner"),
+            "read_only": True,
+            "quote_contract_count": int(quotes.get("contract_count") or 0),
+            "quote_group_count": len(quotes.get("groups") or []),
+            "captured_at_ns": quotes.get("captured_at_ns"),
+            "freshness_limit_seconds": quotes.get("freshness_limit_seconds", 5.0),
+            "depth_enabled": bool(depth.get("enabled", False)),
+            "depth_running": bool(depth.get("running", False)),
+            "depth_record_count": int(depth.get("record_count") or len(depth.get("records") or [])),
+        },
+        "result_count": len(results),
+        "results": results,
+        "live_coverage": coverage,
+    }
+
+
+def _publish_credit_butterfly_condor_pages(*, force: bool = False) -> None:
+    """Push page evaluations only from an existing Box scanner callback."""
+    global _last_credit_butterfly_condor_push_at
+    now = time_module.monotonic()
+    if not force and now - _last_credit_butterfly_condor_push_at < 1.0:
+        return
+    _last_credit_butterfly_condor_push_at = now
+    for expiry_type, page in (
+        ("WEEKLY", "credit-butterfly-condor-weekly"),
+        ("MONTHLY", "credit-butterfly-condor-monthly"),
+    ):
+        try:
+            payload = _credit_butterfly_condor_page_snapshot(expiry_type)
+            publish_page_update(page, "PATCH", {"payload": payload})
+        except Exception as exc:
+            # Strategy diagnostics must not interfere with the Box scanner callback.
+            app_logger.warning("Credit Butterfly/Condor {} push skipped: {}", expiry_type, exc)
+
+
+configure_page_push_snapshot(
+    "credit-butterfly-condor-weekly",
+    lambda: {"payload": _credit_butterfly_condor_page_snapshot("WEEKLY")},
+)
+configure_page_push_snapshot(
+    "credit-butterfly-condor-monthly",
+    lambda: {"payload": _credit_butterfly_condor_page_snapshot("MONTHLY")},
+)
+
+
 def _update_live_box_spread_results(results: tuple) -> None:
     global live_box_spread_latest_results
     # Each scanner callback is scoped to a single quote bucket. Merge fresh
@@ -1391,6 +1488,7 @@ def _update_live_box_spread_results(results: tuple) -> None:
         ):
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
+    _publish_credit_butterfly_condor_pages()
     if selected_results:
         publish_live_box_spread_opportunities(selected_results)
 
