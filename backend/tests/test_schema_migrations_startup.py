@@ -11,6 +11,7 @@ import uuid
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 from app.core import schema_migrations
@@ -191,7 +192,7 @@ def test_order_fill_identity_index_prevents_duplicate_cash_mutations(
             )
         )
 
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         with migration_engine.begin() as connection:
             connection.execute(
                 text(
