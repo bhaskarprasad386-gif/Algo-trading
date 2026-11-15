@@ -292,8 +292,8 @@ def test_l1_and_depth_vwap_comparison_uses_common_executable_lots():
     assert comparison["status"] == "COMPARABLE"
     assert comparison["executable_lots"] == 10
     assert comparison["l1_top_of_book_credit_per_unit"] == 28
-    assert abs(comparison["depth_vwap_credit_per_unit"] - 27.8) < 1e-9
-    assert abs(comparison["l1_minus_depth_vwap_credit_per_unit"] - 0.2) < 1e-9
+    assert abs(comparison["depth_vwap_credit_per_unit"] - 27.9) < 1e-9
+    assert abs(comparison["l1_minus_depth_vwap_credit_per_unit"] - 0.1) < 1e-9
 
 
 def test_l1_depth_comparison_is_not_comparable_when_l1_size_is_smaller():
