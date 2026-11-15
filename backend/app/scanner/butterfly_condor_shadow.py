@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from itertools import combinations
 from math import isfinite
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
 
@@ -27,8 +28,13 @@ def _number(value: Any) -> float | None:
 
 
 def _whole(value: Any) -> int | None:
-    number = _number(value)
-    if number is None or number < 0 or not number.is_integer():
+    # Preserve nanosecond timestamp precision; float conversion can silently
+    # round 64-bit epoch values and invalidate freshness/skew checks.
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
+        return None
+    if not number.is_finite() or number < 0 or number != number.to_integral_value():
         return None
     return int(number)
 
