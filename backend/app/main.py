@@ -79,7 +79,7 @@ from app.scanner.box_spread_paper_routes import router as box_spread_paper_route
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, set_expiry_types as set_live_box_websocket_expiry_types
-from app.scanner.page_push_websocket import router as page_push_websocket_router
+from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -1963,6 +1963,9 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
             feed_manager=iv_feed_manager,
             close_feed_manager=False,
         )
+        runtime.set_page_update_callback(
+            lambda snapshot: publish_page_update("iv-skew-flip", "PATCH", {"runtime": snapshot})
+        )
         try:
             snapshot = runtime.start(instruments=iv_instruments)
         except Exception:
@@ -1985,7 +1988,23 @@ def _stop_iv_skew_flip_runtime():
         snapshot = runtime.stop()
         if iv_skew_flip_runtime is runtime and snapshot.get("status") == "STOPPED":
             iv_skew_flip_runtime = None
+        publish_page_update("iv-skew-flip", "PATCH", {"runtime": snapshot})
         return snapshot
+
+
+def _iv_page_push_snapshot():
+    enabled = _get_iv_scanner_enabled()
+    with _iv_skew_flip_runtime_lock:
+        runtime = iv_skew_flip_runtime
+        snapshot = runtime.snapshot() if runtime is not None else None
+    return {
+        "saved_enabled": enabled,
+        "runtime": snapshot,
+        "orders_enabled": False,
+    }
+
+
+configure_page_push_snapshot("iv-skew-flip", _iv_page_push_snapshot)
 
 
 @app.get("/api/v1/scanner/iv-skew-flip/baskets")
