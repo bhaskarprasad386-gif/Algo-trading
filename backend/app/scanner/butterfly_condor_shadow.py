@@ -221,7 +221,6 @@ def _eligible_index_expiry(underlying: str, expiry_type: str) -> bool:
 def evaluate_butterfly_condor_snapshot(
     snapshot: Mapping[str, Any],
     *,
-    fees_per_unit: float = 0.0,
     max_age_seconds: float = 5.0,
     max_leg_skew_seconds: float = 2.0,
     expiry_type_resolver=None,
@@ -232,11 +231,8 @@ def evaluate_butterfly_condor_snapshot(
     Results are indicative, shadow-only L1/depth calculations; no alert or
     order side effect is performed here. Positive gross credit is required.
     """
-    fees = _number(fees_per_unit)
     max_age = _number(max_age_seconds)
     max_skew = _number(max_leg_skew_seconds)
-    if fees is None or fees < 0:
-        raise ValueError("fees_per_unit must be finite and non-negative")
     if max_age is None or not 0 < max_age <= 60:
         raise ValueError("max_age_seconds must be in (0, 60]")
     if max_skew is None or not 0 < max_skew <= 30:
@@ -406,8 +402,6 @@ def evaluate_butterfly_condor_snapshot(
                         "timestamp_ns": max(stamps),
                         "gross_credit_per_unit": credit,
                         "gross_credit_per_lot": credit * lot_size,
-                        "estimated_fees_per_unit": fees,
-                        "estimated_net_credit_per_unit": credit - fees,
                         "minimum_gross_expiry_pnl_per_unit": minimum_expiry_pnl,
                         "maximum_gross_expiry_loss_per_unit": max(0.0, -minimum_expiry_pnl),
                         "l1_executable_lots": l1_lots,
