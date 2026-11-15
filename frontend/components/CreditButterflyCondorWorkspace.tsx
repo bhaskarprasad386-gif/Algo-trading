@@ -61,7 +61,7 @@ const expiryLabel = (value: number | string) => {
 
 export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryType: ExpiryType }) {
   const symbols = useMemo(() => expiryType === "WEEKLY" ? ["NIFTY", "SENSEX"] : ["NIFTY", "SENSEX", "BANKNIFTY"], [expiryType]);
-  const { data: pageData, lastMessageAt, resync } = usePagePush(
+  const { status: connectionStatus, data: pageData, lastMessageAt, resync } = usePagePush(
     expiryType === "WEEKLY" ? "credit-butterfly-condor-weekly" : "credit-butterfly-condor-monthly"
   );
   const [payload, setPayload] = useState<Payload | null>(null);
@@ -114,7 +114,7 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
 
       <Card className="space-y-2 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed</div>
+          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed <span className="rounded border theme-border px-2 py-0.5 text-[10px]">{connectionStatus}</span></div>
           <div>Runtime: <b>{payload?.runtime_state ?? (loading ? "LOADING" : "UNAVAILABLE")}</b></div>
           <div>Quote contracts: <b>{fmt(payload?.shared_snapshot.quote_contract_count)}</b></div>
           <div>Depth records: <b>{fmt(payload?.shared_snapshot.depth_record_count)}</b></div>
