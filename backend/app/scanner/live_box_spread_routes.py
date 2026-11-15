@@ -133,7 +133,22 @@ def butterfly_condor_shadow(
         max_leg_skew_seconds=max_leg_skew_seconds,
         expiry_type_resolver=classify_expiry_type,
     )
-    return {"strategy": "box-spread-shadow", "runtime_state": runtime_state, **result}
+    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+    depth = snapshot.get("depth") if isinstance(snapshot.get("depth"), dict) else {}
+    shared_summary = {
+        "source": str(snapshot.get("source") or quotes.get("source") or "box-spread-shared-snapshot"),
+        "read_only": True,
+        "quote_contract_count": int(quotes.get("contract_count") or 0),
+        "quote_group_count": len(quotes.get("groups") or []),
+        "captured_at_ns": quotes.get("captured_at_ns"),
+        "freshness_limit_seconds": quotes.get("freshness_limit_seconds", max_age_seconds),
+        "depth_enabled": bool(depth.get("enabled", False)),
+        "depth_running": bool(depth.get("running", False)),
+        "depth_record_count": int(depth.get("record_count") or len(depth.get("records") or [])),
+        "depth_readiness_count": len(depth.get("readiness") or []),
+    }
+    return {"strategy": "box-spread-shadow", "runtime_state": runtime_state,
+            "shared_snapshot": shared_summary, **result}
 
 
 @router.get("/diagnostics")
