@@ -172,3 +172,30 @@ def test_box_snapshot_expiry_backfill_preserves_only_known_classifications(
         ).all()
 
     assert rows == [(1, "WEEKLY"), (2, "MONTHLY"), (3, None), (4, None)]
+
+
+
+def test_order_fill_identity_index_prevents_duplicate_cash_mutations(
+    migration_engine, monkeypatch
+):
+    """A repeated broker fill identity for one user must be rejected."""
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    schema_migrations.run_schema_migrations()
+
+    with migration_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO orders (user_id, fill_id) VALUES "
+                "(7, 'broker-fill-001'), (7, NULL), (7, NULL)"
+            )
+        )
+
+    with pytest.raises(Exception):
+        with migration_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO orders (user_id, fill_id) "
+                    "VALUES (7, 'broker-fill-001')"
+                )
+            )
