@@ -9,7 +9,7 @@ export default function BoxSpreadWorkspacePage() {
         {[
           ["Overview", "#box-overview"], ["Scanner", "#box-scanner-controls"],
           ["Opportunities", "#box-live-opportunities"],
-          ["History", "#box-history"], ["System Health", "#box-system-health"],
+          ["History", "#box-history"], ["Shadow Monitor", "#box-shadow-monitor"], ["System Health", "#box-system-health"],
         ].map(([label, href]) => <a key={href} href={href} className="shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold text-slate-300 transition hover:bg-cyan-400/10 hover:text-cyan-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400">{label}</a>)}
       </nav>
       <StrategyWorkspace slug="box-spread" />
