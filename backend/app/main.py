@@ -75,7 +75,6 @@ from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
-from app.scanner.box_spread_trace_routes import router as box_spread_trace_router
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
@@ -552,7 +551,6 @@ app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
 app.include_router(live_synthetic_trace_router)
 app.include_router(live_box_spread_router)
-app.include_router(box_spread_trace_router)
 app.include_router(box_spread_paper_router)
 app.include_router(box_spread_paper_rule_router)
 app.include_router(live_box_spread_websocket_router)

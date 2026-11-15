@@ -23,7 +23,6 @@ from app.models.live_calendar_spread_alert_history import LiveCalendarSpreadAler
 from app.models.alert_rule import AlertRule
 from app.models.alert_contact import AlertContact
 from app.models.box_spread_real_owner_state import BoxSpreadRealOwnerState
-from app.models.box_spread_trace import BoxSpreadTrace, BoxSpreadTraceExitCheck
 from app.models.box_spread_index_selection import BoxSpreadIndexSelection
 from app.models.iv_scanner_control import IVScannerControl
 from app.models.iv_spot_last_price import IVSpotLastPrice
@@ -36,5 +35,5 @@ __all__ = [
     "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
     "LiveSyntheticAlertHistory", "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
     "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact", "BoxSpreadRealOwnerState",
-    "BoxSpreadTrace", "BoxSpreadTraceExitCheck", "BoxSpreadIndexSelection", "IVScannerControl", "IVSpotLastPrice", "IVOptionObservation", "IVSpotObservation",
+    "BoxSpreadIndexSelection", "IVScannerControl", "IVSpotLastPrice", "IVOptionObservation", "IVSpotObservation",
 ]
