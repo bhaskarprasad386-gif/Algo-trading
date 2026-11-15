@@ -158,8 +158,9 @@ Before feature implementation, establish tests for:
 - Inspect every broker adapter and broker WebSocket owner to avoid conflating trading sessions with market-data sessions.
 - Capture baseline scanner latency, API latency, event-loop lag, worker count, and socket/subscription counts from a safe runtime snapshot.
 - Inspect Android navigation, auth token storage, WebSocket client, lifecycle, and release workflows.
-- Produce target ERD, order-state diagram, adapter contract, migration/rollback plan, and a test matrix.
-- Open a separate implementation PR only after these items are complete and reviewed.
+- Target logical ERD, order-state diagram, adapter contract, expand-and-contract migration/rollback plan, Android remote-UI design, hosting cutover sequence, and test matrix are now documented in `docs/architecture/BATCH_0_TARGET_DESIGN.md`.
+- Still required: verify the full Paper entry/exit/settlement crash boundaries against focused tests; inventory all production callers of the existing execution package; complete per-broker capability and session-isolation audit; capture runtime scanner/API/WebSocket baselines; inspect Android navigation/release workflow; and verify VPS deployment observability/state.
+- Open a separate implementation PR only after these remaining runtime and integration audits are complete and reviewed.
 
 ## Safety decision
 
