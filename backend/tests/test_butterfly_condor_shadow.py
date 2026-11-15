@@ -258,3 +258,51 @@ def test_depth_complete_and_incomplete_counts_are_exposed():
     assert result["depth_status"]["complete"] == 0
     assert result["depth_status"]["incomplete"] > 0
     assert result["depth_status"]["incomplete_reasons"]["MISSING_OR_STALE_DEPTH"] > 0
+
+
+def test_live_coverage_reports_quote_to_depth_coverage_by_option_side():
+    snapshot = _snapshot(
+        {100: (5, 6), 110: (20, 21), 120: (5, 6)},
+        option_types=("CE",), depth=True,
+    )
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    ce = next(row for row in result["live_coverage"] if row["option_type"] == "CE")
+    pe = next(row for row in result["live_coverage"] if row["option_type"] == "PE")
+    assert ce["listed_quote_rows"] == 3
+    assert ce["valid_quote_count"] == 3
+    assert ce["candidate_structure_count"] > 0
+    assert ce["result_count"] > 0
+    assert ce["depth_ready_count"] == ce["result_count"]
+    assert pe["listed_quote_rows"] == 0
+    assert pe["valid_quote_count"] == 0
+    assert pe["result_count"] == 0
+
+
+def test_l1_and_depth_vwap_comparison_uses_common_executable_lots():
+    snapshot = _snapshot(
+        {100: (5, 6), 110: (20, 21), 120: (5, 6)},
+        depth=True,
+    )
+    for row in snapshot["quotes"]["groups"][0]["data"]:
+        row["bid_qty"] = 1000
+        row["ask_qty"] = 1000
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    row = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    comparison = row["l1_vs_depth_vwap"]
+    assert comparison["status"] == "COMPARABLE"
+    assert comparison["executable_lots"] == 10
+    assert comparison["l1_top_of_book_credit_per_unit"] == 28
+    assert abs(comparison["depth_vwap_credit_per_unit"] - 27.9) < 1e-9
+    assert abs(comparison["l1_minus_depth_vwap_credit_per_unit"] - 0.1) < 1e-9
+
+
+def test_l1_depth_comparison_is_not_comparable_when_l1_size_is_smaller():
+    snapshot = _snapshot(
+        {100: (5, 6), 110: (20, 21), 120: (5, 6)},
+        depth=True,
+    )
+    result = evaluate_butterfly_condor_snapshot(snapshot)
+    row = _find(result, "LONG_CREDIT_BUTTERFLY", [100, 110, 120])
+    assert row["l1_vs_depth_vwap"]["status"] == "L1_CAPACITY_BELOW_DEPTH"
+    assert row["l1_vs_depth_vwap"]["l1_executable_lots"] == 5
+    assert row["l1_vs_depth_vwap"]["depth_executable_lots"] == 10
