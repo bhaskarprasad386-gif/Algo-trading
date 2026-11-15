@@ -596,3 +596,72 @@ def test_box_snapshot_normalizes_validated_numeric_configuration_before_calculat
 
     assert results
     assert all(isinstance(row.executable_edge, float) for row in results)
+
+def test_shared_quote_snapshot_exposes_validated_ce_and_pe_independently():
+    scanner = LiveBoxSpreadScanner(atm_provider=lambda _symbol, _stamp: 100.0)
+    base = {
+        "underlying": "NIFTY",
+        "instrument_class": "INDEX",
+        "source_timestamp_ns": 10_000_000_000,
+        "expiry": "30SEP2026",
+        "strike": 100,
+        "bid": 10,
+        "ask": 11,
+        "lot_size": 25,
+        "bid_qty": 50,
+        "ask_qty": 75,
+        "volume": 1000,
+        "oi": 2000,
+    }
+
+    # A CE quote is available without its PE counterpart; no synthetic PE is made.
+    assert scanner.observe(base | {"option_type": "CE"}) == ()
+    snapshot = scanner.shared_quote_snapshot(now_ns=10_500_000_000)
+    assert snapshot["read_only"] is True
+    assert snapshot["contract_count"] == 1
+    group = snapshot["groups"][0]
+    assert group["underlying"] == "NIFTY"
+    assert group["expiry"] == 20260930
+    assert group["atm_strike"] == 100.0
+    assert group["ce_count"] == 1
+    assert group["pe_count"] == 0
+    assert group["data"][0]["option_type"] == "CE"
+    assert group["data"][0]["bid"] == 10.0
+    assert group["data"][0]["ask_qty"] == 75
+
+    # The returned snapshot is detached; consumer mutation cannot affect scanner buckets.
+    group["data"][0]["bid"] = -1
+    again = scanner.shared_quote_snapshot(now_ns=10_500_000_000)
+    assert again["groups"][0]["data"][0]["bid"] == 10.0
+
+
+def test_shared_quote_snapshot_excludes_stale_and_crossed_quotes():
+    scanner = LiveBoxSpreadScanner(atm_provider=lambda _symbol, _stamp: 100.0)
+    base = {
+        "underlying": "NIFTY",
+        "instrument_class": "INDEX",
+        "source_timestamp_ns": 10_000_000_000,
+        "expiry": "30SEP2026",
+        "strike": 100,
+        "bid": 10,
+        "ask": 11,
+        "lot_size": 25,
+        "volume": 1000,
+        "oi": 2000,
+    }
+    scanner.observe(base | {"option_type": "CE"})
+    scanner.observe(base | {
+        "option_type": "PE", "strike": 110, "bid": 12, "ask": 11,
+    })
+    snapshot = scanner.shared_quote_snapshot(max_age_seconds=1, now_ns=12_000_000_001)
+    assert snapshot["contract_count"] == 0
+    assert snapshot["groups"] == []
+
+
+def test_shared_quote_snapshot_rejects_invalid_freshness_window():
+    import pytest
+    scanner = LiveBoxSpreadScanner(atm_provider=lambda _symbol, _stamp: 100.0)
+    with pytest.raises(ValueError, match="max_age_seconds"):
+        scanner.shared_quote_snapshot(max_age_seconds=0)
+    with pytest.raises(ValueError, match="max_age_seconds"):
+        scanner.shared_quote_snapshot(max_age_seconds=61)

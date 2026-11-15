@@ -411,9 +411,15 @@ class BoxLiveDepthShadowFeed:
                     -1.0 <= provider_age <= self.max_provider_age_seconds
                     and 0.0 <= arrival_age <= self.max_arrival_age_seconds
                 )
+                meta = self._metadata.get(item["key"], {})
                 rows.append({
                     "instrument": item["instrument"],
                     "symbol": item["symbol"],
+                    "underlying": str(meta.get("underlying") or "").strip().upper(),
+                    "expiry": meta.get("expiry"),
+                    "strike": meta.get("strike"),
+                    "option_type": meta.get("option_type"),
+                    "lot_size": meta.get("lot_size"),
                     "timestamp_ns": item["timestamp_ns"],
                     "provider_age_seconds": round(provider_age, 3),
                     "arrival_age_seconds": round(arrival_age, 3),
