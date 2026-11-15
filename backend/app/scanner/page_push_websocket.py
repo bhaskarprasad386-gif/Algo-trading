@@ -101,6 +101,41 @@ def publish_page_update(page: str, event: str, data: dict[str, Any] | None = Non
     loop.call_soon_threadsafe(deliver)
 
 
+async def _restart_event_waiter(
+    queue: asyncio.Queue,
+    event_task: asyncio.Task,
+    page_to_reset: str,
+) -> asyncio.Task:
+    """Discard pending events for one page while preserving other subscriptions."""
+    preserved: list[dict[str, Any]] = []
+    if event_task.done() and not event_task.cancelled():
+        try:
+            consumed = event_task.result()
+            if isinstance(consumed, dict) and consumed.get("page") != page_to_reset:
+                preserved.append(consumed)
+        except Exception:
+            pass
+    else:
+        event_task.cancel()
+        await asyncio.gather(event_task, return_exceptions=True)
+
+    while not queue.empty():
+        try:
+            queued = queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        if isinstance(queued, dict) and queued.get("page") != page_to_reset:
+            preserved.append(queued)
+    for frame in preserved:
+        try:
+            queue.put_nowait(frame)
+        except asyncio.QueueFull:
+            # A bounded queue cannot preserve an unbounded backlog. A later
+            # sequence gap will make the client request a fresh page snapshot.
+            break
+    return asyncio.create_task(queue.get())
+
+
 def _origin_allowed(websocket: WebSocket) -> bool:
     origin = str(websocket.headers.get("origin") or "").strip()
     if not origin:
@@ -151,7 +186,9 @@ async def page_updates(websocket: WebSocket) -> None:
                     })
                     continue
                 if event_task in done:
-                    await websocket.send_json(event_task.result())
+                    frame = event_task.result()
+                    if isinstance(frame, dict) and frame.get("page") in channels:
+                        await websocket.send_json(frame)
                     event_task = asyncio.create_task(queue.get())
                 if receive_task in done:
                     raw = receive_task.result()
@@ -173,6 +210,7 @@ async def page_updates(websocket: WebSocket) -> None:
                         _subscribers.discard(entry)
                         entry = (queue, channels)
                         _subscribers.add(entry)
+                        event_task = await _restart_event_waiter(queue, event_task, page)
                     elif message["action"] == "unsubscribe":
                         channels = frozenset(item for item in channels if item != page)
                         _subscribers.discard(entry)
@@ -188,14 +226,7 @@ async def page_updates(websocket: WebSocket) -> None:
                         # queue. It may already have consumed a delta when the
                         # resync request arrives; allowing that task to complete
                         # after this snapshot would replay an older patch.
-                        event_task.cancel()
-                        await asyncio.gather(event_task, return_exceptions=True)
-                        while not queue.empty():
-                            try:
-                                queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                break
-                        event_task = asyncio.create_task(queue.get())
+                        event_task = await _restart_event_waiter(queue, event_task, page)
                     provider = _snapshot_providers.get(page)
                     try:
                         snapshot = provider() if callable(provider) else {}
