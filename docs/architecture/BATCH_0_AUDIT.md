@@ -159,7 +159,9 @@ Before feature implementation, establish tests for:
 - Capture baseline scanner latency, API latency, event-loop lag, worker count, and socket/subscription counts from a safe runtime snapshot.
 - Inspect Android navigation, auth token storage, WebSocket client, lifecycle, and release workflows.
 - Target logical ERD, order-state diagram, adapter contract, expand-and-contract migration/rollback plan, Android remote-UI design, hosting cutover sequence, and test matrix are now documented in `docs/architecture/BATCH_0_TARGET_DESIGN.md`.
-- Still required: verify the full Paper entry/exit/settlement crash boundaries against focused tests; inventory all production callers of the existing execution package; complete per-broker capability and session-isolation audit; capture runtime scanner/API/WebSocket baselines; inspect Android navigation/release workflow; and verify VPS deployment observability/state.
+- Paper lifecycle and crash-boundary source audit is now documented in `docs/architecture/BATCH_0_PAPER_LIFECYCLE_AUDIT.md`. It confirms atomic four-leg Paper ledger transactions and conservative restart replay protection, and identifies the missing successful-entry receipt replay after a lost HTTP response plus required crash-injection/PostgreSQL concurrency tests.
+- Exact-symbol repository search found the generic `DualExecutionEngine`, in-memory idempotency/confirmation/safety helpers, watchdog, and fill-accounting helpers referenced only by their own modules and tests; no production order orchestration caller was found. Dynamic/reflection/external runtime use is not ruled out.
+- Still required: complete per-broker capability and session-isolation audit; capture runtime scanner/API/WebSocket baselines; inspect Android navigation/release workflow; and verify VPS deployment observability/state.
 - Open a separate implementation PR only after these remaining runtime and integration audits are complete and reviewed.
 
 ## Safety decision
