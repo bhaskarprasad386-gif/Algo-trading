@@ -332,7 +332,7 @@ configure_live_box_spread_websocket_depth(
 
 
 def _box_page_push_snapshot():
-    """Compose reconnect state from existing Box runner snapshots only."""
+    """Compose reconnect state from existing Box runner/feed snapshots only."""
     try:
         payload = box_opportunity_page_snapshot()
     except Exception:
@@ -342,6 +342,35 @@ def _box_page_push_snapshot():
         payload["index_spots"] = spot_payload.get("data", []) if isinstance(spot_payload, dict) else []
     except Exception:
         payload["index_spots"] = []
+
+    # Read-only status snapshots replace the Box page's short-interval REST polls.
+    try:
+        runner = live_box_spread_runner
+        runner_snapshot = None if runner is None else runner.snapshot()
+        payload["runtime_health"] = {
+            "common_feed": shared_common_manager().snapshot(),
+            "runners": {"box_spread": runner_snapshot},
+        }
+    except Exception:
+        payload["runtime_health"] = {"common_feed": {"status": "UNAVAILABLE"}, "runners": {"box_spread": None}}
+    try:
+        selected = list(_get_box_spread_index_selection())
+        weekly_only = list(_get_box_spread_weekly_only_symbols())
+        runner = live_box_spread_runner
+        active = sorted({
+            str(target.underlying).strip().upper()
+            for target in (runner.targets if runner is not None else ())
+            if str(getattr(target, "underlying", "") or "").strip()
+        })
+        supervisor = None if live_box_spread_supervisor is None else live_box_spread_supervisor.snapshot()
+        handoff = supervisor.get("handoff", {}) if isinstance(supervisor, dict) else {}
+        payload["index_selection"] = {
+            "symbols": selected,
+            "weekly_only_symbols": weekly_only,
+            "runtime": {"supervisor": {"active_symbols": active, "handoff": handoff}},
+        }
+    except Exception:
+        payload["index_selection"] = {"symbols": [], "weekly_only_symbols": [], "runtime": {"supervisor": {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}}}
     return payload
 
 
@@ -1513,10 +1542,8 @@ def _update_live_box_spread_results(results: tuple) -> None:
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
     try:
-        spot_payload = get_live_box_index_spot_snapshot()
-        publish_page_update("box-spread", "PATCH", {
-            "index_spots": spot_payload.get("data", []) if isinstance(spot_payload, dict) else []
-        })
+        page_snapshot = _box_page_push_snapshot()
+        publish_page_update("box-spread", "PATCH", page_snapshot)
     except Exception:
         pass
     _publish_credit_butterfly_condor_pages()
