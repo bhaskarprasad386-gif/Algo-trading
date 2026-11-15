@@ -127,3 +127,47 @@ def test_created_legacy_tables_generate_primary_keys(migration_engine, monkeypat
 
     assert isinstance(generated_id, int)
     assert generated_id > 0
+
+
+
+def test_box_snapshot_expiry_backfill_preserves_only_known_classifications(
+    migration_engine, monkeypatch
+):
+    """Legacy JSON classifications are copied; unknown/malformed rows stay NULL."""
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    with migration_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE live_box_spread_snapshots (
+                    id INTEGER PRIMARY KEY,
+                    payload_json TEXT,
+                    observed_at TIMESTAMP
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO live_box_spread_snapshots (id, payload_json)
+                VALUES
+                    (1, '{"expiry_type":"weekly"}'),
+                    (2, '{"expiry_type":"MONTHLY"}'),
+                    (3, '{"expiry_type":"UNKNOWN"}'),
+                    (4, 'not-json')
+                """
+            )
+        )
+
+    schema_migrations.run_schema_migrations()
+
+    with migration_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT id, expiry_type FROM live_box_spread_snapshots ORDER BY id"
+            )
+        ).all()
+
+    assert rows == [(1, "WEEKLY"), (2, "MONTHLY"), (3, None), (4, None)]
