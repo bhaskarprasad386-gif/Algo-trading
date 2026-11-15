@@ -1,15 +1,17 @@
 """Database-backed execution lifecycle; no broker or scanner side effects."""
 from __future__ import annotations
 
+import hashlib
 import json
 import time
+from decimal import Decimal
 from dataclasses import dataclass
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide, validate_basket_legs
-from app.models.execution_intent import ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
+from app.models.execution_intent import ExecutionFillRecord, ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
 
 
 class IdempotencyConflict(ValueError):
