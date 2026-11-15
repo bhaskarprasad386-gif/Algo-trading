@@ -43,7 +43,7 @@ export default function BoxSpreadShadowPanel() {
   const diagnostics = data?.diagnostics ?? {};
   const rejected = data?.rejected_counts ?? {};
   const metricKeys = ["valid_quotes", "candidate_structures", "depth_ready", "depth_incomplete", "lot_size_mismatch", "cross_leg_quote_timestamp_skew", "non_positive_credit", "below_minimum_expiry_profit"];
-  return <Card className="space-y-4 border border-slate-300 dark:border-slate-700 p-4" aria-label="Butterfly and Condor shadow diagnostics">
+  return <Card id="box-shadow-monitor" className="space-y-4 border border-slate-300 dark:border-slate-700 p-4" aria-label="Butterfly and Condor shadow diagnostics">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><div className="flex items-center gap-2 text-base font-extrabold"><Activity className="h-5 w-5" /> Butterfly / Condor Shadow Monitor</div><p className="mt-1 text-sm text-slate-500">Existing Box Spread quotes and depth only · no additional broker subscriptions</p></div>
       <div className="flex items-center gap-2"><span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-bold text-emerald-600"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" /> SHADOW ONLY · ORDERS OFF</span><button onClick={() => void refresh()} className="rounded-lg border px-3 py-2 text-sm font-bold"><RefreshCw className="mr-1 inline h-4 w-4" /> Refresh</button></div>
