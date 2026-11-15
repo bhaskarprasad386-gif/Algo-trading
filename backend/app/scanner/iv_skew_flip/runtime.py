@@ -199,6 +199,7 @@ class IVSkewFlipRuntime:
         self._telegram_delivery = {"status": "DISABLED", "last_attempt_ns": None, "last_error": None}
         self._started = False
         self._stopping = False
+        self._page_update_callback: Callable[[dict[str, Any]], None] | None = None
 
     @staticmethod
     def _rows_for_symbol(instruments: list[dict[str, Any]], symbol: str) -> tuple[dict[str, Any], ...]:
@@ -830,6 +831,14 @@ class IVSkewFlipRuntime:
                 "signals_allowed": signals_allowed,
             }
 
+    def set_page_update_callback(
+        self, callback: Callable[[dict[str, Any]], None] | None
+    ) -> None:
+        """Install a best-effort observer for browser page updates only."""
+        if callback is not None and not callable(callback):
+            raise ValueError("page update callback must be callable")
+        self._page_update_callback = callback
+
     def refresh_once(self) -> dict[str, Any]:
         now = self.clock_datetime()
         if now.tzinfo is None:
@@ -869,7 +878,15 @@ class IVSkewFlipRuntime:
         self._maybe_evaluate(now, now_ns)
         with self._lock:
             self._last_refresh_ns = now_ns
-        return self.snapshot()
+        snapshot = self.snapshot()
+        callback = self._page_update_callback
+        if callable(callback):
+            try:
+                callback(snapshot)
+            except Exception:
+                # UI fan-out is observational; it must never interrupt IV sampling.
+                pass
+        return snapshot
 
     @staticmethod
     def _telegram_sender(payload: dict[str, Any]) -> None:

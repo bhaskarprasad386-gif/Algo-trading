@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timezone
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.scanner.page_push_websocket import configure_snapshot_provider, publish_page_update
 
 router = APIRouter(tags=["box-spread"])
 _subscribers = set()
@@ -158,10 +159,7 @@ def _passes_edge_threshold(row):
 
 
 def publish(results):
-    """Call from scanner callback threads; queues are touched on the event loop only."""
-    loop = _loop
-    if loop is None or not loop.is_running():
-        return
+    """Publish to the shared page channel and legacy socket without owning a feed."""
     rows = []
     for result in results or ():
         try:
@@ -170,6 +168,14 @@ def publish(results):
                 rows.append(row)
         except (AttributeError, TypeError, ValueError, OverflowError):
             continue
+    # The shared page gateway owns its own browser-facing event loop. Publish
+    # directly from this callback so the new UI does not depend on a legacy
+    # /ws/live-opportunities client keeping that socket's loop registered.
+    publish_page_update("box-spread", "PATCH", {"opportunity_updates": rows})
+    loop = _loop
+    if loop is None or not loop.is_running():
+        return
+
     # Publish an empty frame too. The scanner callback itself is the heartbeat:
     # an empty result means the scan ran but found no qualifying executable box.
     # Silently dropping it makes a healthy, quiet scanner look like a dead stream.
@@ -218,3 +224,23 @@ async def live_opportunities(websocket: WebSocket):
         _subscribers.discard(queue)
         if not _subscribers:
             _loop = None
+
+
+
+def _page_snapshot():
+    """Return the latest safe Box opportunity rows for page-push reconnects."""
+    rows = []
+    if callable(_latest_getter):
+        try:
+            for item in (_latest_getter() or ()):
+                row = _row(item)
+                if row is not None and _passes_edge_threshold(row):
+                    rows.append(row)
+        except Exception:
+            return {"opportunities": []}
+    return {"opportunities": rows}
+
+
+# The shared page gateway reads this getter on subscribe/resync. It does not
+# start a runner or broker feed and uses the same quote validation as this WS.
+configure_snapshot_provider("box-spread", _page_snapshot)
