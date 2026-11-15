@@ -354,23 +354,10 @@ def _box_page_push_snapshot():
     except Exception:
         payload["runtime_health"] = {"common_feed": {"status": "UNAVAILABLE"}, "runners": {"box_spread": None}}
     try:
-        selected = list(_get_box_spread_index_selection())
-        weekly_only = list(_get_box_spread_weekly_only_symbols())
-        runner = live_box_spread_runner
-        active = sorted({
-            str(target.underlying).strip().upper()
-            for target in (runner.targets if runner is not None else ())
-            if str(getattr(target, "underlying", "") or "").strip()
-        })
         supervisor = None if live_box_spread_supervisor is None else live_box_spread_supervisor.snapshot()
-        handoff = supervisor.get("handoff", {}) if isinstance(supervisor, dict) else {}
-        payload["index_selection"] = {
-            "symbols": selected,
-            "weekly_only_symbols": weekly_only,
-            "runtime": {"supervisor": {"active_symbols": active, "handoff": handoff}},
-        }
+        payload["index_selection_runtime"] = supervisor if isinstance(supervisor, dict) else {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
     except Exception:
-        payload["index_selection"] = {"symbols": [], "weekly_only_symbols": [], "runtime": {"supervisor": {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}}}
+        payload["index_selection_runtime"] = {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
     return payload
 
 
