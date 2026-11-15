@@ -435,3 +435,33 @@ def test_index_spot_snapshot_fails_closed_when_selection_provider_errors(monkeyp
 
     assert payload["data"] == []
     assert seen == []
+
+
+
+def test_butterfly_condor_shadow_endpoint_is_read_only_and_uses_shared_snapshot(monkeypatch):
+    captured = {
+        "quotes": {"captured_at_ns": time.time_ns(), "groups": []},
+        "depth": {"records": []},
+    }
+    monkeypatch.setattr(routes, "_shared_snapshot_getter", lambda **kwargs: captured)
+
+    payload = routes.butterfly_condor_shadow()
+
+    assert payload["strategy"] == "box-spread-shadow"
+    assert payload["runtime_state"] == "SNAPSHOT_AVAILABLE"
+    assert payload["source"] == "box-spread-shared-snapshot"
+    assert payload["read_only"] is True
+    assert payload["execution_mode"] == "SHADOW_ONLY"
+    assert payload["order_routing_enabled"] is False
+    assert payload["result_count"] == 0
+
+
+def test_butterfly_condor_shadow_endpoint_fails_closed_without_runner(monkeypatch):
+    monkeypatch.setattr(routes, "_shared_snapshot_getter", None)
+
+    payload = routes.butterfly_condor_shadow()
+
+    assert payload["runtime_state"] == "WAITING_FOR_BOX_RUNNER"
+    assert payload["read_only"] is True
+    assert payload["order_routing_enabled"] is False
+    assert payload["result_count"] == 0
