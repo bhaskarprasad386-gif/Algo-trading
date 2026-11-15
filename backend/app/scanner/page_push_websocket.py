@@ -182,6 +182,14 @@ async def page_updates(websocket: WebSocket) -> None:
                 elif page not in channels:
                     await websocket.send_json({"type": "error", "code": "NOT_SUBSCRIBED"})
                     continue
+                else:
+                    # Discard queued deltas before sending a fresh snapshot;
+                    # otherwise an older queued patch could arrive after resync.
+                    while not queue.empty():
+                        try:
+                            queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
                 provider = _snapshot_providers.get(page)
                 try:
                     snapshot = provider() if callable(provider) else {}
