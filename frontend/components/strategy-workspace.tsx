@@ -953,9 +953,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (isCustom) return;
+    // History is a durable query, not a live feed. Refresh on filter/page
+    // changes or explicit user action instead of polling it every 10 seconds.
     void loadHistory();
-    const timer = window.setInterval(() => void loadHistory(), 10000);
-    return () => window.clearInterval(timer);
   }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : "", slug === "box-spread" ? historyPage : 1]);
 
   useEffect(() => {
