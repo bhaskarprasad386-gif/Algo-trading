@@ -219,6 +219,17 @@ def record_fill(
         ).with_for_update()).scalar_one_or_none()
         if leg is None:
             raise LookupError("execution leg not found for intent")
+        registered_order = db.execute(select(ExecutionBrokerOrderRecord).where(
+            ExecutionBrokerOrderRecord.account_id == account_id,
+            ExecutionBrokerOrderRecord.broker == broker,
+            ExecutionBrokerOrderRecord.broker_order_id == broker_order_id,
+            ExecutionBrokerOrderRecord.intent_record_id == intent.id,
+            ExecutionBrokerOrderRecord.leg_record_id == leg.id,
+        ).with_for_update()).scalar_one_or_none()
+        if registered_order is None:
+            raise LookupError(
+                "broker order is not registered for this account, intent and execution leg"
+            )
         if intent.status not in {
             IntentStatus.SUBMITTING.value, IntentStatus.WORKING.value,
             IntentStatus.PARTIALLY_FILLED.value,
