@@ -245,10 +245,12 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
         assert replay["replayed"] is True
         assert replay["broker_orders_enabled"] is False
         assert replay["trade_id"] == trade.id
+        assert replay["idempotency_key"] == "restart-complete-entry"
         assert replay["status"] == "FILLED"
         assert {fill["role"] for fill in replay["fills"]} == {
             "LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE",
         }
+        assert all(fill["fill_id"] for fill in replay["fills"])
         assert all(fill["quantity"] == 25 for fill in replay["fills"])
         assert len(after_restart.list_fills(
             trade.id, account_key="restart-complete",
