@@ -19,6 +19,8 @@ class ReconciliationStatus(str, Enum):
     FILL_QUANTITY_MISMATCH = "FILL_QUANTITY_MISMATCH"
     DUPLICATE_BROKER_ORDER_ID = "DUPLICATE_BROKER_ORDER_ID"
     DUPLICATE_BROKER_TRADE_ID = "DUPLICATE_BROKER_TRADE_ID"
+    TRADE_ORDER_MISSING = "TRADE_ORDER_MISSING"
+    ORDER_TRADE_FILL_TOTAL_MISMATCH = "ORDER_TRADE_FILL_TOTAL_MISMATCH"
 
 
 @dataclass(frozen=True)
@@ -174,6 +176,25 @@ def reconcile_snapshot(
         ))
 
     broker_trade_map = {x.broker_trade_id: x for x in snapshot.trades}
+    broker_order_map = {x.broker_order_id: x for x in snapshot.orders}
+    trade_totals_by_order: dict[str, int] = {}
+    for trade in snapshot.trades:
+        if trade.broker_order_id not in broker_order_map:
+            issues.append(ReconciliationIssue(
+                ReconciliationStatus.TRADE_ORDER_MISSING, trade.broker_trade_id,
+                "Broker trade references an order absent from the supplied broker order snapshot.",
+            ))
+        trade_totals_by_order[trade.broker_order_id] = (
+            trade_totals_by_order.get(trade.broker_order_id, 0) + trade.quantity
+        )
+    for order_id, broker_order in broker_order_map.items():
+        trade_total = trade_totals_by_order.get(order_id, 0)
+        if trade_total != broker_order.filled_quantity:
+            issues.append(ReconciliationIssue(
+                ReconciliationStatus.ORDER_TRADE_FILL_TOTAL_MISMATCH, order_id,
+                f"Broker order reports filled quantity {broker_order.filled_quantity}, but broker trade rows total {trade_total}.",
+            ))
+
     for trade_id, local_qty in local_fill_quantities.items():
         if not trade_id.strip() or local_qty <= 0:
             raise ValueError("local fill identities and quantities must be positive")
