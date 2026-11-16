@@ -14,6 +14,10 @@ from app.execution.broker_reconciliation import (
 )
 
 
+class MStockAuthenticationError(RuntimeError):
+    """Raised when the documented m.Stock Type A login flow cannot authenticate an account."""
+
+
 class MStockHistoryUnavailable(RuntimeError):
     """Raised when m.Stock history cannot be proven complete for its supported window."""
 
@@ -28,10 +32,10 @@ class MStockDailyHistory:
 class MStockAdapter:
     """Read-only m.Stock Type A adapter.
 
-    Authentication is supplied as an API key and already-issued access token.
-    This adapter deliberately does not implement OTP/TOTP login or any order
-    mutation API. Type A access tokens are short-lived and must be renewed by
-    the authenticated owner flow outside this adapter.
+    Supports the documented Type A login, OTP/TOTP session exchange and
+    read-only order/trade history. Credentials are request-scoped and are not
+    retained; only the short-lived access token is held for the active session.
+    Order mutation APIs remain deliberately unavailable.
     """
 
     name = "mstock"
@@ -61,6 +65,123 @@ class MStockAdapter:
         self.account_id = account_id
         self.connected = True
         return {"broker": self.name, "connected": True, "account_id": account_id}
+
+    @staticmethod
+    def _auth_payload(response: Any, endpoint: str) -> dict[str, Any]:
+        try:
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            raise MStockAuthenticationError(
+                f"m.Stock {endpoint} request failed: {type(exc).__name__}"
+            ) from exc
+        if not isinstance(payload, dict) or str(payload.get("status", "")).lower() != "success":
+            raise MStockAuthenticationError(f"m.Stock {endpoint} authentication was rejected")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise MStockAuthenticationError(f"m.Stock {endpoint} returned an invalid session payload")
+        return data
+
+    def begin_login(self, *, username: str, password: str) -> dict[str, Any]:
+        """Start Type A password login; m.Stock sends an OTP to the registered device."""
+        if not username.strip() or not password:
+            raise ValueError("m.Stock username and password are required")
+        try:
+            response = self.http.post(
+                f"{self.base_url}/connect/login",
+                headers={
+                    "X-Mirae-Version": "1",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"username": username.strip(), "password": password},
+                timeout=15,
+            )
+            self._auth_payload(response, "connect/login")
+        except MStockAuthenticationError:
+            raise
+        except Exception as exc:
+            raise MStockAuthenticationError(
+                f"m.Stock connect/login request failed: {type(exc).__name__}"
+            ) from exc
+        # Do not return or retain the login response, JWT, username or password.
+        return {"broker": self.name, "status": "OTP_REQUIRED"}
+
+    def _activate_authenticated_session(
+        self, *, data: dict[str, Any], api_key: str, expected_account_id: str
+    ) -> dict[str, Any]:
+        authenticated_id = data.get("user_id")
+        access_token = data.get("access_token")
+        if authenticated_id is None or not str(authenticated_id).strip():
+            raise MStockAuthenticationError("m.Stock session response is missing authenticated user_id")
+        if not access_token or not str(access_token).strip():
+            raise MStockAuthenticationError("m.Stock session response is missing access_token")
+        if str(authenticated_id).strip() != str(expected_account_id).strip():
+            raise MStockAuthenticationError("m.Stock authenticated account does not match requested account")
+        result = self.connect(
+            api_key=api_key,
+            access_token=str(access_token),
+            account_id=str(authenticated_id).strip(),
+        )
+        return {
+            "broker": self.name,
+            "connected": True,
+            "account_id": result["account_id"],
+            "auth_method": "OTP_OR_TOTP",
+        }
+
+    def complete_otp(
+        self, *, api_key: str, otp: str, account_id: str
+    ) -> dict[str, Any]:
+        """Exchange the Type A OTP for a token and verify the returned user_id."""
+        if not api_key.strip() or not otp.strip() or not account_id.strip():
+            raise ValueError("m.Stock API key, OTP and expected account ID are required")
+        try:
+            response = self.http.post(
+                f"{self.base_url}/session/token",
+                headers={
+                    "X-Mirae-Version": "1",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"api_key": api_key.strip(), "request_token": otp.strip(), "checksum": "L"},
+                timeout=15,
+            )
+            data = self._auth_payload(response, "session/token")
+        except MStockAuthenticationError:
+            raise
+        except Exception as exc:
+            raise MStockAuthenticationError(
+                f"m.Stock session/token request failed: {type(exc).__name__}"
+            ) from exc
+        return self._activate_authenticated_session(
+            data=data, api_key=api_key.strip(), expected_account_id=account_id
+        )
+
+    def complete_totp(
+        self, *, api_key: str, totp: str, account_id: str
+    ) -> dict[str, Any]:
+        """Exchange a Type A TOTP for a token and verify the returned user_id."""
+        if not api_key.strip() or not totp.strip() or not account_id.strip():
+            raise ValueError("m.Stock API key, TOTP and expected account ID are required")
+        try:
+            response = self.http.post(
+                f"{self.base_url}/session/verifytotp",
+                headers={
+                    "X-Mirae-Version": "1",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"api_key": api_key.strip(), "totp": totp.strip()},
+                timeout=15,
+            )
+            data = self._auth_payload(response, "session/verifytotp")
+        except MStockAuthenticationError:
+            raise
+        except Exception as exc:
+            raise MStockAuthenticationError(
+                f"m.Stock session/verifytotp request failed: {type(exc).__name__}"
+            ) from exc
+        return self._activate_authenticated_session(
+            data=data, api_key=api_key.strip(), expected_account_id=account_id
+        )
 
     def _headers(self) -> dict[str, str]:
         if not self.connected or not self.api_key or not self.access_token:
