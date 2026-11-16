@@ -269,3 +269,45 @@ def test_single_owner_rejects_cross_broker_switch_even_when_account_ids_differ(d
     assert persisted.id == original.id
     assert persisted.broker_name == "fyers"
     assert persisted.account_fingerprint == account_fingerprint("fyers", "FY12345")
+
+
+def test_disconnect_provider_failure_still_clears_local_and_durable_state(db, monkeypatch):
+    from app.brokers import routes
+    from app.brokers.connections import BrokerConnectionStore
+    from app.brokers.safety import trading_safety
+    from app.brokers.session_store import BrokerSessionStore
+
+    class FailingLogoutAdapter:
+        name = "angel_one"
+        connected = True
+
+        def disconnect(self):
+            raise RuntimeError("provider logout unavailable")
+
+    claim_authenticated_account(db, "angel_one", "CLIENT123")
+    set_state = db.query(BoxSpreadRealOwnerState).one()
+    set_state.connected = True
+    db.commit()
+
+    sessions = BrokerSessionStore()
+    connections = BrokerConnectionStore()
+    adapter = FailingLogoutAdapter()
+    sessions.replace(7, "angel_one", adapter)
+    connections.connect(7, "angel_one", "test account")
+    monkeypatch.setattr(routes, "broker_sessions", sessions)
+    monkeypatch.setattr(routes, "broker_connections", connections)
+    trading_safety.enable(7)
+
+    with pytest.raises(HTTPException) as raised:
+        routes.disconnect("angel_one", db, 7)
+
+    assert raised.value.status_code == 503
+    assert sessions.get(7, "angel_one") is None
+    assert connections.get(7, "angel_one") is None
+    assert trading_safety.get(7).real_trading_enabled is False
+    assert trading_safety.get(7).kill_switch is True
+    db.expire_all()
+    persisted = db.query(BoxSpreadRealOwnerState).one()
+    assert persisted.connected is False
+    assert persisted.real_trading_enabled is False
+    assert persisted.kill_switch is True
