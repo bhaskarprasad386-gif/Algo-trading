@@ -144,7 +144,7 @@ def test_broker_order_identity_is_durable_and_idempotent(db):
         db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
         broker="angel_one", broker_order_id="broker-ord-1",
         symbol="NFO:CE", side="BUY", quantity=50,
-        accepted_at_ns=500,
+        accepted_at_ns=501,
     )
     assert first == {"created": True, "broker_order_id": "broker-ord-1"}
     assert replay == {"created": False, "broker_order_id": "broker-ord-1"}
