@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import os
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,7 +24,6 @@ router = APIRouter()
 
 class FyersAuthUrlRequest(BaseModel):
     app_id: str = Field(min_length=1, max_length=200)
-    redirect_uri: str = Field(min_length=10, max_length=1000)
 
 
 class FyersVerifyRequest(BaseModel):
@@ -31,7 +31,6 @@ class FyersVerifyRequest(BaseModel):
     app_secret: str = Field(min_length=1, max_length=500)
     auth_code: str = Field(min_length=1, max_length=2000)
     state: str = Field(min_length=16, max_length=256)
-    redirect_uri: str = Field(min_length=10, max_length=1000)
     expected_account_id: str = Field(min_length=1, max_length=100)
     display_name: str | None = Field(default=None, max_length=100)
 
@@ -93,19 +92,29 @@ class FyersRESTClient:
 fyers_oauth_states = FyersOAuthStateStore()
 
 
+def _configured_redirect_uri() -> str:
+    # The callback is deployment configuration, not caller-controlled input.
+    # This prevents an authenticated UI caller from turning the broker login
+    # flow into an arbitrary redirect endpoint.
+    return str(os.getenv("FYERS_REDIRECT_URI") or "").strip()
+
+
 @router.post("/fyers/auth-url")
 def fyers_auth_url(
     payload: FyersAuthUrlRequest,
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Create a short-lived, single-use state and return the official login URL."""
+    redirect_uri = _configured_redirect_uri()
+    if not redirect_uri:
+        raise HTTPException(status_code=503, detail="FYERS redirect URI is not configured on the server")
     try:
         state, url = fyers_oauth_states.create(
             app_id=payload.app_id,
-            redirect_uri=payload.redirect_uri,
+            redirect_uri=redirect_uri,
         )
     except (ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=422, detail="Invalid FYERS app or registered redirect URI") from exc
+        raise HTTPException(status_code=503, detail="Configured FYERS redirect URI is invalid") from exc
     return {"broker": "fyers", "authorization_url": url, "state": state, "expires_in": 600}
 
 
@@ -120,7 +129,7 @@ def fyers_verify(
         fyers_oauth_states.consume(
             state=payload.state,
             app_id=payload.app_id,
-            redirect_uri=payload.redirect_uri,
+            redirect_uri=_configured_redirect_uri(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="FYERS OAuth state is invalid, expired, or already used") from exc
