@@ -86,22 +86,24 @@ def _history(*, complete=True, account_id="acct-1", broker="angel_one", scope="C
     return SimpleNamespace(scope=scope, snapshot=snapshot, trading_date="2026-11-16")
 
 
-def test_sync_persists_all_order_events_and_reports_counts(monkeypatch):
+@pytest.mark.parametrize("broker", ["angel_one", "zerodha", "fyers", "shoonya", "mstock"])
+def test_sync_persists_all_order_events_and_reports_counts(monkeypatch, broker):
     seen = []
     monkeypatch.setattr(
         sync, "record_broker_order_event",
         lambda db, event: seen.append(event) or {"created": len(seen) == 1},
     )
     result = sync.sync_account_order_status_events(
-        object(), adapter=_adapter(_history(orders=[_order(), _order(
+        object(), adapter=_adapter(_history(broker=broker, orders=[_order(), _order(
             broker_order_id="order-2", raw_status="COMPLETE", filled_quantity=50,
-        )])), account_id="acct-1",
+        )]), name=broker), account_id="acct-1",
     )
     assert result["status"] == "SYNCED"
     assert result["event_count"] == 2
     assert result["created_count"] == 1
     assert result["duplicate_count"] == 1
     assert len(seen) == 2
+    assert all(event.broker == broker for event in seen)
 
 
 @pytest.mark.parametrize(
