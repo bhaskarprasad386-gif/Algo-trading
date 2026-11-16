@@ -145,3 +145,32 @@ def test_intent_lookup_is_account_scoped(db):
             db, snapshot=_snapshot(account_id="acct-2"),
             reconciliation_id="run-cross-account", intent_ids=("intent-reconcile",),
         )
+
+
+def test_unrecorded_broker_order_is_durably_blocked(db):
+    _persist_order(db)
+    snapshot = BrokerSnapshot(
+        account_id="acct-1",
+        broker="fyers",
+        orders=(
+            BrokerOrderSnapshot(
+                broker_order_id="order-1", symbol="NFO:CE", side="BUY",
+                quantity=50, filled_quantity=0,
+            ),
+            BrokerOrderSnapshot(
+                broker_order_id="unexpected-order", symbol="NFO:OTHER", side="SELL",
+                quantity=25, filled_quantity=0,
+            ),
+        ),
+        trades=(),
+        complete=True,
+    )
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=snapshot, reconciliation_id="run-unrecorded-order",
+        intent_ids=("intent-reconcile",),
+    )
+    assert result["report"].is_consistent is False
+    assert any(
+        issue.status.value == "UNRECORDED_BROKER_ORDER"
+        for issue in result["report"].issues
+    )
