@@ -101,3 +101,20 @@ A cumulative quantity below already persisted fills, or a cumulative quantity
 above the registered order size, remains a hard fail-closed error. Deferred
 events do not trigger polling, retry, order mutation, automatic adoption, or
 execution resume. Reconciliation remains the authority for unresolved gaps.
+
+
+## Deferred callback event visibility
+
+The owner-authenticated `GET /api/v1/brokers/events/review` endpoint exposes a
+bounded, account- and broker-scoped read-only view of callback events whose
+fill evidence is not yet reconciled. It distinguishes cumulative fill gaps,
+conflicting cumulative quantities, missing trade identity, unresolved broker
+order identity, and fill application that has not reached the immutable fill
+ledger. Exact fill evidence already present in the ledger is omitted from the
+unresolved list.
+
+The review never replays callbacks, writes fills, changes intent state, polls a
+provider, or authorizes order actions. Results are limited to the authenticated
+single broker account, and `trading_authorized` remains false. The endpoint
+returns only event identity and quantity/timestamp diagnostics, not callback
+payload JSON or average fill prices.
