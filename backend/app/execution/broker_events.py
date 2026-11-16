@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 
 
 class BrokerOrderEventStatus(str, Enum):
@@ -51,8 +52,10 @@ class BrokerOrderEvent:
             raise ValueError("fill_id cannot be empty")
         if (self.fill_id is None) != (self.fill_quantity is None):
             raise ValueError("fill_id and fill_quantity must be supplied together")
-        if self.average_fill_price is not None and self.average_fill_price <= 0:
-            raise ValueError("average_fill_price must be positive")
+        if self.average_fill_price is not None and (
+            not math.isfinite(self.average_fill_price) or self.average_fill_price <= 0
+        ):
+            raise ValueError("average_fill_price must be finite and positive")
         if self.occurred_at_ns < 0:
             raise ValueError("occurred_at_ns cannot be negative")
         if (
