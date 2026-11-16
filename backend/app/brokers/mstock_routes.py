@@ -60,6 +60,8 @@ def mstock_verify_login(
     if payload.auth_method == "TOTP" and (not payload.totp or payload.otp):
         raise HTTPException(status_code=422, detail="Provide totp only when auth_method is TOTP")
 
+    # Re-authentication must disarm any prior process-local safety state first.
+    trading_safety.disable(user_id)
     adapter = MStockAdapter()
     try:
         if payload.auth_method == "OTP":
@@ -85,9 +87,9 @@ def mstock_verify_login(
             db.rollback()
             raise
 
-        previous = broker_sessions.replace(user_id, "mstock", adapter)
-        if previous is not None:
-            previous.disconnect()
+        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "mstock", adapter)
+        if logout_error is not None:
+            app_logger.error("Previous mstock provider logout failed during reconnect: %s", type(logout_error).__name__)
         item = broker_connections.connect(user_id, "mstock", payload.display_name)
         trading_safety.disable(user_id)
         return {

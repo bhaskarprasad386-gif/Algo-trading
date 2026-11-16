@@ -168,15 +168,9 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
         db.rollback()
         app_logger.error("Durable Box Spread connection state update failed: %s", exc)
         raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
-    old = broker_sessions.replace(user_id, broker, adapter)
-    if old is not None:
-        try:
-            old.disconnect()
-        except Exception:
-            # The new authenticated session is already installed and durable
-            # state is fail-closed. A stale provider-side session must not make
-            # the API report a failed reconnect or skip connection metadata.
-            app_logger.exception("Previous broker session logout failed during reconnect for %s", broker)
+    logout_error = broker_sessions.replace_and_disconnect_previous(user_id, broker, adapter)
+    if logout_error is not None:
+        app_logger.error("Previous %s provider logout failed during reconnect: %s", broker, type(logout_error).__name__)
     item = broker_connections.connect(user_id, broker, payload.display_name)
     trading_safety.disable(user_id)
     return {"connected": item.connected, "broker": item.broker, "display_name": item.display_name, "client_code": result.get("client_code"), "real_trading": False}

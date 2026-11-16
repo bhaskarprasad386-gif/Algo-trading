@@ -107,3 +107,20 @@ def test_disconnect_all_continues_after_one_provider_disconnect_fails():
     assert healthy.connected is False
     assert store.get(7, "angel_one") is None
     assert store.get(8, "fyers") is None
+
+
+def test_replace_and_disconnect_previous_keeps_new_session_when_old_logout_fails():
+    class BrokenAdapter(FakeAdapter):
+        def disconnect(self):
+            raise RuntimeError("provider logout unavailable")
+
+    store = BrokerSessionStore()
+    previous = BrokenAdapter("fyers")
+    current = FakeAdapter("fyers")
+    store.replace(7, "fyers", previous)
+
+    error = store.replace_and_disconnect_previous(7, "fyers", current)
+
+    assert isinstance(error, RuntimeError)
+    assert store.get(7, "fyers") is current
+    assert current.connected is True
