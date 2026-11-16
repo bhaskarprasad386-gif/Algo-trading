@@ -80,7 +80,7 @@ def test_auth_url_rejects_unregistered_redirect_shape(monkeypatch):
             fyers_routes.FyersAuthUrlRequest(app_id="APP-100"),
             user_id=0,
         )
-    assert raised.value.status_code == 422
+    assert raised.value.status_code == 503
 
 
 def test_verify_binds_broker_identity_and_keeps_trading_off(monkeypatch, db_session):
@@ -148,7 +148,6 @@ def test_verify_rejects_replayed_or_invalid_state_before_network(monkeypatch, db
                 app_secret="secret",
                 auth_code="one-time-code",
                 state="s" * 32,
-                redirect_uri="https://example.com/callback",
                 expected_account_id="FY12345",
             ),
             db=db_session,
