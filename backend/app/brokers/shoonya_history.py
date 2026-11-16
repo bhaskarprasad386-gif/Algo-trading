@@ -53,4 +53,5 @@ class ShoonyaHistoryProvider:
             window_end=window_end,
             daily_history=daily,
             provider_window="CURRENT_TRADING_DAY_ORDER_BOOK_AND_TRADE_BOOK",
+            expected_trading_date=local_start.date().isoformat(),
         )
