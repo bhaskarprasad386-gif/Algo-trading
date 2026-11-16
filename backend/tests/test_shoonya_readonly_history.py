@@ -3,30 +3,36 @@ import pytest
 from app.brokers.shoonya import ShoonyaAdapter, ShoonyaHistoryUnavailable
 
 
+_DEFAULT = object()
+
+
 class FakeShoonya:
-    def __init__(self, profile=None, orders=None, trades=None, error=None):
-        self.profile_data = {"stat": "Ok", "uid": "SHOONYA-UID", "actid": "SH-123"} if profile is None else profile
-        self.order_rows = [] if orders is None else orders
-        self.trade_rows = [] if trades is None else trades
-        self.error = error
+    def __init__(self, profile=_DEFAULT, orders=_DEFAULT, trades=_DEFAULT,
+                 profile_error=None, order_error=None, trade_error=None):
+        self.profile_data = {"stat": "Ok", "uid": "SHOONYA-UID", "actid": "SH-123"} if profile is _DEFAULT else profile
+        self.order_rows = [] if orders is _DEFAULT else orders
+        self.trade_rows = [] if trades is _DEFAULT else trades
+        self.profile_error = profile_error
+        self.order_error = order_error
+        self.trade_error = trade_error
         self.calls = []
 
     def get_user_details(self):
         self.calls.append("profile")
-        if self.error:
-            raise self.error
+        if self.profile_error:
+            raise self.profile_error
         return self.profile_data
 
     def get_order_book(self):
         self.calls.append("orders")
-        if self.error:
-            raise self.error
+        if self.order_error:
+            raise self.order_error
         return self.order_rows
 
     def get_trade_book(self):
         self.calls.append("trades")
-        if self.error:
-            raise self.error
+        if self.trade_error:
+            raise self.trade_error
         return self.trade_rows
 
 
@@ -110,8 +116,7 @@ def test_unsuccessful_book_row_fails_closed():
 
 
 def test_trade_book_failure_never_returns_partial_snapshot():
-    client = FakeShoonya(error=RuntimeError("temporary"))
-    adapter = connected_adapter(client)
+    adapter = connected_adapter(FakeShoonya(trade_error=RuntimeError("temporary")))
     with pytest.raises(ShoonyaHistoryUnavailable, match="request failed"):
         adapter.fetch_today_broker_snapshot(account_id="SH-123")
 
