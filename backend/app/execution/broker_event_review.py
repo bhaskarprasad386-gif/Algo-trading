@@ -80,6 +80,7 @@ def review_deferred_broker_events(
                 if (
                     fill.broker_order_id != event.broker_order_id
                     or fill.quantity != event.fill_quantity
+                    or float(fill.fill_price) != float(event.average_fill_price)
                     or fill.occurred_at_ns != event.occurred_at_ns
                 ):
                     reason = "FILL_IDENTITY_EVIDENCE_CONFLICT"
