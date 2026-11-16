@@ -25,6 +25,30 @@ class ConcurrentTransitionError(RuntimeError):
     pass
 
 
+def _transaction(db: Session):
+    """Join a caller transaction with a savepoint, ensuring SQLite has a real BEGIN.
+
+    SQLite's legacy transaction mode does not BEGIN for SELECT statements. A
+    SAVEPOINT as the first physical statement can therefore be released as an
+    implicit commit, defeating rollback of the logical outer transaction.
+    """
+    if db.in_transaction():
+        if db.get_bind().dialect.name == "sqlite":
+            connection = db.connection()
+            raw_connection = connection.connection.driver_connection
+            if not raw_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN")
+        return db.begin_nested()
+
+    transaction = db.begin()
+    if db.get_bind().dialect.name == "sqlite":
+        connection = db.connection()
+        raw_connection = connection.connection.driver_connection
+        if not raw_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
+    return transaction
+
+
 @dataclass(frozen=True)
 class PersistedIntent:
     intent: ExecutionIntent
@@ -61,7 +85,7 @@ def create_intent(db: Session, intent: ExecutionIntent, legs: tuple[ExecutionLeg
         raise ValueError("new execution intents must start in CREATED state")
     validate_basket_legs(legs)
     wanted = _payload(legs)
-    with db.begin():
+    with _transaction(db):
         existing = db.execute(select(ExecutionIntentRecord)
             .options(selectinload(ExecutionIntentRecord.legs))
             .where(ExecutionIntentRecord.account_id == intent.account_id,
@@ -96,7 +120,7 @@ def create_intent(db: Session, intent: ExecutionIntent, legs: tuple[ExecutionLeg
 
 
 def get_intent(db: Session, *, account_id: str, intent_id: str):
-    with db.begin():
+    with _transaction(db):
         record = db.execute(select(ExecutionIntentRecord)
             .options(selectinload(ExecutionIntentRecord.legs))
             .where(ExecutionIntentRecord.account_id == account_id,
@@ -110,7 +134,7 @@ def transition_intent(db: Session, *, account_id: str, intent_id: str,
                       occurred_at_ns: int | None = None, details: dict | None = None):
     """Validate and persist one transition plus immutable event atomically."""
     now = occurred_at_ns if occurred_at_ns is not None else time.time_ns()
-    with db.begin():
+    with _transaction(db):
         record = db.execute(select(ExecutionIntentRecord).where(
             ExecutionIntentRecord.account_id == account_id,
             ExecutionIntentRecord.intent_id == intent_id,
@@ -172,7 +196,7 @@ def record_fill(
     }, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    with db.begin():
+    with _transaction(db):
         duplicate = db.execute(select(ExecutionFillRecord).where(
             ExecutionFillRecord.account_id == account_id,
             ExecutionFillRecord.broker == broker,
@@ -304,7 +328,7 @@ def record_broker_order(
     }, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    with db.begin():
+    with _transaction(db):
         intent = db.execute(select(ExecutionIntentRecord).where(
             ExecutionIntentRecord.account_id == account_id,
             ExecutionIntentRecord.intent_id == intent_id,
