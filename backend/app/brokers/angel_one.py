@@ -1,9 +1,29 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import pyotp
 from SmartApi import SmartConnect
+
+from app.execution.broker_reconciliation import (
+    BrokerOrderSnapshot,
+    BrokerSnapshot,
+    BrokerTradeSnapshot,
+)
+
+
+class BrokerHistoryUnavailable(RuntimeError):
+    """Raised when broker history cannot be proven complete for its supported window."""
+
+
+@dataclass(frozen=True)
+class AngelOneDailyHistory:
+    """Complete Angel One order/trade books for the current trading day only."""
+
+    trading_date: str
+    snapshot: BrokerSnapshot
+    scope: str = "CURRENT_TRADING_DAY"
 
 
 class AngelOneAdapter:
@@ -19,6 +39,7 @@ class AngelOneAdapter:
     def __init__(self) -> None:
         self.smart_api: SmartConnect | None = None
         self.client_code: str | None = None
+        self.account_id: str | None = None
         self.connected = False
 
     def connect(self, **credentials: Any) -> dict:
@@ -43,8 +64,134 @@ class AngelOneAdapter:
 
         self.smart_api = smart_api
         self.client_code = client_code
+        account_id = credentials.get("account_id")
+        self.account_id = str(account_id).strip() if account_id else None
         self.connected = True
         return {"broker": self.name, "connected": True, "client_code": client_code}
+
+
+    @staticmethod
+    def _history_rows(response: Any, endpoint: str) -> list[dict[str, Any]]:
+        """Accept only a successful SmartAPI response with an explicit row list."""
+        if not isinstance(response, dict) or response.get("status") is not True:
+            message = response.get("message") if isinstance(response, dict) else None
+            raise BrokerHistoryUnavailable(
+                f"Angel One {endpoint} did not return a successful response: {message or 'invalid response'}"
+            )
+        rows = response.get("data")
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise BrokerHistoryUnavailable(
+                f"Angel One {endpoint} response is not a complete row list"
+            )
+        return rows
+
+    @staticmethod
+    def _required_text(row: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = row.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        raise BrokerHistoryUnavailable(
+            f"Angel One history row is missing required field: {'/'.join(keys)}"
+        )
+
+    @staticmethod
+    def _nonnegative_int(row: dict[str, Any], *keys: str) -> int:
+        value = None
+        for key in keys:
+            if row.get(key) not in (None, ""):
+                value = row[key]
+                break
+        try:
+            parsed = int(str(value))
+        except (TypeError, ValueError):
+            raise BrokerHistoryUnavailable(
+                f"Angel One history row has invalid numeric field: {'/'.join(keys)}"
+            ) from None
+        if parsed < 0:
+            raise BrokerHistoryUnavailable(
+                f"Angel One history row has negative field: {'/'.join(keys)}"
+            )
+        return parsed
+
+    @staticmethod
+    def _positive_int(row: dict[str, Any], *keys: str) -> int:
+        value = None
+        for key in keys:
+            if row.get(key) not in (None, ""):
+                value = row[key]
+                break
+        try:
+            parsed = int(str(value))
+        except (TypeError, ValueError):
+            raise BrokerHistoryUnavailable(
+                f"Angel One history row has invalid numeric field: {'/'.join(keys)}"
+            ) from None
+        if parsed <= 0:
+            raise BrokerHistoryUnavailable(
+                f"Angel One history row has non-positive field: {'/'.join(keys)}"
+            )
+        return parsed
+
+    def fetch_today_broker_snapshot(self, *, account_id: str) -> AngelOneDailyHistory:
+        """Fetch read-only orderBook + tradeBook for the current trading day.
+
+        SmartAPI's orderBook/tradeBook endpoints are day-scoped. This method
+        deliberately does not claim multi-day history completeness and refuses
+        to synthesize an empty book from failed, null, or malformed responses.
+        Both endpoints must succeed before a complete BrokerSnapshot is returned.
+        """
+        if not self.connected or self.smart_api is None:
+            raise BrokerHistoryUnavailable("Angel One session is not connected")
+        if not self.account_id or account_id != self.account_id:
+            raise BrokerHistoryUnavailable("Angel One account scope is not bound to this session")
+
+        try:
+            order_response = self.smart_api.orderBook()
+            trade_response = self.smart_api.tradeBook()
+        except Exception as exc:
+            raise BrokerHistoryUnavailable(
+                f"Angel One order/trade history request failed: {type(exc).__name__}"
+            ) from exc
+
+        order_rows = self._history_rows(order_response, "orderBook")
+        trade_rows = self._history_rows(trade_response, "tradeBook")
+
+        orders = tuple(
+            BrokerOrderSnapshot(
+                broker_order_id=self._required_text(row, "orderid", "order_id"),
+                symbol=self._required_text(row, "tradingsymbol", "symbol"),
+                side=self._required_text(row, "transactiontype", "transaction_type").upper(),
+                quantity=self._positive_int(row, "quantity", "orderquantity"),
+                filled_quantity=self._nonnegative_int(
+                    row, "filledshares", "filled_quantity"
+                ),
+            )
+            for row in order_rows
+        )
+        trades = tuple(
+            BrokerTradeSnapshot(
+                broker_trade_id=self._required_text(row, "tradeid", "trade_id"),
+                broker_order_id=self._required_text(row, "orderid", "order_id"),
+                quantity=self._positive_int(row, "fillshares", "quantity", "filled_quantity"),
+            )
+            for row in trade_rows
+        )
+
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        trading_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        return AngelOneDailyHistory(
+            trading_date=trading_date,
+            snapshot=BrokerSnapshot(
+                account_id=account_id,
+                broker=self.name,
+                orders=orders,
+                trades=trades,
+                complete=True,
+            ),
+        )
 
     def place_order(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError("Live order routing is disabled until broker safety approval")
@@ -60,4 +207,5 @@ class AngelOneAdapter:
                 pass
         self.smart_api = None
         self.client_code = None
+        self.account_id = None
         self.connected = False
