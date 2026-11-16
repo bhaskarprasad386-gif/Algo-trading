@@ -109,6 +109,5 @@ class ExecutionBrokerOrderRecord(Base):
     side: Mapped[str] = mapped_column(String(4), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     client_order_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
-    broker_status: Mapped[str] = mapped_column(String(32), nullable=False)
     accepted_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
