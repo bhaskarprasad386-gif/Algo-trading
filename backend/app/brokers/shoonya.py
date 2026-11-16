@@ -163,7 +163,6 @@ class ShoonyaAdapter:
                 occurred_at_ns=parse_trade_timestamp_ns(row.get("fltm")),
             )
             for row in trade_rows
-        )            for row in trade_rows
         )
         return ShoonyaDailyHistory(
             trading_date=datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
