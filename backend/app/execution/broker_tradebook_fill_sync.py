@@ -75,22 +75,13 @@ def sync_account_tradebook_fills(
         return _blocked("DUPLICATE_BROKER_TRADE_ID", trade_count=len(trades))
 
     order_by_id = {str(row.broker_order_id).strip(): row for row in orders}
-    trade_totals: dict[str, int] = {}
-    for trade in trades:
-        order_id = str(trade.broker_order_id).strip()
-        if order_id not in order_by_id:
-            return _blocked("TRADE_REFERENCES_UNKNOWN_BROKER_ORDER", trade_count=len(trades))
-        trade_totals[order_id] = trade_totals.get(order_id, 0) + int(trade.quantity)
-
-    for order_id, order in order_by_id.items():
-        if trade_totals.get(order_id, 0) != int(order.filled_quantity):
-            return _blocked("ORDER_TRADE_FILL_TOTAL_MISMATCH", trade_count=len(trades))
-
     if not trades:
         return {
             "status": "SYNCED",
             "trading_date": getattr(history, "trading_date", None),
             "trade_count": 0,
+            "managed_trade_count": 0,
+            "unmatched_trade_count": 0,
             "created_count": 0,
             "duplicate_count": 0,
             "trading_authorized": False,
@@ -99,6 +90,8 @@ def sync_account_tradebook_fills(
     # Keep mapping reads, validation and all fill writes in one transaction.
     # A preceding SELECT must not leave an uncommitted outer request transaction.
     created = 0
+    unmatched_trade_ids: list[str] = []
+    managed_trade_count = 0
     with _transaction(db):
         mapped_rows = db.execute(
             select(ExecutionBrokerOrderRecord, ExecutionIntentRecord, ExecutionLegRecord)
@@ -116,13 +109,23 @@ def sync_account_tradebook_fills(
             for row in mapped_rows
         }
 
-        prepared: list[tuple[Any, Any, Any, Any, Decimal, int]] = []
+        # A broker account may contain manually placed or otherwise unmanaged
+        # trades. Never adopt them. Report their trade IDs, while reconciling and
+        # ingesting only fills whose parent order is registered to this ledger.
+        managed_trades: list[Any] = []
+        unmatched_trade_ids = []
+        trade_totals: dict[str, int] = {}
         for trade in trades:
             order_id = str(trade.broker_order_id).strip()
-            registered = mapped.get(order_id)
-            if registered is None:
-                return _blocked("UNREGISTERED_BROKER_ORDER", trade_count=len(trades))
-            broker_order, intent, leg = registered
+            if order_id not in order_by_id:
+                return _blocked("TRADE_REFERENCES_UNKNOWN_BROKER_ORDER", trade_count=len(trades))
+            if order_id not in mapped:
+                unmatched_trade_ids.append(str(trade.broker_trade_id).strip())
+                continue
+            managed_trades.append(trade)
+            trade_totals[order_id] = trade_totals.get(order_id, 0) + int(trade.quantity)
+
+        for order_id, (broker_order, _intent, _leg) in mapped.items():
             broker_order_snapshot = order_by_id[order_id]
             if (
                 broker_order.symbol != broker_order_snapshot.symbol
@@ -130,6 +133,13 @@ def sync_account_tradebook_fills(
                 or broker_order.quantity != broker_order_snapshot.quantity
             ):
                 return _blocked("REGISTERED_BROKER_ORDER_MISMATCH", trade_count=len(trades))
+            if trade_totals.get(order_id, 0) != int(broker_order_snapshot.filled_quantity):
+                return _blocked("ORDER_TRADE_FILL_TOTAL_MISMATCH", trade_count=len(trades))
+
+        prepared: list[tuple[Any, Any, Any, Any, Decimal, int]] = []
+        for trade in managed_trades:
+            order_id = str(trade.broker_order_id).strip()
+            broker_order, intent, leg = mapped[order_id]
             if trade.fill_price is None or trade.occurred_at_ns is None:
                 return _blocked("TRADE_EXECUTION_PRICE_OR_TIMESTAMP_MISSING", trade_count=len(trades))
             try:
@@ -140,6 +150,7 @@ def sync_account_tradebook_fills(
                 return _blocked("TRADE_EXECUTION_EVIDENCE_INVALID", trade_count=len(trades))
             prepared.append((trade, broker_order, intent, leg, price, int(trade.occurred_at_ns)))
 
+        managed_trade_count = len(prepared)
         for trade, broker_order, intent, leg, price, occurred_at_ns in prepared:
             result = record_fill(
                 db,
@@ -156,10 +167,13 @@ def sync_account_tradebook_fills(
             created += int(bool(result.get("created")))
 
     return {
-        "status": "SYNCED",
+        "status": "SYNCED_WITH_UNMATCHED" if unmatched_trade_ids else "SYNCED",
         "trading_date": getattr(history, "trading_date", None),
         "trade_count": len(trades),
+        "managed_trade_count": managed_trade_count,
+        "unmatched_trade_count": len(unmatched_trade_ids),
+        "unmatched_trade_ids": unmatched_trade_ids,
         "created_count": created,
-        "duplicate_count": len(trades) - created,
+        "duplicate_count": managed_trade_count - created,
         "trading_authorized": False,
     }
