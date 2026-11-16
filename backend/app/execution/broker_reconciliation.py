@@ -5,6 +5,7 @@ database, changes an intent, retries an order, or enables Live execution.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 
@@ -139,9 +140,11 @@ def reconcile_snapshot(
     expected_ids = [x.broker_order_id for x in expected_orders]
     if len(expected_ids) != len(set(expected_ids)):
         raise ValueError("expected broker_order_id values must be unique")
-    broker_order_ids = [x.broker_order_id for x in snapshot.orders]
-    duplicate_orders = {x for x in broker_order_ids if broker_order_ids.count(x) > 1}
-    for identity in sorted(duplicate_orders):
+    broker_order_counts = Counter(x.broker_order_id for x in snapshot.orders)
+    broker_order_ids = list(broker_order_counts)
+    for identity, count in sorted(broker_order_counts.items()):
+        if count <= 1:
+            continue
         issues.append(ReconciliationIssue(
             ReconciliationStatus.DUPLICATE_BROKER_ORDER_ID, identity,
             "Broker snapshot contains the same order identity more than once.",
@@ -175,9 +178,11 @@ def reconcile_snapshot(
         else:
             matched += 1
 
-    broker_trade_ids = [x.broker_trade_id for x in snapshot.trades]
-    duplicate_trades = {x for x in broker_trade_ids if broker_trade_ids.count(x) > 1}
-    for identity in sorted(duplicate_trades):
+    broker_trade_counts = Counter(x.broker_trade_id for x in snapshot.trades)
+    broker_trade_ids = list(broker_trade_counts)
+    for identity, count in sorted(broker_trade_counts.items()):
+        if count <= 1:
+            continue
         issues.append(ReconciliationIssue(
             ReconciliationStatus.DUPLICATE_BROKER_TRADE_ID, identity,
             "Broker snapshot contains the same trade identity more than once.",
