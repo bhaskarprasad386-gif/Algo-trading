@@ -1,5 +1,7 @@
 """Durable audit-event regressions for the isolated Box Spread paper ledger."""
 
+import pytest
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -96,9 +98,10 @@ def test_validation_claim_crash_and_operator_decision_are_append_only():
         recovered = ledger.list_open_trades(account_key="audit-recovery")
         assert recovered[0]["manual_review_required"] is True
         assert recovered[0]["automatic_replay"] is False
-        assert len(ledger.list_audit_events(
-            trade_id=trade.id, account_key="another-account",
-        )) if False else True
+        with pytest.raises(ValueError, match="paper trade not found for account"):
+            ledger.list_audit_events(
+                trade_id=trade.id, account_key="another-account",
+            )
     finally:
         engine.dispose()
 
