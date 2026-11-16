@@ -19,7 +19,7 @@ from app.execution.broker_event_replay_review import (
 )
 from app.models import BoxSpreadRealOwnerState
 
-router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
+router = APIRouter(tags=["brokers"])
 
 
 class ReplayEligibilityRequest(BaseModel):
