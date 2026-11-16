@@ -124,3 +124,23 @@ def test_review_limit_is_bounded(limit):
         review_deferred_broker_events(
             object(), broker="fyers", account_id="acct-1", limit=limit,
         )
+
+
+
+def test_reused_fill_identity_with_different_price_is_not_hidden(db):
+    intent, leg, _ = _registered_order(db)
+    db.add(_event(cumulative=10))
+    db.add(ExecutionFillRecord(
+        intent_record_id=intent.id, leg_record_id=leg.id,
+        account_id="acct-1", broker="fyers", broker_fill_id="trade-1",
+        broker_order_id="order-1", quantity=10, fill_price=Decimal("102.00"),
+        occurred_at_ns=200, payload_hash="d" * 64,
+    ))
+    db.flush()
+
+    result = review_deferred_broker_events(
+        db, broker="fyers", account_id="acct-1",
+    )
+
+    assert result["unresolved_count"] == 1
+    assert result["events"][0]["reason"] == "FILL_IDENTITY_EVIDENCE_CONFLICT"
