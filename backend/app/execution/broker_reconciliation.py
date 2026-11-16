@@ -50,6 +50,7 @@ class BrokerOrderSnapshot:
     side: str
     quantity: int
     filled_quantity: int
+    raw_status: str | None = None
 
     def __post_init__(self) -> None:
         if not self.broker_order_id.strip() or not self.symbol.strip():
