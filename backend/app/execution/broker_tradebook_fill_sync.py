@@ -38,7 +38,7 @@ def sync_account_tradebook_fills(
     """Fetch one complete current-day snapshot and atomically persist trade fills.
 
     This is evidence ingestion only. It never submits, cancels, retries, adopts
-    or resumes orders. Unknown/unregistered trades are blocked for operator
+    or resumes orders. Unmanaged trades are reported as unmatched for operator
     reconciliation instead of being attached to a guessed execution leg.
     """
     broker = str(getattr(adapter, "name", "") or "").strip().lower()
