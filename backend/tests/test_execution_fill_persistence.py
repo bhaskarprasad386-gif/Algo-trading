@@ -8,8 +8,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide
-from app.execution.persistence import IdempotencyConflict, create_intent, record_fill, transition_intent
-from app.models.execution_intent import ExecutionFillRecord, ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
+from app.execution.persistence import IdempotencyConflict, create_intent, record_broker_order, record_fill, transition_intent
+from app.models.execution_intent import ExecutionBrokerOrderRecord, ExecutionFillRecord, ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
 
 
 @pytest.fixture(params=["sqlite", "postgres"])
@@ -161,3 +161,47 @@ def test_reconciliation_required_blocks_fill_mutation_until_review(db):
         fill(db, "cb", "trade-1", 10)
     leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
     assert leg.filled_quantity == 0
+
+
+
+def test_sequential_partial_fill_updates_accumulate_and_replay_is_ignored(db):
+    create_working_intent(db)
+    first = fill(db, "cb", "trade-part-1", 10)
+    second = fill(db, "cb", "trade-part-2", 15)
+    replay = fill(db, "cb", "trade-part-1", 10)
+
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert first["filled_quantity"] == 10
+    assert second["filled_quantity"] == 25
+    assert replay["created"] is False
+    assert leg.filled_quantity == 25
+    assert leg.status == "PARTIALLY_FILLED"
+    assert db.query(ExecutionFillRecord).count() == 2
+
+
+def _record_order(db, *, broker_order_id="broker-order-1", client_order_id="client-1"):
+    return record_broker_order(
+        db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="Angel_One", broker_order_id=broker_order_id,
+        symbol="NFO:CE", side="BUY", quantity=50, accepted_at_ns=2000,
+        client_order_id=client_order_id,
+    )
+
+
+def test_duplicate_broker_order_update_identity_is_idempotent(db):
+    create_working_intent(db)
+    first = _record_order(db)
+    duplicate = _record_order(db)
+
+    assert first == {"created": True, "broker_order_id": "broker-order-1"}
+    assert duplicate == {"created": False, "broker_order_id": "broker-order-1"}
+    assert db.query(ExecutionBrokerOrderRecord).count() == 1
+
+
+def test_broker_order_identity_reuse_with_changed_payload_is_rejected(db):
+    create_working_intent(db)
+    _record_order(db)
+    with pytest.raises(IdempotencyConflict, match="reused"):
+        _record_order(db, client_order_id="different-client-order")
+
+    assert db.query(ExecutionBrokerOrderRecord).count() == 1
