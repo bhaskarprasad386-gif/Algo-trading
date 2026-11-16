@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.execution.broker_events import BrokerOrderEvent
 from app.models.broker_order_event import BrokerOrderEventRecord
-from app.models.execution_intent import ExecutionBrokerOrderRecord, ExecutionIntentRecord
+from app.models.execution_intent import ExecutionBrokerOrderRecord, ExecutionIntentRecord, ExecutionLegRecord
 from app.execution.persistence import record_fill
 
 
@@ -112,7 +112,7 @@ def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) ->
             "fill callback requires fill_id, fill_quantity and average_fill_price"
         )
 
-    with db.begin():
+    with _transaction(db):
         event_result = record_broker_order_event(db, event)
         if not event_result["created"]:
             return {
@@ -146,14 +146,14 @@ def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) ->
         if intent is None:
             raise LookupError("execution intent for broker order was not found")
 
+        leg = db.get(ExecutionLegRecord, order.leg_record_id)
+        if leg is None:
+            raise LookupError("execution leg for broker order was not found")
         fill_result = record_fill(
             db,
             account_id=account_id,
             intent_id=intent.intent_id,
-            leg_id=order.leg_id if hasattr(order, "leg_id") else db.get(
-                __import__("app.models.execution_intent", fromlist=["ExecutionLegRecord"]).ExecutionLegRecord,
-                order.leg_record_id,
-            ).leg_id,
+            leg_id=leg.leg_id,
             broker=broker,
             broker_fill_id=event.fill_id,
             broker_order_id=event.broker_order_id.strip(),
