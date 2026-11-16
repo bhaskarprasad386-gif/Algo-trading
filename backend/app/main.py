@@ -89,6 +89,7 @@ from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
+from app.brokers.session_store import broker_sessions
 from app.backtesting.download_status_routes import create_download_status_router
 from app.backtesting.cash_future_download_routes import CashFutureDownloadManager, create_cash_future_download_router
 from app.backtesting.historical_download_status import HistoricalDownloadStatusStore
@@ -505,6 +506,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Broker adapters own authenticated provider sessions in process memory.
+        # Drain them before shutdown completes; failures are logged per provider
+        # and must not prevent the remaining sessions or market-data runners closing.
+        for broker_name, error in broker_sessions.disconnect_all():
+            app_logger.error("Broker session shutdown failed for %s: %s", broker_name, error)
         # Shoonya owns an isolated shadow feed; stop it before application tasks unwind.
         if shoonya_market_data_supervisor is not None:
             shoonya_market_data_supervisor.stop()
