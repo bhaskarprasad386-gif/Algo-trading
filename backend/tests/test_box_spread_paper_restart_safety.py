@@ -138,3 +138,114 @@ def test_restart_after_partial_entry_fill_blocks_route_replay(monkeypatch):
         )["status"] == "CLAIMED"
     finally:
         engine.dispose()
+
+
+def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_replay(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    tables = [
+        BoxSpreadPaperAccount.__table__,
+        BoxSpreadPaperTradeRecord.__table__,
+        BoxSpreadPaperLedgerEntry.__table__,
+        BoxSpreadPaperEntryClaim.__table__,
+    ]
+    Base.metadata.create_all(bind=engine, tables=tables)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    try:
+        before_restart = BoxSpreadPaperLedger(factory)
+        trade = before_restart.create_trade(
+            account_key="restart-complete",
+            idempotency_key="restart-complete-entry",
+            underlying="NIFTY",
+            instrument_class="INDEX",
+            expiry="2026-10-29",
+            low_strike=25000,
+            high_strike=25100,
+            direction="LONG",
+            lots=1,
+            lot_size=25,
+            alert_edge=8,
+        )
+        claim = before_restart.claim_entry_attempt(
+            trade_id=trade.id, account_key="restart-complete",
+        )
+        assert claim["created"] is True
+        fills = {
+            "LOW_CE": {"fill_id": "complete-low-ce", "action": "BUY", "quantity": 25, "fill_price": 100},
+            "HIGH_CE": {"fill_id": "complete-high-ce", "action": "SELL", "quantity": 25, "fill_price": 90},
+            "HIGH_PE": {"fill_id": "complete-high-pe", "action": "BUY", "quantity": 25, "fill_price": 80},
+            "LOW_PE": {"fill_id": "complete-low-pe", "action": "SELL", "quantity": 25, "fill_price": 70},
+        }
+        receipts = before_restart.record_entry_basket(
+            trade_id=trade.id, legs=fills, account_key="restart-complete",
+        )
+        assert len(receipts) == 4
+        assert before_restart.get_entry_claim(
+            trade_id=trade.id, account_key="restart-complete",
+        )["status"] == "COMPLETED"
+
+        # New ledger instance simulates API restart; durable fills remain the
+        # only source of truth and the process-local execution engine is gone.
+        after_restart = BoxSpreadPaperLedger(factory)
+        recovered = after_restart.list_open_trades(account_key="restart-complete")
+        assert len(recovered) == 1
+        position = recovered[0]
+        assert position["trade_id"] == trade.id
+        assert position["manual_review_required"] is True
+        assert position["automatic_replay"] is False
+        assert all(leg["open_position_quantity"] == 25 for leg in position["legs"])
+
+        persisted = after_restart.list_fills(
+            trade.id, account_key="restart-complete",
+        )
+        assert {(fill.role, fill.fill_id, fill.quantity) for fill in persisted} == {
+            ("LOW_CE", "complete-low-ce", 25),
+            ("HIGH_CE", "complete-high-ce", 25),
+            ("HIGH_PE", "complete-high-pe", 25),
+            ("LOW_PE", "complete-low-pe", 25),
+        }
+        summary = after_restart.get_trade_summary(
+            trade.id, account_key="restart-complete",
+        )
+        assert summary["status"] == "FILLED"
+        assert summary["fill_count"] == 4
+
+        request = routes.CreatePaperTrade(
+            underlying="NIFTY",
+            instrument_class="INDEX",
+            expiry="2026-10-29",
+            low_strike=25000,
+            high_strike=25100,
+            direction="LONG",
+            lots=1,
+            idempotency_key="restart-complete-entry",
+            account_key="restart-complete",
+            alert_edge=8,
+        )
+        monkeypatch.setattr(routes, "_paper_execution_enabled", True)
+        monkeypatch.setattr(routes, "_ledger", after_restart)
+        monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("completed entry must not be simulated again after restart")
+
+        monkeypatch.setattr(routes, "_resolve", forbidden)
+        monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
+
+        with pytest.raises(routes.HTTPException) as raised:
+            asyncio.run(routes.simulate_entry(
+                trade.id, routes.SimulateEntry(account_key="restart-complete"),
+            ))
+        assert raised.value.status_code == 409
+        assert "durably claimed" in raised.value.detail
+        assert len(after_restart.list_fills(
+            trade.id, account_key="restart-complete",
+        )) == 4
+        assert after_restart.get_entry_claim(
+            trade_id=trade.id, account_key="restart-complete",
+        )["status"] == "COMPLETED"
+    finally:
+        engine.dispose()
