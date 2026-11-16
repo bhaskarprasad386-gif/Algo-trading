@@ -182,3 +182,9 @@ def broker_settings_page() -> HTMLResponse:
     if not page.exists():
         raise HTTPException(status_code=404, detail="Broker settings page unavailable")
     return HTMLResponse(content=page.read_text(encoding="utf-8"), media_type="text/html")
+
+
+# Keep the m.Stock Type A login flow separate from the Angel One /connect contract.
+from app.brokers.mstock_routes import router as mstock_router
+
+router.include_router(mstock_router)
