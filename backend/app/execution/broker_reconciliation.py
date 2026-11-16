@@ -9,6 +9,7 @@ from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 import math
 from zoneinfo import ZoneInfo
 
@@ -27,6 +28,9 @@ class ReconciliationStatus(str, Enum):
     DUPLICATE_BROKER_TRADE_ID = "DUPLICATE_BROKER_TRADE_ID"
     TRADE_ORDER_MISSING = "TRADE_ORDER_MISSING"
     ORDER_TRADE_FILL_TOTAL_MISMATCH = "ORDER_TRADE_FILL_TOTAL_MISMATCH"
+    FILL_EXECUTION_EVIDENCE_MISSING = "FILL_EXECUTION_EVIDENCE_MISSING"
+    FILL_PRICE_MISMATCH = "FILL_PRICE_MISMATCH"
+    FILL_TIMESTAMP_MISMATCH = "FILL_TIMESTAMP_MISMATCH"
     ORDER_STATUS_REQUIRES_RECONCILIATION = "ORDER_STATUS_REQUIRES_RECONCILIATION"
     ORDER_STATUS_CONFLICT = "ORDER_STATUS_CONFLICT"
 
@@ -175,10 +179,13 @@ def reconcile_snapshot(
     expected_orders: tuple[ExpectedOrder, ...],
     local_fill_quantities: dict[str, int],
     snapshot: BrokerSnapshot,
+    local_fill_evidence: dict[str, tuple[int, Decimal | str | float, int]] | None = None,
 ) -> ReconciliationReport:
     """Compare a caller-supplied, account-scoped snapshot without side effects.
 
     local_fill_quantities maps persisted broker_trade_id -> persisted quantity.
+    local_fill_evidence optionally maps trade ID -> (quantity, price, timestamp ns)
+    so price/time can be compared without weakening older quantity-only callers.
     A caller must obtain a complete broker order AND trade history window before
     treating an empty result as authoritative. Any discrepancy blocks resume.
     """
@@ -285,6 +292,47 @@ def reconcile_snapshot(
             issues.append(ReconciliationIssue(
                 ReconciliationStatus.UNRECORDED_BROKER_TRADE, trade.broker_trade_id,
                 "Broker reports a trade that is not present in the local immutable fill ledger.",
+            ))
+
+    for trade_id, evidence in (local_fill_evidence or {}).items():
+        if trade_id not in local_fill_quantities:
+            raise ValueError("local fill evidence must have a matching local fill quantity")
+        if len(evidence) != 3:
+            raise ValueError("local fill evidence must contain quantity, price and timestamp")
+        local_quantity, local_price_raw, local_timestamp = evidence
+        if local_quantity <= 0 or local_timestamp <= 0:
+            raise ValueError("local fill evidence quantity and timestamp must be positive")
+        broker_trade = broker_trade_map.get(trade_id)
+        if broker_trade is None:
+            continue
+        if local_quantity != local_fill_quantities[trade_id]:
+            raise ValueError("local fill evidence quantity differs from local fill quantity")
+        if broker_trade.fill_price is None or broker_trade.occurred_at_ns is None:
+            issues.append(ReconciliationIssue(
+                ReconciliationStatus.FILL_EXECUTION_EVIDENCE_MISSING, trade_id,
+                "Broker trade snapshot is missing execution price or timestamp evidence.",
+            ))
+            continue
+        try:
+            local_price = Decimal(str(local_price_raw))
+            broker_price = Decimal(str(broker_trade.fill_price))
+        except (InvalidOperation, TypeError, ValueError):
+            issues.append(ReconciliationIssue(
+                ReconciliationStatus.FILL_EXECUTION_EVIDENCE_MISSING, trade_id,
+                "Local or broker execution price evidence is invalid.",
+            ))
+            continue
+        if not local_price.is_finite() or local_price <= 0:
+            raise ValueError("local fill price must be finite and positive")
+        if local_price != broker_price:
+            issues.append(ReconciliationIssue(
+                ReconciliationStatus.FILL_PRICE_MISMATCH, trade_id,
+                f"Persisted fill price {local_price} differs from broker fill price {broker_price}.",
+            ))
+        if local_timestamp != broker_trade.occurred_at_ns:
+            issues.append(ReconciliationIssue(
+                ReconciliationStatus.FILL_TIMESTAMP_MISMATCH, trade_id,
+                f"Persisted fill timestamp {local_timestamp} differs from broker timestamp {broker_trade.occurred_at_ns}.",
             ))
 
     return ReconciliationReport(
