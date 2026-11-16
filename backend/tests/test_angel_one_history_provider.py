@@ -46,7 +46,7 @@ def test_angel_one_provider_returns_complete_current_day_contract():
             "transactiontype": "BUY", "quantity": "50", "filledshares": "25",
         }]},
         trades={"status": True, "data": [{
-            "tradeid": "AT-1", "orderid": "AO-1", "fillshares": "25",
+            "fillid": "AT-1", "orderid": "AO-1", "fillsize": "25", "fillprice": "101.25", "filltime": "10:31:00",
         }]},
     )
     start, end = _today_window()
