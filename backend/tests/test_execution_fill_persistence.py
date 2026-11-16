@@ -66,6 +66,18 @@ def create_working_intent(db, *, working=True):
             target=target,
         )
         state = target
+    for leg_id, symbol, side in (
+        ("cb", "NFO:CE", "BUY"),
+        ("cs", "NFO:CE-HIGH", "SELL"),
+        ("pb", "NFO:PE", "BUY"),
+        ("ps", "NFO:PE-HIGH", "SELL"),
+    ):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
+            broker="angel_one", broker_order_id=f"order-{leg_id}",
+            symbol=symbol, side=side, quantity=50, accepted_at_ns=2000,
+            client_order_id=f"client-{leg_id}",
+        )
     return saved
 
 
@@ -179,7 +191,7 @@ def test_sequential_partial_fill_updates_accumulate_and_replay_is_ignored(db):
     assert db.query(ExecutionFillRecord).count() == 2
 
 
-def _record_order(db, *, broker_order_id="broker-order-1", client_order_id="client-1"):
+def _record_order(db, *, broker_order_id="order-cb", client_order_id="client-cb"):
     return record_broker_order(
         db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
         broker="Angel_One", broker_order_id=broker_order_id,
@@ -193,9 +205,9 @@ def test_duplicate_broker_order_update_identity_is_idempotent(db):
     first = _record_order(db)
     duplicate = _record_order(db)
 
-    assert first == {"created": True, "broker_order_id": "broker-order-1"}
-    assert duplicate == {"created": False, "broker_order_id": "broker-order-1"}
-    assert db.query(ExecutionBrokerOrderRecord).count() == 1
+    assert first == {"created": False, "broker_order_id": "order-cb"}
+    assert duplicate == {"created": False, "broker_order_id": "order-cb"}
+    assert db.query(ExecutionBrokerOrderRecord).count() == 4
 
 
 def test_broker_order_identity_reuse_with_changed_payload_is_rejected(db):
@@ -204,4 +216,45 @@ def test_broker_order_identity_reuse_with_changed_payload_is_rejected(db):
     with pytest.raises(IdempotencyConflict, match="reused"):
         _record_order(db, client_order_id="different-client-order")
 
-    assert db.query(ExecutionBrokerOrderRecord).count() == 1
+    assert db.query(ExecutionBrokerOrderRecord).count() == 4
+
+
+def test_fill_requires_registered_broker_order_for_same_account_intent_and_leg(db):
+    create_working_intent(db)
+    with pytest.raises(LookupError, match="broker order is not registered"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_fill_id="trade-unregistered",
+            broker_order_id="unknown-order", quantity=10,
+            fill_price="101.25", occurred_at_ns=3000,
+        )
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+    assert db.query(ExecutionFillRecord).count() == 0
+
+
+def test_fill_cannot_be_attached_to_another_legs_broker_order(db):
+    create_working_intent(db)
+    with pytest.raises(LookupError, match="broker order is not registered"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cs",
+            broker="angel_one", broker_fill_id="trade-wrong-leg",
+            broker_order_id="order-cb", quantity=10,
+            fill_price="101.25", occurred_at_ns=3001,
+        )
+    call_leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    put_leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cs"))
+    assert call_leg.filled_quantity == put_leg.filled_quantity == 0
+    assert db.query(ExecutionFillRecord).count() == 0
+
+
+
+def test_second_distinct_broker_order_for_same_leg_is_rejected_until_cancel_replace_exists(db):
+    create_working_intent(db)
+    with pytest.raises(ValueError, match="cancel/replace is not supported"):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_order_id="second-order-cb",
+            symbol="NFO:CE", side="BUY", quantity=50, accepted_at_ns=3000,
+        )
+    assert db.query(ExecutionBrokerOrderRecord).count() == 4

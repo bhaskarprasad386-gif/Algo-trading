@@ -219,6 +219,17 @@ def record_fill(
         ).with_for_update()).scalar_one_or_none()
         if leg is None:
             raise LookupError("execution leg not found for intent")
+        registered_order = db.execute(select(ExecutionBrokerOrderRecord).where(
+            ExecutionBrokerOrderRecord.account_id == account_id,
+            ExecutionBrokerOrderRecord.broker == broker,
+            ExecutionBrokerOrderRecord.broker_order_id == broker_order_id,
+            ExecutionBrokerOrderRecord.intent_record_id == intent.id,
+            ExecutionBrokerOrderRecord.leg_record_id == leg.id,
+        ).with_for_update()).scalar_one_or_none()
+        if registered_order is None:
+            raise LookupError(
+                "broker order is not registered for this account, intent and execution leg"
+            )
         if intent.status not in {
             IntentStatus.SUBMITTING.value, IntentStatus.WORKING.value,
             IntentStatus.PARTIALLY_FILLED.value,
@@ -359,6 +370,16 @@ def record_broker_order(
             if existing.payload_hash != digest:
                 raise IdempotencyConflict("broker order ID was reused with different order data")
             return {"created": False, "broker_order_id": existing.broker_order_id}
+
+        prior_leg_order = db.execute(select(ExecutionBrokerOrderRecord).where(
+            ExecutionBrokerOrderRecord.account_id == account_id,
+            ExecutionBrokerOrderRecord.intent_record_id == intent.id,
+            ExecutionBrokerOrderRecord.leg_record_id == leg.id,
+        ).with_for_update()).scalar_one_or_none()
+        if prior_leg_order is not None:
+            raise ValueError(
+                "execution leg already has a broker order identity; cancel/replace is not supported"
+            )
 
         record = ExecutionBrokerOrderRecord(
             intent_record_id=intent.id, leg_record_id=leg.id,
