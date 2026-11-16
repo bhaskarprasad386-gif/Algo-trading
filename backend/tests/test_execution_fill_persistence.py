@@ -76,6 +76,7 @@ def create_working_intent(db, *, working=True):
             db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
             broker="angel_one", broker_order_id=f"order-{leg_id}",
             symbol=symbol, side=side, quantity=50, accepted_at_ns=2000,
+            client_order_id=f"client-{leg_id}",
         )
     return saved
 
@@ -190,7 +191,7 @@ def test_sequential_partial_fill_updates_accumulate_and_replay_is_ignored(db):
     assert db.query(ExecutionFillRecord).count() == 2
 
 
-def _record_order(db, *, broker_order_id="broker-order-1", client_order_id="client-1"):
+def _record_order(db, *, broker_order_id="order-cb", client_order_id="client-cb"):
     return record_broker_order(
         db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
         broker="Angel_One", broker_order_id=broker_order_id,
@@ -245,3 +246,15 @@ def test_fill_cannot_be_attached_to_another_legs_broker_order(db):
     put_leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cs"))
     assert call_leg.filled_quantity == put_leg.filled_quantity == 0
     assert db.query(ExecutionFillRecord).count() == 0
+
+
+
+def test_second_distinct_broker_order_for_same_leg_is_rejected_until_cancel_replace_exists(db):
+    create_working_intent(db)
+    with pytest.raises(ValueError, match="cancel/replace is not supported"):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_order_id="second-order-cb",
+            symbol="NFO:CE", side="BUY", quantity=50, accepted_at_ns=3000,
+        )
+    assert db.query(ExecutionBrokerOrderRecord).count() == 4
