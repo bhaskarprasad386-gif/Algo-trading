@@ -114,3 +114,17 @@ These are source-level test inventory findings. No fresh test suite was executed
 The current Box Paper ledger has robust atomic four-leg persistence and conservative restart replay protection. It is not yet a durable unified execution lifecycle: simulator state is in memory, entry response replay is incomplete, and ambiguous claims require manual review. Keep the existing behavior unchanged while the durable intent/event layer and PostgreSQL concurrency tests are built.
 
 **No runtime code, scanner, WebSocket subscription, schema, deployment, or Live Trading setting was changed by this audit.**
+
+
+## 7. Durable lifecycle audit events (Batch 0 follow-up)
+
+The Box Paper ledger now has an append-only `box_spread_paper_audit_events` table, created through the existing SQLAlchemy startup metadata path. Events are written in the same database transaction as the corresponding durable claim or four-leg entry commit:
+
+- `ENTRY_CLAIMED`: the one-shot claim is created; records prior trade state and `CLAIMED`.
+- `ENTRY_COMPLETED`: all four entry legs and the completed claim are committed; the event is part of that same transaction.
+- `MANUAL_REVIEW_REQUIRED`: a post-claim execution failure is recorded without clearing the claim or enabling retry.
+- `MANUAL_REVIEW_DECISION`: an explicit ledger-level decision is appended with actor and reason; it does not alter execution state or trigger replay.
+
+Events are read in stable insertion order through the ledger's account-scoped read method. Event details are diagnostic only and do not authorize broker or Paper execution. The event table is append-only by application contract; database-level immutability enforcement and an authenticated operator-facing recovery workflow remain separate follow-up work.
+
+Pre-claim validation failures are not yet emitted by every route validation branch. Operator identity is supplied to the ledger method and is not yet bound to an authenticated owner identity. No Live broker path, scanner, WebSocket, or deployment behavior is changed by this work.
