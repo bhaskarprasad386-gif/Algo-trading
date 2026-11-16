@@ -114,10 +114,13 @@ def normalize_order_status(
             NormalizedOrderState.CANCELLED,
             NormalizedOrderState.REJECTED,
         }
-        if state == NormalizedOrderState.FILLED:
-            # Provider says filled but no fill quantity is visible yet.
-            requires_reconciliation = True
-        elif state == NormalizedOrderState.UNKNOWN:
+        if state in {
+            NormalizedOrderState.FILLED,
+            NormalizedOrderState.PARTIALLY_FILLED,
+            NormalizedOrderState.UNKNOWN,
+        }:
+            # Provider says filled/partial but no fill quantity is visible yet,
+            # so the order and trade books must be reconciled before any action.
             requires_reconciliation = True
 
     return OrderStatusEvidence(
