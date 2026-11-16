@@ -11,12 +11,7 @@ from sqlalchemy.orm import Session
 from app.execution.broker_events import BrokerOrderEvent
 from app.models.broker_order_event import BrokerOrderEventRecord
 from app.models.execution_intent import ExecutionBrokerOrderRecord, ExecutionFillRecord, ExecutionIntentRecord, ExecutionLegRecord
-from app.execution.persistence import record_fill
-
-
-def _transaction(db: Session):
-    """Join a caller-owned transaction or own/commit a standalone operation."""
-    return db.begin_nested() if db.in_transaction() else db.begin()
+from app.execution.persistence import _transaction, record_fill
 
 
 class BrokerEventConflict(ValueError):
