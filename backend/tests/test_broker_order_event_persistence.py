@@ -72,3 +72,109 @@ def test_event_store_does_not_mutate_execution_fill_or_order_state(db):
 def test_non_finite_or_non_positive_event_fill_price_is_rejected(bad_price):
     with pytest.raises(ValueError, match="finite and positive"):
         event(average_fill_price=bad_price)
+
+
+from app.execution.contracts import (
+    ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide,
+)
+from app.execution.persistence import create_intent, record_broker_order, transition_intent
+from app.execution.broker_event_persistence import record_broker_order_event_with_fill
+from app.models.execution_intent import ExecutionFillRecord, ExecutionIntentRecord, ExecutionLegRecord
+
+
+def _working_intent_with_broker_order(db):
+    intent = ExecutionIntent(
+        "intent-atomic", "acct-1", "key-atomic", "corr-atomic",
+        ExecutionMode.PAPER, created_at_ns=100,
+    )
+    legs = (
+        ExecutionLeg("cb", "NFO:CE", OrderSide.BUY, 50, limit_price=100),
+        ExecutionLeg("cs", "NFO:CE-HIGH", OrderSide.SELL, 50, limit_price=80),
+        ExecutionLeg("pb", "NFO:PE", OrderSide.BUY, 50, limit_price=90),
+        ExecutionLeg("ps", "NFO:PE-HIGH", OrderSide.SELL, 50, limit_price=70),
+    )
+    saved, _ = create_intent(db, intent, legs)
+    version = saved.version
+    for target in (
+        IntentStatus.VALIDATING, IntentStatus.RISK_CHECK, IntentStatus.APPROVED,
+        IntentStatus.RESERVED, IntentStatus.SUBMITTING,
+    ):
+        saved = transition_intent(
+            db, account_id="acct-1", intent_id="intent-atomic",
+            expected_version=version, target=target,
+        )
+        version = saved.version
+    record_broker_order(
+        db, account_id="acct-1", intent_id="intent-atomic", leg_id="cb",
+        broker="fyers", broker_order_id="order-atomic", symbol="NFO:CE",
+        side="BUY", quantity=50, accepted_at_ns=200,
+    )
+
+
+def _fill_event(**changes):
+    values = dict(
+        broker="fyers", account_id="acct-1", event_id="evt-fill-atomic",
+        broker_order_id="order-atomic",
+        status=BrokerOrderEventStatus.PARTIALLY_FILLED,
+        cumulative_filled_quantity=10, fill_id="trade-atomic",
+        fill_quantity=10, average_fill_price=101.25, occurred_at_ns=300,
+    )
+    values.update(changes)
+    return BrokerOrderEvent(**values)
+
+
+def test_event_and_fill_progress_commit_atomically(db):
+    _working_intent_with_broker_order(db)
+    result = record_broker_order_event_with_fill(db, _fill_event())
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    intent = db.scalar(select(ExecutionIntentRecord).where(
+        ExecutionIntentRecord.intent_id == "intent-atomic"
+    ))
+    assert result["event_created"] is True
+    assert result["fill_created"] is True
+    assert db.query(BrokerOrderEventRecord).count() == 1
+    assert db.query(ExecutionFillRecord).count() == 1
+    assert leg.filled_quantity == 10
+    assert intent.status == IntentStatus.PARTIALLY_FILLED.value
+
+
+def test_duplicate_event_does_not_apply_fill_twice(db):
+    _working_intent_with_broker_order(db)
+    first = record_broker_order_event_with_fill(db, _fill_event())
+    replay = record_broker_order_event_with_fill(db, _fill_event())
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert first["fill_created"] is True
+    assert replay["event_created"] is False
+    assert replay["fill_created"] is False
+    assert leg.filled_quantity == 10
+    assert db.query(ExecutionFillRecord).count() == 1
+
+
+def test_fill_validation_failure_rolls_back_callback_event(db):
+    _working_intent_with_broker_order(db)
+    with pytest.raises(ValueError, match="exceed"):
+        record_broker_order_event_with_fill(
+            db, _fill_event(cumulative_filled_quantity=51, fill_quantity=51)
+        )
+    assert db.query(BrokerOrderEventRecord).count() == 0
+    assert db.query(ExecutionFillRecord).count() == 0
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+
+
+def test_unmatched_broker_order_rolls_back_callback_event(db):
+    _working_intent_with_broker_order(db)
+    with pytest.raises(LookupError, match="not registered"):
+        record_broker_order_event_with_fill(
+            db, _fill_event(broker_order_id="unknown-order")
+        )
+    assert db.query(BrokerOrderEventRecord).count() == 0
+    assert db.query(ExecutionFillRecord).count() == 0
+
+
+def test_fill_status_without_complete_fill_identity_is_rejected(db):
+    with pytest.raises(ValueError, match="requires fill_id"):
+        record_broker_order_event_with_fill(
+            db, _fill_event(fill_id=None, fill_quantity=None, average_fill_price=None)
+        )
+    assert db.query(BrokerOrderEventRecord).count() == 0
