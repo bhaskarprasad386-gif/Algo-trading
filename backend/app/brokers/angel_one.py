@@ -10,6 +10,8 @@ from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
     BrokerTradeSnapshot,
+    parse_positive_trade_price,
+    parse_trade_timestamp_ns,
 )
 
 
@@ -172,11 +174,14 @@ class AngelOneAdapter:
         )
         trades = tuple(
             BrokerTradeSnapshot(
-                broker_trade_id=self._required_text(row, "tradeid", "trade_id"),
+                broker_trade_id=self._required_text(row, "fillid", "tradeid", "trade_id"),
                 broker_order_id=self._required_text(row, "orderid", "order_id"),
-                quantity=self._positive_int(row, "fillshares", "quantity", "filled_quantity"),
+                quantity=self._positive_int(row, "fillsize", "fillshares", "quantity", "filled_quantity"),
+                fill_price=parse_positive_trade_price(row.get("fillprice")),
+                occurred_at_ns=parse_trade_timestamp_ns(row.get("filltime")),
             )
             for row in trade_rows
+        )            for row in trade_rows
         )
 
         from datetime import datetime
