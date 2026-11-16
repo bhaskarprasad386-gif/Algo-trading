@@ -113,8 +113,11 @@ order identity, and fill application that has not reached the immutable fill
 ledger. Exact fill evidence already present in the ledger is omitted from the
 unresolved list.
 
-The review never replays callbacks, writes fills, changes intent state, polls a
-provider, or authorizes order actions. Results are limited to the authenticated
+The review is bounded to the requested limit (maximum 1,000). If more events
+exist than the requested limit, it returns `INCOMPLETE` with `truncated=true`
+rather than falsely claiming the account is clear. The review never replays
+callbacks, writes fills, changes intent state, polls a provider, or authorizes
+order actions. Results are limited to the authenticated
 single broker account, and `trading_authorized` remains false. The endpoint
 returns only event identity and quantity/timestamp diagnostics, not callback
 payload JSON or average fill prices.
