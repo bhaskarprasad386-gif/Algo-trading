@@ -879,6 +879,14 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
         return await _simulate_entry_locked(trade_id, payload)
 
 
+def _load_trade_quantity(trade_id: int, account_key: str) -> int:
+    with SessionLocal() as session:
+        trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+        if trade is None or trade.account_key != account_key:
+            raise HTTPException(status_code=404, detail="paper trade not found")
+        return int(trade.quantity)
+
+
 async def _completed_entry_receipt_replay(
     trade_id: int, account_key: str, request: CreatePaperTrade,
 ) -> dict[str, Any] | None:
@@ -913,6 +921,9 @@ async def _completed_entry_receipt_replay(
             detail="Completed entry claim does not have exactly four durable entry receipts; manual review is required.",
         )
 
+    selected_quantity = await asyncio.to_thread(
+        _load_trade_quantity, trade_id, account_key,
+    )
     replay_fills = []
     for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
         fill = by_fill_id.get(expected[role])
@@ -920,7 +931,7 @@ async def _completed_entry_receipt_replay(
             fill is None
             or fill.role != role
             or fill.action != expected_actions[role]
-            or fill.quantity != request.lots * _load_trade_lot_size(request)
+            or fill.quantity != selected_quantity
         ):
             raise HTTPException(
                 status_code=409,
