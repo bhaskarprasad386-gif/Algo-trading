@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session
 from app.execution.broker_reconciliation import (
     BrokerSnapshot,
     ExpectedOrder,
+    ReconciliationIssue,
     ReconciliationReport,
+    ReconciliationStatus,
     reconcile_snapshot,
 )
 from app.models.broker_reconciliation import BrokerReconciliationRecord
@@ -110,6 +112,9 @@ def reconcile_persisted_account_snapshot(
             quantity=order.quantity,
         ) for order, _intent, leg in orders)
         order_ids = {order.broker_order_id for order, _intent, _leg in orders}
+        persisted_legs = db.execute(select(ExecutionLegRecord).where(ExecutionLegRecord.intent_record_id.in_([row.id for row in intents]))).scalars().all()
+        recorded_leg_ids = {leg.id for _order, _intent, leg in orders}
+        missing_order_legs = [leg for leg in persisted_legs if leg.id not in recorded_leg_ids]
         fills = db.execute(select(ExecutionFillRecord).where(
             ExecutionFillRecord.account_id == account_id,
             ExecutionFillRecord.broker == broker,
@@ -124,6 +129,23 @@ def reconcile_persisted_account_snapshot(
             local_fill_quantities=local_fills,
             snapshot=snapshot,
         )
+        if missing_order_legs:
+            report = ReconciliationReport(
+                account_id=report.account_id,
+                broker=report.broker,
+                snapshot_complete=report.snapshot_complete,
+                matched_order_count=report.matched_order_count,
+                issues=report.issues + tuple(
+                    ReconciliationIssue(
+                        ReconciliationStatus.MISSING_PERSISTED_BROKER_ORDER_ID,
+                        f"{intent.intent_id}:{leg.leg_id}",
+                        "Persisted execution leg has no broker order identity for this broker/account.",
+                    )
+                    for intent in intents
+                    for leg in missing_order_legs
+                    if leg.intent_record_id == intent.id
+                ),
+            )
         payload = {
             "report": _report_payload(report),
             "intent_ids": list(intent_ids),
