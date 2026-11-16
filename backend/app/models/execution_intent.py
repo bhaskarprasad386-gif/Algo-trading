@@ -81,3 +81,33 @@ class ExecutionFillRecord(Base):
     occurred_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     intent: Mapped[ExecutionIntentRecord] = relationship(back_populates="fills")
+
+
+class ExecutionBrokerOrderRecord(Base):
+    """Immutable broker order identity linked to one persisted execution leg."""
+
+    __tablename__ = "execution_broker_orders"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "broker", "broker_order_id",
+            name="uq_execution_broker_order_identity",
+        ),
+        Index("ix_execution_broker_orders_intent_leg", "intent_record_id", "leg_record_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    intent_record_id: Mapped[int] = mapped_column(
+        ForeignKey("execution_intents.id", ondelete="CASCADE"), nullable=False
+    )
+    leg_record_id: Mapped[int] = mapped_column(
+        ForeignKey("execution_intent_legs.id", ondelete="CASCADE"), nullable=False
+    )
+    account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    broker: Mapped[str] = mapped_column(String(32), nullable=False)
+    broker_order_id: Mapped[str] = mapped_column(String(192), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(192), nullable=False)
+    side: Mapped[str] = mapped_column(String(4), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    client_order_id: Mapped[str | None] = mapped_column(String(192), nullable=True)
+    accepted_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
