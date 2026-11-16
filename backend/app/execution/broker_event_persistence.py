@@ -249,3 +249,89 @@ def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) ->
             "event_record_id": event_result["event_record_id"],
             "fill_result": fill_result,
         }
+
+
+def review_unapplied_broker_fill_events(
+    db: Session, *, broker: str, account_id: str, limit: int = 500,
+) -> dict:
+    """Read-only inventory of trade-identified callback evidence not in the fill ledger.
+
+    This is an operator-facing crash/reconnect review primitive. It never
+    replays events, writes fills, changes intent state, or calls a broker.
+    A missing exact fill identity is reported as pending evidence; an identity
+    present with different execution fields is reported as a conflict.
+    """
+    broker = broker.strip().lower()
+    account_id = account_id.strip()
+    if not broker or not account_id:
+        raise ValueError("broker and account_id are required")
+    if limit < 1 or limit > 5000:
+        raise ValueError("limit must be between 1 and 5000")
+
+    events = db.execute(
+        select(BrokerOrderEventRecord)
+        .where(
+            BrokerOrderEventRecord.broker == broker,
+            BrokerOrderEventRecord.account_id == account_id,
+            BrokerOrderEventRecord.fill_id.is_not(None),
+            BrokerOrderEventRecord.fill_quantity.is_not(None),
+            BrokerOrderEventRecord.average_fill_price.is_not(None),
+        )
+        .order_by(BrokerOrderEventRecord.occurred_at_ns, BrokerOrderEventRecord.id)
+        .limit(limit)
+    ).scalars().all()
+
+    fill_ids = {row.fill_id for row in events if row.fill_id}
+    fills = db.execute(
+        select(ExecutionFillRecord).where(
+            ExecutionFillRecord.broker == broker,
+            ExecutionFillRecord.account_id == account_id,
+            ExecutionFillRecord.broker_fill_id.in_(fill_ids) if fill_ids else False,
+        )
+    ).scalars().all()
+    fills_by_id = {row.broker_fill_id: row for row in fills}
+
+    pending = []
+    conflicts = []
+    applied_count = 0
+    for row in events:
+        fill = fills_by_id.get(row.fill_id)
+        if fill is None:
+            pending.append({
+                "event_id": row.event_id,
+                "broker_order_id": row.broker_order_id,
+                "fill_id": row.fill_id,
+                "fill_quantity": row.fill_quantity,
+                "cumulative_filled_quantity": row.cumulative_filled_quantity,
+                "occurred_at_ns": row.occurred_at_ns,
+                "reason": "NO_MATCHING_PERSISTED_FILL",
+            })
+            continue
+        exact = (
+            fill.broker_order_id == row.broker_order_id
+            and fill.quantity == row.fill_quantity
+            and fill.fill_price == row.average_fill_price
+            and fill.occurred_at_ns == row.occurred_at_ns
+        )
+        if exact:
+            applied_count += 1
+        else:
+            conflicts.append({
+                "event_id": row.event_id,
+                "broker_order_id": row.broker_order_id,
+                "fill_id": row.fill_id,
+                "reason": "FILL_IDENTITY_EXECUTION_EVIDENCE_MISMATCH",
+            })
+
+    return {
+        "broker": broker,
+        "account_id": account_id,
+        "scanned_event_count": len(events),
+        "applied_event_count": applied_count,
+        "pending_event_count": len(pending),
+        "conflict_event_count": len(conflicts),
+        "pending_events": pending,
+        "conflict_events": conflicts,
+        "truncated": len(events) == limit,
+        "read_only": True,
+    }
