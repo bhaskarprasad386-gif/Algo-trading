@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base
 from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperAccount,
+    BoxSpreadPaperAuditEvent,
     BoxSpreadPaperEntryClaim,
     BoxSpreadPaperLedger,
     BoxSpreadPaperLedgerEntry,
@@ -34,6 +35,7 @@ def postgres_paper_ledgers():
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ]
     Base.metadata.create_all(bind=engine, tables=tables)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -46,6 +48,9 @@ def postgres_paper_ledgers():
         )
     finally:
         with factory.begin() as session:
+            session.execute(delete(BoxSpreadPaperAuditEvent).where(
+                BoxSpreadPaperAuditEvent.account_key == account_key,
+            ))
             session.execute(delete(BoxSpreadPaperLedgerEntry).where(
                 BoxSpreadPaperLedgerEntry.account_key == account_key,
             ))

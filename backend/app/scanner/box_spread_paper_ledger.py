@@ -6,11 +6,12 @@ and does not write to generic trading accounts or live scanner history.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Callable
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func, select, update
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.core.database import Base
@@ -149,6 +150,23 @@ class BoxSpreadPaperLedgerEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class BoxSpreadPaperAuditEvent(Base):
+    """Append-only lifecycle evidence for Box Paper; never drives execution."""
+    __tablename__ = "box_spread_paper_audit_events"
+    __table_args__ = (Index("ix_box_paper_audit_account_trade_id", "account_key", "trade_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("box_spread_paper_trades.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 @dataclass(frozen=True)
 class BoxSpreadPaperFillReceipt:
     trade_id: int
@@ -179,6 +197,121 @@ class BoxSpreadPaperLedger:
         self.starting_balance = _money(starting_balance, field="starting balance")
         if not self.fee_schedule.version.strip():
             raise ValueError("fee schedule version is required")
+
+    @staticmethod
+    def _append_audit_event(
+        session: Session, *, account_key: str, trade_id: int, event_type: str,
+        from_state: str | None, to_state: str | None, reason: str,
+        actor: str = "system", details: dict[str, object] | None = None,
+    ) -> None:
+        clean_reason = str(reason or "").strip()
+        clean_actor = str(actor or "").strip()
+        if not clean_reason or len(clean_reason) > 512:
+            raise ValueError("audit event reason is required and must be at most 512 characters")
+        if not clean_actor or len(clean_actor) > 128:
+            raise ValueError("audit event actor is required and must be at most 128 characters")
+        session.add(BoxSpreadPaperAuditEvent(
+            account_key=account_key, trade_id=trade_id, event_type=event_type,
+            from_state=from_state, to_state=to_state, actor=clean_actor,
+            reason=clean_reason,
+            details_json=json.dumps(details, sort_keys=True, separators=(",", ":"), default=str) if details else None,
+            created_at=datetime.now(timezone.utc),
+        ))
+
+    def list_audit_events(self, *, trade_id: int, account_key: str = "default") -> list[dict[str, object]]:
+        key = self._account_key(account_key)
+        with self._session_factory() as session:
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            rows = session.scalars(select(BoxSpreadPaperAuditEvent).where(
+                BoxSpreadPaperAuditEvent.account_key == key,
+                BoxSpreadPaperAuditEvent.trade_id == trade_id,
+            ).order_by(BoxSpreadPaperAuditEvent.id)).all()
+            return [{
+                "event_id": row.id, "event_type": row.event_type,
+                "from_state": row.from_state, "to_state": row.to_state,
+                "actor": row.actor, "reason": row.reason,
+                "details": json.loads(row.details_json) if row.details_json else None,
+                "created_at": _utc_iso(row.created_at),
+            } for row in rows]
+
+    def record_manual_review_required(
+        self, *, trade_id: int, reason: str, account_key: str = "default",
+        failure_type: str | None = None,
+    ) -> None:
+        """Record a post-claim failure without releasing or replaying the claim."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session, session.begin():
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is None or claim.status == "COMPLETED":
+                return
+            self._append_audit_event(
+                session, account_key=key, trade_id=trade_id,
+                event_type="MANUAL_REVIEW_REQUIRED", from_state=claim.status,
+                to_state="MANUAL_REVIEW_REQUIRED", reason=reason,
+                details={"failure_type": failure_type} if failure_type else None,
+            )
+
+    def record_entry_validation_failure(
+        self, *, trade_id: int, reason: str, actor: str = "system",
+        account_key: str = "default", details: dict[str, object] | None = None,
+    ) -> None:
+        """Persist a pre-claim validation failure without changing trade/claim state."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session, session.begin():
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is not None:
+                raise ValueError("validation failure must be recorded before an entry claim exists")
+            self._append_audit_event(
+                session, account_key=key, trade_id=trade_id,
+                event_type="ENTRY_VALIDATION_FAILED", from_state=trade.status,
+                to_state=trade.status, actor=actor, reason=reason, details=details,
+            )
+
+    def record_manual_review_decision(
+        self, *, trade_id: int, decision: str, actor: str, reason: str,
+        account_key: str = "default",
+    ) -> None:
+        """Append an operator decision; records evidence but never retries execution."""
+        key = self._account_key(account_key)
+        decision_value = str(decision or "").strip().upper()
+        if decision_value not in {"ACKNOWLEDGED", "RESOLVED", "REJECTED"}:
+            raise ValueError("manual review decision must be ACKNOWLEDGED, RESOLVED or REJECTED")
+        with self._session_factory() as session, session.begin():
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is None or claim.status == "COMPLETED":
+                raise ValueError("manual review decision requires an unresolved durable entry claim")
+            prior_review_event = session.scalar(select(BoxSpreadPaperAuditEvent.id).where(
+                BoxSpreadPaperAuditEvent.account_key == key,
+                BoxSpreadPaperAuditEvent.trade_id == trade_id,
+                BoxSpreadPaperAuditEvent.event_type == "MANUAL_REVIEW_REQUIRED",
+            ).limit(1))
+            if prior_review_event is None:
+                raise ValueError("manual review decision requires a recorded manual-review event")
+            self._append_audit_event(
+                session, account_key=key, trade_id=trade_id,
+                event_type="MANUAL_REVIEW_DECISION", from_state="MANUAL_REVIEW_REQUIRED",
+                to_state=decision_value, actor=actor, reason=reason,
+            )
 
     def ensure_account(self, account_key: str = "default") -> Decimal:
         key = self._account_key(account_key)
@@ -295,6 +428,11 @@ class BoxSpreadPaperLedger:
                 )
                 session.add(claim)
                 session.flush()
+                self._append_audit_event(
+                    session, account_key=key, trade_id=trade_id, event_type="ENTRY_CLAIMED",
+                    from_state=trade.status, to_state="CLAIMED",
+                    reason="Durable one-shot paper entry attempt reserved",
+                )
                 return {"trade_id": trade_id, "account_key": key, "status": claim.status,
                         "claimed_at": _utc_iso(claim.claimed_at), "created": True}
         except IntegrityError:
@@ -332,8 +470,15 @@ class BoxSpreadPaperLedger:
             ))
             if claim is None:
                 raise ValueError("paper entry claim is missing")
+            previous_status = claim.status
             claim.status = "COMPLETED"
             claim.completed_at = datetime.now(timezone.utc)
+            if previous_status != "COMPLETED":
+                self._append_audit_event(
+                    session, account_key=key, trade_id=trade_id, event_type="ENTRY_COMPLETED",
+                    from_state=previous_status, to_state="COMPLETED",
+                    reason="All four entry legs are durably filled",
+                )
 
     def get_entry_claim(self, *, trade_id: int, account_key: str = "default") -> dict[str, object] | None:
         key = self._account_key(account_key)
@@ -456,8 +601,16 @@ class BoxSpreadPaperLedger:
                 receipts.append(self._receipt(entry, balance))
             account.virtual_balance = balance
             trade.status = "FILLED"
+            previous_claim_status = claim.status
             claim.status = "COMPLETED"
             claim.completed_at = datetime.now(timezone.utc)
+            if previous_claim_status != "COMPLETED":
+                self._append_audit_event(
+                    session, account_key=key, trade_id=trade_id, event_type="ENTRY_COMPLETED",
+                    from_state=previous_claim_status, to_state="COMPLETED",
+                    reason="Four-leg paper entry basket committed atomically",
+                    details={"leg_count": 4, "quantity_per_leg": trade.quantity},
+                )
             return receipts
 
     def record_fill(

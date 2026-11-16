@@ -178,6 +178,11 @@ class PaperExecutionControl(BaseModel):
     enabled: bool
 
 
+class ManualReviewDecision(BaseModel):
+    decision: Literal["ACKNOWLEDGED", "RESOLVED", "REJECTED"]
+    reason: str = Field(min_length=1, max_length=512)
+
+
 class CreatePaperTrade(BaseModel):
     underlying: str = Field(min_length=1, max_length=64)
     instrument_class: str
@@ -968,6 +973,7 @@ async def _completed_entry_receipt_replay(
 
 
 async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
+    claim = None
     try:
         request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
         replay = await _completed_entry_receipt_replay(
@@ -1137,8 +1143,64 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
             } for fill, receipt in zip(execution.fills, receipts, strict=True)],
             "summary": {key: str(value) if isinstance(value, Decimal) else value for key, value in summary.items()},
         }
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code in {409, 422}:
+            try:
+                await asyncio.to_thread(
+                    _ledger.record_entry_validation_failure,
+                    trade_id=trade_id, account_key=payload.account_key,
+                    reason=f"HTTP {exc.status_code}: {str(exc.detail)[:450]}",
+                    details={"http_status": exc.status_code},
+                )
+            except ValueError:
+                # Once a durable claim exists, this is not a pre-claim failure.
+                pass
         raise
+    except Exception as exc:
+        if claim is not None and claim.get("created"):
+            await asyncio.to_thread(
+                _ledger.record_manual_review_required,
+                trade_id=trade_id, account_key=payload.account_key,
+                reason="Entry failed after durable claim; inspect recovery before any operator action",
+                failure_type=type(exc).__name__,
+            )
+        _error(exc)
+
+
+@router.get("/trades/{trade_id}/audit-events")
+def get_trade_audit_events(
+    trade_id: int, account_key: str = "default",
+    claims: dict[str, Any] = Depends(require_paper_access),
+):
+    """Read immutable Box Paper lifecycle evidence for the authenticated owner."""
+    try:
+        return {
+            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+            "trade_id": trade_id,
+            "events": _ledger.list_audit_events(trade_id=trade_id, account_key=account_key),
+        }
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/trades/{trade_id}/manual-review-decision")
+def record_manual_review_decision(
+    trade_id: int, payload: ManualReviewDecision,
+    account_key: str = "default",
+    claims: dict[str, Any] = Depends(require_paper_access),
+):
+    """Record operator review evidence only; this endpoint never retries execution."""
+    try:
+        _ledger.record_manual_review_decision(
+            trade_id=trade_id, account_key=account_key,
+            decision=payload.decision, reason=payload.reason,
+            actor=str(claims.get("sub") or "paper-owner"),
+        )
+        return {
+            "mode": "PAPER_ONLY", "broker_orders_enabled": False,
+            "trade_id": trade_id, "decision_recorded": payload.decision,
+            "execution_replayed": False, "automatic_replay": False,
+        }
     except Exception as exc:
         _error(exc)
 

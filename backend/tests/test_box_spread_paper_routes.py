@@ -916,7 +916,12 @@ def test_all_paper_ledger_routes_have_auth_dependency():
         for method in methods:
             if method in {"GET", "POST"} and path != "/auth/login":
                 actual.add((method, path))
-                assert any(dependency.dependency is routes.require_paper_access for dependency in route.dependencies), path
+                dependencies = list(route.dependencies) + list(getattr(route.dependant, "dependencies", []))
+                assert any(
+                    getattr(dependency, "call", None) is routes.require_paper_access
+                    or getattr(dependency, "dependency", None) is routes.require_paper_access
+                    for dependency in dependencies
+                ), path
     assert protected <= actual
 
 
@@ -1045,6 +1050,7 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
         routes._ledger, "claim_entry_attempt",
         lambda **kwargs: claim_state.update(claimed=True) or {"created": True, "status": "CLAIMED"},
     )
+    monkeypatch.setattr(routes._ledger, "record_manual_review_required", lambda **kwargs: None)
     monkeypatch.setattr(
         routes._ledger, "list_fills",
         lambda trade_id, account_key="default": list(durable_fills),

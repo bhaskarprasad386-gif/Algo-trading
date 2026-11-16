@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.scanner import box_spread_paper_routes as routes
 from app.scanner.box_spread_paper_ledger import (
-    BoxSpreadPaperAccount, BoxSpreadPaperEntryClaim,
+    BoxSpreadPaperAccount, BoxSpreadPaperAuditEvent, BoxSpreadPaperEntryClaim,
     BoxSpreadPaperLedger, BoxSpreadPaperLedgerEntry, BoxSpreadPaperTradeRecord,
 )
 
@@ -23,6 +23,7 @@ def durable_ledger():
     Base.metadata.create_all(bind=engine, tables=[
         BoxSpreadPaperAccount.__table__, BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__, BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     try:

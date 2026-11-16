@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperAccount,
+    BoxSpreadPaperAuditEvent,
     BoxSpreadPaperFeeSchedule,
     BoxSpreadPaperLedger,
     BoxSpreadPaperLedgerEntry,
@@ -31,6 +32,7 @@ def paper_ledger():
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ]
     Base.metadata.create_all(bind=engine, tables=tables)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -194,6 +196,7 @@ def test_concurrent_entry_fills_cannot_overfill_same_leg(tmp_path):
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
@@ -277,6 +280,7 @@ def test_prevents_overspending_and_invalid_fill_values():
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(
@@ -851,6 +855,7 @@ def test_exit_is_never_blocked_by_low_virtual_balance():
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory, starting_balance=100)
@@ -1113,6 +1118,7 @@ def test_concurrent_duplicate_four_leg_basket_exit_is_idempotent(tmp_path):
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
@@ -1173,6 +1179,7 @@ def test_concurrent_distinct_exit_baskets_cannot_overclose_position(tmp_path):
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
@@ -1240,6 +1247,7 @@ def test_concurrent_distinct_partial_exit_baskets_close_only_available_lots(tmp_
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
@@ -1290,3 +1298,50 @@ def test_concurrent_distinct_partial_exit_baskets_close_only_available_lots(tmp_
         assert ledger.list_open_trades() == []
     finally:
         engine.dispose()
+
+
+def test_paper_entry_lifecycle_audit_rejects_review_after_completion(paper_ledger):
+    trade = _trade(paper_ledger, account_key="audit-events", idempotency_key="audit-entry")
+    claim = paper_ledger.claim_entry_attempt(trade_id=trade.id, account_key="audit-events")
+    assert claim["created"] is True
+
+    quantity = trade.quantity
+    paper_ledger.record_entry_basket(
+        trade_id=trade.id,
+        account_key="audit-events",
+        legs={
+            "LOW_CE": {"fill_id": "audit-low-ce", "action": "BUY", "quantity": quantity, "fill_price": 100},
+            "HIGH_CE": {"fill_id": "audit-high-ce", "action": "SELL", "quantity": quantity, "fill_price": 90},
+            "HIGH_PE": {"fill_id": "audit-high-pe", "action": "BUY", "quantity": quantity, "fill_price": 80},
+            "LOW_PE": {"fill_id": "audit-low-pe", "action": "SELL", "quantity": quantity, "fill_price": 70},
+        },
+    )
+    with pytest.raises(ValueError, match="unresolved durable entry claim"):
+        paper_ledger.record_manual_review_decision(
+            trade_id=trade.id, account_key="audit-events", decision="ACKNOWLEDGED",
+            actor="operator-7", reason="Reviewed durable entry receipts",
+        )
+
+    events = paper_ledger.list_audit_events(trade_id=trade.id, account_key="audit-events")
+    assert [event["event_type"] for event in events] == ["ENTRY_CLAIMED", "ENTRY_COMPLETED"]
+    assert (events[0]["from_state"], events[0]["to_state"]) == ("CREATED", "CLAIMED")
+    assert (events[1]["from_state"], events[1]["to_state"]) == ("CLAIMED", "COMPLETED")
+    assert events[1]["details"] == {"leg_count": 4, "quantity_per_leg": quantity}
+
+
+def test_post_claim_failure_is_audited_without_releasing_claim(paper_ledger):
+    trade = _trade(paper_ledger, account_key="audit-failure", idempotency_key="audit-failure-entry")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id, account_key="audit-failure")
+    paper_ledger.record_manual_review_required(
+        trade_id=trade.id, account_key="audit-failure",
+        reason="Simulator failed after claim", failure_type="RuntimeError",
+    )
+
+    events = paper_ledger.list_audit_events(trade_id=trade.id, account_key="audit-failure")
+    assert [event["event_type"] for event in events] == ["ENTRY_CLAIMED", "MANUAL_REVIEW_REQUIRED"]
+    assert events[1]["from_state"] == "CLAIMED"
+    assert events[1]["to_state"] == "MANUAL_REVIEW_REQUIRED"
+    assert events[1]["details"] == {"failure_type": "RuntimeError"}
+    assert paper_ledger.get_entry_claim(
+        trade_id=trade.id, account_key="audit-failure",
+    )["status"] == "CLAIMED"
