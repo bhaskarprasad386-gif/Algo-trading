@@ -17,10 +17,12 @@ class FakeResponse:
 
 
 class FakeHTTP:
-    def __init__(self, orders=None, trades=None):
+    _UNSET = object()
+
+    def __init__(self, orders=_UNSET, trades=_UNSET):
         self.responses = {
-            "orders": orders if orders is not None else {"status": "success", "data": []},
-            "tradebook": trades if trades is not None else {"status": "success", "data": []},
+            "orders": {"status": "success", "data": []} if orders is self._UNSET else orders,
+            "tradebook": {"status": "success", "data": []} if trades is self._UNSET else trades,
         }
         self.calls = []
 
