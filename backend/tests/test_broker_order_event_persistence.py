@@ -66,3 +66,9 @@ def test_same_event_id_is_allowed_for_different_account(db):
 def test_event_store_does_not_mutate_execution_fill_or_order_state(db):
     record_broker_order_event(db, event())
     assert db.query(BrokerOrderEventRecord).count() == 1
+
+
+@pytest.mark.parametrize("bad_price", [float("nan"), float("inf"), float("-inf"), 0.0, -1.0])
+def test_non_finite_or_non_positive_event_fill_price_is_rejected(bad_price):
+    with pytest.raises(ValueError, match="finite and positive"):
+        event(average_fill_price=bad_price)
