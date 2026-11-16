@@ -41,6 +41,14 @@ def _normalized_status(
         NormalizedOrderState.REJECTED: BrokerOrderEventStatus.REJECTED,
         NormalizedOrderState.UNKNOWN: BrokerOrderEventStatus.UNKNOWN,
     }
+    # BrokerOrderEvent requires a positive cumulative quantity for PARTIAL/FILLED.
+    # A provider terminal/partial label without matching quantity remains
+    # UNKNOWN event evidence until the tradebook supplies that quantity.
+    if filled == 0 and evidence.state in {
+        NormalizedOrderState.PARTIALLY_FILLED,
+        NormalizedOrderState.FILLED,
+    }:
+        return BrokerOrderEventStatus.UNKNOWN
     return mapped[evidence.state]
 
 
