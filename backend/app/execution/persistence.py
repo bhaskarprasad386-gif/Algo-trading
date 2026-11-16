@@ -352,8 +352,8 @@ def record_broker_order(
         ).with_for_update()).scalar_one_or_none()
         if leg is None:
             raise LookupError("execution leg not found for intent")
-        if symbol != leg.instrument or side != leg.side or quantity > leg.quantity:
-            raise ValueError("broker order does not match the persisted execution leg")
+        if symbol != leg.instrument or side != leg.side or quantity != leg.quantity:
+            raise ValueError("broker order does not exactly match the persisted execution leg")
         if intent.status not in {
             IntentStatus.SUBMITTING.value, IntentStatus.UNKNOWN.value,
             IntentStatus.RECONCILIATION_REQUIRED.value, IntentStatus.WORKING.value,
