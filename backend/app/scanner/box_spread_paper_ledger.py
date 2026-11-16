@@ -6,11 +6,12 @@ and does not write to generic trading accounts or live scanner history.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Callable
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func, select, update
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.core.database import Base
@@ -146,6 +147,23 @@ class BoxSpreadPaperLedgerEntry(Base):
     charges: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     cash_delta: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
     fee_schedule_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BoxSpreadPaperAuditEvent(Base):
+    """Append-only lifecycle evidence for Box Paper; never drives execution."""
+    __tablename__ = "box_spread_paper_audit_events"
+    __table_args__ = (Index("ix_box_paper_audit_account_trade_id", "account_key", "trade_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("box_spread_paper_trades.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
