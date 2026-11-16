@@ -216,3 +216,32 @@ def test_broker_order_identity_reuse_with_changed_payload_is_rejected(db):
         _record_order(db, client_order_id="different-client-order")
 
     assert db.query(ExecutionBrokerOrderRecord).count() == 1
+
+
+def test_fill_requires_registered_broker_order_for_same_account_intent_and_leg(db):
+    create_working_intent(db)
+    with pytest.raises(LookupError, match="broker order is not registered"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_fill_id="trade-unregistered",
+            broker_order_id="unknown-order", quantity=10,
+            fill_price="101.25", occurred_at_ns=3000,
+        )
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+    assert db.query(ExecutionFillRecord).count() == 0
+
+
+def test_fill_cannot_be_attached_to_another_legs_broker_order(db):
+    create_working_intent(db)
+    with pytest.raises(LookupError, match="broker order is not registered"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cs",
+            broker="angel_one", broker_fill_id="trade-wrong-leg",
+            broker_order_id="order-cb", quantity=10,
+            fill_price="101.25", occurred_at_ns=3001,
+        )
+    call_leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    put_leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cs"))
+    assert call_leg.filled_quantity == put_leg.filled_quantity == 0
+    assert db.query(ExecutionFillRecord).count() == 0
