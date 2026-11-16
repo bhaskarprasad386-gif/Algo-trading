@@ -347,3 +347,33 @@ def test_read_only_review_reports_truncation_only_when_more_rows_exist(db):
     )
     assert two_rows["scanned_event_count"] == 1
     assert two_rows["truncated"] is True
+
+
+
+def test_non_binary_decimal_price_replay_is_idempotent(db):
+    _working_intent_with_broker_order(db)
+    first = record_broker_order_event_with_fill(
+        db, _fill_event(average_fill_price=101.1)
+    )
+    replay = record_broker_order_event_with_fill(
+        db, _fill_event(
+            event_id="evt-fill-decimal-replay",
+            average_fill_price=101.1,
+        )
+    )
+    assert first["fill_created"] is True
+    assert replay["event_created"] is True
+    assert replay["fill_created"] is False
+    assert db.query(ExecutionFillRecord).count() == 1
+
+
+def test_non_binary_decimal_price_is_reported_as_exactly_applied(db):
+    _working_intent_with_broker_order(db)
+    record_broker_order_event_with_fill(
+        db, _fill_event(average_fill_price=101.1)
+    )
+    report = review_unapplied_broker_fill_events(
+        db, broker="fyers", account_id="acct-1",
+    )
+    assert report["applied_event_count"] == 1
+    assert report["conflict_event_count"] == 0
