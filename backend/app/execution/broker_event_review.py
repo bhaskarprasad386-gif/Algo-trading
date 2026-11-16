@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.broker_order_event import BrokerOrderEventRecord
+from app.execution.broker_event_sequence_review import review_callback_sequence
 from app.models.execution_intent import (
     ExecutionBrokerOrderRecord,
     ExecutionFillRecord,
@@ -118,6 +119,8 @@ def review_deferred_broker_events(
             "occurred_at_ns": event.occurred_at_ns,
         })
 
+    sequence_integrity = review_callback_sequence(events)
+
     deferred_count = sum(
         1 for item in unresolved
         if item["reason"] == "CUMULATIVE_FILL_GAP"
@@ -133,5 +136,6 @@ def review_deferred_broker_events(
         "unresolved_count": len(unresolved),
         "deferred_count": deferred_count,
         "events": unresolved,
+        "callback_sequence_integrity": sequence_integrity,
         "trading_authorized": False,
     }
