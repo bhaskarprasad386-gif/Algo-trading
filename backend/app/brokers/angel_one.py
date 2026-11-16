@@ -181,7 +181,6 @@ class AngelOneAdapter:
                 occurred_at_ns=parse_trade_timestamp_ns(row.get("filltime")),
             )
             for row in trade_rows
-        )            for row in trade_rows
         )
 
         from datetime import datetime
