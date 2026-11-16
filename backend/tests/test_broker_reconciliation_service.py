@@ -324,3 +324,56 @@ def test_reconciliation_durably_blocks_fill_price_and_timestamp_mismatch(db):
         BrokerReconciliationRecord.reconciliation_id == "run-fill-evidence-mismatch"
     ))
     assert stored.is_consistent is False
+
+
+def test_multileg_spread_with_unequal_broker_fills_is_blocked(db):
+    _persist_order(db)
+    # Only the first of the four Box Spread legs has filled at the broker.
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot(filled=25),
+        reconciliation_id="run-unequal-multileg-fills",
+        intent_ids=("intent-reconcile",),
+    )
+    issue = next(
+        issue for issue in result["report"].issues
+        if issue.status.value == "MULTI_LEG_FILL_QUANTITY_MISMATCH"
+    )
+    assert issue.identity == "intent-reconcile"
+    assert "cb=25" in issue.detail
+    assert "cs=0" in issue.detail
+    assert result["report"].is_consistent is False
+    stored = db.scalar(select(BrokerReconciliationRecord).where(
+        BrokerReconciliationRecord.reconciliation_id == "run-unequal-multileg-fills"
+    ))
+    assert stored.is_consistent is False
+
+
+def test_multileg_spread_with_equal_partial_fills_has_no_leg_imbalance_issue(db):
+    _persist_order(db)
+    base = _snapshot()
+    balanced = BrokerSnapshot(
+        account_id=base.account_id,
+        broker=base.broker,
+        orders=tuple(
+            BrokerOrderSnapshot(
+                broker_order_id=row.broker_order_id,
+                symbol=row.symbol,
+                side=row.side,
+                quantity=row.quantity,
+                filled_quantity=10,
+                raw_status="OPEN",
+            )
+            for row in base.orders
+        ),
+        trades=(),
+        complete=True,
+    )
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=balanced,
+        reconciliation_id="run-balanced-partial-multileg-fills",
+        intent_ids=("intent-reconcile",),
+    )
+    assert not any(
+        issue.status.value == "MULTI_LEG_FILL_QUANTITY_MISMATCH"
+        for issue in result["report"].issues
+    )
