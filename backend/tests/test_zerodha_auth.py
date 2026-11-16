@@ -23,14 +23,22 @@ class FakeResponse:
 
 class FakeHTTP:
     def __init__(self, post_response=None, profile_response=None):
-        self.post_response = post_response or {
-            "status": "success",
-            "data": {"user_id": "AB1234", "access_token": "token-123"},
-        }
-        self.profile_response = profile_response or {
-            "status": "success",
-            "data": {"user_id": "AB1234", "broker": "ZERODHA"},
-        }
+        self.post_response = FakeResponse(
+            post_response
+            if post_response is not None
+            else {
+                "status": "success",
+                "data": {"user_id": "AB1234", "access_token": "token-123"},
+            }
+        )
+        self.profile_response = FakeResponse(
+            profile_response
+            if profile_response is not None
+            else {
+                "status": "success",
+                "data": {"user_id": "AB1234", "broker": "ZERODHA"},
+            }
+        )
         self.calls = []
 
     def post(self, url, **kwargs):
