@@ -304,7 +304,8 @@ def test_disconnect_provider_failure_still_clears_local_and_durable_state(db, mo
     assert raised.value.status_code == 503
     assert sessions.get(7, "angel_one") is None
     assert connections.get(7, "angel_one") is None
-    assert trading_safety.is_enabled(7) is False
+    assert trading_safety.get(7).real_trading_enabled is False
+    assert trading_safety.get(7).kill_switch is True
     db.expire_all()
     persisted = db.query(BoxSpreadRealOwnerState).one()
     assert persisted.connected is False
