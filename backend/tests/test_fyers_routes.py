@@ -54,12 +54,10 @@ def test_auth_url_returns_single_use_state_and_url(monkeypatch):
     store = Mock()
     store.create.return_value = ("a" * 32, "https://api-t1.fyers.in/login?state=" + "a" * 32)
     monkeypatch.setattr(fyers_routes, "fyers_oauth_states", store)
+    monkeypatch.setenv("FYERS_REDIRECT_URI", "https://example.com/callback")
 
     result = fyers_routes.fyers_auth_url(
-        fyers_routes.FyersAuthUrlRequest(
-            app_id="APP-100",
-            redirect_uri="https://example.com/callback",
-        ),
+        fyers_routes.FyersAuthUrlRequest(app_id="APP-100"),
         user_id=0,
     )
 
@@ -75,13 +73,11 @@ def test_auth_url_rejects_unregistered_redirect_shape(monkeypatch):
     store = Mock()
     store.create.side_effect = ValueError("bad redirect")
     monkeypatch.setattr(fyers_routes, "fyers_oauth_states", store)
+    monkeypatch.setenv("FYERS_REDIRECT_URI", "http://example.com/callback")
 
     with pytest.raises(HTTPException) as raised:
         fyers_routes.fyers_auth_url(
-            fyers_routes.FyersAuthUrlRequest(
-                app_id="APP-100",
-                redirect_uri="http://example.com/callback",
-            ),
+            fyers_routes.FyersAuthUrlRequest(app_id="APP-100"),
             user_id=0,
         )
     assert raised.value.status_code == 422
@@ -91,6 +87,7 @@ def test_verify_binds_broker_identity_and_keeps_trading_off(monkeypatch, db_sess
     cleanup()
     state_store = Mock()
     monkeypatch.setattr(fyers_routes, "fyers_oauth_states", state_store)
+    monkeypatch.setenv("FYERS_REDIRECT_URI", "https://example.com/callback")
     monkeypatch.setattr(
         fyers_routes.FyersTypeAAuthenticator,
         "exchange_auth_code",
@@ -119,7 +116,6 @@ def test_verify_binds_broker_identity_and_keeps_trading_off(monkeypatch, db_sess
             app_secret="secret",
             auth_code="one-time-code",
             state="s" * 32,
-            redirect_uri="https://example.com/callback",
             expected_account_id="FY12345",
         ),
         db=db_session,
@@ -141,6 +137,7 @@ def test_verify_rejects_replayed_or_invalid_state_before_network(monkeypatch, db
     store = Mock()
     store.consume.side_effect = ValueError("replayed")
     monkeypatch.setattr(fyers_routes, "fyers_oauth_states", store)
+    monkeypatch.setenv("FYERS_REDIRECT_URI", "https://example.com/callback")
     exchange = Mock()
     monkeypatch.setattr(fyers_routes.FyersTypeAAuthenticator, "exchange_auth_code", exchange)
 
@@ -177,6 +174,7 @@ def test_verify_owner_conflict_discards_authenticated_session(monkeypatch, db_se
     cleanup()
     state_store = Mock()
     monkeypatch.setattr(fyers_routes, "fyers_oauth_states", state_store)
+    monkeypatch.setenv("FYERS_REDIRECT_URI", "https://example.com/callback")
     monkeypatch.setattr(
         fyers_routes.FyersTypeAAuthenticator,
         "exchange_auth_code",
