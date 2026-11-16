@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from app.brokers.history import BrokerHistoryUnavailable, BrokerHistoryWindow
+from app.brokers.history import BrokerHistoryUnavailable, validated_daily_history_window
 from app.brokers.mstock import MStockAdapter, MStockHistoryUnavailable
 
 
@@ -46,11 +46,11 @@ class MStockHistoryProvider:
             daily = self._adapter.fetch_today_broker_snapshot(account_id=account_id)
         except MStockHistoryUnavailable as exc:
             raise BrokerHistoryUnavailable(str(exc)) from exc
-        return BrokerHistoryWindow(
-            snapshot=daily.snapshot,
+        return validated_daily_history_window(
+            provider_name=self.name,
+            account_id=account_id,
             window_start=window_start,
             window_end=window_end,
-            pages_fetched=1,
-            has_more=False,
+            daily_history=daily,
             provider_window="CURRENT_TRADING_DAY_ORDER_BOOK_AND_TRADE_BOOK",
         )
