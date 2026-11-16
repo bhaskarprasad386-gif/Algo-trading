@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.execution.broker_events import BrokerOrderEvent, BrokerOrderEventStatus
+from app.execution.broker_events import BrokerOrderEvent
 from app.execution.broker_event_persistence import (
     record_broker_order_event,
     record_broker_order_event_with_fill,
@@ -17,12 +17,6 @@ from app.execution.broker_event_persistence import (
 
 class BrokerEventIngestionBlocked(ValueError):
     """The event cannot be safely attributed to the active broker session."""
-
-
-_FILL_STATUSES = {
-    BrokerOrderEventStatus.PARTIALLY_FILLED,
-    BrokerOrderEventStatus.FILLED,
-}
 
 
 def ingest_broker_order_event(
@@ -53,6 +47,9 @@ def ingest_broker_order_event(
         value is not None
         for value in (event.fill_id, event.fill_quantity, event.average_fill_price)
     )
-    if event.status in _FILL_STATUSES or has_fill_metadata:
+    # Order-status updates may report cumulative partial/full quantities without
+    # a trade-level identity or price. Persist that status evidence only; never
+    # invent a fill. Only trade-identified payloads may mutate the fill ledger.
+    if has_fill_metadata:
         return record_broker_order_event_with_fill(db, event)
     return record_broker_order_event(db, event)
