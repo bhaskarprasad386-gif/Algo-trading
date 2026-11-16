@@ -20,6 +20,7 @@ from app.models.execution_intent import (
     ExecutionBrokerOrderRecord,
     ExecutionFillRecord,
     ExecutionIntentRecord,
+    ExecutionLegRecord,
 )
 
 
@@ -77,8 +78,9 @@ def reconcile_persisted_account_snapshot(
             raise LookupError("one or more execution intents do not belong to this broker account")
 
         orders = db.execute(
-            select(ExecutionBrokerOrderRecord, ExecutionIntentRecord)
+            select(ExecutionBrokerOrderRecord, ExecutionIntentRecord, ExecutionLegRecord)
             .join(ExecutionIntentRecord, ExecutionIntentRecord.id == ExecutionBrokerOrderRecord.intent_record_id)
+            .join(ExecutionLegRecord, ExecutionLegRecord.id == ExecutionBrokerOrderRecord.leg_record_id)
             .where(
                 ExecutionBrokerOrderRecord.account_id == account_id,
                 ExecutionBrokerOrderRecord.broker == broker,
@@ -87,13 +89,13 @@ def reconcile_persisted_account_snapshot(
             .order_by(ExecutionBrokerOrderRecord.id)
         ).all()
         expected = tuple(ExpectedOrder(
-            leg_id=str(order.leg_record_id),
+            leg_id=leg.leg_id,
             broker_order_id=order.broker_order_id,
             symbol=order.symbol,
             side=order.side,
             quantity=order.quantity,
-        ) for order, _intent in orders)
-        order_ids = {order.broker_order_id for order, _intent in orders}
+        ) for order, _intent, leg in orders)
+        order_ids = {order.broker_order_id for order, _intent, _leg in orders}
         fills = db.execute(select(ExecutionFillRecord).where(
             ExecutionFillRecord.account_id == account_id,
             ExecutionFillRecord.broker == broker,
@@ -108,7 +110,33 @@ def reconcile_persisted_account_snapshot(
             local_fill_quantities=local_fills,
             snapshot=snapshot,
         )
-        payload = _report_payload(report)
+        payload = {
+            "report": _report_payload(report),
+            "intent_ids": list(intent_ids),
+            "source_snapshot": {
+                "account_id": snapshot.account_id,
+                "broker": snapshot.broker.strip().lower(),
+                "complete": snapshot.complete,
+                "orders": [
+                    {
+                        "broker_order_id": row.broker_order_id,
+                        "symbol": row.symbol,
+                        "side": row.side,
+                        "quantity": row.quantity,
+                        "filled_quantity": row.filled_quantity,
+                    }
+                    for row in snapshot.orders
+                ],
+                "trades": [
+                    {
+                        "broker_trade_id": row.broker_trade_id,
+                        "broker_order_id": row.broker_order_id,
+                        "quantity": row.quantity,
+                    }
+                    for row in snapshot.trades
+                ],
+            },
+        }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
