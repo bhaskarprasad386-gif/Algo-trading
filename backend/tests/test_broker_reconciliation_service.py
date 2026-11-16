@@ -58,7 +58,7 @@ def _persist_order(db, *, account_id="acct-1", all_legs=True):
         record_broker_order(
             db, account_id=account_id, intent_id="intent-reconcile",
             leg_id=leg.leg_id, broker="fyers",
-            broker_order_id=f"order-{index}", symbol=leg.symbol,
+            broker_order_id=f"order-{index}", symbol=leg.instrument,
             side=leg.side.value, quantity=leg.quantity,
             accepted_at_ns=200 + index,
         )
