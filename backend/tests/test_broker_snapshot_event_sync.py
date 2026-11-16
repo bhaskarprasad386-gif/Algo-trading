@@ -211,3 +211,20 @@ def test_normalized_trade_snapshot_rejects_invalid_optional_execution_evidence()
         BrokerTradeSnapshot("trade-1", "order-1", 10, fill_price=0)
     with pytest.raises(ValueError, match="timestamp"):
         BrokerTradeSnapshot("trade-1", "order-1", 10, fill_price=100, occurred_at_ns=0)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (1_800_000_000, 1_800_000_000_000_000_000),
+        (1_800_000_000_000, 1_800_000_000_000_000_000),
+        (1_800_000_000_000_000_000, 1_800_000_000_000_000_000),
+    ],
+)
+def test_epoch_trade_timestamps_normalize_to_nanoseconds(value, expected):
+    assert parse_trade_timestamp_ns(value) == expected
+
+
+def test_shoonya_full_fill_time_format_is_parsed_as_ist():
+    timestamp = parse_trade_timestamp_ns("10:31:00 16-11-2026")
+    assert timestamp is not None and timestamp > 0
