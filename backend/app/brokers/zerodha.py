@@ -137,7 +137,6 @@ class ZerodhaAdapter:
                 occurred_at_ns=parse_trade_timestamp_ns(row.get("fill_timestamp")),
             )
             for row in trade_rows
-        )            for row in trade_rows
         )
         return ZerodhaDailyHistory(
             trading_date=datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
