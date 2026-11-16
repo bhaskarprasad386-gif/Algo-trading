@@ -92,6 +92,7 @@ def sync_account_tradebook_fills(
     # A preceding SELECT must not leave an uncommitted outer request transaction.
     created = 0
     unmatched_trade_ids: list[str] = []
+    unmatched_order_ids: list[str] = []
     managed_trade_count = 0
     with _transaction(db):
         mapped_rows = db.execute(
@@ -109,6 +110,7 @@ def sync_account_tradebook_fills(
             row[0].broker_order_id: (row[0], row[1], row[2])
             for row in mapped_rows
         }
+        unmatched_order_ids = sorted(set(order_by_id) - set(mapped))
 
         # A broker account may contain manually placed or otherwise unmanaged
         # trades. Never adopt them. Report their trade IDs, while reconciling and
@@ -168,12 +170,14 @@ def sync_account_tradebook_fills(
             created += int(bool(result.get("created")))
 
     return {
-        "status": "SYNCED_WITH_UNMATCHED" if unmatched_trade_ids else "SYNCED",
+        "status": "SYNCED_WITH_UNMATCHED" if (unmatched_trade_ids or unmatched_order_ids) else "SYNCED",
         "trading_date": getattr(history, "trading_date", None),
         "trade_count": len(trades),
         "managed_trade_count": managed_trade_count,
         "unmatched_trade_count": len(unmatched_trade_ids),
         "unmatched_trade_ids": unmatched_trade_ids,
+        "unmatched_order_count": len(unmatched_order_ids),
+        "unmatched_order_ids": unmatched_order_ids,
         "created_count": created,
         "duplicate_count": managed_trade_count - created,
         "trading_authorized": False,
