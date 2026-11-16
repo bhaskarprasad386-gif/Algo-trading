@@ -17,7 +17,7 @@ from app.execution.persistence import record_fill
 
 def _transaction(db: Session):
     """Join a caller-owned transaction or own/commit a standalone operation."""
-    return nullcontext() if db.in_transaction() else db.begin()
+    return db.begin_nested() if db.in_transaction() else db.begin()
 
 
 class BrokerEventConflict(ValueError):
