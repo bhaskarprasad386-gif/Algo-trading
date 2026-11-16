@@ -188,3 +188,16 @@ def test_cumulative_quantity_mismatch_rolls_back_callback_and_fill(db):
         )
     assert db.query(BrokerOrderEventRecord).count() == 0
     assert db.query(ExecutionFillRecord).count() == 0
+
+
+def test_new_callback_cannot_reuse_an_already_consumed_fill_identity(db):
+    _working_intent_with_broker_order(db)
+    record_broker_order_event_with_fill(db, _fill_event())
+    with pytest.raises(BrokerEventConflict, match="different callback event"):
+        record_broker_order_event_with_fill(
+            db, _fill_event(event_id="evt-fill-atomic-2", cumulative_filled_quantity=20)
+        )
+    assert db.query(BrokerOrderEventRecord).count() == 1
+    assert db.query(ExecutionFillRecord).count() == 1
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 10
