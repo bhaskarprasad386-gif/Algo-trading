@@ -62,3 +62,17 @@ submit, or resume orders. Provider-specific status aliases remain conservative; 
 uses this same normalizer. A provider-reported FILLED/PARTIAL status without cumulative
 fill quantity remains UNKNOWN in the event ledger until tradebook evidence arrives.
 Unknown values stay blocked until verified fixtures support an explicit mapping.
+
+
+## Multi-leg spread fill completeness
+
+Account reconciliation also compares broker-confirmed cumulative filled
+quantities across every persisted leg in each multi-leg intent. If one leg has
+filled 25 units while another has filled 0 (or any other unequal quantity), the
+durable report includes `MULTI_LEG_FILL_QUANTITY_MISMATCH` and remains
+inconsistent. Equal partial quantities are not classified as a leg imbalance,
+but the existing per-order tradebook and status checks still apply.
+
+This check is read-only and uses broker order snapshot cumulative quantities;
+it does not infer fills from local estimates, alter the immutable fill ledger,
+submit compensating orders, or authorize execution resume.
