@@ -311,3 +311,64 @@ def test_disconnect_provider_failure_still_clears_local_and_durable_state(db, mo
     assert persisted.connected is False
     assert persisted.real_trading_enabled is False
     assert persisted.kill_switch is True
+
+def test_reconnect_old_provider_logout_failure_keeps_new_session_consistent_and_disarmed(db, monkeypatch):
+    from app.brokers import routes
+    from app.brokers.connections import BrokerConnectionStore
+    from app.brokers.safety import trading_safety
+    from app.brokers.session_store import BrokerSessionStore
+    from app.brokers.routes import ConnectRequest
+
+    class FakeAdapter:
+        name = "angel_one"
+        connected = True
+
+        def connect(self, **kwargs):
+            return {"broker": "angel_one", "connected": True, "client_code": "CLIENT123"}
+
+        def disconnect(self):
+            return None
+
+    class OldAdapter:
+        name = "angel_one"
+        connected = True
+
+        def disconnect(self):
+            raise RuntimeError("old provider session logout unavailable")
+
+    claim_authenticated_account(db, "angel_one", "CLIENT123")
+    sessions = BrokerSessionStore()
+    connections = BrokerConnectionStore()
+    sessions.replace(7, "angel_one", OldAdapter())
+    connections.connect(7, "angel_one", "old session")
+    monkeypatch.setattr(routes, "broker_sessions", sessions)
+    monkeypatch.setattr(routes, "broker_connections", connections)
+    monkeypatch.setattr(routes, "AngelOneAdapter", FakeAdapter)
+    trading_safety.enable(7)
+
+    result = routes.connect(
+        ConnectRequest(
+            broker="angel_one",
+            display_name="new session",
+            api_key="api",
+            client_code="CLIENT123",
+            password="password",
+            totp_secret="totp",
+        ),
+        db,
+        7,
+    )
+
+    assert result["connected"] is True
+    assert result["real_trading"] is False
+    assert sessions.get(7, "angel_one") is not None
+    assert sessions.get(7, "angel_one").__class__ is FakeAdapter
+    assert connections.get(7, "angel_one").display_name == "new session"
+    assert trading_safety.get(7).real_trading_enabled is False
+    assert trading_safety.get(7).kill_switch is True
+    db.expire_all()
+    persisted = db.query(BoxSpreadRealOwnerState).one()
+    assert persisted.connected is True
+    assert persisted.real_trading_enabled is False
+    assert persisted.kill_switch is True
+    trading_safety.disable(7)
