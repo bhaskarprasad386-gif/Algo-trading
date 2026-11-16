@@ -226,3 +226,11 @@ The shared boundary is used by Angel One, Zerodha, FYERS, Shoonya and m.Stock.
 FYERS closed-day reports pass through the same validation as current-day book
 providers. Regression tests exercise account mismatch, broker mismatch,
 incomplete snapshots, and pagination/completeness contradictions.
+
+
+Current-day providers also verify that the adapter's declared trading date
+matches the requested IST calendar day. This prevents a stale but otherwise
+well-formed previous-day snapshot from being relabelled as today's complete
+book. FYERS date-range reports remain validated against their explicitly
+requested closed-day range and preserve both order-report and trade-report
+page counts in the shared history window.
