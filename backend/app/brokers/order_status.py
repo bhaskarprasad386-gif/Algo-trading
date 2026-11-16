@@ -113,7 +113,7 @@ def normalize_order_status(
 
     if filled_quantity == quantity:
         state = NormalizedOrderState.FILLED
-        conflict = mapped in {"CANCELLED", "REJECTED", "OPEN", "UNKNOWN", "PARTIALLY_FILLED"}
+        conflict = mapped in {"CANCELLED", "REJECTED", "EXPIRED", "OPEN", "UNKNOWN", "PARTIALLY_FILLED"}
         requires_reconciliation = conflict
         terminal = True
     elif filled_quantity > 0:
