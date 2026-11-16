@@ -1,0 +1,98 @@
+from types import SimpleNamespace
+
+from app.execution.broker_reconciliation import BrokerSnapshot
+from app.execution.recovery_review import RecoveryDisposition
+from app.execution import recovery_snapshot as module
+
+
+def _candidate():
+    return SimpleNamespace(
+        persisted=SimpleNamespace(
+            intent=SimpleNamespace(account_id="acct-1", intent_id="intent-1")
+        )
+    )
+
+
+class _Adapter:
+    def __init__(self, history=None, error=None):
+        self.history = history
+        self.error = error
+        self.accounts = []
+
+    def fetch_today_broker_snapshot(self, *, account_id):
+        self.accounts.append(account_id)
+        if self.error:
+            raise self.error
+        return self.history
+
+
+def test_orchestrator_calls_read_only_history_for_candidate_account(monkeypatch):
+    snapshot = BrokerSnapshot("acct-1", "zerodha", (), (), False)
+    adapter = _Adapter(SimpleNamespace(
+        scope="CURRENT_TRADING_DAY", trading_date="2026-11-16",
+        snapshot=snapshot,
+    ))
+    evidence = SimpleNamespace(local_orders=(), local_fill_quantities={})
+    monkeypatch.setattr(module, "load_recovery_ledger_evidence", lambda *a, **k: evidence)
+    review = SimpleNamespace(
+        disposition=RecoveryDisposition.BLOCKED, is_consistent=False,
+    )
+    monkeypatch.setattr(module, "review_recovery_candidate", lambda **kwargs: review)
+
+    result = module.review_with_broker_history(
+        object(), candidate=_candidate(), broker="ZERODHA", adapter=adapter,
+    )
+
+    assert adapter.accounts == ["acct-1"]
+    assert result.disposition is RecoveryDisposition.BLOCKED
+    assert result.reason == "RECONCILIATION_REQUIRES_REVIEW"
+    assert result.trading_date == "2026-11-16"
+
+
+def test_adapter_failure_fails_closed_without_ledger_or_review(monkeypatch):
+    def must_not_load(*args, **kwargs):
+        raise AssertionError("ledger must not be consulted after history failure")
+
+    monkeypatch.setattr(module, "load_recovery_ledger_evidence", must_not_load)
+    result = module.review_with_broker_history(
+        object(), candidate=_candidate(), broker="fyers",
+        adapter=_Adapter(error=RuntimeError("provider response contains secrets")),
+    )
+    assert result.disposition is RecoveryDisposition.BLOCKED
+    assert result.review is None
+    assert result.reason == "BROKER_HISTORY_FETCH_FAILED"
+
+
+def test_unsupported_history_scope_fails_closed(monkeypatch):
+    def must_not_load(*args, **kwargs):
+        raise AssertionError("unsupported scope must not be reconciled")
+
+    monkeypatch.setattr(module, "load_recovery_ledger_evidence", must_not_load)
+    result = module.review_with_broker_history(
+        object(), candidate=_candidate(), broker="mstock",
+        adapter=_Adapter(SimpleNamespace(
+            scope="MULTI_DAY_UNVERIFIED", trading_date="2026-11-16",
+            snapshot=BrokerSnapshot("acct-1", "mstock", (), (), True),
+        )),
+    )
+    assert result.disposition is RecoveryDisposition.BLOCKED
+    assert result.reason == "BROKER_HISTORY_SCOPE_UNSUPPORTED"
+
+
+def test_incomplete_current_day_snapshot_remains_blocked(monkeypatch):
+    snapshot = BrokerSnapshot("acct-1", "shoonya", (), (), False)
+    evidence = SimpleNamespace(local_orders=(), local_fill_quantities={})
+    monkeypatch.setattr(module, "load_recovery_ledger_evidence", lambda *a, **k: evidence)
+    review = SimpleNamespace(
+        disposition=RecoveryDisposition.BLOCKED, is_consistent=False,
+    )
+    monkeypatch.setattr(module, "review_recovery_candidate", lambda **kwargs: review)
+    result = module.review_with_broker_history(
+        object(), candidate=_candidate(), broker="shoonya",
+        adapter=_Adapter(SimpleNamespace(
+            scope="CURRENT_TRADING_DAY", trading_date="2026-11-16",
+            snapshot=snapshot,
+        )),
+    )
+    assert result.disposition is RecoveryDisposition.BLOCKED
+    assert result.reason == "RECONCILIATION_REQUIRES_REVIEW"
