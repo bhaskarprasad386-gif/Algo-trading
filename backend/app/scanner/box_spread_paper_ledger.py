@@ -294,6 +294,19 @@ class BoxSpreadPaperLedger:
             trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
             if trade is None or trade.account_key != key:
                 raise ValueError("paper trade not found for account")
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is None or claim.status == "COMPLETED":
+                raise ValueError("manual review decision requires an unresolved durable entry claim")
+            prior_review_event = session.scalar(select(BoxSpreadPaperAuditEvent.id).where(
+                BoxSpreadPaperAuditEvent.account_key == key,
+                BoxSpreadPaperAuditEvent.trade_id == trade_id,
+                BoxSpreadPaperAuditEvent.event_type == "MANUAL_REVIEW_REQUIRED",
+            ).limit(1))
+            if prior_review_event is None:
+                raise ValueError("manual review decision requires a recorded manual-review event")
             self._append_audit_event(
                 session, account_key=key, trade_id=trade_id,
                 event_type="MANUAL_REVIEW_DECISION", from_state="MANUAL_REVIEW_REQUIRED",
