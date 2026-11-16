@@ -21,6 +21,7 @@ from app.brokers.real_owner_state import claim_authenticated_account, disable_ow
 from app.core.database import get_db
 from app.core.logger import app_logger
 from app.execution.recovery_coordinator import review_account_recovery
+from app.execution.broker_snapshot_event_sync import sync_account_order_status_events
 from app.models import BoxSpreadRealOwnerState
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
@@ -83,6 +84,52 @@ def broker_capability_matrix(user_id: int = Depends(require_real_owner_access)) 
 def connections(user_id: int = Depends(require_real_owner_access)) -> dict:
     return {"connections": [{"broker": c.broker, "connected": c.connected, "display_name": c.display_name, "connected_at": c.connected_at.isoformat() if c.connected_at else None} for c in broker_connections.list(user_id)]}
 
+
+
+
+@router.post("/events/sync")
+def sync_broker_order_status_events(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
+) -> dict:
+    """Persist immutable order-status evidence from one complete current-day broker snapshot."""
+    owner_state = db.query(BoxSpreadRealOwnerState).filter(
+        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    ).first()
+    if owner_state is None or not owner_state.broker_name:
+        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+
+    broker = str(owner_state.broker_name).strip().lower()
+    adapter = broker_sessions.get(user_id, broker)
+    db.rollback()
+    if adapter is None or not bool(getattr(adapter, "connected", False)):
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_NOT_CONNECTED",
+            "event_count": 0,
+            "created_count": 0,
+            "trading_authorized": False,
+        }
+    account_id = str(getattr(adapter, "account_id", "") or "").strip()
+    if not account_id:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+            "event_count": 0,
+            "created_count": 0,
+            "trading_authorized": False,
+        }
+    try:
+        return sync_account_order_status_events(
+            db, adapter=adapter, account_id=account_id,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Broker order snapshot is invalid") from exc
+    except Exception as exc:
+        db.rollback()
+        app_logger.exception("Broker order-status snapshot sync failed")
+        raise HTTPException(status_code=503, detail="Broker order-status synchronization is temporarily unavailable") from exc
 
 
 @router.get("/recovery/review")
