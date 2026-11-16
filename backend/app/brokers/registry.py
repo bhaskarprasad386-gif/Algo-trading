@@ -1,12 +1,14 @@
 """Registry for supported broker adapters."""
 from .base import BrokerAdapter
 from .angel_one import AngelOneAdapter
+from .mstock import MStockAdapter
 
 
 class BrokerRegistry:
     def __init__(self) -> None:
         self._adapters: dict[str, BrokerAdapter] = {}
         self.register(AngelOneAdapter())
+        self.register(MStockAdapter())
 
     def register(self, adapter: BrokerAdapter) -> None:
         key = adapter.name.strip().lower()
