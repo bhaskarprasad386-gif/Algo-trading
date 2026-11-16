@@ -113,7 +113,7 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
         raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
     adapter = AngelOneAdapter()
     try:
-        result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret)
+        result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret, account_id=payload.client_code)
     except Exception as exc:
         app_logger.error("Angel One connection failed: %s", exc)
         raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
