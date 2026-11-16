@@ -1,6 +1,6 @@
 # Batch 0 — Box Paper Lifecycle and Crash-Boundary Audit
 
-**Status:** Source/test audit completed for the inspected Box Paper entry, exit, and recovery paths. No runtime code changed.  
+**Status:** Source/test audit completed; durable Box Paper lifecycle audit events are implemented on the Batch 0 follow-up branch and awaiting CI.  
 **Audited main commit:** `8da655f0c287251cf1602cae484714a7c26fcf15`.
 
 ## 1. Production caller inventory for the generic execution package
@@ -113,13 +113,14 @@ These are source-level test inventory findings. No fresh test suite was executed
 
 The current Box Paper ledger has robust atomic four-leg persistence and conservative restart replay protection. It is not yet a durable unified execution lifecycle: simulator state is in memory, entry response replay is incomplete, and ambiguous claims require manual review. Keep the existing behavior unchanged while the durable intent/event layer and PostgreSQL concurrency tests are built.
 
-**No runtime code, scanner, WebSocket subscription, schema, deployment, or Live Trading setting was changed by this audit.**
+**The lifecycle event implementation changes only the Box Paper ledger schema and authenticated audit endpoints. Scanner, WebSocket subscriptions, broker adapters, deployment, and Live Trading settings are unchanged.**
 
 
 ## 7. Durable lifecycle audit events (Batch 0 follow-up)
 
 The Box Paper ledger now has an append-only `box_spread_paper_audit_events` table, created through the existing SQLAlchemy startup metadata path. Events are written in the same database transaction as the corresponding durable claim or four-leg entry commit:
 
+- `ENTRY_VALIDATION_FAILED`: a pre-claim HTTP 409/422 validation rejection is recorded without changing trade or claim state.
 - `ENTRY_CLAIMED`: the one-shot claim is created; records prior trade state and `CLAIMED`.
 - `ENTRY_COMPLETED`: all four entry legs and the completed claim are committed; the event is part of that same transaction.
 - `MANUAL_REVIEW_REQUIRED`: a post-claim execution failure is recorded without clearing the claim or enabling retry.
@@ -127,4 +128,4 @@ The Box Paper ledger now has an append-only `box_spread_paper_audit_events` tabl
 
 Events are read in stable insertion order through the ledger's account-scoped read method. Event details are diagnostic only and do not authorize broker or Paper execution. The event table is append-only by application contract; database-level immutability enforcement and an authenticated operator-facing recovery workflow remain separate follow-up work.
 
-Pre-claim validation failures are not yet emitted by every route validation branch. Operator identity is supplied to the ledger method and is not yet bound to an authenticated owner identity. No Live broker path, scanner, WebSocket, or deployment behavior is changed by this work.
+Pre-claim HTTP 409/422 validation failures are captured by the entry route. The authenticated paper-owner subject is recorded for manual decisions; account-key authorization remains a separate ownership-hardening task. No Live broker path, scanner, WebSocket, or deployment behavior is changed by this work.
