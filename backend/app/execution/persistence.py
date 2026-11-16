@@ -11,7 +11,10 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide, validate_basket_legs
-from app.models.execution_intent import (\n    ExecutionBrokerOrderRecord, ExecutionFillRecord, ExecutionIntentEventRecord,\n    ExecutionIntentRecord, ExecutionLegRecord,\n)
+from app.models.execution_intent import (
+    ExecutionBrokerOrderRecord, ExecutionFillRecord, ExecutionIntentEventRecord,
+    ExecutionIntentRecord, ExecutionLegRecord,
+)
 
 
 class IdempotencyConflict(ValueError):
