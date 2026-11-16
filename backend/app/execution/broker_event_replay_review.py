@@ -136,7 +136,7 @@ def review_operator_replay_eligibility(
             ExecutionFillRecord.account_id == account_key,
             ExecutionFillRecord.broker == broker_key,
         ).group_by(ExecutionFillRecord.leg_record_id)).all()
-        projected = {leg.id: int(leg_total) for leg, leg_total in ((leg_id, qty) for leg_id, qty in current_totals)}
+        projected = {int(leg_id): int(leg_total) for leg_id, leg_total in current_totals}
         for leg in legs:
             projected.setdefault(leg.id, 0)
 
