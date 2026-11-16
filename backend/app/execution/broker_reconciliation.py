@@ -205,6 +205,9 @@ def reconcile_snapshot(
     expected_ids = [x.broker_order_id for x in expected_orders]
     if len(expected_ids) != len(set(expected_ids)):
         raise ValueError("expected broker_order_id values must be unique")
+    expected_leg_ids = [x.leg_id for x in expected_orders]
+    if len(expected_leg_ids) != len(set(expected_leg_ids)):
+        raise ValueError("expected leg_id values must be unique for multi-leg reconciliation")
     broker_order_counts = Counter(x.broker_order_id for x in snapshot.orders)
     broker_order_ids = list(broker_order_counts)
     for identity, count in sorted(broker_order_counts.items()):
@@ -242,6 +245,27 @@ def reconcile_snapshot(
             ))
         else:
             matched += 1
+
+    # A multi-leg spread is balanced only when every expected leg has the
+    # same broker-confirmed cumulative filled quantity. A missing broker order
+    # contributes zero; incomplete snapshots still remain independently blocked.
+    if len(expected_orders) > 1:
+        filled_by_leg = {
+            expected.leg_id: (
+                broker_by_id[expected.broker_order_id].filled_quantity
+                if expected.broker_order_id in broker_by_id else 0
+            )
+            for expected in expected_orders
+        }
+        if len(set(filled_by_leg.values())) > 1:
+            detail = "Broker-confirmed cumulative fills differ across intent legs: " + ", ".join(
+                f"{leg_id}={quantity}" for leg_id, quantity in sorted(filled_by_leg.items())
+            )
+            issues.append(ReconciliationIssue(
+                ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH,
+                account_id,
+                detail,
+            ))
 
     broker_trade_counts = Counter(x.broker_trade_id for x in snapshot.trades)
     broker_trade_ids = list(broker_trade_counts)

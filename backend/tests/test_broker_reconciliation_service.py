@@ -348,7 +348,7 @@ def test_multileg_spread_with_unequal_broker_fills_is_blocked(db):
         issue for issue in result["report"].issues
         if issue.status.value == "MULTI_LEG_FILL_QUANTITY_MISMATCH"
     )
-    assert issue.identity == "intent-reconcile"
+    assert issue.identity == "acct-1"
     assert "cb=25" in issue.detail
     assert "cs=0" in issue.detail
     assert result["report"].is_consistent is False

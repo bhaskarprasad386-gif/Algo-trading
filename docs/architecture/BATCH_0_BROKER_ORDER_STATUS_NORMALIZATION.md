@@ -181,3 +181,18 @@ reports `trading_authorized=false` and `fills_mutated=false`. It is provider
 agnostic and therefore applies uniformly to Angel One, Zerodha, FYERS, Shoonya,
 and m.Stock only after their adapters have emitted the shared normalized event
 contract; it does not claim independent live certification of each adapter.
+
+
+## Standalone multi-leg broker snapshot balance guard
+
+The pure snapshot reconciliation contract now independently verifies that
+broker-confirmed cumulative filled quantities are equal across all expected
+legs in a multi-leg intent. A missing broker order contributes zero to this
+comparison and is separately reported as MISSING_BROKER_ORDER. Unequal leg
+fills add MULTI_LEG_FILL_QUANTITY_MISMATCH; duplicate expected leg identities
+are rejected as ambiguous input. Equal partial fills across every leg remain
+valid evidence and are not falsely flagged as an imbalance.
+
+This check consumes only the supplied broker snapshot and persisted expected
+order identities. It does not infer missing executions, submit compensating
+orders, change local fill rows, or authorize execution resume.

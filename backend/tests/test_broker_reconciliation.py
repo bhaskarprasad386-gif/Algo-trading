@@ -188,3 +188,74 @@ def test_fill_evidence_must_be_scoped_to_existing_local_fill_quantity():
             local_fill_evidence={"trade-1": (25, "101.25", 123456789)},
             snapshot=_snapshot(trades=(_trade(fill_price=101.25, occurred_at_ns=123456789),)),
         )
+
+
+def test_multi_leg_reconciliation_blocks_unequal_broker_confirmed_fills():
+    expected = (
+        ExpectedOrder("call-buy", "ord-ce", "NIFTY-CE", "BUY", 50),
+        ExpectedOrder("put-sell", "ord-pe", "NIFTY-PE", "SELL", 50),
+    )
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=expected,
+        local_fill_quantities={"trade-ce": 25},
+        snapshot=_snapshot(
+            (_order(order_id="ord-ce", symbol="NIFTY-CE", filled=25),
+             _order(order_id="ord-pe", symbol="NIFTY-PE", side="SELL", filled=0)),
+            (_trade(trade_id="trade-ce", order_id="ord-ce", quantity=25),),
+        ),
+    )
+    assert report.is_consistent is False
+    assert ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH in {
+        issue.status for issue in report.issues
+    }
+
+
+def test_multi_leg_reconciliation_accepts_equal_partial_fills():
+    expected = (
+        ExpectedOrder("call-buy", "ord-ce", "NIFTY-CE", "BUY", 50),
+        ExpectedOrder("put-sell", "ord-pe", "NIFTY-PE", "SELL", 50),
+    )
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=expected,
+        local_fill_quantities={"trade-ce": 25, "trade-pe": 25},
+        snapshot=_snapshot(
+            (_order(order_id="ord-ce", symbol="NIFTY-CE", filled=25),
+             _order(order_id="ord-pe", symbol="NIFTY-PE", side="SELL", filled=25)),
+            (_trade(trade_id="trade-ce", order_id="ord-ce", quantity=25),
+             _trade(trade_id="trade-pe", order_id="ord-pe", quantity=25)),
+        ),
+    )
+    assert report.is_consistent is True
+    assert ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH not in {
+        issue.status for issue in report.issues
+    }
+
+
+def test_multi_leg_reconciliation_treats_missing_order_as_zero_filled_leg():
+    expected = (
+        ExpectedOrder("call-buy", "ord-ce", "NIFTY-CE", "BUY", 50),
+        ExpectedOrder("put-sell", "ord-pe", "NIFTY-PE", "SELL", 50),
+    )
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=expected,
+        local_fill_quantities={"trade-ce": 25},
+        snapshot=_snapshot(
+            (_order(order_id="ord-ce", symbol="NIFTY-CE", filled=25),),
+            (_trade(trade_id="trade-ce", order_id="ord-ce", quantity=25),),
+        ),
+    )
+    statuses = {issue.status for issue in report.issues}
+    assert ReconciliationStatus.MISSING_BROKER_ORDER in statuses
+    assert ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH in statuses
+
+
+def test_multi_leg_reconciliation_rejects_duplicate_expected_leg_identity():
+    expected = (
+        ExpectedOrder("same-leg", "ord-ce", "NIFTY-CE", "BUY", 50),
+        ExpectedOrder("same-leg", "ord-pe", "NIFTY-PE", "SELL", 50),
+    )
+    with pytest.raises(ValueError, match="leg_id values must be unique"):
+        reconcile_snapshot(
+            account_id="acct-1", broker="angel_one", expected_orders=expected,
+            local_fill_quantities={}, snapshot=_snapshot(),
+        )
