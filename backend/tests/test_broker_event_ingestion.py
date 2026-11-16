@@ -143,3 +143,26 @@ def test_partial_fill_without_fill_identity_is_rejected_before_persistence(monke
                 cumulative_filled_quantity=1,
             ),
         )
+
+
+
+def test_partial_fill_status_without_trade_identity_is_evidence_only(monkeypatch):
+    adapter = SimpleNamespace(name="angel_one", account_id="acct-123", connected=True)
+    calls = []
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event",
+        lambda db, event: calls.append(("event", event)) or {"created": True},
+    )
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event_with_fill",
+        lambda *args, **kwargs: pytest.fail("no trade identity means no fill mutation"),
+    )
+    event = _event(
+        status=BrokerOrderEventStatus.PARTIALLY_FILLED,
+        cumulative_filled_quantity=3,
+    )
+    result = ingestion.ingest_broker_order_event(
+        object(), adapter=adapter, event=event,
+    )
+    assert result["created"] is True
+    assert calls == [("event", event)]
