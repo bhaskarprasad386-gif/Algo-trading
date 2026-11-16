@@ -13,6 +13,7 @@ from app.brokers.zerodha_routes import router as zerodha_router
 from app.brokers.fyers_routes import router as fyers_router
 from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
+from app.brokers.capabilities import broker_capabilities
 from app.brokers.safety import trading_safety
 from app.brokers.session_store import broker_sessions
 from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
@@ -50,6 +51,31 @@ def owner_login(payload: RealOwnerLogin, request: Request):
 @router.get("")
 def supported_brokers(user_id: int = Depends(require_real_owner_access)) -> dict:
     return {"brokers": BrokerRegistry().names()}
+
+
+
+@router.get("/capabilities")
+def broker_capability_matrix(user_id: int = Depends(require_real_owner_access)) -> dict:
+    """Return explicit provider coverage without granting execution capability."""
+    return {
+        "brokers": [
+            {
+                "broker": item.broker,
+                "display_name": item.display_name,
+                "history_provider": item.history_provider,
+                "history_window": item.history_window,
+                "history_limitations": item.history_limitations,
+                "connection_flow": item.connection_flow,
+                "adapter_registered_for_routing": item.adapter_registered_for_routing,
+                "can_place_orders": item.can_place_orders,
+                "can_cancel_orders": item.can_cancel_orders,
+                "can_modify_orders": item.can_modify_orders,
+                "live_certified": item.live_certified,
+            }
+            for item in broker_capabilities.all()
+        ],
+        "execution_authorized": False,
+    }
 
 
 @router.get("/connections")
