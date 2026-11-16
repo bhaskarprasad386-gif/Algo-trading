@@ -174,10 +174,10 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
         )
         assert claim["created"] is True
         fills = {
-            "LOW_CE": {"fill_id": "complete-low-ce", "action": "BUY", "quantity": 25, "fill_price": 100},
-            "HIGH_CE": {"fill_id": "complete-high-ce", "action": "SELL", "quantity": 25, "fill_price": 90},
-            "HIGH_PE": {"fill_id": "complete-high-pe", "action": "BUY", "quantity": 25, "fill_price": 80},
-            "LOW_PE": {"fill_id": "complete-low-pe", "action": "SELL", "quantity": 25, "fill_price": 70},
+            "LOW_CE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "LOW_CE"), "action": "BUY", "quantity": 25, "fill_price": 100},
+            "HIGH_CE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "HIGH_CE"), "action": "SELL", "quantity": 25, "fill_price": 90},
+            "HIGH_PE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "HIGH_PE"), "action": "BUY", "quantity": 25, "fill_price": 80},
+            "LOW_PE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "LOW_PE"), "action": "SELL", "quantity": 25, "fill_price": 70},
         }
         receipts = before_restart.record_entry_basket(
             trade_id=trade.id, legs=fills, account_key="restart-complete",
@@ -225,22 +225,34 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
             account_key="restart-complete",
             alert_edge=8,
         )
-        monkeypatch.setattr(routes, "_paper_execution_enabled", True)
+        # A completed receipt must replay even when the Paper entry switch is
+        # OFF. Replaying reads durable ledger rows only; it must not resolve
+        # contracts, read scanner quotes, or invoke the simulator.
+        monkeypatch.setattr(routes, "_paper_execution_enabled", False)
         monkeypatch.setattr(routes, "_ledger", after_restart)
         monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+        monkeypatch.setattr(routes, "_load_trade_quantity", lambda trade_id, account_key: 25)
 
         def forbidden(*args, **kwargs):
-            pytest.fail("completed entry must not be simulated again after restart")
+            pytest.fail("completed entry receipt replay must not resolve or simulate again")
 
         monkeypatch.setattr(routes, "_resolve", forbidden)
         monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
 
-        with pytest.raises(routes.HTTPException) as raised:
-            asyncio.run(routes.simulate_entry(
-                trade.id, routes.SimulateEntry(account_key="restart-complete"),
-            ))
-        assert raised.value.status_code == 409
-        assert "durably claimed" in raised.value.detail
+        replay = asyncio.run(routes.simulate_entry(
+            trade.id, routes.SimulateEntry(account_key="restart-complete"),
+        ))
+        assert replay["replayed"] is True
+        assert replay["broker_orders_enabled"] is False
+        assert replay["trade_id"] == trade.id
+        assert replay["status"] == "FILLED"
+        assert {fill["role"] for fill in replay["fills"]} == {
+            "LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE",
+        }
+        assert all(fill["quantity"] == 25 for fill in replay["fills"])
+        assert len(after_restart.list_fills(
+            trade.id, account_key="restart-complete",
+        )) == 4
         assert len(after_restart.list_fills(
             trade.id, account_key="restart-complete",
         )) == 4
