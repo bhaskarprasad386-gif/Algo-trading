@@ -83,6 +83,7 @@ def validated_daily_history_window(
     daily_history: object,
     provider_window: str,
     pages_fetched: int = 1,
+    expected_trading_date: str | None = None,
 ) -> BrokerHistoryWindow:
     """Validate adapter output again at the provider boundary.
 
@@ -116,6 +117,12 @@ def validated_daily_history_window(
         raise BrokerHistoryUnavailable(
             f"{expected_broker} history adapter returned an incomplete snapshot"
         )
+    if expected_trading_date is not None:
+        actual_trading_date = getattr(daily_history, "trading_date", None)
+        if actual_trading_date != expected_trading_date:
+            raise BrokerHistoryUnavailable(
+                f"{expected_broker} history trading date does not match the requested IST day"
+            )
     return BrokerHistoryWindow(
         snapshot=snapshot,
         window_start=window_start,
