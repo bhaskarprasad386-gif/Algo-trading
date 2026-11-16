@@ -38,6 +38,7 @@ def make_event(**overrides):
         BrokerOrderEventStatus.FILLED,
         BrokerOrderEventStatus.CANCEL_PENDING,
         BrokerOrderEventStatus.CANCELLED,
+        BrokerOrderEventStatus.EXPIRED,
         BrokerOrderEventStatus.REJECTED,
         BrokerOrderEventStatus.UNKNOWN,
     ],
