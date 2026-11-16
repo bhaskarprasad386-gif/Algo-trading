@@ -1,0 +1,157 @@
+"""Read-only account-scoped reconciliation with durable report evidence."""
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.execution.broker_reconciliation import (
+    BrokerSnapshot,
+    ExpectedOrder,
+    ReconciliationReport,
+    reconcile_snapshot,
+)
+from app.models.broker_reconciliation import BrokerReconciliationRecord
+from app.models.execution_intent import (
+    ExecutionBrokerOrderRecord,
+    ExecutionFillRecord,
+    ExecutionIntentRecord,
+)
+
+
+class ReconciliationIdentityConflict(ValueError):
+    """A reconciliation ID was reused for a different broker snapshot/report."""
+
+
+def _transaction(db: Session):
+    return db.begin_nested() if db.in_transaction() else db.begin()
+
+
+def _report_payload(report: ReconciliationReport) -> dict:
+    return {
+        "account_id": report.account_id,
+        "broker": report.broker,
+        "snapshot_complete": report.snapshot_complete,
+        "matched_order_count": report.matched_order_count,
+        "is_consistent": report.is_consistent,
+        "issues": [
+            {"status": issue.status.value, "identity": issue.identity, "detail": issue.detail}
+            for issue in report.issues
+        ],
+    }
+
+
+def reconcile_persisted_account_snapshot(
+    db: Session,
+    *,
+    snapshot: BrokerSnapshot,
+    reconciliation_id: str,
+    intent_ids: tuple[str, ...],
+) -> dict:
+    """Compare a supplied complete-window broker snapshot with persisted evidence.
+
+    intent_ids explicitly scope the local order/fill ledger to the same history
+    window represented by the broker snapshot. The function never calls a broker,
+    submits/cancels orders, changes execution intents, or authorizes Live trading.
+    """
+    reconciliation_id = reconciliation_id.strip()
+    intent_ids = tuple(dict.fromkeys(x.strip() for x in intent_ids if x and x.strip()))
+    if not reconciliation_id:
+        raise ValueError("reconciliation_id is required")
+    if not intent_ids:
+        raise ValueError("at least one history-window-scoped intent_id is required")
+
+    broker = snapshot.broker.strip().lower()
+    account_id = snapshot.account_id.strip()
+    with _transaction(db):
+        intents = db.execute(select(ExecutionIntentRecord).where(
+            ExecutionIntentRecord.account_id == account_id,
+            ExecutionIntentRecord.intent_id.in_(intent_ids),
+        )).scalars().all()
+        found_ids = {row.intent_id for row in intents}
+        if found_ids != set(intent_ids):
+            raise LookupError("one or more execution intents do not belong to this broker account")
+
+        orders = db.execute(
+            select(ExecutionBrokerOrderRecord, ExecutionIntentRecord)
+            .join(ExecutionIntentRecord, ExecutionIntentRecord.id == ExecutionBrokerOrderRecord.intent_record_id)
+            .where(
+                ExecutionBrokerOrderRecord.account_id == account_id,
+                ExecutionBrokerOrderRecord.broker == broker,
+                ExecutionBrokerOrderRecord.intent_record_id.in_([row.id for row in intents]),
+            )
+            .order_by(ExecutionBrokerOrderRecord.id)
+        ).all()
+        expected = tuple(ExpectedOrder(
+            leg_id=str(order.leg_record_id),
+            broker_order_id=order.broker_order_id,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=order.quantity,
+        ) for order, _intent in orders)
+        order_ids = {order.broker_order_id for order, _intent in orders}
+        fills = db.execute(select(ExecutionFillRecord).where(
+            ExecutionFillRecord.account_id == account_id,
+            ExecutionFillRecord.broker == broker,
+            ExecutionFillRecord.broker_order_id.in_(order_ids) if order_ids else False,
+        )).scalars().all()
+        local_fills = {fill.broker_fill_id: fill.quantity for fill in fills}
+
+        report = reconcile_snapshot(
+            account_id=account_id,
+            broker=broker,
+            expected_orders=expected,
+            local_fill_quantities=local_fills,
+            snapshot=snapshot,
+        )
+        payload = _report_payload(report)
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+        existing = db.execute(select(BrokerReconciliationRecord).where(
+            BrokerReconciliationRecord.broker == broker,
+            BrokerReconciliationRecord.account_id == account_id,
+            BrokerReconciliationRecord.reconciliation_id == reconciliation_id,
+        )).scalar_one_or_none()
+        if existing is not None:
+            if existing.payload_hash != digest:
+                raise ReconciliationIdentityConflict(
+                    "reconciliation identity was reused with a different report payload"
+                )
+            return {"created": False, "record_id": existing.id, "report": report}
+
+        record = BrokerReconciliationRecord(
+            broker=broker,
+            account_id=account_id,
+            reconciliation_id=reconciliation_id,
+            snapshot_complete=report.snapshot_complete,
+            is_consistent=report.is_consistent,
+            matched_order_count=report.matched_order_count,
+            issue_count=len(report.issues),
+            created_at_ns=time.time_ns(),
+            payload_hash=digest,
+            report_json=canonical,
+        )
+        try:
+            with db.begin_nested():
+                db.add(record)
+                db.flush()
+        except IntegrityError:
+            winner = db.execute(select(BrokerReconciliationRecord).where(
+                BrokerReconciliationRecord.broker == broker,
+                BrokerReconciliationRecord.account_id == account_id,
+                BrokerReconciliationRecord.reconciliation_id == reconciliation_id,
+            )).scalar_one_or_none()
+            if winner is None:
+                raise
+            if winner.payload_hash != digest:
+                raise ReconciliationIdentityConflict(
+                    "reconciliation identity was reused with a different report payload"
+                )
+            return {"created": False, "record_id": winner.id, "report": report}
+
+        return {"created": True, "record_id": record.id, "report": report}
