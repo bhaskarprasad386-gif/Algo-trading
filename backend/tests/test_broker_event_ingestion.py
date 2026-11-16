@@ -128,21 +128,24 @@ def test_status_only_event_never_calls_fill_persistence(monkeypatch):
     assert len(calls) == 1
 
 
-def test_partial_fill_without_fill_identity_is_rejected_before_persistence(monkeypatch):
+def test_partial_fill_without_trade_identity_is_status_evidence_only(monkeypatch):
     adapter = SimpleNamespace(name="angel_one", account_id="acct-123", connected=True)
+    seen = []
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event",
+        lambda db, event: seen.append(event) or {"created": True},
+    )
     monkeypatch.setattr(
         ingestion, "record_broker_order_event_with_fill",
-        lambda *args, **kwargs: pytest.fail("invalid fill must not reach persistence"),
+        lambda *args, **kwargs: pytest.fail("must not mutate fill ledger without trade identity"),
     )
-    with pytest.raises(ValueError, match="requires fill_id"):
-        ingestion.ingest_broker_order_event(
-            object(),
-            adapter=adapter,
-            event=_event(
-                status=BrokerOrderEventStatus.PARTIALLY_FILLED,
-                cumulative_filled_quantity=1,
-            ),
-        )
+    event = _event(
+        status=BrokerOrderEventStatus.PARTIALLY_FILLED,
+        cumulative_filled_quantity=1,
+    )
+    result = ingestion.ingest_broker_order_event(object(), adapter=adapter, event=event)
+    assert result["created"] is True
+    assert seen == [event]
 
 
 
