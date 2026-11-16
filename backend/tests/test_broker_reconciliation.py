@@ -108,3 +108,27 @@ def test_account_and_broker_scope_are_required():
             account_id="", broker="angel_one", expected_orders=(),
             local_fill_quantities={}, snapshot=_snapshot(),
         )
+
+
+def test_broker_order_filled_quantity_must_equal_trade_rows_total():
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=_expected(),
+        local_fill_quantities={"trade-1": 25},
+        snapshot=_snapshot((_order(filled=30),), (_trade(quantity=25),)),
+    )
+    assert report.is_consistent is False
+    assert ReconciliationStatus.ORDER_TRADE_FILL_TOTAL_MISMATCH in {
+        issue.status for issue in report.issues
+    }
+
+
+def test_broker_trade_must_reference_an_order_in_the_snapshot():
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=(),
+        local_fill_quantities={"trade-1": 25},
+        snapshot=_snapshot((), (_trade(order_id="unknown-order"),)),
+    )
+    assert report.is_consistent is False
+    assert ReconciliationStatus.TRADE_ORDER_MISSING in {
+        issue.status for issue in report.issues
+    }
