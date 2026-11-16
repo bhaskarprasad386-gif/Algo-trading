@@ -76,18 +76,6 @@ def sync_account_tradebook_fills(
         return _blocked("DUPLICATE_BROKER_TRADE_ID", trade_count=len(trades))
 
     order_by_id = {str(row.broker_order_id).strip(): row for row in orders}
-    if not trades:
-        return {
-            "status": "SYNCED",
-            "trading_date": getattr(history, "trading_date", None),
-            "trade_count": 0,
-            "managed_trade_count": 0,
-            "unmatched_trade_count": 0,
-            "created_count": 0,
-            "duplicate_count": 0,
-            "trading_authorized": False,
-        }
-
     # Keep mapping reads, validation and all fill writes in one transaction.
     # A preceding SELECT must not leave an uncommitted outer request transaction.
     created = 0
