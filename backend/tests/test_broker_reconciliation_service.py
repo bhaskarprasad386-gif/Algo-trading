@@ -387,3 +387,72 @@ def test_multileg_spread_with_equal_partial_fills_has_no_leg_imbalance_issue(db)
         issue.status.value == "MULTI_LEG_FILL_QUANTITY_MISMATCH"
         for issue in result["report"].issues
     )
+
+
+def _persist_second_intent_with_repeated_leg_labels(db):
+    intent = ExecutionIntent(
+        "intent-reconcile-second", "acct-1", "key-reconcile-second",
+        "corr-reconcile-second", ExecutionMode.PAPER, created_at_ns=300,
+    )
+    legs = (
+        ExecutionLeg("cb", "NFO:CE", OrderSide.BUY, 50, limit_price=100),
+        ExecutionLeg("cs", "NFO:CE-HIGH", OrderSide.SELL, 50, limit_price=80),
+        ExecutionLeg("pb", "NFO:PE", OrderSide.BUY, 50, limit_price=90),
+        ExecutionLeg("ps", "NFO:PE-HIGH", OrderSide.SELL, 50, limit_price=70),
+    )
+    saved, _ = create_intent(db, intent, legs)
+    version = saved.version
+    for target in (
+        IntentStatus.VALIDATING, IntentStatus.RISK_CHECK, IntentStatus.APPROVED,
+        IntentStatus.RESERVED, IntentStatus.SUBMITTING,
+    ):
+        saved = transition_intent(
+            db, account_id="acct-1", intent_id="intent-reconcile-second",
+            expected_version=version, target=target,
+        )
+        version = saved.version
+    for index, leg in enumerate(legs, start=5):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-reconcile-second",
+            leg_id=leg.leg_id, broker="fyers",
+            broker_order_id=f"order-{index}", symbol=leg.instrument,
+            side=leg.side.value, quantity=leg.quantity,
+            accepted_at_ns=300 + index,
+        )
+
+
+def test_multiple_intents_with_repeated_leg_labels_reconcile_independently(db):
+    _persist_order(db)
+    _persist_second_intent_with_repeated_leg_labels(db)
+    base = _snapshot()
+    second_orders = tuple(
+        BrokerOrderSnapshot(
+            broker_order_id=f"order-{index}",
+            symbol=symbol,
+            side=side,
+            quantity=50,
+            filled_quantity=0,
+            raw_status="OPEN",
+        )
+        for index, (symbol, side) in enumerate((
+            ("NFO:CE", "BUY"),
+            ("NFO:CE-HIGH", "SELL"),
+            ("NFO:PE", "BUY"),
+            ("NFO:PE-HIGH", "SELL"),
+        ), start=5)
+    )
+    snapshot = BrokerSnapshot(
+        account_id="acct-1",
+        broker="fyers",
+        orders=base.orders + second_orders,
+        trades=(),
+        complete=True,
+    )
+    result = reconcile_persisted_account_snapshot(
+        db,
+        snapshot=snapshot,
+        reconciliation_id="run-multiple-intents-repeated-leg-labels",
+        intent_ids=("intent-reconcile", "intent-reconcile-second"),
+    )
+    assert result["report"].is_consistent is True
+    assert result["report"].matched_order_count == 8
