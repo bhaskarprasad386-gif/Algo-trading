@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from app.brokers.fyers import FyersAdapter, FyersHistoryUnavailable
-from app.brokers.history import BrokerHistoryUnavailable, BrokerHistoryWindow
+from app.brokers.history import BrokerHistoryUnavailable, validated_daily_history_window
 from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
@@ -170,11 +170,11 @@ class FyersHistoryProvider:
             trades=trades,
             complete=True,
         )
-        return BrokerHistoryWindow(
-            snapshot=snapshot,
+        return validated_daily_history_window(
+            provider_name=self.name,
+            account_id=account_id,
             window_start=window_start,
             window_end=window_end,
-            pages_fetched=order_pages + trade_pages,
-            has_more=False,
+            daily_history=type("HistoryEvidence", (), {"snapshot": snapshot})(),
             provider_window="FYERS_CLOSED_DAY_DATE_RANGE_REPORTS",
         )
