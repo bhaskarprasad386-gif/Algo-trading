@@ -142,6 +142,9 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
     broker = payload.broker.strip().lower()
     if broker != "angel_one":
         raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
+
+    # A reconnect attempt must never inherit an armed process-local safety state.
+    trading_safety.disable(user_id)
     adapter = AngelOneAdapter()
     try:
         result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret, account_id=payload.client_code)
@@ -167,7 +170,13 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
         raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
     old = broker_sessions.replace(user_id, broker, adapter)
     if old is not None:
-        old.disconnect()
+        try:
+            old.disconnect()
+        except Exception:
+            # The new authenticated session is already installed and durable
+            # state is fail-closed. A stale provider-side session must not make
+            # the API report a failed reconnect or skip connection metadata.
+            app_logger.exception("Previous broker session logout failed during reconnect for %s", broker)
     item = broker_connections.connect(user_id, broker, payload.display_name)
     trading_safety.disable(user_id)
     return {"connected": item.connected, "broker": item.broker, "display_name": item.display_name, "client_code": result.get("client_code"), "real_trading": False}
