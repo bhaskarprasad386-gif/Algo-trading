@@ -37,6 +37,24 @@ class BrokerSessionStore:
             self._sessions[key] = adapter
             return previous
 
+    def replace_and_disconnect_previous(
+        self, owner_id: int, broker: str, adapter: BrokerAdapter
+    ) -> Exception | None:
+        """Install the new adapter and best-effort close the previous provider session.
+
+        The new adapter becomes the only locally reachable session before the
+        old provider logout is attempted. A remote logout failure is returned
+        to the caller for logging, but never rolls back the new local session.
+        """
+        previous = self.replace(owner_id, broker, adapter)
+        if previous is None:
+            return None
+        try:
+            previous.disconnect()
+        except Exception as exc:
+            return exc
+        return None
+
     def get(self, owner_id: int, broker: str) -> BrokerAdapter | None:
         key = self._key(owner_id, broker)
         with self._lock:
