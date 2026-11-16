@@ -142,7 +142,9 @@ def test_tradebook_sync_blocks_unregistered_order_without_guessing_leg(db):
     result = sync.sync_account_tradebook_fills(
         db, adapter=_adapter(_snapshot()), account_id="acct-1",
     )
-    assert result["reason"] == "UNREGISTERED_BROKER_ORDER"
+    assert result["status"] == "SYNCED_WITH_UNMATCHED"
+    assert result["unmatched_trade_ids"] == ["trade-1"]
+    assert result["created_count"] == 0
     assert db.query(ExecutionFillRecord).count() == 0
 
 
