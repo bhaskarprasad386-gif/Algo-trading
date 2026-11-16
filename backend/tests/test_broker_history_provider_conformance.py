@@ -132,3 +132,22 @@ def test_history_window_rejects_cursor_or_pagination_claimed_as_complete():
             has_more=True,
             next_cursor="page-2",
         )
+
+
+def test_current_day_history_boundary_rejects_adapter_snapshot_for_another_day():
+    start, end = _history_window()
+
+    class Daily:
+        trading_date = "2026-11-15"
+        snapshot = _history_snapshot(broker="angel_one")
+
+    with pytest.raises(BrokerHistoryUnavailable, match="trading date"):
+        validated_daily_history_window(
+            provider_name="angel_one",
+            account_id="acct-1",
+            window_start=start,
+            window_end=end,
+            daily_history=Daily(),
+            provider_window="CURRENT_TRADING_DAY",
+            expected_trading_date="2026-11-16",
+        )
