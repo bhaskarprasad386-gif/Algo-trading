@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from contextlib import nullcontext
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
