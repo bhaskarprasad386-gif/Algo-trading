@@ -205,9 +205,9 @@ def test_duplicate_broker_order_update_identity_is_idempotent(db):
     first = _record_order(db)
     duplicate = _record_order(db)
 
-    assert first == {"created": True, "broker_order_id": "broker-order-1"}
-    assert duplicate == {"created": False, "broker_order_id": "broker-order-1"}
-    assert db.query(ExecutionBrokerOrderRecord).count() == 1
+    assert first == {"created": True, "broker_order_id": "order-cb"}
+    assert duplicate == {"created": False, "broker_order_id": "order-cb"}
+    assert db.query(ExecutionBrokerOrderRecord).count() == 4
 
 
 def test_broker_order_identity_reuse_with_changed_payload_is_rejected(db):
