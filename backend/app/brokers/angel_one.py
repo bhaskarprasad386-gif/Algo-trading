@@ -96,6 +96,25 @@ class AngelOneAdapter:
         )
 
     @staticmethod
+    def _nonnegative_int(row: dict[str, Any], *keys: str) -> int:
+        value = None
+        for key in keys:
+            if row.get(key) not in (None, ""):
+                value = row[key]
+                break
+        try:
+            parsed = int(str(value))
+        except (TypeError, ValueError):
+            raise BrokerHistoryUnavailable(
+                f"Angel One history row has invalid numeric field: {'/'.join(keys)}"
+            ) from None
+        if parsed < 0:
+            raise BrokerHistoryUnavailable(
+                f"Angel One history row has negative field: {'/'.join(keys)}"
+            )
+        return parsed
+
+    @staticmethod
     def _positive_int(row: dict[str, Any], *keys: str) -> int:
         value = None
         for key in keys:
@@ -144,8 +163,8 @@ class AngelOneAdapter:
                 symbol=self._required_text(row, "tradingsymbol", "symbol"),
                 side=self._required_text(row, "transactiontype", "transaction_type").upper(),
                 quantity=self._positive_int(row, "quantity", "orderquantity"),
-                filled_quantity=(
-                    int(str(row.get("filledshares", row.get("filled_quantity", 0)) or 0))
+                filled_quantity=self._nonnegative_int(
+                    row, "filledshares", "filled_quantity"
                 ),
             )
             for row in order_rows
