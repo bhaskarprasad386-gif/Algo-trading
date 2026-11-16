@@ -16,41 +16,32 @@ from app.execution.broker_event_persistence import record_broker_order_event
 from app.execution.persistence import _transaction
 
 
-_STATUS_ALIASES = {
-    "NEW": BrokerOrderEventStatus.NEW,
-    "PUT ORDER REQ RECEIVED": BrokerOrderEventStatus.NEW,
-    "OPEN": BrokerOrderEventStatus.OPEN,
-    "PENDING": BrokerOrderEventStatus.OPEN,
-    "TRIGGER PENDING": BrokerOrderEventStatus.OPEN,
-    "VALIDATION PENDING": BrokerOrderEventStatus.OPEN,
-    "PARTIALLY FILLED": BrokerOrderEventStatus.PARTIALLY_FILLED,
-    "PARTIAL FILLED": BrokerOrderEventStatus.PARTIALLY_FILLED,
-    "PARTIAL": BrokerOrderEventStatus.PARTIALLY_FILLED,
-    "COMPLETE": BrokerOrderEventStatus.FILLED,
-    "COMPLETED": BrokerOrderEventStatus.FILLED,
-    "FILLED": BrokerOrderEventStatus.FILLED,
-    "TRADED": BrokerOrderEventStatus.FILLED,
-    "CANCEL PENDING": BrokerOrderEventStatus.CANCEL_PENDING,
-    "CANCELLED": BrokerOrderEventStatus.CANCELLED,
-    "CANCELED": BrokerOrderEventStatus.CANCELLED,
-    "REJECTED": BrokerOrderEventStatus.REJECTED,
-}
+def _normalized_status(
+    raw_status: str | None, *, broker: str, quantity: int, filled: int,
+) -> BrokerOrderEventStatus:
+    """Use the shared provider-aware status contract for snapshot and event paths."""
+    from app.brokers.order_status import NormalizedOrderState, normalize_order_status
 
-
-def _normalized_status(raw_status: str | None, *, quantity: int, filled: int) -> BrokerOrderEventStatus:
-    raw = " ".join(str(raw_status or "").strip().upper().replace("_", " ").replace("-", " ").split())
-    status = _STATUS_ALIASES.get(raw, BrokerOrderEventStatus.UNKNOWN)
-    # Quantity evidence is stronger than a generic OPEN/NEW label. Keep
-    # terminal cancellation/rejection states intact even if partially filled.
-    if status not in {BrokerOrderEventStatus.CANCELLED, BrokerOrderEventStatus.CANCEL_PENDING,
-                      BrokerOrderEventStatus.REJECTED}:
-        if filled > 0 and filled < quantity:
-            return BrokerOrderEventStatus.PARTIALLY_FILLED
-        if filled == quantity and quantity > 0:
-            return BrokerOrderEventStatus.FILLED
-        if status in {BrokerOrderEventStatus.PARTIALLY_FILLED, BrokerOrderEventStatus.FILLED} and filled == 0:
-            return BrokerOrderEventStatus.UNKNOWN
-    return status
+    evidence = normalize_order_status(
+        broker=broker,
+        raw_status=raw_status,
+        quantity=quantity,
+        filled_quantity=filled,
+    )
+    mapped = {
+        NormalizedOrderState.OPEN: BrokerOrderEventStatus.OPEN,
+        NormalizedOrderState.PARTIALLY_FILLED: BrokerOrderEventStatus.PARTIALLY_FILLED,
+        # The cumulative quantity is preserved separately on the event. Keep
+        # the terminal broker state explicit rather than rewriting it to partial.
+        NormalizedOrderState.PARTIALLY_FILLED_CANCELLED: BrokerOrderEventStatus.CANCELLED,
+        NormalizedOrderState.PARTIALLY_FILLED_EXPIRED: BrokerOrderEventStatus.EXPIRED,
+        NormalizedOrderState.FILLED: BrokerOrderEventStatus.FILLED,
+        NormalizedOrderState.CANCELLED: BrokerOrderEventStatus.CANCELLED,
+        NormalizedOrderState.EXPIRED: BrokerOrderEventStatus.EXPIRED,
+        NormalizedOrderState.REJECTED: BrokerOrderEventStatus.REJECTED,
+        NormalizedOrderState.UNKNOWN: BrokerOrderEventStatus.UNKNOWN,
+    }
+    return mapped[evidence.state]
 
 
 def snapshot_order_to_event(*, broker: str, account_id: str, order: Any) -> BrokerOrderEvent:
@@ -72,7 +63,7 @@ def snapshot_order_to_event(*, broker: str, account_id: str, order: Any) -> Brok
         raise ValueError("broker snapshot filled quantity is invalid")
 
     raw_status = str(getattr(order, "raw_status", "") or "")
-    status = _normalized_status(raw_status, quantity=quantity, filled=filled)
+    status = _normalized_status(raw_status, broker=broker_key, quantity=quantity, filled=filled)
     identity_material = "|".join((
         broker_key, account, order_id, symbol, side, str(quantity), str(filled),
         " ".join(raw_status.strip().upper().split()),
