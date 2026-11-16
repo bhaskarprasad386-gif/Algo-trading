@@ -53,6 +53,7 @@ def test_missing_order_and_unrecorded_trade_are_both_reported():
     )
     assert {x.status for x in report.issues} == {
         ReconciliationStatus.MISSING_BROKER_ORDER,
+        ReconciliationStatus.TRADE_ORDER_MISSING,
         ReconciliationStatus.UNRECORDED_BROKER_TRADE,
     }
 
@@ -75,6 +76,7 @@ def test_local_fill_absence_and_quantity_mismatch_are_detected():
     assert {x.status for x in report.issues} == {
         ReconciliationStatus.LOCAL_FILL_MISSING_AT_BROKER,
         ReconciliationStatus.FILL_QUANTITY_MISMATCH,
+        ReconciliationStatus.TRADE_ORDER_MISSING,
     }
 
 
@@ -87,6 +89,7 @@ def test_duplicate_broker_order_and_trade_ids_are_reported():
     assert {x.status for x in report.issues} == {
         ReconciliationStatus.DUPLICATE_BROKER_ORDER_ID,
         ReconciliationStatus.DUPLICATE_BROKER_TRADE_ID,
+        ReconciliationStatus.ORDER_TRADE_FILL_TOTAL_MISMATCH,
     }
 
 
