@@ -172,12 +172,13 @@ def test_unmatched_broker_order_rolls_back_callback_event(db):
     assert db.query(ExecutionFillRecord).count() == 0
 
 
-def test_fill_status_without_complete_fill_identity_is_rejected(db):
-    with pytest.raises(ValueError, match="requires fill_id"):
-        record_broker_order_event_with_fill(
-            db, _fill_event(fill_id=None, fill_quantity=None, average_fill_price=None)
-        )
-    assert db.query(BrokerOrderEventRecord).count() == 0
+def test_partial_fill_status_without_trade_identity_is_persisted_as_event_only(db):
+    result = record_broker_order_event(
+        db, _fill_event(fill_id=None, fill_quantity=None, average_fill_price=None)
+    )
+    assert result["created"] is True
+    assert db.query(BrokerOrderEventRecord).count() == 1
+    assert db.query(ExecutionFillRecord).count() == 0
 
 
 def test_cumulative_quantity_mismatch_rolls_back_callback_and_fill(db):
