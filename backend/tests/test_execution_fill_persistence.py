@@ -66,6 +66,17 @@ def create_working_intent(db, *, working=True):
             target=target,
         )
         state = target
+    for leg_id, symbol, side in (
+        ("cb", "NFO:CE", "BUY"),
+        ("cs", "NFO:CE-HIGH", "SELL"),
+        ("pb", "NFO:PE", "BUY"),
+        ("ps", "NFO:PE-HIGH", "SELL"),
+    ):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
+            broker="angel_one", broker_order_id=f"order-{leg_id}",
+            symbol=symbol, side=side, quantity=50, accepted_at_ns=2000,
+        )
     return saved
 
 
