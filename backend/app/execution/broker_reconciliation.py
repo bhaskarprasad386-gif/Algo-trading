@@ -94,6 +94,16 @@ def parse_trade_timestamp_ns(value: object, *, trading_date: str | None = None) 
     Known placeholder dates (notably Shoonya's 1980 example value) are not
     represented as real execution times.
     """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric = float(value)
+        if not math.isfinite(numeric) or numeric <= 0:
+            return None
+        # Provider history APIs may expose epoch seconds, milliseconds or ns.
+        if numeric < 100_000_000_000:
+            return int(numeric * 1_000_000_000)
+        if numeric < 100_000_000_000_000:
+            return int(numeric * 1_000_000)
+        return int(numeric)
     raw = str(value or "").strip()
     if not raw:
         return None
@@ -102,6 +112,7 @@ def parse_trade_timestamp_ns(value: object, *, trading_date: str | None = None) 
         "%Y-%m-%dT%H:%M:%S",
         "%d-%m-%Y %H:%M:%S",
         "%d-%b-%Y %H:%M:%S",
+        "%H:%M:%S %d-%m-%Y",
         "%H:%M:%S",
     )
     parsed = None
