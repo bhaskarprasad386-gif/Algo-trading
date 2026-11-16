@@ -12,6 +12,7 @@ from app.scanner import box_spread_paper_routes as routes
 from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperAccount,
     BoxSpreadPaperAuditEvent,
+    BoxSpreadPaperAuditEvent,
     BoxSpreadPaperEntryClaim,
     BoxSpreadPaperLedger,
     BoxSpreadPaperLedgerEntry,
@@ -153,6 +154,7 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ]
     Base.metadata.create_all(bind=engine, tables=tables)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
