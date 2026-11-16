@@ -211,3 +211,18 @@ multiple independent spreads to be reconciled together.
 A regression fixture covers two intents that reuse the same four leg labels.
 The check remains read-only and account-scoped; it does not merge intent state
 or infer that fills in one intent satisfy another intent's legs.
+
+
+## Broker history provider boundary validation
+
+All five read-only history providers now revalidate the adapter result before
+publishing it as a complete history window. The returned snapshot must be a
+BrokerSnapshot, match the requested account exactly, identify the same broker
+as the provider, and explicitly prove completeness. A successful adapter call
+alone is not sufficient evidence. Wrong-account, wrong-broker, malformed, or
+incomplete snapshots fail closed as BrokerHistoryUnavailable.
+
+The shared boundary is used by Angel One, Zerodha, FYERS, Shoonya and m.Stock.
+FYERS closed-day reports pass through the same validation as current-day book
+providers. Regression tests exercise account mismatch, broker mismatch,
+incomplete snapshots, and pagination/completeness contradictions.
