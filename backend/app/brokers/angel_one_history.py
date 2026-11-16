@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.brokers.angel_one import AngelOneAdapter, BrokerHistoryUnavailable
-from app.brokers.history import BrokerHistoryWindow
+from app.brokers.history import validated_daily_history_window
 
 
 _IST = ZoneInfo("Asia/Kolkata")
@@ -47,11 +47,11 @@ class AngelOneHistoryProvider:
             )
 
         daily = self._adapter.fetch_today_broker_snapshot(account_id=account_id)
-        return BrokerHistoryWindow(
-            snapshot=daily.snapshot,
+        return validated_daily_history_window(
+            provider_name=self.name,
+            account_id=account_id,
             window_start=window_start,
             window_end=window_end,
-            pages_fetched=1,
-            has_more=False,
+            daily_history=daily,
             provider_window="CURRENT_TRADING_DAY",
         )
