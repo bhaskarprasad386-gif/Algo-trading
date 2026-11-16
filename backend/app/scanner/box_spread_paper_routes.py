@@ -915,7 +915,7 @@ async def _completed_entry_receipt_replay(
         for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
     }
     by_fill_id = {item.fill_id: item for item in persisted if item.fill_id in set(expected.values())}
-    if len(by_fill_id) != 4:
+    if len(persisted) != 4 or len(by_fill_id) != 4 or set(by_fill_id) != set(expected.values()):
         raise HTTPException(
             status_code=409,
             detail="Completed entry claim does not have exactly four durable entry receipts; manual review is required.",
