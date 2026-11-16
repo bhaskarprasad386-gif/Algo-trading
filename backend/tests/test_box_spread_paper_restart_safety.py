@@ -187,16 +187,25 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
             trade_id=trade.id, account_key="restart-complete",
         )["status"] == "COMPLETED"
 
+        # Close the position before restart: replay must still find the four
+        # original entry receipts even though the durable ledger also has exits.
+        exit_receipts = before_restart.record_exit_basket(
+            trade_id=trade.id,
+            fill_id="restart-complete-exit",
+            account_key="restart-complete",
+            legs={
+                "LOW_CE": {"quantity": 25, "fill_price": 101},
+                "HIGH_CE": {"quantity": 25, "fill_price": 89},
+                "HIGH_PE": {"quantity": 25, "fill_price": 81},
+                "LOW_PE": {"quantity": 25, "fill_price": 69},
+            },
+        )
+        assert len(exit_receipts) == 4
+
         # New ledger instance simulates API restart; durable fills remain the
         # only source of truth and the process-local execution engine is gone.
         after_restart = BoxSpreadPaperLedger(factory)
-        recovered = after_restart.list_open_trades(account_key="restart-complete")
-        assert len(recovered) == 1
-        position = recovered[0]
-        assert position["trade_id"] == trade.id
-        assert position["manual_review_required"] is True
-        assert position["automatic_replay"] is False
-        assert all(leg["open_position_quantity"] == 25 for leg in position["legs"])
+        assert after_restart.list_open_trades(account_key="restart-complete") == []
 
         persisted = after_restart.list_fills(
             trade.id, account_key="restart-complete",
@@ -210,8 +219,8 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
         summary = after_restart.get_trade_summary(
             trade.id, account_key="restart-complete",
         )
-        assert summary["status"] == "FILLED"
-        assert summary["fill_count"] == 4
+        assert summary["status"] == "CLOSED"
+        assert summary["fill_count"] == 8
 
         request = routes.CreatePaperTrade(
             underlying="NIFTY",
@@ -246,7 +255,7 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
         assert replay["broker_orders_enabled"] is False
         assert replay["trade_id"] == trade.id
         assert replay["idempotency_key"] == "restart-complete-entry"
-        assert replay["status"] == "FILLED"
+        assert replay["status"] == "CLOSED"
         assert {fill["role"] for fill in replay["fills"]} == {
             "LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE",
         }
@@ -254,10 +263,7 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
         assert all(fill["quantity"] == 25 for fill in replay["fills"])
         assert len(after_restart.list_fills(
             trade.id, account_key="restart-complete",
-        )) == 4
-        assert len(after_restart.list_fills(
-            trade.id, account_key="restart-complete",
-        )) == 4
+        )) == 8
         assert after_restart.get_entry_claim(
             trade_id=trade.id, account_key="restart-complete",
         )["status"] == "COMPLETED"
