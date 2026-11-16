@@ -2,7 +2,8 @@
 
 Only trade rows with a registered broker order, unique broker trade ID,
 positive execution price and trustworthy execution timestamp can mutate the
-local fill ledger. The whole snapshot is validated before any fill is written.
+local fill ledger. Unmanaged/manual trades are surfaced as unmatched and never
+adopted. The whole managed subset is validated before any fill is written.
 """
 from __future__ import annotations
 
