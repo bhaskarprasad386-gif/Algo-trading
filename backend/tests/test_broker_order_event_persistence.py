@@ -323,3 +323,27 @@ def test_read_only_review_is_account_and_broker_scoped_and_bounded(db):
         review_unapplied_broker_fill_events(
             db, broker="fyers", account_id="acct-1", limit=5001,
         )
+
+
+
+def test_read_only_review_reports_truncation_only_when_more_rows_exist(db):
+    _working_intent_with_broker_order(db)
+    record_broker_order_event_with_fill(
+        db, _fill_event(event_id="evt-pending-one", fill_id="trade-pending-one",
+                        cumulative_filled_quantity=20)
+    )
+    one_row = review_unapplied_broker_fill_events(
+        db, broker="fyers", account_id="acct-1", limit=1,
+    )
+    assert one_row["scanned_event_count"] == 1
+    assert one_row["truncated"] is False
+
+    record_broker_order_event_with_fill(
+        db, _fill_event(event_id="evt-pending-two", fill_id="trade-pending-two",
+                        cumulative_filled_quantity=30)
+    )
+    two_rows = review_unapplied_broker_fill_events(
+        db, broker="fyers", account_id="acct-1", limit=1,
+    )
+    assert two_rows["scanned_event_count"] == 1
+    assert two_rows["truncated"] is True
