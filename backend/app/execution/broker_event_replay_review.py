@@ -8,6 +8,7 @@ workflow. Eligibility is not authorization to execute.
 from __future__ import annotations
 
 from collections import defaultdict
+import math
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -79,7 +80,12 @@ def review_operator_replay_eligibility(
     for event in events:
         if event.status not in {"PARTIALLY_FILLED", "FILLED"}:
             issues_by_event[event.event_id].append("EVENT_STATUS_NOT_FILL_BEARING")
-        if not event.fill_id or not event.fill_quantity or not event.average_fill_price:
+        if (
+            not event.fill_id or not event.fill_quantity
+            or event.average_fill_price is None
+            or not math.isfinite(float(event.average_fill_price))
+            or float(event.average_fill_price) <= 0
+        ):
             issues_by_event[event.event_id].append("FILL_IDENTITY_OR_EXECUTION_EVIDENCE_MISSING")
         if event.fill_quantity is not None and event.fill_quantity <= 0:
             issues_by_event[event.event_id].append("INVALID_FILL_QUANTITY")
@@ -118,7 +124,10 @@ def review_operator_replay_eligibility(
             ExecutionBrokerOrderRecord.account_id == account_key,
             ExecutionBrokerOrderRecord.broker == broker_key,
         )).scalars().all()
-        order_by_leg = {order.leg_record_id: order for order in orders_for_intent}
+        orders_by_leg: dict[int, list[ExecutionBrokerOrderRecord]] = defaultdict(list)
+        for registered_order in orders_for_intent:
+            orders_by_leg[registered_order.leg_record_id].append(registered_order)
+        order_by_leg = {leg_id: values[0] for leg_id, values in orders_by_leg.items() if len(values) == 1}
         current_totals = db.execute(select(
             ExecutionFillRecord.leg_record_id,
             func.coalesce(func.sum(ExecutionFillRecord.quantity), 0),
@@ -155,9 +164,22 @@ def review_operator_replay_eligibility(
         # Every leg must have an exact persisted broker-order identity, and
         # projected fill quantities must balance across all legs.
         missing_order_legs = [leg for leg in legs if leg.id not in order_by_leg]
-        if missing_order_legs:
+        if missing_order_legs or any(len(values) != 1 for values in orders_by_leg.values()):
             for event, _ in pairs:
                 issues_by_event[event.event_id].append("MULTI_LEG_BROKER_ORDER_IDENTITY_INCOMPLETE")
+        for leg in legs:
+            registered = order_by_leg.get(leg.id)
+            if registered is not None and (
+                registered.symbol != leg.instrument
+                or registered.side != leg.side
+                or registered.quantity != leg.quantity
+            ):
+                for event, _ in pairs:
+                    issues_by_event[event.event_id].append("BROKER_ORDER_LEG_IDENTITY_MISMATCH")
+        for event, order in pairs:
+            leg = leg_by_id.get(order.leg_record_id)
+            if leg is None or order.symbol != leg.instrument or order.side != leg.side or order.quantity != leg.quantity:
+                issues_by_event[event.event_id].append("BROKER_ORDER_LEG_IDENTITY_MISMATCH")
         if len(set(projected.values())) != 1:
             quantities = ",".join(f"{leg_by_id[key].leg_id}:{value}" for key, value in sorted(projected.items()))
             for event, _ in pairs:
