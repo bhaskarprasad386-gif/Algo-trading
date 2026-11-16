@@ -3,12 +3,18 @@ import pytest
 from app.brokers.zerodha import ZerodhaAdapter, ZerodhaHistoryUnavailable
 
 
+_DEFAULT = object()
+
+
 class FakeKite:
-    def __init__(self, profile=None, orders=None, trades=None, error=None):
-        self.profile_data = {"user_id": "ZER-123"} if profile is None else profile
-        self.order_rows = [] if orders is None else orders
-        self.trade_rows = [] if trades is None else trades
-        self.error = error
+    def __init__(self, profile=_DEFAULT, orders=_DEFAULT, trades=_DEFAULT,
+                 profile_error=None, order_error=None, trade_error=None):
+        self.profile_data = {"user_id": "ZER-123"} if profile is _DEFAULT else profile
+        self.order_rows = [] if orders is _DEFAULT else orders
+        self.trade_rows = [] if trades is _DEFAULT else trades
+        self.profile_error = profile_error
+        self.order_error = order_error
+        self.trade_error = trade_error
         self.calls = []
         self.access_token = None
 
@@ -17,21 +23,21 @@ class FakeKite:
         self.calls.append(("set_access_token", token))
 
     def profile(self):
-        if self.error:
-            raise self.error
+        if self.profile_error:
+            raise self.profile_error
         self.calls.append(("profile",))
         return self.profile_data
 
     def orders(self):
         self.calls.append(("orders",))
-        if self.error:
-            raise self.error
+        if self.order_error:
+            raise self.order_error
         return self.order_rows
 
     def trades(self):
         self.calls.append(("trades",))
-        if self.error:
-            raise self.error
+        if self.trade_error:
+            raise self.trade_error
         return self.trade_rows
 
 
@@ -101,7 +107,7 @@ def test_malformed_order_book_never_becomes_complete(rows):
 
 
 def test_trade_book_failure_never_returns_partial_snapshot():
-    client = FakeKite(trades=None, error=RuntimeError("temporary"))
+    client = FakeKite(trade_error=RuntimeError("temporary"))
     adapter = connected_adapter(client)
     with pytest.raises(ZerodhaHistoryUnavailable, match="request failed"):
         adapter.fetch_today_broker_snapshot(account_id="ZER-123")
