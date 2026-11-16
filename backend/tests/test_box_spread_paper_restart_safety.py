@@ -202,10 +202,10 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
             trade.id, account_key="restart-complete",
         )
         assert {(fill.role, fill.fill_id, fill.quantity) for fill in persisted} == {
-            ("LOW_CE", "complete-low-ce", 25),
-            ("HIGH_CE", "complete-high-ce", 25),
-            ("HIGH_PE", "complete-high-pe", 25),
-            ("LOW_PE", "complete-low-pe", 25),
+            ("LOW_CE", routes._ledger_fill_id("restart-complete-entry", "LOW_CE"), 25),
+            ("HIGH_CE", routes._ledger_fill_id("restart-complete-entry", "HIGH_CE"), 25),
+            ("HIGH_PE", routes._ledger_fill_id("restart-complete-entry", "HIGH_PE"), 25),
+            ("LOW_PE", routes._ledger_fill_id("restart-complete-entry", "LOW_PE"), 25),
         }
         summary = after_restart.get_trade_summary(
             trade.id, account_key="restart-complete",
