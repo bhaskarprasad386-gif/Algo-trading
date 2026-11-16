@@ -9,6 +9,8 @@ from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
     BrokerTradeSnapshot,
+    parse_positive_trade_price,
+    parse_trade_timestamp_ns,
 )
 
 
@@ -131,8 +133,11 @@ class ZerodhaAdapter:
                 broker_trade_id=self._text(row, "trade_id"),
                 broker_order_id=self._text(row, "order_id"),
                 quantity=self._integer(row, positive=True, keys=("quantity",)),
+                fill_price=parse_positive_trade_price(row.get("average_price")),
+                occurred_at_ns=parse_trade_timestamp_ns(row.get("fill_timestamp")),
             )
             for row in trade_rows
+        )            for row in trade_rows
         )
         return ZerodhaDailyHistory(
             trading_date=datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
