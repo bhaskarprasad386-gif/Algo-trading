@@ -3,7 +3,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.execution.broker_events import BrokerOrderEventStatus
 from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
