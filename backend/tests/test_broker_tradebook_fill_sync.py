@@ -216,3 +216,39 @@ def test_unmanaged_manual_trades_are_reported_but_never_adopted(db):
     assert result["unmatched_trade_ids"] == ["manual-trade-1"]
     assert db.query(ExecutionFillRecord).count() == 1
     assert db.scalar(select(ExecutionFillRecord)).broker_fill_id == "trade-1"
+
+
+def test_empty_tradebook_with_registered_zero_fill_order_is_clean(db):
+    _working_intent(db)
+    snapshot = BrokerSnapshot(
+        "acct-1", "angel_one",
+        (BrokerOrderSnapshot("order-ce", "NFO:CE", "BUY", 50, 0, "OPEN"),),
+        (),
+        True,
+    )
+    result = sync.sync_account_tradebook_fills(
+        db, adapter=_adapter(snapshot), account_id="acct-1",
+    )
+    assert result["status"] == "SYNCED"
+    assert result["trade_count"] == 0
+    assert result["unmatched_order_count"] == 0
+    assert result["created_count"] == 0
+
+
+def test_empty_tradebook_reports_unmanaged_manual_orders(db):
+    _working_intent(db)
+    snapshot = BrokerSnapshot(
+        "acct-1", "angel_one",
+        (
+            BrokerOrderSnapshot("order-ce", "NFO:CE", "BUY", 50, 0, "OPEN"),
+            BrokerOrderSnapshot("manual-order", "NFO:MANUAL", "BUY", 10, 0, "OPEN"),
+        ),
+        (),
+        True,
+    )
+    result = sync.sync_account_tradebook_fills(
+        db, adapter=_adapter(snapshot), account_id="acct-1",
+    )
+    assert result["status"] == "SYNCED_WITH_UNMATCHED"
+    assert result["unmatched_order_count"] == 1
+    assert result["unmatched_order_ids"] == ["manual-order"]
