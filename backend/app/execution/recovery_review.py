@@ -82,7 +82,7 @@ def review_recovery_candidate(
         if leg is None or (
             order.symbol != leg.instrument
             or order.side != leg.side.value
-            or order.quantity > leg.quantity
+            or order.quantity != leg.quantity
         ):
             issues.append(ReconciliationIssue(
                 ReconciliationStatus.BROKER_ORDER_MISMATCH, order.broker_order_id,

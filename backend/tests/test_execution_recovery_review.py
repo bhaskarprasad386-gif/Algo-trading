@@ -62,6 +62,26 @@ def test_matching_intent_is_consistent_but_never_authorizes_resume():
     assert review.matched_order_count == 2
 
 
+def test_under_sized_persisted_broker_order_is_blocked():
+    candidate = _candidate()
+    undersized = (
+        LocalBrokerOrder("cb", "ord-1", "NIFTY-CE", "BUY", 25),
+        LocalBrokerOrder("cs", "ord-2", "NIFTY-CE-HIGH", "SELL", 50),
+    )
+    review = review_recovery_candidate(
+        candidate=candidate,
+        broker="zerodha",
+        local_orders=undersized,
+        local_fill_quantities={},
+        snapshot=_snapshot(orders=(
+            BrokerOrderSnapshot("ord-1", "NIFTY-CE", "BUY", 25, 0),
+            BrokerOrderSnapshot("ord-2", "NIFTY-CE-HIGH", "SELL", 50, 0),
+        )),
+    )
+    assert review.disposition is RecoveryDisposition.BLOCKED
+    assert ReconciliationStatus.BROKER_ORDER_MISMATCH in {x.status for x in review.issues}
+
+
 def test_untracked_leg_with_similar_broker_order_is_blocked_for_manual_review():
     review = review_recovery_candidate(
         candidate=_candidate(),

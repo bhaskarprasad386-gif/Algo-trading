@@ -352,7 +352,7 @@ def record_broker_order(
         ).with_for_update()).scalar_one_or_none()
         if leg is None:
             raise LookupError("execution leg not found for intent")
-        if symbol != leg.instrument or side != leg.side or quantity > leg.quantity:
+        if symbol != leg.instrument or side != leg.side:
             raise ValueError("broker order does not match the persisted execution leg")
         if intent.status not in {
             IntentStatus.SUBMITTING.value, IntentStatus.UNKNOWN.value,
@@ -370,6 +370,9 @@ def record_broker_order(
             if existing.payload_hash != digest:
                 raise IdempotencyConflict("broker order ID was reused with different order data")
             return {"created": False, "broker_order_id": existing.broker_order_id}
+
+        if quantity != leg.quantity:
+            raise ValueError("broker order does not exactly match the persisted execution leg")
 
         prior_leg_order = db.execute(select(ExecutionBrokerOrderRecord).where(
             ExecutionBrokerOrderRecord.account_id == account_id,
