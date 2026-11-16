@@ -4,7 +4,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.execution.broker_events import BrokerOrderEvent, BrokerOrderEventStatus
-from app.execution.broker_event_persistence import BrokerEventConflict, record_broker_order_event
+from app.execution.broker_event_persistence import (
+    BrokerEventConflict, record_broker_order_event,
+    review_unapplied_broker_fill_events,
+)
 from app.models.broker_order_event import BrokerOrderEventRecord
 
 
@@ -248,3 +251,75 @@ def test_new_callback_reusing_exact_fill_identity_does_not_apply_fill_twice(db):
     assert db.query(ExecutionFillRecord).count() == 1
     leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
     assert leg.filled_quantity == 10
+
+
+
+def test_read_only_review_surfaces_durable_out_of_order_fill_evidence(db):
+    _working_intent_with_broker_order(db)
+    deferred = _fill_event(
+        event_id="evt-deferred-review", fill_id="trade-deferred",
+        cumulative_filled_quantity=20, fill_quantity=10,
+    )
+    result = record_broker_order_event_with_fill(db, deferred)
+    assert result["fill_deferred"] is True
+
+    report = review_unapplied_broker_fill_events(
+        db, broker="FYERS", account_id="acct-1",
+    )
+    assert report["read_only"] is True
+    assert report["scanned_event_count"] == 1
+    assert report["pending_event_count"] == 1
+    assert report["applied_event_count"] == 0
+    assert report["conflict_event_count"] == 0
+    assert report["pending_events"][0]["event_id"] == "evt-deferred-review"
+    assert report["pending_events"][0]["reason"] == "NO_MATCHING_PERSISTED_FILL"
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+
+
+def test_read_only_review_marks_exactly_applied_fill_evidence(db):
+    _working_intent_with_broker_order(db)
+    record_broker_order_event_with_fill(db, _fill_event())
+    report = review_unapplied_broker_fill_events(
+        db, broker="fyers", account_id="acct-1",
+    )
+    assert report["applied_event_count"] == 1
+    assert report["pending_event_count"] == 0
+    assert report["conflict_event_count"] == 0
+
+
+def test_read_only_review_flags_reused_fill_id_with_changed_execution_evidence(db):
+    _working_intent_with_broker_order(db)
+    record_broker_order_event_with_fill(db, _fill_event())
+    record_broker_order_event(
+        db,
+        _fill_event(
+            event_id="evt-fill-conflicting-evidence",
+            average_fill_price=102.00,
+        ),
+    )
+    report = review_unapplied_broker_fill_events(
+        db, broker="fyers", account_id="acct-1",
+    )
+    assert report["applied_event_count"] == 1
+    assert report["conflict_event_count"] == 1
+    assert report["conflict_events"][0]["event_id"] == "evt-fill-conflicting-evidence"
+
+
+def test_read_only_review_is_account_and_broker_scoped_and_bounded(db):
+    _working_intent_with_broker_order(db)
+    record_broker_order_event_with_fill(
+        db, _fill_event(cumulative_filled_quantity=20, event_id="evt-pending-a")
+    )
+    other_account = review_unapplied_broker_fill_events(
+        db, broker="fyers", account_id="acct-else",
+    )
+    other_broker = review_unapplied_broker_fill_events(
+        db, broker="angelone", account_id="acct-1",
+    )
+    assert other_account["scanned_event_count"] == 0
+    assert other_broker["scanned_event_count"] == 0
+    with pytest.raises(ValueError, match="limit"):
+        review_unapplied_broker_fill_events(
+            db, broker="fyers", account_id="acct-1", limit=5001,
+        )
