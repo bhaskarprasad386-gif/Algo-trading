@@ -46,7 +46,7 @@ def test_mstock_normalizes_order_and_trade_books_read_only():
         }]},
         trades={"status": "success", "data": [{
             "TRADE_NUMBER": "MT-1", "ORDER_NUMBER": "MO-1",
-            "QUANTITY": 25, "BUY_SELL": "Buy",
+            "QUANTITY": 25, "BUY_SELL": "Buy", "PRICE": 101.25, "ORDER_DATE_TIME": "16-11-2026 10:31:00",
         }]},
     )
     result = connected_adapter(http).fetch_today_broker_snapshot(account_id="mstock-account")
@@ -59,6 +59,8 @@ def test_mstock_normalizes_order_and_trade_books_read_only():
     assert result.snapshot.orders[0].filled_quantity == 25
     assert result.snapshot.trades[0].broker_trade_id == "MT-1"
     assert result.snapshot.trades[0].quantity == 25
+    assert result.snapshot.trades[0].fill_price == 101.25
+    assert result.snapshot.trades[0].occurred_at_ns is not None
     assert [call[0] for call in http.calls] == ["orders", "tradebook"]
     assert all(call[1]["Authorization"] == "token api-key:short-lived-token" for call in http.calls)
 
