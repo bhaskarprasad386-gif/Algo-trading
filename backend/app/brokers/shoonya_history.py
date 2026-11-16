@@ -1,7 +1,7 @@
 """Shoonya current-day order/trade books as a read-only history provider."""
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.brokers.history import BrokerHistoryUnavailable, BrokerHistoryWindow
@@ -37,11 +37,6 @@ class ShoonyaHistoryProvider:
         local_start = window_start.astimezone(_IST)
         local_end = window_end.astimezone(_IST)
         today_start = datetime.combine(datetime.now(_IST).date(), time.min, tzinfo=_IST)
-        expected_end = datetime.combine(
-            datetime.now(_IST).date(), time.min, tzinfo=_IST
-        ).replace(day=datetime.now(_IST).day) 
-        # Calendar-day end is computed by adding one day to avoid month-boundary arithmetic.
-        from datetime import timedelta
         expected_end = today_start + timedelta(days=1)
         if local_start != today_start or local_end != expected_end:
             raise BrokerHistoryUnavailable(
