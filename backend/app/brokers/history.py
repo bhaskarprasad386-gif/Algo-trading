@@ -72,3 +72,62 @@ class BrokerHistorySnapshotProvider(Protocol):
         snapshot.
         """
         ...
+
+
+def validated_daily_history_window(
+    *,
+    provider_name: str,
+    account_id: str,
+    window_start: datetime,
+    window_end: datetime,
+    daily_history: object,
+    provider_window: str,
+    pages_fetched: int = 1,
+    expected_trading_date: str | None = None,
+) -> BrokerHistoryWindow:
+    """Validate adapter output again at the provider boundary.
+
+    Session adapters are trusted to enforce their own account scope, but this
+    boundary deliberately verifies the returned evidence as well. A malformed
+    or cross-account/cross-broker snapshot must never be relabelled as complete
+    history merely because the adapter call returned successfully.
+    """
+    snapshot = (
+        daily_history
+        if isinstance(daily_history, BrokerSnapshot)
+        else getattr(daily_history, "snapshot", None)
+    )
+    if not isinstance(snapshot, BrokerSnapshot):
+        raise BrokerHistoryUnavailable(
+            f"{provider_name} history adapter returned no BrokerSnapshot"
+        )
+    expected_account = str(account_id).strip()
+    expected_broker = str(provider_name).strip().lower()
+    if not expected_account:
+        raise BrokerHistoryUnavailable("history account scope is required")
+    if str(snapshot.account_id).strip() != expected_account:
+        raise BrokerHistoryUnavailable(
+            f"{expected_broker} history snapshot account scope does not match the request"
+        )
+    if str(snapshot.broker).strip().lower() != expected_broker:
+        raise BrokerHistoryUnavailable(
+            f"{expected_broker} history snapshot broker identity does not match the provider"
+        )
+    if not snapshot.complete:
+        raise BrokerHistoryUnavailable(
+            f"{expected_broker} history adapter returned an incomplete snapshot"
+        )
+    if expected_trading_date is not None:
+        actual_trading_date = getattr(daily_history, "trading_date", None)
+        if actual_trading_date != expected_trading_date:
+            raise BrokerHistoryUnavailable(
+                f"{expected_broker} history trading date does not match the requested IST day"
+            )
+    return BrokerHistoryWindow(
+        snapshot=snapshot,
+        window_start=window_start,
+        window_end=window_end,
+        pages_fetched=pages_fetched,
+        has_more=False,
+        provider_window=provider_window,
+    )
