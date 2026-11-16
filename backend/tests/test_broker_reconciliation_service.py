@@ -6,11 +6,12 @@ from app.core.database import Base
 from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
+    BrokerTradeSnapshot,
 )
 from app.execution.contracts import (
     ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide,
 )
-from app.execution.persistence import create_intent, record_broker_order, transition_intent
+from app.execution.persistence import create_intent, record_broker_order, record_fill, transition_intent
 from app.execution.reconciliation_service import (
     ReconciliationIdentityConflict,
     reconcile_persisted_account_snapshot,
@@ -264,3 +265,62 @@ def test_cancel_after_partial_fill_is_persisted_as_conflict_free_manual_reconcil
         issue.status.value == "ORDER_STATUS_REQUIRES_RECONCILIATION"
         for issue in result["report"].issues
     )
+
+
+def _snapshot_with_fill(*, fill_price=101.25, occurred_at_ns=123456789):
+    base = _snapshot(filled=25)
+    orders = tuple(
+        BrokerOrderSnapshot(
+            broker_order_id=row.broker_order_id,
+            symbol=row.symbol,
+            side=row.side,
+            quantity=row.quantity,
+            filled_quantity=row.filled_quantity,
+            raw_status="OPEN",
+        )
+        for index, row in enumerate(base.orders)
+    )
+    return BrokerSnapshot(
+        account_id=base.account_id,
+        broker=base.broker,
+        orders=orders,
+        trades=(BrokerTradeSnapshot(
+            "trade-1", "order-1", 25, fill_price, occurred_at_ns,
+        ),),
+        complete=True,
+    )
+
+
+def _persist_one_fill(db, *, price="101.25", occurred_at_ns=123456789):
+    record_fill(
+        db, account_id="acct-1", intent_id="intent-reconcile", leg_id="cb",
+        broker="fyers", broker_fill_id="trade-1", broker_order_id="order-1",
+        quantity=25, fill_price=price, occurred_at_ns=occurred_at_ns,
+    )
+
+
+def test_reconciliation_compares_persisted_fill_price_and_timestamp(db):
+    _persist_order(db)
+    _persist_one_fill(db)
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot_with_fill(), reconciliation_id="run-fill-evidence-match",
+        intent_ids=("intent-reconcile",),
+    )
+    assert result["report"].is_consistent is True
+
+
+def test_reconciliation_durably_blocks_fill_price_and_timestamp_mismatch(db):
+    _persist_order(db)
+    _persist_one_fill(db)
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot_with_fill(fill_price=101.5, occurred_at_ns=123456790),
+        reconciliation_id="run-fill-evidence-mismatch",
+        intent_ids=("intent-reconcile",),
+    )
+    statuses = {issue.status.value for issue in result["report"].issues}
+    assert "FILL_PRICE_MISMATCH" in statuses
+    assert "FILL_TIMESTAMP_MISMATCH" in statuses
+    stored = db.scalar(select(BrokerReconciliationRecord).where(
+        BrokerReconciliationRecord.reconciliation_id == "run-fill-evidence-mismatch"
+    ))
+    assert stored.is_consistent is False
