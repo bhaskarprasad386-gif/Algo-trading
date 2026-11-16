@@ -1,0 +1,142 @@
+from types import SimpleNamespace
+
+import pytest
+
+from app.execution import broker_snapshot_event_sync as sync
+from app.execution.broker_events import BrokerOrderEventStatus
+
+
+def _order(**changes):
+    values = dict(
+        broker_order_id="order-1", symbol="NIFTY26NOV25000CE",
+        side="BUY", quantity=50, filled_quantity=0, raw_status="OPEN",
+    )
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.parametrize(
+    "raw,filled,expected",
+    [
+        ("open", 0, BrokerOrderEventStatus.OPEN),
+        ("COMPLETE", 50, BrokerOrderEventStatus.FILLED),
+        ("open", 10, BrokerOrderEventStatus.PARTIALLY_FILLED),
+        ("cancelled", 10, BrokerOrderEventStatus.CANCELLED),
+        ("rejected", 0, BrokerOrderEventStatus.REJECTED),
+        ("vendor-new-status", 0, BrokerOrderEventStatus.UNKNOWN),
+        ("COMPLETE", 0, BrokerOrderEventStatus.UNKNOWN),
+    ],
+)
+def test_snapshot_order_status_is_normalized_without_fabricating_fill(raw, filled, expected):
+    event = sync.snapshot_order_to_event(
+        broker="zerodha", account_id="acct-1",
+        order=_order(raw_status=raw, filled_quantity=filled),
+    )
+    assert event.status is expected
+    assert event.fill_id is None
+    assert event.fill_quantity is None
+    assert event.average_fill_price is None
+    assert event.occurred_at_ns == 0
+
+
+def test_snapshot_order_event_identity_is_stable_and_changes_with_state():
+    first = sync.snapshot_order_to_event(
+        broker="fyers", account_id="acct-1", order=_order(raw_status="OPEN"),
+    )
+    replay = sync.snapshot_order_to_event(
+        broker="fyers", account_id="acct-1", order=_order(raw_status="OPEN"),
+    )
+    updated = sync.snapshot_order_to_event(
+        broker="fyers", account_id="acct-1",
+        order=_order(raw_status="OPEN", filled_quantity=10),
+    )
+    assert first.event_id == replay.event_id
+    assert first.event_id != updated.event_id
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"side": "UNKNOWN"},
+        {"quantity": 0},
+        {"filled_quantity": -1},
+        {"filled_quantity": 51},
+        {"quantity": True},
+    ],
+)
+def test_invalid_snapshot_order_is_rejected(changes):
+    with pytest.raises(ValueError):
+        sync.snapshot_order_to_event(
+            broker="mstock", account_id="acct-1", order=_order(**changes),
+        )
+
+
+def _adapter(history, *, name="angel_one", account_id="acct-1", connected=True):
+    return SimpleNamespace(
+        name=name, account_id=account_id, connected=connected,
+        fetch_today_broker_snapshot=lambda **kwargs: history,
+    )
+
+
+def _history(*, complete=True, account_id="acct-1", broker="angel_one", scope="CURRENT_TRADING_DAY", orders=None):
+    snapshot = SimpleNamespace(
+        complete=complete, account_id=account_id, broker=broker,
+        orders=tuple(orders or ()), trades=(),
+    )
+    return SimpleNamespace(scope=scope, snapshot=snapshot, trading_date="2026-11-16")
+
+
+def test_sync_persists_all_order_events_and_reports_counts(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        sync, "record_broker_order_event",
+        lambda db, event: seen.append(event) or {"created": len(seen) == 1},
+    )
+    result = sync.sync_account_order_status_events(
+        object(), adapter=_adapter(_history(orders=[_order(), _order(
+            broker_order_id="order-2", raw_status="COMPLETE", filled_quantity=50,
+        )])), account_id="acct-1",
+    )
+    assert result["status"] == "SYNCED"
+    assert result["event_count"] == 2
+    assert result["created_count"] == 1
+    assert result["duplicate_count"] == 1
+    assert len(seen) == 2
+
+
+@pytest.mark.parametrize(
+    "history,expected",
+    [
+        (_history(complete=False), "BROKER_HISTORY_INCOMPLETE_OR_SCOPE_MISMATCH"),
+        (_history(account_id="other"), "BROKER_HISTORY_INCOMPLETE_OR_SCOPE_MISMATCH"),
+        (_history(broker="fyers"), "BROKER_HISTORY_INCOMPLETE_OR_SCOPE_MISMATCH"),
+        (_history(scope="UNKNOWN"), "BROKER_HISTORY_SCOPE_UNSUPPORTED"),
+    ],
+)
+def test_sync_blocks_bad_snapshot_before_any_write(monkeypatch, history, expected):
+    monkeypatch.setattr(
+        sync, "record_broker_order_event",
+        lambda *args, **kwargs: pytest.fail("must not persist an invalid snapshot"),
+    )
+    result = sync.sync_account_order_status_events(
+        object(), adapter=_adapter(history), account_id="acct-1",
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == expected
+    assert result["event_count"] == 0
+
+
+def test_sync_blocks_disconnected_or_wrong_account_session(monkeypatch):
+    history = _history(orders=[_order()])
+    monkeypatch.setattr(
+        sync, "record_broker_order_event",
+        lambda *args, **kwargs: pytest.fail("must not persist"),
+    )
+    disconnected = sync.sync_account_order_status_events(
+        object(), adapter=_adapter(history, connected=False), account_id="acct-1",
+    )
+    wrong_account = sync.sync_account_order_status_events(
+        object(), adapter=_adapter(history, account_id="acct-2"), account_id="acct-1",
+    )
+    assert disconnected["reason"] == "BROKER_SESSION_NOT_CONNECTED"
+    assert wrong_account["reason"] == "BROKER_SESSION_ACCOUNT_MISMATCH"
