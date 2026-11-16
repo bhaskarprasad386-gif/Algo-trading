@@ -84,3 +84,20 @@ quantities across persisted legs is classified as blocked for operator
 reconciliation; equal partial quantities across all known legs are not
 misclassified as an imbalance. This closes the gap between the standalone
 reconciliation report and the recovery-review path.
+
+
+## Out-of-order callback fill evidence
+
+Trade-identified callback events are stored immutably before attempting fill
+progress. If a callback's cumulative filled quantity is ahead of the currently
+persisted tradebook/callback fills, the callback is retained as
+`CUMULATIVE_FILL_GAP` evidence and no fill ledger or intent progress is
+changed. Replaying that exact callback after its missing predecessor arrives
+re-attempts application. Exact broker trade IDs remain idempotent across
+different callback IDs; changed execution data under an existing trade ID is
+a conflict.
+
+A cumulative quantity below already persisted fills, or a cumulative quantity
+above the registered order size, remains a hard fail-closed error. Deferred
+events do not trigger polling, retry, order mutation, automatic adoption, or
+execution resume. Reconciliation remains the authority for unresolved gaps.
