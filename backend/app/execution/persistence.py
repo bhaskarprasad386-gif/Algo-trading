@@ -371,6 +371,16 @@ def record_broker_order(
                 raise IdempotencyConflict("broker order ID was reused with different order data")
             return {"created": False, "broker_order_id": existing.broker_order_id}
 
+        prior_leg_order = db.execute(select(ExecutionBrokerOrderRecord).where(
+            ExecutionBrokerOrderRecord.account_id == account_id,
+            ExecutionBrokerOrderRecord.intent_record_id == intent.id,
+            ExecutionBrokerOrderRecord.leg_record_id == leg.id,
+        ).with_for_update()).scalar_one_or_none()
+        if prior_leg_order is not None:
+            raise ValueError(
+                "execution leg already has a broker order identity; cancel/replace is not supported"
+            )
+
         record = ExecutionBrokerOrderRecord(
             intent_record_id=intent.id, leg_record_id=leg.id,
             account_id=account_id, broker=broker, broker_order_id=broker_order_id,
