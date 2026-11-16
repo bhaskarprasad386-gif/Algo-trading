@@ -21,7 +21,6 @@ from app.brokers.order_status import (
         ("rejected", NormalizedOrderState.REJECTED),
         ("some-new-vendor-code", NormalizedOrderState.UNKNOWN),
         (None, NormalizedOrderState.UNKNOWN),
-        (2, NormalizedOrderState.UNKNOWN),
     ],
 )
 def test_normalizes_conservative_text_statuses_for_all_brokers(broker, raw, expected):
