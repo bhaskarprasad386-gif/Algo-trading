@@ -101,3 +101,19 @@ A cumulative quantity below already persisted fills, or a cumulative quantity
 above the registered order size, remains a hard fail-closed error. Deferred
 events do not trigger polling, retry, order mutation, automatic adoption, or
 execution resume. Reconciliation remains the authority for unresolved gaps.
+
+
+## Deferred fill evidence after process restart
+
+A read-only review primitive inventories trade-identified callback events for
+one exact broker/account and compares each event's fill identity, order ID,
+quantity, price, and timestamp with the immutable execution-fill ledger.
+Evidence with no matching fill row is surfaced as
+`NO_MATCHING_PERSISTED_FILL`; a reused fill identity with changed execution
+fields is surfaced as a conflict. Exact matches are counted as already applied.
+
+This report is intentionally not a replay worker. It performs no fill writes,
+does not infer missing trades from cumulative status, does not poll the broker,
+and does not resume or retry any intent. Operators can use the inventory after
+a process restart or reconnect to identify callback evidence that needs
+tradebook-backed reconciliation.
