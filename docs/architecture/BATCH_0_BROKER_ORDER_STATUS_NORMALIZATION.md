@@ -121,3 +121,27 @@ order actions. Results are limited to the authenticated
 single broker account, and `trading_authorized` remains false. The endpoint
 returns only event identity and quantity/timestamp diagnostics, not callback
 payload JSON or average fill prices.
+
+
+## Operator-requested deferred callback replay eligibility (dry-run only)
+
+The owner-authenticated `POST /api/v1/brokers/events/replay-eligibility`
+endpoint accepts an explicit list of persisted callback event IDs and the
+confirmation phrase `REVIEW DEFERRED FILL REPLAY ELIGIBILITY`. It is a
+read-only eligibility calculation, not a replay endpoint.
+
+The review is scoped to the single broker/account bound to the authenticated
+owner session. Every selected event must exist in that scope and have a
+trade identity, positive quantity, execution price, and trustworthy timestamp.
+The broker order must map exactly to a persisted intent leg. Existing fill IDs,
+quantity overruns, cumulative sequence gaps/conflicts, incomplete leg-to-order
+identity, and unequal projected quantities across the intent's legs block
+eligibility. The operator must select a complete event set whose projected
+per-leg fill quantities balance; the review never infers missing fills.
+
+An eligible response means only that the selected evidence passed these
+preconditions for a separately designed operator workflow. It does not replay
+callbacks, write fill rows, mutate intent/leg state, poll a broker, submit,
+cancel, modify, retry, adopt, or resume orders. The response always includes
+`replay_performed=false`, `fill_ledger_mutated=false`,
+`intent_state_mutated=false`, and `trading_authorized=false`.
