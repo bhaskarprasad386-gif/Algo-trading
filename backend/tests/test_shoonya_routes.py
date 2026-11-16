@@ -202,3 +202,44 @@ def test_owner_conflict_discards_session(monkeypatch, db_session):
     assert raised.value.status_code == 409
     assert client.disconnected is True
     assert broker_sessions.get(0, "shoonya") is None
+
+
+def test_shoonya_rest_client_uses_bearer_and_jdata_for_read_only_books():
+    from app.brokers.shoonya_routes import ShoonyaRESTClient
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    http = Mock()
+    http.post.side_effect = [
+        Response({"stat": "Ok", "uid": "SH12345", "actid": "SH12345"}),
+        Response([{"stat": "Ok", "norenordno": "O1"}]),
+        Response([{"stat": "Ok", "flid": "T1"}]),
+    ]
+    client = ShoonyaRESTClient(
+        uid="SH12345",
+        account_id="SH12345",
+        access_token="token-value",
+        http=http,
+    )
+
+    assert client.get_user_details()["uid"] == "SH12345"
+    assert client.get_order_book()[0]["norenordno"] == "O1"
+    assert client.get_trade_book()[0]["flid"] == "T1"
+
+    calls = http.post.call_args_list
+    assert calls[0].args[0].endswith("/UserDetails")
+    assert calls[1].args[0].endswith("/OrderBook")
+    assert calls[2].args[0].endswith("/TradeBook")
+    assert all(call.kwargs["headers"]["Authorization"] == "Bearer token-value" for call in calls)
+    assert all(call.kwargs["headers"]["Content-Type"] == "text/plain" for call in calls)
+    assert calls[0].kwargs["data"] == 'jData={"uid":"SH12345"}'
+    assert calls[1].kwargs["data"] == 'jData={"uid":"SH12345"}'
+    assert calls[2].kwargs["data"] == 'jData={"uid":"SH12345","actid":"SH12345"}'
