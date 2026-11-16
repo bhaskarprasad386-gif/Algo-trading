@@ -71,3 +71,39 @@ def test_session_store_rejects_empty_broker_name():
     store = BrokerSessionStore()
     with pytest.raises(ValueError, match="cannot be empty"):
         store.get(7, "   ")
+
+
+
+def test_disconnect_all_closes_every_session_and_clears_store():
+    store = BrokerSessionStore()
+    angel = FakeAdapter("angel_one")
+    fyers = FakeAdapter("fyers")
+    store.replace(7, "angel_one", angel)
+    store.replace(8, "fyers", fyers)
+
+    assert store.disconnect_all() == []
+    assert angel.connected is False
+    assert fyers.connected is False
+    assert store.get(7, "angel_one") is None
+    assert store.get(8, "fyers") is None
+
+
+def test_disconnect_all_continues_after_one_provider_disconnect_fails():
+    class BrokenAdapter(FakeAdapter):
+        def disconnect(self):
+            raise RuntimeError("provider logout unavailable")
+
+    store = BrokerSessionStore()
+    broken = BrokenAdapter("angel_one")
+    healthy = FakeAdapter("fyers")
+    store.replace(7, "angel_one", broken)
+    store.replace(8, "fyers", healthy)
+
+    failures = store.disconnect_all()
+
+    assert len(failures) == 1
+    assert failures[0][0] == "angel_one"
+    assert isinstance(failures[0][1], RuntimeError)
+    assert healthy.connected is False
+    assert store.get(7, "angel_one") is None
+    assert store.get(8, "fyers") is None
