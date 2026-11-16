@@ -3,32 +3,38 @@ import pytest
 from app.brokers.fyers import FyersAdapter, FyersHistoryUnavailable
 
 
+_DEFAULT = object()
+
+
 class FakeFyers:
-    def __init__(self, profile=None, orders=None, trades=None, error=None):
+    def __init__(self, profile=_DEFAULT, orders=_DEFAULT, trades=_DEFAULT,
+                 profile_error=None, order_error=None, trade_error=None):
         self.profile_data = {
             "s": "ok", "code": 200, "data": {"fy_id": "FY-123"}
-        } if profile is None else profile
-        self.order_rows = {"s": "ok", "code": 200, "orderBook": []} if orders is None else orders
-        self.trade_rows = {"s": "ok", "code": 200, "tradeBook": []} if trades is None else trades
-        self.error = error
+        } if profile is _DEFAULT else profile
+        self.order_rows = {"s": "ok", "code": 200, "orderBook": []} if orders is _DEFAULT else orders
+        self.trade_rows = {"s": "ok", "code": 200, "tradeBook": []} if trades is _DEFAULT else trades
+        self.profile_error = profile_error
+        self.order_error = order_error
+        self.trade_error = trade_error
         self.calls = []
 
     def get_profile(self):
         self.calls.append("profile")
-        if self.error:
-            raise self.error
+        if self.profile_error:
+            raise self.profile_error
         return self.profile_data
 
     def orderbook(self):
         self.calls.append("orders")
-        if self.error:
-            raise self.error
+        if self.order_error:
+            raise self.order_error
         return self.order_rows
 
     def tradebook(self):
         self.calls.append("trades")
-        if self.error:
-            raise self.error
+        if self.trade_error:
+            raise self.trade_error
         return self.trade_rows
 
 
