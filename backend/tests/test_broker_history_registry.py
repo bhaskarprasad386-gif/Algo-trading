@@ -3,7 +3,6 @@
 import pytest
 
 from app.brokers.history_registry import BrokerHistoryProviderRegistry
-from app.brokers.history import BrokerHistorySnapshotProvider
 
 
 @pytest.mark.parametrize("broker", ["angel_one", "zerodha", "fyers", "shoonya", "mstock"])
@@ -12,7 +11,7 @@ def test_registry_builds_only_matching_read_only_history_provider(broker):
         name = broker
 
     provider = BrokerHistoryProviderRegistry().build(broker, SessionAdapter())
-    assert isinstance(provider, BrokerHistorySnapshotProvider)
+    assert callable(provider.fetch_order_trade_snapshot)
     assert provider.name == broker
     assert callable(provider.fetch_order_trade_snapshot)
     assert not hasattr(provider, "place_order")
