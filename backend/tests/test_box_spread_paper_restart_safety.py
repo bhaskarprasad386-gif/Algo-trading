@@ -174,10 +174,10 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
         )
         assert claim["created"] is True
         fills = {
-            "LOW_CE": {"fill_id": "complete-low-ce", "action": "BUY", "quantity": 25, "fill_price": 100},
-            "HIGH_CE": {"fill_id": "complete-high-ce", "action": "SELL", "quantity": 25, "fill_price": 90},
-            "HIGH_PE": {"fill_id": "complete-high-pe", "action": "BUY", "quantity": 25, "fill_price": 80},
-            "LOW_PE": {"fill_id": "complete-low-pe", "action": "SELL", "quantity": 25, "fill_price": 70},
+            "LOW_CE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "LOW_CE"), "action": "BUY", "quantity": 25, "fill_price": 100},
+            "HIGH_CE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "HIGH_CE"), "action": "SELL", "quantity": 25, "fill_price": 90},
+            "HIGH_PE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "HIGH_PE"), "action": "BUY", "quantity": 25, "fill_price": 80},
+            "LOW_PE": {"fill_id": routes._ledger_fill_id("restart-complete-entry", "LOW_PE"), "action": "SELL", "quantity": 25, "fill_price": 70},
         }
         receipts = before_restart.record_entry_basket(
             trade_id=trade.id, legs=fills, account_key="restart-complete",
@@ -187,31 +187,42 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
             trade_id=trade.id, account_key="restart-complete",
         )["status"] == "COMPLETED"
 
+        # Close the position before restart: replay must still find the four
+        # original entry receipts even though the durable ledger also has exits.
+        exit_receipts = before_restart.record_exit_basket(
+            trade_id=trade.id,
+            fill_id="restart-complete-exit",
+            account_key="restart-complete",
+            legs={
+                "LOW_CE": {"quantity": 25, "fill_price": 101},
+                "HIGH_CE": {"quantity": 25, "fill_price": 89},
+                "HIGH_PE": {"quantity": 25, "fill_price": 81},
+                "LOW_PE": {"quantity": 25, "fill_price": 69},
+            },
+        )
+        assert len(exit_receipts) == 4
+
         # New ledger instance simulates API restart; durable fills remain the
         # only source of truth and the process-local execution engine is gone.
         after_restart = BoxSpreadPaperLedger(factory)
-        recovered = after_restart.list_open_trades(account_key="restart-complete")
-        assert len(recovered) == 1
-        position = recovered[0]
-        assert position["trade_id"] == trade.id
-        assert position["manual_review_required"] is True
-        assert position["automatic_replay"] is False
-        assert all(leg["open_position_quantity"] == 25 for leg in position["legs"])
+        assert after_restart.list_open_trades(account_key="restart-complete") == []
 
         persisted = after_restart.list_fills(
             trade.id, account_key="restart-complete",
         )
-        assert {(fill.role, fill.fill_id, fill.quantity) for fill in persisted} == {
-            ("LOW_CE", "complete-low-ce", 25),
-            ("HIGH_CE", "complete-high-ce", 25),
-            ("HIGH_PE", "complete-high-pe", 25),
-            ("LOW_PE", "complete-low-pe", 25),
+        entry_persisted = [fill for fill in persisted if not fill.fill_id.startswith(("EXIT:", "SETTLE:"))]
+        assert {(fill.role, fill.fill_id, fill.quantity) for fill in entry_persisted} == {
+            ("LOW_CE", routes._ledger_fill_id("restart-complete-entry", "LOW_CE"), 25),
+            ("HIGH_CE", routes._ledger_fill_id("restart-complete-entry", "HIGH_CE"), 25),
+            ("HIGH_PE", routes._ledger_fill_id("restart-complete-entry", "HIGH_PE"), 25),
+            ("LOW_PE", routes._ledger_fill_id("restart-complete-entry", "LOW_PE"), 25),
         }
+        assert len(persisted) == 8
         summary = after_restart.get_trade_summary(
             trade.id, account_key="restart-complete",
         )
-        assert summary["status"] == "FILLED"
-        assert summary["fill_count"] == 4
+        assert summary["status"] == "CLOSED"
+        assert summary["fill_count"] == 8
 
         request = routes.CreatePaperTrade(
             underlying="NIFTY",
@@ -225,25 +236,36 @@ def test_restart_after_completed_four_leg_entry_preserves_receipt_and_blocks_rep
             account_key="restart-complete",
             alert_edge=8,
         )
-        monkeypatch.setattr(routes, "_paper_execution_enabled", True)
+        # A completed receipt must replay even when the Paper entry switch is
+        # OFF. Replaying reads durable ledger rows only; it must not resolve
+        # contracts, read scanner quotes, or invoke the simulator.
+        monkeypatch.setattr(routes, "_paper_execution_enabled", False)
         monkeypatch.setattr(routes, "_ledger", after_restart)
         monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, account_key: request)
+        monkeypatch.setattr(routes, "_load_trade_quantity", lambda trade_id, account_key: 25)
 
         def forbidden(*args, **kwargs):
-            pytest.fail("completed entry must not be simulated again after restart")
+            pytest.fail("completed entry receipt replay must not resolve or simulate again")
 
         monkeypatch.setattr(routes, "_resolve", forbidden)
         monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
 
-        with pytest.raises(routes.HTTPException) as raised:
-            asyncio.run(routes.simulate_entry(
-                trade.id, routes.SimulateEntry(account_key="restart-complete"),
-            ))
-        assert raised.value.status_code == 409
-        assert "durably claimed" in raised.value.detail
+        replay = asyncio.run(routes.simulate_entry(
+            trade.id, routes.SimulateEntry(account_key="restart-complete"),
+        ))
+        assert replay["replayed"] is True
+        assert replay["broker_orders_enabled"] is False
+        assert replay["trade_id"] == trade.id
+        assert replay["idempotency_key"] == "restart-complete-entry"
+        assert replay["status"] == "CLOSED"
+        assert {fill["role"] for fill in replay["fills"]} == {
+            "LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE",
+        }
+        assert all(fill["fill_id"] for fill in replay["fills"])
+        assert all(fill["quantity"] == 25 for fill in replay["fills"])
         assert len(after_restart.list_fills(
             trade.id, account_key="restart-complete",
-        )) == 4
+        )) == 8
         assert after_restart.get_entry_claim(
             trade_id=trade.id, account_key="restart-complete",
         )["status"] == "COMPLETED"
