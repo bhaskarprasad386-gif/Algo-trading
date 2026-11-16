@@ -13,6 +13,7 @@ class ReconciliationStatus(str, Enum):
     MATCHED = "MATCHED"
     INCOMPLETE_SNAPSHOT = "INCOMPLETE_SNAPSHOT"
     MISSING_BROKER_ORDER = "MISSING_BROKER_ORDER"
+    UNRECORDED_BROKER_ORDER = "UNRECORDED_BROKER_ORDER"
     BROKER_ORDER_MISMATCH = "BROKER_ORDER_MISMATCH"
     UNRECORDED_BROKER_TRADE = "UNRECORDED_BROKER_TRADE"
     LOCAL_FILL_MISSING_AT_BROKER = "LOCAL_FILL_MISSING_AT_BROKER"
@@ -145,6 +146,13 @@ def reconcile_snapshot(
             "Broker snapshot contains the same order identity more than once.",
         ))
     broker_by_id = {x.broker_order_id: x for x in snapshot.orders}
+
+    expected_id_set = set(expected_ids)
+    for identity in sorted(set(broker_order_ids) - expected_id_set):
+        issues.append(ReconciliationIssue(
+            ReconciliationStatus.UNRECORDED_BROKER_ORDER, identity,
+            "Broker snapshot contains an order absent from the selected persisted intent scope.",
+        ))
 
     matched = 0
     for expected in expected_orders:
