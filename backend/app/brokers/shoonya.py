@@ -160,7 +160,10 @@ class ShoonyaAdapter:
                 broker_order_id=self._text(row, "norenordno"),
                 quantity=self._integer(row, positive=True, keys=("flqty",)),
                 fill_price=parse_positive_trade_price(row.get("flprc")),
-                occurred_at_ns=parse_trade_timestamp_ns(row.get("fltm")),
+                occurred_at_ns=(
+                    parse_trade_timestamp_ns(row.get("fltm"))
+                    or parse_trade_timestamp_ns(row.get("exch_tm"))
+                ),
             )
             for row in trade_rows
         )
