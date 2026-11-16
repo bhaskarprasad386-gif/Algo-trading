@@ -196,3 +196,18 @@ valid evidence and are not falsely flagged as an imbalance.
 This check consumes only the supplied broker snapshot and persisted expected
 order identities. It does not infer missing executions, submit compensating
 orders, change local fill rows, or authorize execution resume.
+
+
+## Multi-intent reconciliation identity scope
+
+A reconciliation request may include several execution intents from the same
+broker account and history window. Spread leg labels such as cb, cs, pb and ps
+are local to one intent, not globally unique across the account. The service
+therefore qualifies each expected leg identity with its parent intent ID
+before passing the combined order set to the pure reconciliation contract.
+This preserves duplicate-leg detection within an intent while allowing
+multiple independent spreads to be reconciled together.
+
+A regression fixture covers two intents that reuse the same four leg labels.
+The check remains read-only and account-scoped; it does not merge intent state
+or infer that fills in one intent satisfy another intent's legs.
