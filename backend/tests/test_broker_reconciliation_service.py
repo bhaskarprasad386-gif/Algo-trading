@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
+from app.brokers.history import BrokerHistoryUnavailable, BrokerHistoryWindow
 from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
@@ -17,6 +18,7 @@ from app.execution.persistence import create_intent, record_broker_order, record
 from app.execution.reconciliation_service import (
     ReconciliationIdentityConflict,
     reconcile_persisted_account_snapshot,
+    reconcile_persisted_history_window,
 )
 from app.models.broker_reconciliation import BrokerReconciliationRecord
 
