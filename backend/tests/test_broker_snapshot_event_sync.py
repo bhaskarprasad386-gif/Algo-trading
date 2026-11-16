@@ -181,3 +181,33 @@ def test_snapshot_batch_rolls_back_all_events_if_any_persist_fails(db, monkeypat
     with pytest.raises(RuntimeError, match="simulated persistence failure"):
         sync.sync_account_order_status_events(db, adapter=adapter, account_id="acct-1")
     assert db.scalar(select(BrokerOrderEventRecord)) is None
+
+
+from app.execution.broker_reconciliation import (
+    BrokerTradeSnapshot,
+    parse_positive_trade_price,
+    parse_trade_timestamp_ns,
+)
+
+
+@pytest.mark.parametrize("value", ["", None, "01-01-1980 00:00:00", "not-a-time"])
+def test_untrusted_or_placeholder_trade_timestamp_is_not_fabricated(value):
+    assert parse_trade_timestamp_ns(value, trading_date="2026-11-16") is None
+
+
+def test_time_only_trade_timestamp_is_anchored_to_explicit_ist_trading_date():
+    timestamp = parse_trade_timestamp_ns("10:31:00", trading_date="2026-11-16")
+    assert timestamp is not None and timestamp > 0
+
+
+@pytest.mark.parametrize("price", [None, "", "bad", 0, -1, float("nan"), float("inf")])
+def test_invalid_provider_fill_price_is_rejected(price):
+    with pytest.raises(ValueError):
+        parse_positive_trade_price(price)
+
+
+def test_normalized_trade_snapshot_rejects_invalid_optional_execution_evidence():
+    with pytest.raises(ValueError, match="fill price"):
+        BrokerTradeSnapshot("trade-1", "order-1", 10, fill_price=0)
+    with pytest.raises(ValueError, match="timestamp"):
+        BrokerTradeSnapshot("trade-1", "order-1", 10, fill_price=100, occurred_at_ns=0)
