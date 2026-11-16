@@ -968,6 +968,7 @@ async def _completed_entry_receipt_replay(
 
 
 async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
+    claim = None
     try:
         request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
         replay = await _completed_entry_receipt_replay(
@@ -1140,6 +1141,13 @@ async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
     except HTTPException:
         raise
     except Exception as exc:
+        if claim is not None and claim.get("created"):
+            await asyncio.to_thread(
+                _ledger.record_manual_review_required,
+                trade_id=trade_id, account_key=payload.account_key,
+                reason="Entry failed after durable claim; inspect recovery before any operator action",
+                failure_type=type(exc).__name__,
+            )
         _error(exc)
 
 
