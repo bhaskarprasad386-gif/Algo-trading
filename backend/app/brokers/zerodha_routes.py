@@ -106,6 +106,8 @@ def zerodha_verify(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Exchange one-time Kite request token, verify identity, and bind one owner account."""
+    # Re-authentication must disarm any prior process-local safety state first.
+    trading_safety.disable(user_id)
     client: ZerodhaRESTClient | None = None
     adapter: ZerodhaAdapter | None = None
     try:
@@ -127,9 +129,9 @@ def zerodha_verify(
         claim_authenticated_account(db, "zerodha", authenticated.account_id)
         set_owner_connection_state(db, True)
 
-        previous = broker_sessions.replace(user_id, "zerodha", adapter)
-        if previous is not None:
-            previous.disconnect()
+        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "zerodha", adapter)
+        if logout_error is not None:
+            app_logger.error("Previous zerodha provider logout failed during reconnect: %s", type(logout_error).__name__)
         item = broker_connections.connect(user_id, "zerodha", payload.display_name)
         trading_safety.disable(user_id)
         return {
