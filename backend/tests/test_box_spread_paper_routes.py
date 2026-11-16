@@ -917,8 +917,11 @@ def test_all_paper_ledger_routes_have_auth_dependency():
             if method in {"GET", "POST"} and path != "/auth/login":
                 actual.add((method, path))
                 dependencies = list(route.dependencies) + list(getattr(route.dependant, "dependencies", []))
-                assert any(dependency.call is routes.require_paper_access or dependency.dependency is routes.require_paper_access
-                           for dependency in dependencies), path
+                assert any(
+                    getattr(dependency, "call", None) is routes.require_paper_access
+                    or getattr(dependency, "dependency", None) is routes.require_paper_access
+                    for dependency in dependencies
+                ), path
     assert protected <= actual
 
 
