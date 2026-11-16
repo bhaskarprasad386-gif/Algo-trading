@@ -99,7 +99,7 @@ def test_angel_one_provider_keeps_account_scope_fail_closed():
         _provider(fake).fetch_order_trade_snapshot(
             account_id="acct-2", window_start=start, window_end=end,
         )
-    assert fake.calls == ["orderBook", "tradeBook"]
+    assert fake.calls == []
 
 
 def test_angel_one_provider_never_calls_order_mutation_endpoints():
