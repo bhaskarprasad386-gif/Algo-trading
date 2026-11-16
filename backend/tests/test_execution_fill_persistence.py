@@ -42,7 +42,7 @@ def db(request):
             admin_engine.dispose()
 
 
-def create_working_intent(db, *, working=True):
+def create_working_intent(db, *, working=True, register_orders=True):
     intent = ExecutionIntent("intent-1", "acct-1", "key-1", "corr-1", ExecutionMode.PAPER, created_at_ns=100)
     legs = tuple(
         ExecutionLeg(leg_id, symbol, side, 50, limit_price=price)
@@ -66,18 +66,19 @@ def create_working_intent(db, *, working=True):
             target=target,
         )
         state = target
-    for leg_id, symbol, side in (
-        ("cb", "NFO:CE", "BUY"),
-        ("cs", "NFO:CE-HIGH", "SELL"),
-        ("pb", "NFO:PE", "BUY"),
-        ("ps", "NFO:PE-HIGH", "SELL"),
-    ):
-        record_broker_order(
-            db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
-            broker="angel_one", broker_order_id=f"order-{leg_id}",
-            symbol=symbol, side=side, quantity=50, accepted_at_ns=2000,
-            client_order_id=f"client-{leg_id}",
-        )
+    if register_orders:
+        for leg_id, symbol, side in (
+            ("cb", "NFO:CE", "BUY"),
+            ("cs", "NFO:CE-HIGH", "SELL"),
+            ("pb", "NFO:PE", "BUY"),
+            ("ps", "NFO:PE-HIGH", "SELL"),
+        ):
+            record_broker_order(
+                db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
+                broker="angel_one", broker_order_id=f"order-{leg_id}",
+                symbol=symbol, side=side, quantity=50, accepted_at_ns=2000,
+                client_order_id=f"client-{leg_id}",
+            )
     return saved
 
 
@@ -258,3 +259,19 @@ def test_second_distinct_broker_order_for_same_leg_is_rejected_until_cancel_repl
             symbol="NFO:CE", side="BUY", quantity=50, accepted_at_ns=3000,
         )
     assert db.query(ExecutionBrokerOrderRecord).count() == 4
+
+
+
+@pytest.mark.parametrize("order_quantity", [49, 51])
+def test_broker_order_quantity_must_exactly_match_execution_leg(db, order_quantity):
+    create_working_intent(db, register_orders=False)
+
+    with pytest.raises(ValueError, match="does not exactly match"):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_order_id=f"wrong-quantity-{order_quantity}",
+            symbol="NFO:CE", side="BUY", quantity=order_quantity,
+            accepted_at_ns=3000,
+        )
+
+    assert db.query(ExecutionBrokerOrderRecord).count() == 0
