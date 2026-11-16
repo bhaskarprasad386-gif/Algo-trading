@@ -38,6 +38,7 @@ def test_startup_create_all_adds_paper_tables_without_touching_existing_rows(tmp
                 "box_spread_paper_accounts",
                 "box_spread_paper_trades",
                 "box_spread_paper_entry_claims",
+                "box_spread_paper_audit_events",
                 "box_spread_paper_ledger_entries",
             }.issubset(tables)
 
