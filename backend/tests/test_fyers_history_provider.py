@@ -17,7 +17,9 @@ class FakeFyersReports:
         self.order_pages = order_pages or {1: [{"id_fyers": "FO-1", "symbol": "NSE:NIFTY26NOV25000CE",
                                                 "transaction_type": "BUY", "qty": 50, "tradedQty": 25}]}
         self.trade_pages = trade_pages or {1: [{"tradeNumber": "FT-1", "orderNumber": "FO-1",
-                                                 "side": 1, "traded_qty": 25}]}
+                                                 "side": 1, "traded_qty": 25,
+                                                 "trade_price": 101.25,
+                                                 "orderDateTime": "16-Nov-2026 10:31:00"}]}
         self.calls = []
 
     def get_profile(self):
