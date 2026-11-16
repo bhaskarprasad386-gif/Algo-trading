@@ -145,3 +145,20 @@ def test_review_does_not_mutate_fill_or_intent_state(db):
     after = (intent.status, intent.version, [leg.filled_quantity for leg, _ in legs])
     assert after == before
     assert db.query(ExecutionFillRecord).count() == 0
+
+
+def test_replay_eligibility_audit_record_is_append_only_evidence_metadata(db):
+    from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAuditRecord
+
+    audit = BrokerReplayEligibilityAuditRecord(
+        review_id="review-1", broker="fyers", account_id="acct-1",
+        event_ids_json='["evt-a","evt-b"]', evidence_digest="d" * 64,
+        result_status="ELIGIBLE_FOR_SEPARATE_OPERATOR_REVIEW",
+        eligible=True, reviewed_at_ns=1_000, valid_until_ns=61_000,
+    )
+    db.add(audit)
+    db.flush()
+    stored = db.query(BrokerReplayEligibilityAuditRecord).filter_by(review_id="review-1").one()
+    assert stored.evidence_digest == "d" * 64
+    assert stored.valid_until_ns - stored.reviewed_at_ns == 60_000
+    assert stored.eligible is True
