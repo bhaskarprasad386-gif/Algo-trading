@@ -236,3 +236,36 @@ def test_broker_status_reports_durable_owner_flags_and_defaults_closed(db):
     assert result["kill_switch"] is True
     trading_safety.disable(999)
 
+
+
+def test_single_owner_rejects_same_client_identity_under_a_different_broker(db):
+    original = claim_authenticated_account(db, "angel_one", "CLIENT123")
+
+    # The Box Spread owner is intentionally bound to one account total, not
+    # one account per broker. A matching broker-side ID under another broker
+    # is a different identity and must not replace the existing binding.
+    with pytest.raises(HTTPException) as raised:
+        claim_authenticated_account(db, "zerodha", "CLIENT123")
+
+    assert raised.value.status_code == 409
+    db.expire_all()
+    persisted = db.query(BoxSpreadRealOwnerState).one()
+    assert persisted.id == original.id
+    assert persisted.broker_name == "angel_one"
+    assert persisted.account_fingerprint == account_fingerprint("angel_one", "CLIENT123")
+    assert persisted.real_trading_enabled is False
+    assert persisted.kill_switch is True
+
+
+def test_single_owner_rejects_cross_broker_switch_even_when_account_ids_differ(db):
+    original = claim_authenticated_account(db, "fyers", "FY12345")
+
+    with pytest.raises(HTTPException) as raised:
+        claim_authenticated_account(db, "shoonya", "SHOONYA123")
+
+    assert raised.value.status_code == 409
+    db.expire_all()
+    persisted = db.query(BoxSpreadRealOwnerState).one()
+    assert persisted.id == original.id
+    assert persisted.broker_name == "fyers"
+    assert persisted.account_fingerprint == account_fingerprint("fyers", "FY12345")
