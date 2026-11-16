@@ -259,6 +259,28 @@ class BoxSpreadPaperLedger:
                 details={"failure_type": failure_type} if failure_type else None,
             )
 
+    def record_entry_validation_failure(
+        self, *, trade_id: int, reason: str, actor: str = "system",
+        account_key: str = "default", details: dict[str, object] | None = None,
+    ) -> None:
+        """Persist a pre-claim validation failure without changing trade/claim state."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session, session.begin():
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is not None:
+                raise ValueError("validation failure must be recorded before an entry claim exists")
+            self._append_audit_event(
+                session, account_key=key, trade_id=trade_id,
+                event_type="ENTRY_VALIDATION_FAILED", from_state=trade.status,
+                to_state=trade.status, actor=actor, reason=reason, details=details,
+            )
+
     def record_manual_review_decision(
         self, *, trade_id: int, decision: str, actor: str, reason: str,
         account_key: str = "default",
