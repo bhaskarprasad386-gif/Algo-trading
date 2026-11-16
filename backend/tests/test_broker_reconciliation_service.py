@@ -30,7 +30,7 @@ def db():
         engine.dispose()
 
 
-def _persist_order(db, *, account_id="acct-1"):
+def _persist_order(db, *, account_id="acct-1", all_legs=True):
     intent = ExecutionIntent(
         "intent-reconcile", account_id, "key-reconcile", "corr-reconcile",
         ExecutionMode.PAPER, created_at_ns=100,
@@ -52,21 +52,32 @@ def _persist_order(db, *, account_id="acct-1"):
             expected_version=version, target=target,
         )
         version = saved.version
-    record_broker_order(
-        db, account_id=account_id, intent_id="intent-reconcile", leg_id="cb",
-        broker="fyers", broker_order_id="order-1", symbol="NFO:CE",
-        side="BUY", quantity=50, accepted_at_ns=200,
-    )
+
+    order_legs = legs if all_legs else legs[:1]
+    for index, leg in enumerate(order_legs, start=1):
+        record_broker_order(
+            db, account_id=account_id, intent_id="intent-reconcile",
+            leg_id=leg.leg_id, broker="fyers",
+            broker_order_id=f"order-{index}", symbol=leg.symbol,
+            side=leg.side.value, quantity=leg.quantity,
+            accepted_at_ns=200 + index,
+        )
 
 
 def _snapshot(*, account_id="acct-1", filled=0, complete=True, symbol="NFO:CE"):
+    rows = (
+        ("order-1", symbol, "BUY"),
+        ("order-2", "NFO:CE-HIGH", "SELL"),
+        ("order-3", "NFO:PE", "BUY"),
+        ("order-4", "NFO:PE-HIGH", "SELL"),
+    )
     return BrokerSnapshot(
         account_id=account_id,
         broker="FYERS",
-        orders=(BrokerOrderSnapshot(
-            broker_order_id="order-1", symbol=symbol, side="BUY",
-            quantity=50, filled_quantity=filled,
-        ),),
+        orders=tuple(BrokerOrderSnapshot(
+            broker_order_id=order_id, symbol=order_symbol, side=side,
+            quantity=50, filled_quantity=filled if index == 0 else 0,
+        ) for index, (order_id, order_symbol, side) in enumerate(rows)),
         trades=(),
         complete=complete,
     )
@@ -152,11 +163,7 @@ def test_unrecorded_broker_order_is_durably_blocked(db):
     snapshot = BrokerSnapshot(
         account_id="acct-1",
         broker="fyers",
-        orders=(
-            BrokerOrderSnapshot(
-                broker_order_id="order-1", symbol="NFO:CE", side="BUY",
-                quantity=50, filled_quantity=0,
-            ),
+        orders=_snapshot().orders + (
             BrokerOrderSnapshot(
                 broker_order_id="unexpected-order", symbol="NFO:OTHER", side="SELL",
                 quantity=25, filled_quantity=0,
@@ -177,7 +184,7 @@ def test_unrecorded_broker_order_is_durably_blocked(db):
 
 
 def test_missing_broker_order_identity_on_any_persisted_leg_blocks_reconciliation(db):
-    _persist_order(db)
+    _persist_order(db, all_legs=False)
     result = reconcile_persisted_account_snapshot(
         db, snapshot=_snapshot(), reconciliation_id="run-missing-leg-order",
         intent_ids=("intent-reconcile",),
