@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: integration-tests
+  # Keep each PR's integration gate independent; unrelated PRs must not cancel one another.
+  group: integration-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
