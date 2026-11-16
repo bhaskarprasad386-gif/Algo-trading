@@ -52,4 +52,5 @@ class ZerodhaHistoryProvider:
             window_end=window_end,
             daily_history=daily,
             provider_window="CURRENT_TRADING_DAY",
+            expected_trading_date=local_start.date().isoformat(),
         )
