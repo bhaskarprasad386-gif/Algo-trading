@@ -281,3 +281,12 @@ def test_order_expiry_is_a_supported_immutable_broker_event_status():
         cumulative_filled_quantity=0,
     )
     assert event.status is BrokerOrderEventStatus.EXPIRED
+
+
+def test_fyers_filled_code_without_cumulative_quantity_remains_unknown():
+    event = sync.snapshot_order_to_event(
+        broker="fyers", account_id="acct-1",
+        order=_order(raw_status="2", filled_quantity=0),
+    )
+    assert event.status is BrokerOrderEventStatus.UNKNOWN
+    assert event.cumulative_filled_quantity == 0
