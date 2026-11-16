@@ -29,7 +29,21 @@ class ReconciliationIdentityConflict(ValueError):
 
 
 def _transaction(db: Session):
-    return db.begin_nested() if db.in_transaction() else db.begin()
+    """Preserve caller transactions and force a physical BEGIN on SQLite."""
+    if db.in_transaction():
+        if db.get_bind().dialect.name == "sqlite":
+            connection = db.connection()
+            raw_connection = connection.connection.driver_connection
+            if not raw_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN")
+        return db.begin_nested()
+    transaction = db.begin()
+    if db.get_bind().dialect.name == "sqlite":
+        connection = db.connection()
+        raw_connection = connection.connection.driver_connection
+        if not raw_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
+    return transaction
 
 
 def _report_payload(report: ReconciliationReport) -> dict:
