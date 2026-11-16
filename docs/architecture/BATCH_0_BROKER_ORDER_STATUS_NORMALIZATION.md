@@ -145,3 +145,21 @@ callbacks, write fill rows, mutate intent/leg state, poll a broker, submit,
 cancel, modify, retry, adopt, or resume orders. The response always includes
 `replay_performed=false`, `fill_ledger_mutated=false`,
 `intent_state_mutated=false`, and `trading_authorized=false`.
+
+
+## Replay eligibility audit receipts and expiry
+
+Each owner-authenticated eligibility review now writes an append-only audit
+receipt scoped to the currently bound broker/account. The receipt records the
+explicit event-ID set, a SHA-256 digest of the reviewed evidence/result, the
+result status, and review timestamps; callback payloads and credentials are
+not copied into the audit row.
+
+A review receipt is current for 60 seconds only. The account-scoped
+`GET /api/v1/brokers/events/replay-eligibility/audit/{review_id}` endpoint
+reports `CURRENT` or `EXPIRED`. Expiry never grants or implies approval.
+There is deliberately no approval, replay, or execution endpoint in this
+batch: `approval_granted=false`, `replay_authorized=false`, and
+`trading_authorized=false` remain explicit. A future operator workflow must
+perform a fresh eligibility review and independently revalidate evidence;
+this receipt is an audit record, not a reusable authorization token.
