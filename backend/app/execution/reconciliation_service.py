@@ -147,17 +147,11 @@ def reconcile_persisted_account_snapshot(
                 ReconciliationStatus.ORDER_STATUS_CONFLICT
                 if item.status_conflict
                 else ReconciliationStatus.ORDER_STATUS_REQUIRES_RECONCILIATION,
-                next(
-                    order.broker_order_id
-                    for order in snapshot.orders
-                    if order.quantity == item.quantity
-                    and order.filled_quantity == item.filled_quantity
-                    and (order.raw_status or "") == item.raw_status
-                ),
+                order.broker_order_id,
                 f"Provider status {item.raw_status!r} normalized as {item.state.value}; "
                 f"filled={item.filled_quantity}, remaining={item.remaining_quantity}.",
             )
-            for item in status_evidence
+            for order, item in zip(snapshot.orders, status_evidence)
             if item.requires_reconciliation
         )
         if status_issues:
