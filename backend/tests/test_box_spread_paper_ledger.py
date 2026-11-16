@@ -280,6 +280,7 @@ def test_prevents_overspending_and_invalid_fill_values():
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(
@@ -854,6 +855,7 @@ def test_exit_is_never_blocked_by_low_virtual_balance():
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory, starting_balance=100)
@@ -1116,6 +1118,7 @@ def test_concurrent_duplicate_four_leg_basket_exit_is_idempotent(tmp_path):
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
@@ -1176,6 +1179,7 @@ def test_concurrent_distinct_exit_baskets_cannot_overclose_position(tmp_path):
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
@@ -1243,6 +1247,7 @@ def test_concurrent_distinct_partial_exit_baskets_close_only_available_lots(tmp_
         BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__,
         BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     ledger = BoxSpreadPaperLedger(factory)
