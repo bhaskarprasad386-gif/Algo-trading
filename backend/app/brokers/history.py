@@ -91,7 +91,11 @@ def validated_daily_history_window(
     or cross-account/cross-broker snapshot must never be relabelled as complete
     history merely because the adapter call returned successfully.
     """
-    snapshot = getattr(daily_history, "snapshot", None)
+    snapshot = (
+        daily_history
+        if isinstance(daily_history, BrokerSnapshot)
+        else getattr(daily_history, "snapshot", None)
+    )
     if not isinstance(snapshot, BrokerSnapshot):
         raise BrokerHistoryUnavailable(
             f"{provider_name} history adapter returned no BrokerSnapshot"
