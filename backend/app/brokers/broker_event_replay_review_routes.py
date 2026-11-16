@@ -5,6 +5,11 @@ replays callbacks, applies fills, or changes execution state.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import time
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -18,6 +23,7 @@ from app.execution.broker_event_replay_review import (
     review_operator_replay_eligibility,
 )
 from app.models import BoxSpreadRealOwnerState
+from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAuditRecord
 
 router = APIRouter(tags=["brokers"])
 
@@ -63,11 +69,40 @@ def review_requested_replay_eligibility(
             "trading_authorized": False,
         }
     try:
-        return review_operator_replay_eligibility(
+        result = review_operator_replay_eligibility(
             db, broker=broker, account_id=account_id,
             event_ids=tuple(payload.event_ids),
             confirmation=payload.confirmation,
         )
+        reviewed_at_ns = time.time_ns()
+        valid_until_ns = reviewed_at_ns + 60 * 1_000_000_000
+        canonical_events = json.dumps(sorted(payload.event_ids), separators=(",", ":"))
+        digest_material = json.dumps({
+            "broker": broker, "account_id": account_id,
+            "event_ids": sorted(payload.event_ids),
+            "result": result,
+        }, sort_keys=True, separators=(",", ":"), default=str)
+        review_id = uuid.uuid4().hex
+        audit = BrokerReplayEligibilityAuditRecord(
+            review_id=review_id, broker=broker, account_id=account_id,
+            event_ids_json=canonical_events,
+            evidence_digest=hashlib.sha256(digest_material.encode("utf-8")).hexdigest(),
+            result_status=str(result.get("status", "BLOCKED")),
+            eligible=bool(result.get("eligible", False)),
+            reviewed_at_ns=reviewed_at_ns, valid_until_ns=valid_until_ns,
+        )
+        db.add(audit)
+        db.commit()
+        result["review_audit"] = {
+            "review_id": review_id,
+            "evidence_digest": audit.evidence_digest,
+            "reviewed_at_ns": reviewed_at_ns,
+            "valid_until_ns": valid_until_ns,
+            "validity_seconds": 60,
+            "approval_granted": False,
+            "replay_authorized": False,
+        }
+        return result
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail="Replay eligibility review request is invalid") from exc
