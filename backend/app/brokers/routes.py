@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.brokers.angel_one import AngelOneAdapter
+from app.brokers.shoonya_routes import router as shoonya_router
 from app.brokers.fyers_routes import router as fyers_router
 from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
@@ -20,6 +21,7 @@ from app.core.logger import app_logger
 from app.models import BoxSpreadRealOwnerState
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
+router.include_router(shoonya_router)
 router.include_router(fyers_router)
 
 
