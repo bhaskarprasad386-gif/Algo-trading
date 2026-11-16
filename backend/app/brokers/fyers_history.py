@@ -87,6 +87,7 @@ class FyersHistoryProvider:
         return BrokerOrderSnapshot(
             broker_order_id=order_id, symbol=symbol, side=side,
             quantity=quantity, filled_quantity=filled,
+            raw_status=str(row.get("status") or ""),
         )
 
     @staticmethod

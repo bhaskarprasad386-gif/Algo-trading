@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.brokers.order_status import normalize_order_status
 from app.execution.broker_reconciliation import (
     BrokerSnapshot,
     ExpectedOrder,
@@ -129,6 +130,38 @@ def reconcile_persisted_account_snapshot(
             local_fill_quantities=local_fills,
             snapshot=snapshot,
         )
+        # Preserve and classify provider status evidence alongside immutable
+        # order/trade identities. Unknown/conflicting statuses become explicit
+        # reconciliation issues; this never authorizes a retry or order action.
+        status_evidence = tuple(
+            normalize_order_status(
+                broker=broker,
+                raw_status=order.raw_status,
+                quantity=order.quantity,
+                filled_quantity=order.filled_quantity,
+            )
+            for order in snapshot.orders
+        )
+        status_issues = tuple(
+            ReconciliationIssue(
+                ReconciliationStatus.ORDER_STATUS_CONFLICT
+                if item.status_conflict
+                else ReconciliationStatus.ORDER_STATUS_REQUIRES_RECONCILIATION,
+                order.broker_order_id,
+                f"Provider status {item.raw_status!r} normalized as {item.state.value}; "
+                f"filled={item.filled_quantity}, remaining={item.remaining_quantity}.",
+            )
+            for order, item in zip(snapshot.orders, status_evidence)
+            if item.requires_reconciliation
+        )
+        if status_issues:
+            report = ReconciliationReport(
+                account_id=report.account_id,
+                broker=report.broker,
+                snapshot_complete=report.snapshot_complete,
+                matched_order_count=report.matched_order_count,
+                issues=report.issues + status_issues,
+            )
         if missing_order_legs:
             report = ReconciliationReport(
                 account_id=report.account_id,
@@ -149,6 +182,19 @@ def reconcile_persisted_account_snapshot(
         payload = {
             "report": _report_payload(report),
             "intent_ids": list(intent_ids),
+            "order_status_evidence": [
+                {
+                    "raw_status": item.raw_status,
+                    "normalized_state": item.state.value,
+                    "quantity": item.quantity,
+                    "filled_quantity": item.filled_quantity,
+                    "remaining_quantity": item.remaining_quantity,
+                    "terminal": item.terminal,
+                    "requires_reconciliation": item.requires_reconciliation,
+                    "status_conflict": item.status_conflict,
+                }
+                for item in status_evidence
+            ],
             "source_snapshot": {
                 "account_id": snapshot.account_id,
                 "broker": snapshot.broker.strip().lower(),
@@ -160,6 +206,7 @@ def reconcile_persisted_account_snapshot(
                         "side": row.side,
                         "quantity": row.quantity,
                         "filled_quantity": row.filled_quantity,
+                        "raw_status": row.raw_status,
                     }
                     for row in snapshot.orders
                 ],

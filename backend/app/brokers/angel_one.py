@@ -166,6 +166,7 @@ class AngelOneAdapter:
                 filled_quantity=self._nonnegative_int(
                     row, "filledshares", "filled_quantity"
                 ),
+                raw_status=str(row.get("status") or row.get("orderstatus") or ""),
             )
             for row in order_rows
         )

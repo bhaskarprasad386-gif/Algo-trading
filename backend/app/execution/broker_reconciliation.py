@@ -24,6 +24,8 @@ class ReconciliationStatus(str, Enum):
     DUPLICATE_BROKER_TRADE_ID = "DUPLICATE_BROKER_TRADE_ID"
     TRADE_ORDER_MISSING = "TRADE_ORDER_MISSING"
     ORDER_TRADE_FILL_TOTAL_MISMATCH = "ORDER_TRADE_FILL_TOTAL_MISMATCH"
+    ORDER_STATUS_REQUIRES_RECONCILIATION = "ORDER_STATUS_REQUIRES_RECONCILIATION"
+    ORDER_STATUS_CONFLICT = "ORDER_STATUS_CONFLICT"
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,7 @@ class BrokerOrderSnapshot:
     side: str
     quantity: int
     filled_quantity: int
+    raw_status: str | None = None
 
     def __post_init__(self) -> None:
         if not self.broker_order_id.strip() or not self.symbol.strip():

@@ -259,6 +259,7 @@ class MStockAdapter:
                 filled_quantity=self._integer(
                     row, positive=False, keys=("filled_quantity",)
                 ),
+                raw_status=str(row.get("status") or row.get("order_status") or ""),
             )
             for row in order_rows
         )
