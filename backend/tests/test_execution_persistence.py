@@ -144,14 +144,15 @@ def test_broker_order_identity_is_durable_and_idempotent(db):
         db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
         broker="angel_one", broker_order_id="broker-ord-1",
         symbol="NFO:CE", side="BUY", quantity=50,
-        broker_status="OPEN", accepted_at_ns=500,
+        accepted_at_ns=500,
     )
     assert first == {"created": True, "broker_order_id": "broker-ord-1"}
     assert replay == {"created": False, "broker_order_id": "broker-ord-1"}
     from app.models.execution_intent import ExecutionBrokerOrderRecord
     saved = db.scalar(select(ExecutionBrokerOrderRecord))
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
     assert (saved.account_id, saved.broker, saved.leg_record_id, saved.quantity) == (
-        "acct-1", "angel_one", saved.leg_record_id, 50,
+        "acct-1", "angel_one", leg.id, 50,
     )
 
 
@@ -161,7 +162,7 @@ def test_broker_order_id_reuse_with_different_payload_is_rejected(db):
         account_id="acct-1", intent_id="intent-1", leg_id="cb",
         broker="angel_one", broker_order_id="broker-ord-1",
         symbol="NFO:CE", side="BUY", quantity=50,
-        broker_status="OPEN", accepted_at_ns=500,
+        accepted_at_ns=500,
     )
     record_broker_order(db, **args)
     with pytest.raises(IdempotencyConflict, match="broker order ID"):
@@ -175,14 +176,14 @@ def test_broker_order_identity_is_account_scoped_and_leg_validated(db):
             db, account_id="acct-2", intent_id="intent-1", leg_id="cb",
             broker="angel_one", broker_order_id="broker-ord-1",
             symbol="NFO:CE", side="BUY", quantity=50,
-            broker_status="OPEN", accepted_at_ns=500,
+            accepted_at_ns=500,
         )
     with pytest.raises(ValueError, match="execution leg"):
         record_broker_order(
             db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
             broker="angel_one", broker_order_id="broker-ord-2",
             symbol="NFO:CE", side="SELL", quantity=50,
-            broker_status="OPEN", accepted_at_ns=500,
+            accepted_at_ns=500,
         )
 
 
@@ -193,7 +194,7 @@ def test_broker_order_identity_does_not_advance_intent_state(db):
         db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
         broker="angel_one", broker_order_id="broker-ord-1",
         symbol="NFO:CE", side="BUY", quantity=50,
-        broker_status="OPEN", accepted_at_ns=500,
+        accepted_at_ns=500,
     )
     after = get_intent(db, account_id="acct-1", intent_id="intent-1")
     assert after.intent.status == before.intent.status == IntentStatus.SUBMITTING
