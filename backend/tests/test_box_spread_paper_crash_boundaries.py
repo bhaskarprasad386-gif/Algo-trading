@@ -23,6 +23,7 @@ def durable_ledger():
     Base.metadata.create_all(bind=engine, tables=[
         BoxSpreadPaperAccount.__table__, BoxSpreadPaperTradeRecord.__table__,
         BoxSpreadPaperLedgerEntry.__table__, BoxSpreadPaperEntryClaim.__table__,
+        BoxSpreadPaperAuditEvent.__table__,
     ])
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     try:
