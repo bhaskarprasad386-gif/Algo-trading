@@ -128,6 +128,8 @@ def get_replay_eligibility_audit(
     adapter = broker_sessions.get(user_id, broker)
     if adapter is None or not bool(getattr(adapter, "connected", False)):
         raise HTTPException(status_code=409, detail="Bound broker session is not connected")
+    if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
+        raise HTTPException(status_code=409, detail="Bound broker session identity does not match owner binding")
     account_id = str(getattr(adapter, "account_id", "") or "").strip()
     if not account_id:
         raise HTTPException(status_code=409, detail="Bound broker account identity is unavailable")
