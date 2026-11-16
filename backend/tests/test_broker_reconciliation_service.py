@@ -275,28 +275,38 @@ def _snapshot_with_fill(*, fill_price=101.25, occurred_at_ns=123456789):
             symbol=row.symbol,
             side=row.side,
             quantity=row.quantity,
-            filled_quantity=row.filled_quantity,
+            filled_quantity=25,
             raw_status="OPEN",
         )
-        for index, row in enumerate(base.orders)
+        for row in base.orders
     )
     return BrokerSnapshot(
         account_id=base.account_id,
         broker=base.broker,
         orders=orders,
-        trades=(BrokerTradeSnapshot(
-            "trade-1", "order-1", 25, fill_price, occurred_at_ns,
-        ),),
+        trades=(
+            BrokerTradeSnapshot("trade-1", "order-1", 25, fill_price, occurred_at_ns),
+            BrokerTradeSnapshot("trade-2", "order-2", 25, 81.25, 123456790),
+            BrokerTradeSnapshot("trade-3", "order-3", 25, 91.25, 123456791),
+            BrokerTradeSnapshot("trade-4", "order-4", 25, 71.25, 123456792),
+        ),
         complete=True,
     )
 
 
 def _persist_one_fill(db, *, price="101.25", occurred_at_ns=123456789):
-    record_fill(
-        db, account_id="acct-1", intent_id="intent-reconcile", leg_id="cb",
-        broker="fyers", broker_fill_id="trade-1", broker_order_id="order-1",
-        quantity=25, fill_price=price, occurred_at_ns=occurred_at_ns,
+    fills = (
+        ("cb", "trade-1", "order-1", price, occurred_at_ns),
+        ("cs", "trade-2", "order-2", "81.25", 123456790),
+        ("pb", "trade-3", "order-3", "91.25", 123456791),
+        ("ps", "trade-4", "order-4", "71.25", 123456792),
     )
+    for leg_id, trade_id, order_id, fill_price, timestamp in fills:
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-reconcile", leg_id=leg_id,
+            broker="fyers", broker_fill_id=trade_id, broker_order_id=order_id,
+            quantity=25, fill_price=fill_price, occurred_at_ns=timestamp,
+        )
 
 
 def test_reconciliation_compares_persisted_fill_price_and_timestamp(db):
