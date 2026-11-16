@@ -123,7 +123,7 @@ def review_deferred_broker_events(
         if item["reason"] == "CUMULATIVE_FILL_GAP"
     )
     return {
-        "status": "REQUIRES_REVIEW" if unresolved else ("INCOMPLETE" if truncated else "CLEAR"),
+        "status": "INCOMPLETE" if truncated else ("REQUIRES_REVIEW" if unresolved else "CLEAR"),
         "broker": broker_key,
         "account_id": account_key,
         "event_count": len(events),
