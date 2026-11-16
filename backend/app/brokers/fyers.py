@@ -159,7 +159,6 @@ class FyersAdapter:
                 occurred_at_ns=parse_trade_timestamp_ns(row.get("orderDateTime")),
             )
             for row in trade_rows
-        )            for row in trade_rows
         )
         return FyersDailyHistory(
             trading_date=datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
