@@ -16,9 +16,11 @@ class NormalizedOrderState(str, Enum):
     OPEN = "OPEN"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     PARTIALLY_FILLED_CANCELLED = "PARTIALLY_FILLED_CANCELLED"
+    PARTIALLY_FILLED_EXPIRED = "PARTIALLY_FILLED_EXPIRED"
     FILLED = "FILLED"
     CANCELLED = "CANCELLED"
     REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
     UNKNOWN = "UNKNOWN"
 
 
@@ -36,7 +38,7 @@ class OrderStatusEvidence:
 
 
 # Deliberately conservative textual aliases shared across supported provider
-# responses. Numeric/vendor-specific codes are not guessed; they stay UNKNOWN.
+# responses. Numeric/vendor-specific codes are mapped only in a broker-specific table.
 _STATUS_ALIASES = {
     "OPEN": "OPEN",
     "NEW": "OPEN",
@@ -57,6 +59,19 @@ _STATUS_ALIASES = {
     "CANCELLED BY USER": "CANCELLED",
     "CANCELED BY USER": "CANCELLED",
     "REJECTED": "REJECTED",
+}
+
+
+# FYERS API v3 Order Book status codes (official provider mapping):
+# 1 cancelled, 2 traded/filled, 3 unused, 4 transit, 5 rejected,
+# 6 pending, 7 expired. Do not apply these numeric codes to other brokers.
+_FYERS_STATUS_ALIASES = {
+    "1": "CANCELLED",
+    "2": "FILLED",
+    "4": "OPEN",
+    "5": "REJECTED",
+    "6": "OPEN",
+    "7": "EXPIRED",
 }
 
 
@@ -87,7 +102,11 @@ def normalize_order_status(
 
     raw = "" if raw_status is None else str(raw_status).strip()
     token = " ".join(raw.upper().replace("_", " ").replace("-", " ").split())
-    mapped = _STATUS_ALIASES.get(token, "UNKNOWN")
+    mapped = (
+        _FYERS_STATUS_ALIASES.get(token, "UNKNOWN")
+        if key == "fyers" and token.isdigit()
+        else _STATUS_ALIASES.get(token, "UNKNOWN")
+    )
     remaining = quantity - filled_quantity
     conflict = False
     requires_reconciliation = False
@@ -102,6 +121,10 @@ def normalize_order_status(
             state = NormalizedOrderState.PARTIALLY_FILLED_CANCELLED
             terminal = True
             requires_reconciliation = True
+        elif mapped == "EXPIRED":
+            state = NormalizedOrderState.PARTIALLY_FILLED_EXPIRED
+            terminal = True
+            requires_reconciliation = True
         else:
             state = NormalizedOrderState.PARTIALLY_FILLED
             terminal = mapped == "REJECTED"
@@ -113,6 +136,7 @@ def normalize_order_status(
             NormalizedOrderState.FILLED,
             NormalizedOrderState.CANCELLED,
             NormalizedOrderState.REJECTED,
+            NormalizedOrderState.EXPIRED,
         }
         if state in {
             NormalizedOrderState.FILLED,
