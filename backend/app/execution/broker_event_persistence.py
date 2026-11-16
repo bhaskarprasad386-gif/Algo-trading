@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -134,7 +135,7 @@ def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) ->
             same_fill = (
                 existing_fill.broker_order_id == order_id
                 and existing_fill.quantity == event.fill_quantity
-                and existing_fill.fill_price == event.average_fill_price
+                and Decimal(str(existing_fill.fill_price)) == Decimal(str(event.average_fill_price))
                 and existing_fill.occurred_at_ns == event.occurred_at_ns
             )
             if not same_fill:
@@ -312,7 +313,7 @@ def review_unapplied_broker_fill_events(
         exact = (
             fill.broker_order_id == row.broker_order_id
             and fill.quantity == row.fill_quantity
-            and fill.fill_price == row.average_fill_price
+            and Decimal(str(fill.fill_price)) == Decimal(str(row.average_fill_price))
             and fill.occurred_at_ns == row.occurred_at_ns
         )
         if exact:
