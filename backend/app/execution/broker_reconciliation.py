@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
-from datetime import date, datetime, time as datetime_time
+from datetime import date, datetime
 import math
 from zoneinfo import ZoneInfo
 
@@ -87,7 +87,7 @@ class BrokerTradeSnapshot:
             raise ValueError("trade timestamp must be positive when supplied")
 
 
-def parse_trade_timestamp_ns(value: object, *, trading_date: str) -> int | None:
+def parse_trade_timestamp_ns(value: object, *, trading_date: str | None = None) -> int | None:
     """Parse a provider trade timestamp into IST epoch ns; reject placeholders.
 
     A time-only provider field is anchored to the adapter's current trading date.
@@ -109,7 +109,8 @@ def parse_trade_timestamp_ns(value: object, *, trading_date: str) -> int | None:
         try:
             parsed = datetime.strptime(raw, fmt)
             if fmt == "%H:%M:%S":
-                parsed = datetime.combine(date.fromisoformat(trading_date), parsed.time())
+                day = trading_date or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+                parsed = datetime.combine(date.fromisoformat(day), parsed.time())
             break
         except ValueError:
             continue
@@ -282,3 +283,15 @@ def reconcile_snapshot(
         matched_order_count=matched,
         issues=tuple(issues),
     )
+
+
+
+def parse_positive_trade_price(value: object) -> float:
+    """Parse a provider execution price without accepting missing/zero/NaN values."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("trade fill price is missing or invalid") from None
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ValueError("trade fill price must be finite and positive")
+    return parsed
