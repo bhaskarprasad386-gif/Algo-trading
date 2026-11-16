@@ -97,7 +97,20 @@ def test_owner_login_rate_limits_repeated_failures(monkeypatch):
 def test_broker_management_routes_require_owner_auth():
     from app.brokers import routes
 
-    for route in routes.router.routes:
+    def concrete_routes(router):
+        for route in router.routes:
+            path = getattr(route, "path", None)
+            if path is not None:
+                yield route
+                continue
+            # Recent FastAPI versions keep included routers as wrappers until
+            # route compilation. Inspect their original router without assuming
+            # every entry in APIRouter.routes is an APIRoute.
+            nested = getattr(route, "original_router", None)
+            if nested is not None:
+                yield from concrete_routes(nested)
+
+    for route in concrete_routes(routes.router):
         if route.path.endswith("/owner-auth/login") or route.path.endswith("/web/settings"):
             continue
         assert any(
