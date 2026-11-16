@@ -5,13 +5,13 @@ import hashlib
 import json
 from contextlib import nullcontext
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.execution.broker_events import BrokerOrderEvent
 from app.models.broker_order_event import BrokerOrderEventRecord
-from app.models.execution_intent import ExecutionBrokerOrderRecord, ExecutionIntentRecord, ExecutionLegRecord
+from app.models.execution_intent import ExecutionBrokerOrderRecord, ExecutionFillRecord, ExecutionIntentRecord, ExecutionLegRecord
 from app.execution.persistence import record_fill
 
 
@@ -149,6 +149,17 @@ def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) ->
         leg = db.get(ExecutionLegRecord, order.leg_record_id)
         if leg is None:
             raise LookupError("execution leg for broker order was not found")
+        previously_recorded = db.execute(select(
+            func.coalesce(func.sum(ExecutionFillRecord.quantity), 0)
+        ).where(
+            ExecutionFillRecord.account_id == account_id,
+            ExecutionFillRecord.broker == broker,
+            ExecutionFillRecord.broker_order_id == event.broker_order_id.strip(),
+        )).scalar_one()
+        if previously_recorded + event.fill_quantity != event.cumulative_filled_quantity:
+            raise ValueError(
+                "callback cumulative fill quantity does not match persisted fills plus this fill"
+            )
         fill_result = record_fill(
             db,
             account_id=account_id,
