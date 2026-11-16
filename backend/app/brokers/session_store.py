@@ -60,5 +60,21 @@ class BrokerSessionStore:
             self._sessions.clear()
             return sessions
 
+    def disconnect_all(self) -> list[tuple[str, Exception]]:
+        """Atomically drain sessions and best-effort terminate every provider session.
+
+        The store is cleared before network/provider cleanup starts, so callers
+        cannot retrieve a session while shutdown is in progress. One provider's
+        disconnect failure never prevents the remaining sessions from closing.
+        """
+        failures: list[tuple[str, Exception]] = []
+        for adapter in self.clear():
+            name = str(getattr(adapter, "name", "unknown"))
+            try:
+                adapter.disconnect()
+            except Exception as exc:
+                failures.append((name, exc))
+        return failures
+
 
 broker_sessions = BrokerSessionStore()
