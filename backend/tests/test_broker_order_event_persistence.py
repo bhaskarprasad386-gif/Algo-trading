@@ -178,3 +178,13 @@ def test_fill_status_without_complete_fill_identity_is_rejected(db):
             db, _fill_event(fill_id=None, fill_quantity=None, average_fill_price=None)
         )
     assert db.query(BrokerOrderEventRecord).count() == 0
+
+
+def test_cumulative_quantity_mismatch_rolls_back_callback_and_fill(db):
+    _working_intent_with_broker_order(db)
+    with pytest.raises(ValueError, match="cumulative fill quantity"):
+        record_broker_order_event_with_fill(
+            db, _fill_event(cumulative_filled_quantity=12, fill_quantity=10)
+        )
+    assert db.query(BrokerOrderEventRecord).count() == 0
+    assert db.query(ExecutionFillRecord).count() == 0
