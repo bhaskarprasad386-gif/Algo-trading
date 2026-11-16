@@ -26,6 +26,7 @@ from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
+from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAuditRecord  # noqa: F401 - register immutable operator review audit table
 from app.models.broker_order_event import BrokerOrderEventRecord  # noqa: F401 - register durable broker callback event table
 from app.models.execution_intent import ExecutionIntentRecord, ExecutionLegRecord, ExecutionIntentEventRecord, ExecutionFillRecord, ExecutionBrokerOrderRecord  # noqa: F401 - register durable execution and broker order identity tables
 from app.models.broker_reconciliation import BrokerReconciliationRecord  # noqa: F401 - register durable reconciliation evidence
