@@ -171,3 +171,12 @@ def test_fyers_fully_filled_quantity_conflicts_with_cancelled_code():
     assert evidence.state is NormalizedOrderState.FILLED
     assert evidence.status_conflict is True
     assert evidence.requires_reconciliation is True
+
+
+def test_fyers_expired_status_conflicts_with_fully_filled_quantity():
+    evidence = normalize_order_status(
+        broker="fyers", raw_status=7, quantity=50, filled_quantity=50,
+    )
+    assert evidence.state is NormalizedOrderState.FILLED
+    assert evidence.status_conflict is True
+    assert evidence.requires_reconciliation is True
