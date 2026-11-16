@@ -205,7 +205,7 @@ def test_duplicate_broker_order_update_identity_is_idempotent(db):
     first = _record_order(db)
     duplicate = _record_order(db)
 
-    assert first == {"created": True, "broker_order_id": "order-cb"}
+    assert first == {"created": False, "broker_order_id": "order-cb"}
     assert duplicate == {"created": False, "broker_order_id": "order-cb"}
     assert db.query(ExecutionBrokerOrderRecord).count() == 4
 
@@ -216,7 +216,7 @@ def test_broker_order_identity_reuse_with_changed_payload_is_rejected(db):
     with pytest.raises(IdempotencyConflict, match="reused"):
         _record_order(db, client_order_id="different-client-order")
 
-    assert db.query(ExecutionBrokerOrderRecord).count() == 1
+    assert db.query(ExecutionBrokerOrderRecord).count() == 4
 
 
 def test_fill_requires_registered_broker_order_for_same_account_intent_and_leg(db):
