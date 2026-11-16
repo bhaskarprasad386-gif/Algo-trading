@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.scanner import box_spread_paper_routes as routes
 from app.scanner.box_spread_paper_ledger import (
-    BoxSpreadPaperAccount, BoxSpreadPaperEntryClaim,
+    BoxSpreadPaperAccount, BoxSpreadPaperAuditEvent, BoxSpreadPaperEntryClaim,
     BoxSpreadPaperLedger, BoxSpreadPaperLedgerEntry, BoxSpreadPaperTradeRecord,
 )
 
