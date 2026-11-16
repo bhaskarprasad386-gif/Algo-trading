@@ -148,6 +148,7 @@ class ShoonyaAdapter:
                 filled_quantity=self._integer(
                     row, positive=False, keys=("fillshares",)
                 ),
+                raw_status=str(row.get("status") or row.get("stat") or ""),
             )
             for row in order_rows
         )
