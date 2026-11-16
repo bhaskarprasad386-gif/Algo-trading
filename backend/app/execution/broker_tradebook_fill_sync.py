@@ -96,49 +96,50 @@ def sync_account_tradebook_fills(
             "trading_authorized": False,
         }
 
-    # Load account/broker order mappings once. Trades are never linked by
-    # symbol/side/quantity heuristics; broker-assigned order identity is required.
-    mapped_rows = db.execute(
-        select(ExecutionBrokerOrderRecord, ExecutionIntentRecord, ExecutionLegRecord)
-        .join(ExecutionIntentRecord, ExecutionIntentRecord.id == ExecutionBrokerOrderRecord.intent_record_id)
-        .join(ExecutionLegRecord, ExecutionLegRecord.id == ExecutionBrokerOrderRecord.leg_record_id)
-        .where(
-            ExecutionBrokerOrderRecord.account_id == account,
-            ExecutionBrokerOrderRecord.broker == broker,
-            ExecutionBrokerOrderRecord.broker_order_id.in_(order_by_id),
-        )
-    ).all()
-    mapped = {
-        row[0].broker_order_id: (row[0], row[1], row[2])
-        for row in mapped_rows
-    }
-
-    prepared: list[tuple[Any, Any, Any, Any, Decimal, int]] = []
-    for trade in trades:
-        order_id = str(trade.broker_order_id).strip()
-        registered = mapped.get(order_id)
-        if registered is None:
-            return _blocked("UNREGISTERED_BROKER_ORDER", trade_count=len(trades))
-        broker_order, intent, leg = registered
-        broker_order_snapshot = order_by_id[order_id]
-        if (
-            broker_order.symbol != broker_order_snapshot.symbol
-            or broker_order.side != broker_order_snapshot.side
-            or broker_order.quantity != broker_order_snapshot.quantity
-        ):
-            return _blocked("REGISTERED_BROKER_ORDER_MISMATCH", trade_count=len(trades))
-        if trade.fill_price is None or trade.occurred_at_ns is None:
-            return _blocked("TRADE_EXECUTION_PRICE_OR_TIMESTAMP_MISSING", trade_count=len(trades))
-        try:
-            price = Decimal(str(trade.fill_price))
-        except (InvalidOperation, TypeError, ValueError):
-            return _blocked("TRADE_EXECUTION_PRICE_INVALID", trade_count=len(trades))
-        if not price.is_finite() or price <= 0 or int(trade.quantity) <= 0 or int(trade.occurred_at_ns) <= 0:
-            return _blocked("TRADE_EXECUTION_EVIDENCE_INVALID", trade_count=len(trades))
-        prepared.append((trade, broker_order, intent, leg, price, int(trade.occurred_at_ns)))
-
+    # Keep mapping reads, validation and all fill writes in one transaction.
+    # A preceding SELECT must not leave an uncommitted outer request transaction.
     created = 0
     with _transaction(db):
+        mapped_rows = db.execute(
+            select(ExecutionBrokerOrderRecord, ExecutionIntentRecord, ExecutionLegRecord)
+            .join(ExecutionIntentRecord, ExecutionIntentRecord.id == ExecutionBrokerOrderRecord.intent_record_id)
+            .join(ExecutionLegRecord, ExecutionLegRecord.id == ExecutionBrokerOrderRecord.leg_record_id)
+            .where(
+                ExecutionBrokerOrderRecord.account_id == account,
+                ExecutionBrokerOrderRecord.broker == broker,
+                ExecutionBrokerOrderRecord.broker_order_id.in_(order_by_id),
+            )
+            .with_for_update()
+        ).all()
+        mapped = {
+            row[0].broker_order_id: (row[0], row[1], row[2])
+            for row in mapped_rows
+        }
+
+        prepared: list[tuple[Any, Any, Any, Any, Decimal, int]] = []
+        for trade in trades:
+            order_id = str(trade.broker_order_id).strip()
+            registered = mapped.get(order_id)
+            if registered is None:
+                return _blocked("UNREGISTERED_BROKER_ORDER", trade_count=len(trades))
+            broker_order, intent, leg = registered
+            broker_order_snapshot = order_by_id[order_id]
+            if (
+                broker_order.symbol != broker_order_snapshot.symbol
+                or broker_order.side != broker_order_snapshot.side
+                or broker_order.quantity != broker_order_snapshot.quantity
+            ):
+                return _blocked("REGISTERED_BROKER_ORDER_MISMATCH", trade_count=len(trades))
+            if trade.fill_price is None or trade.occurred_at_ns is None:
+                return _blocked("TRADE_EXECUTION_PRICE_OR_TIMESTAMP_MISSING", trade_count=len(trades))
+            try:
+                price = Decimal(str(trade.fill_price))
+            except (InvalidOperation, TypeError, ValueError):
+                return _blocked("TRADE_EXECUTION_PRICE_INVALID", trade_count=len(trades))
+            if not price.is_finite() or price <= 0 or int(trade.quantity) <= 0 or int(trade.occurred_at_ns) <= 0:
+                return _blocked("TRADE_EXECUTION_EVIDENCE_INVALID", trade_count=len(trades))
+            prepared.append((trade, broker_order, intent, leg, price, int(trade.occurred_at_ns)))
+
         for trade, broker_order, intent, leg, price, occurred_at_ns in prepared:
             result = record_fill(
                 db,
