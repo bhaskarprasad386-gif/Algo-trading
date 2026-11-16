@@ -274,7 +274,6 @@ class MStockAdapter:
                 occurred_at_ns=parse_trade_timestamp_ns(row.get("ORDER_DATE_TIME")),
             )
             for row in trade_rows
-        )            for row in trade_rows
         )
 
         return MStockDailyHistory(
