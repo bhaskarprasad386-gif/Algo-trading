@@ -7,6 +7,7 @@ from app.brokers.session_store import broker_sessions
 
 
 class FakeAdapter:
+    name = "mstock"
     def __init__(self, *, outcome=None, error=None):
         self.outcome = outcome or {"broker": "mstock", "connected": True, "account_id": "M123"}
         self.error = error
