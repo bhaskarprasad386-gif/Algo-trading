@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 from app.brokers.angel_one import AngelOneAdapter, BrokerHistoryUnavailable
