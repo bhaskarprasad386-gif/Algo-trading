@@ -8,6 +8,9 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
+from datetime import date, datetime, time as datetime_time
+import math
+from zoneinfo import ZoneInfo
 
 
 class ReconciliationStatus(str, Enum):
@@ -68,12 +71,51 @@ class BrokerTradeSnapshot:
     broker_trade_id: str
     broker_order_id: str
     quantity: int
+    fill_price: float | None = None
+    occurred_at_ns: int | None = None
 
     def __post_init__(self) -> None:
         if not self.broker_trade_id.strip() or not self.broker_order_id.strip():
             raise ValueError("broker trade and order identities are required")
         if self.quantity <= 0:
             raise ValueError("trade quantity must be positive")
+        if self.fill_price is not None and (
+            not math.isfinite(self.fill_price) or self.fill_price <= 0
+        ):
+            raise ValueError("trade fill price must be finite and positive")
+        if self.occurred_at_ns is not None and self.occurred_at_ns <= 0:
+            raise ValueError("trade timestamp must be positive when supplied")
+
+
+def parse_trade_timestamp_ns(value: object, *, trading_date: str) -> int | None:
+    """Parse a provider trade timestamp into IST epoch ns; reject placeholders.
+
+    A time-only provider field is anchored to the adapter's current trading date.
+    Known placeholder dates (notably Shoonya's 1980 example value) are not
+    represented as real execution times.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    formats = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%b-%Y %H:%M:%S",
+        "%H:%M:%S",
+    )
+    parsed = None
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            if fmt == "%H:%M:%S":
+                parsed = datetime.combine(date.fromisoformat(trading_date), parsed.time())
+            break
+        except ValueError:
+            continue
+    if parsed is None or parsed.date().isoformat() == "1980-01-01":
+        return None
+    return int(parsed.replace(tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 @dataclass(frozen=True)
