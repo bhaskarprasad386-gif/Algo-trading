@@ -76,3 +76,11 @@ but the existing per-order tradebook and status checks still apply.
 This check is read-only and uses broker order snapshot cumulative quantities;
 it does not infer fills from local estimates, alter the immutable fill ledger,
 submit compensating orders, or authorize execution resume.
+
+
+The same multi-leg quantity-balance guard is applied during read-only restart
+recovery review. A spread with different broker-confirmed cumulative fill
+quantities across persisted legs is classified as blocked for operator
+reconciliation; equal partial quantities across all known legs are not
+misclassified as an imbalance. This closes the gap between the standalone
+reconciliation report and the recovery-review path.
