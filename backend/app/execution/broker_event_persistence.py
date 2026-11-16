@@ -5,6 +5,7 @@ import hashlib
 import json
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.execution.broker_events import BrokerOrderEvent
@@ -15,11 +16,20 @@ class BrokerEventConflict(ValueError):
     """A broker reused an event identity with a different payload."""
 
 
-def record_broker_order_event(db: Session, event: BrokerOrderEvent) -> dict:
-    """Persist an immutable callback; exact replays are no-ops.
+def _find_event(db: Session, *, broker: str, account_id: str, event_id: str):
+    return db.execute(select(BrokerOrderEventRecord).where(
+        BrokerOrderEventRecord.broker == broker,
+        BrokerOrderEventRecord.account_id == account_id,
+        BrokerOrderEventRecord.event_id == event_id,
+    )).scalar_one_or_none()
 
-    The database unique constraint is the cross-worker identity arbiter.
-    This function intentionally does not mutate order/fill execution state.
+
+def record_broker_order_event(db: Session, event: BrokerOrderEvent) -> dict:
+    """Persist an immutable callback; exact concurrent replays are no-ops.
+
+    The database unique constraint is the cross-worker identity arbiter. A
+    savepoint contains a uniqueness race without poisoning the caller's outer
+    transaction. This function records evidence only; it does not mutate fills.
     """
     payload = {
         "broker": event.broker.strip().lower(),
@@ -39,11 +49,10 @@ def record_broker_order_event(db: Session, event: BrokerOrderEvent) -> dict:
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     with db.begin():
-        existing = db.execute(select(BrokerOrderEventRecord).where(
-            BrokerOrderEventRecord.broker == payload["broker"],
-            BrokerOrderEventRecord.account_id == payload["account_id"],
-            BrokerOrderEventRecord.event_id == payload["event_id"],
-        )).scalar_one_or_none()
+        existing = _find_event(
+            db, broker=payload["broker"], account_id=payload["account_id"],
+            event_id=payload["event_id"],
+        )
         if existing is not None:
             if existing.payload_hash != digest:
                 raise BrokerEventConflict(
@@ -52,10 +61,25 @@ def record_broker_order_event(db: Session, event: BrokerOrderEvent) -> dict:
             return {"created": False, "event_record_id": existing.id}
 
         record = BrokerOrderEventRecord(
-            **payload,
-            payload_hash=digest,
-            payload_json=canonical,
+            **payload, payload_hash=digest, payload_json=canonical,
         )
-        db.add(record)
-        db.flush()
-        return {"created": True, "event_record_id": record.id}
+        try:
+            with db.begin_nested():
+                db.add(record)
+                db.flush()
+            return {"created": True, "event_record_id": record.id}
+        except IntegrityError:
+            # Another worker may have inserted this unique identity after our
+            # initial SELECT. The savepoint rollback leaves the outer session
+            # usable so we can classify the winner's payload deterministically.
+            existing = _find_event(
+                db, broker=payload["broker"], account_id=payload["account_id"],
+                event_id=payload["event_id"],
+            )
+            if existing is None:
+                raise
+            if existing.payload_hash != digest:
+                raise BrokerEventConflict(
+                    "broker event identity was replayed with a different payload"
+                )
+            return {"created": False, "event_record_id": existing.id}
