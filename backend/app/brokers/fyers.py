@@ -175,3 +175,6 @@ class FyersAdapter:
     def disconnect(self) -> None:
         self.account_id = None
         self.connected = False
+        disconnect = getattr(self.client, "disconnect", None)
+        if callable(disconnect):
+            disconnect()
