@@ -29,8 +29,10 @@ def review_deferred_broker_events(
         ).order_by(
             BrokerOrderEventRecord.occurred_at_ns.desc(),
             BrokerOrderEventRecord.id.desc(),
-        ).limit(limit)
+        ).limit(limit + 1)
     ).scalars().all()
+    truncated = len(events) > limit
+    events = events[:limit]
 
     fill_ids = {event.fill_id for event in events if event.fill_id}
     fills_by_id = {}
@@ -121,10 +123,13 @@ def review_deferred_broker_events(
         if item["reason"] == "CUMULATIVE_FILL_GAP"
     )
     return {
-        "status": "CLEAR" if not unresolved else "REQUIRES_REVIEW",
+        "status": "REQUIRES_REVIEW" if unresolved else ("INCOMPLETE" if truncated else "CLEAR"),
         "broker": broker_key,
         "account_id": account_key,
         "event_count": len(events),
+        "limit": limit,
+        "truncated": truncated,
+        "review_complete": not truncated,
         "unresolved_count": len(unresolved),
         "deferred_count": deferred_count,
         "events": unresolved,
