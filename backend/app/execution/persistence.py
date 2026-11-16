@@ -271,7 +271,7 @@ def record_fill(
 def record_broker_order(
     db: Session, *, account_id: str, intent_id: str, leg_id: str,
     broker: str, broker_order_id: str, symbol: str, side: str,
-    quantity: int, broker_status: str, accepted_at_ns: int,
+    quantity: int, accepted_at_ns: int,
     client_order_id: str | None = None,
 ):
     """Persist a broker-assigned order identity without changing execution state.
@@ -285,7 +285,6 @@ def record_broker_order(
     broker_order_id = broker_order_id.strip()
     symbol = symbol.strip()
     side = side.strip().upper()
-    broker_status = broker_status.strip().upper()
     client_order_id = client_order_id.strip() if client_order_id else None
     if not account_id.strip() or not intent_id.strip() or not leg_id.strip():
         raise ValueError("account_id, intent_id and leg_id are required")
@@ -295,16 +294,10 @@ def record_broker_order(
         raise ValueError("side must be BUY or SELL")
     if quantity <= 0 or accepted_at_ns <= 0:
         raise ValueError("order quantity and accepted timestamp must be positive")
-    if broker_status not in {
-        "PENDING", "OPEN", "TRIGGER_PENDING", "PARTIALLY_FILLED",
-        "COMPLETE", "REJECTED", "CANCELLED", "UNKNOWN",
-    }:
-        raise ValueError("unsupported broker order status")
     canonical = json.dumps({
         "intent_id": intent_id, "leg_id": leg_id, "broker": broker,
         "broker_order_id": broker_order_id, "symbol": symbol, "side": side,
         "quantity": quantity, "client_order_id": client_order_id,
-        "broker_status": broker_status, "accepted_at_ns": accepted_at_ns,
     }, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -344,8 +337,8 @@ def record_broker_order(
             intent_record_id=intent.id, leg_record_id=leg.id,
             account_id=account_id, broker=broker, broker_order_id=broker_order_id,
             symbol=symbol, side=side, quantity=quantity,
-            client_order_id=client_order_id, broker_status=broker_status,
-            accepted_at_ns=accepted_at_ns, payload_hash=digest,
+            client_order_id=client_order_id, accepted_at_ns=accepted_at_ns,
+            payload_hash=digest,
         )
         db.add(record)
         db.flush()
