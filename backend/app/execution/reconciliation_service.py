@@ -105,13 +105,16 @@ def reconcile_persisted_account_snapshot(
             )
             .order_by(ExecutionBrokerOrderRecord.id)
         ).all()
+        # Leg labels are unique only inside an intent. Include the intent
+        # identity so multiple spreads can be reconciled in one account window
+        # without treating repeated labels (cb/cs/pb/ps) as duplicate legs.
         expected = tuple(ExpectedOrder(
-            leg_id=leg.leg_id,
+            leg_id=f"{intent.intent_id}:{leg.leg_id}",
             broker_order_id=order.broker_order_id,
             symbol=order.symbol,
             side=order.side,
             quantity=order.quantity,
-        ) for order, _intent, leg in orders)
+        ) for order, intent, leg in orders)
         order_ids = {order.broker_order_id for order, _intent, _leg in orders}
         persisted_legs = db.execute(select(ExecutionLegRecord).where(ExecutionLegRecord.intent_record_id.in_([row.id for row in intents]))).scalars().all()
         recorded_leg_ids = {leg.id for _order, _intent, leg in orders}
