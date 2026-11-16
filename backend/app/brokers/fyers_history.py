@@ -175,7 +175,7 @@ class FyersHistoryProvider:
             account_id=account_id,
             window_start=window_start,
             window_end=window_end,
-            daily_history=type("HistoryEvidence", (), {"snapshot": snapshot})(),
+            daily_history=snapshot,
             provider_window="FYERS_CLOSED_DAY_DATE_RANGE_REPORTS",
             pages_fetched=order_pages + trade_pages,
         )
