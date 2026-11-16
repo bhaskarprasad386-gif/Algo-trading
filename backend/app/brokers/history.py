@@ -82,6 +82,7 @@ def validated_daily_history_window(
     window_end: datetime,
     daily_history: object,
     provider_window: str,
+    pages_fetched: int = 1,
 ) -> BrokerHistoryWindow:
     """Validate adapter output again at the provider boundary.
 
@@ -115,7 +116,7 @@ def validated_daily_history_window(
         snapshot=snapshot,
         window_start=window_start,
         window_end=window_end,
-        pages_fetched=1,
+        pages_fetched=pages_fetched,
         has_more=False,
         provider_window=provider_window,
     )
