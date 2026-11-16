@@ -7,7 +7,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide
-from app.execution.persistence import (\n    ConcurrentTransitionError, IdempotencyConflict, create_intent, get_intent,\n    record_broker_order, transition_intent,\n)
+from app.execution.persistence import (
+    ConcurrentTransitionError, IdempotencyConflict, create_intent, get_intent,
+    record_broker_order, transition_intent,
+)
 from app.models.execution_intent import ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
 
 
