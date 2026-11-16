@@ -171,6 +171,10 @@ def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) ->
             fill_price=event.average_fill_price,
             occurred_at_ns=event.occurred_at_ns,
         )
+        if not fill_result["created"]:
+            raise BrokerEventConflict(
+                "fill identity was already consumed by a different callback event"
+            )
         return {
             "event_created": True,
             "fill_created": fill_result["created"],
