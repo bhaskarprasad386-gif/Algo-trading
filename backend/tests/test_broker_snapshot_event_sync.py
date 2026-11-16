@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 
+from app.core.database import Base
+from app.models.broker_order_event import BrokerOrderEventRecord
 from app.execution import broker_snapshot_event_sync as sync
 from app.execution.broker_events import BrokerOrderEventStatus
 
@@ -142,3 +146,38 @@ def test_sync_blocks_disconnected_or_wrong_account_session(monkeypatch):
     )
     assert disconnected["reason"] == "BROKER_SESSION_NOT_CONNECTED"
     assert wrong_account["reason"] == "BROKER_SESSION_ACCOUNT_MISMATCH"
+
+
+
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_snapshot_batch_rolls_back_all_events_if_any_persist_fails(db, monkeypatch):
+    original = sync.record_broker_order_event
+    calls = 0
+
+    def fail_on_second(db_session, event):
+        nonlocal calls
+        calls += 1
+        result = original(db_session, event)
+        if calls == 2:
+            raise RuntimeError("simulated persistence failure")
+        return result
+
+    monkeypatch.setattr(sync, "record_broker_order_event", fail_on_second)
+    adapter = _adapter(_history(orders=[
+        _order(broker_order_id="order-a"),
+        _order(broker_order_id="order-b"),
+    ]))
+    with pytest.raises(RuntimeError, match="simulated persistence failure"):
+        sync.sync_account_order_status_events(db, adapter=adapter, account_id="acct-1")
+    assert db.scalar(select(BrokerOrderEventRecord)) is None
