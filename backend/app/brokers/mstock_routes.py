@@ -38,6 +38,8 @@ def mstock_begin_login(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Start m.Stock Type A login; credentials are used only for this request."""
+    # Re-authentication must disarm any prior process-local safety state first.
+    trading_safety.disable(user_id)
     adapter = MStockAdapter()
     try:
         result = adapter.begin_login(username=payload.username, password=payload.password)
@@ -85,9 +87,9 @@ def mstock_verify_login(
             db.rollback()
             raise
 
-        previous = broker_sessions.replace(user_id, "mstock", adapter)
-        if previous is not None:
-            previous.disconnect()
+        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "mstock", adapter)
+        if logout_error is not None:
+            app_logger.error("Previous mstock provider logout failed during reconnect: %s", type(logout_error).__name__)
         item = broker_connections.connect(user_id, "mstock", payload.display_name)
         trading_safety.disable(user_id)
         return {
