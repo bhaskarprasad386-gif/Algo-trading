@@ -1,64 +1,55 @@
-# Batch 0 — Broker Trading Adapter and Market-Data Separation Audit
+# Batch 0 — Broker Read-Only Reconciliation and Trading Adapter Audit
 
-**Status:** Source audit only; no credentials used and no broker orders submitted.  
-**Audited base:** `main` at `8da655f0c287251cf1602cae484714a7c26fcf15`.
+**Status:** Source audit only; no broker credentials used and no orders submitted.  
+**Audited source:** current `main` at the time of this correction.
 
-## 1. Trading adapter capability matrix
+## 1. Capability matrix — distinguish history adapters from live trading
 
-| Broker | Trading adapter registered | Connect/auth code | Place/modify/cancel | Order/trade/position reconciliation | Current conclusion |
+| Broker | Read-only order/trade snapshot code | Registered in `BrokerRegistry` | Place/cancel | Modify | Current verified capability |
 |---|---|---|---|---|---|
-| Angel One | Yes — sole registry entry | SmartAPI login with API key, client code, password, TOTP; session SDK object held in process memory | `place_order` and `cancel_order` explicitly raise `NotImplementedError`; no modify implementation | Not defined by current `BrokerAdapter` protocol | Authentication connector only; not a live trading adapter |
-| Fyers | No | No broker trading adapter found in `backend/app/brokers/` | None | None | Not implemented |
-| Shoonya | No trading adapter | Separate Shoonya market-data WebSocket/supervisor and readiness evidence exist | No trading order adapter in registry | Market-data order-update observation is not a trading reconciliation implementation | Market-data/shadow diagnostics only; do not count as trading support |
-| mStock | No | No adapter found | None | None | Not implemented |
-| Zerodha | No | No adapter found | None | None | Not implemented |
+| Angel One | Yes: current-day orderBook + tradeBook | Yes; sole registry entry | Explicitly fail closed with `NotImplementedError` | Not implemented | Authentication + read-only current-day history |
+| FYERS | Yes: date-range orderhistory + tradehistory reports; current-day adapter books also exist | No | Explicitly fail closed | Not implemented | Injected-client auth/profile identity check + closed-day paginated reports |
+| Shoonya | Yes: current-day order book + trade book | No | Explicitly fail closed | Not implemented | Injected-client UID/account identity check + read-only current-day history |
+| Zerodha | Yes: current-day orders + trades | No | Explicitly fail closed | Not implemented | Injected-client profile identity check + read-only current-day history |
+| m.Stock | Yes: current-day orders + tradebook | No | Explicitly fail closed | Not implemented | Type A OTP/TOTP session + read-only current-day history |
 
-The current registry registers only `AngelOneAdapter`. The broker connect route accepts only `angel_one` and Angel One-shaped credential fields. The provider-neutral `BrokerAdapter` protocol currently exposes only connect/place/cancel/disconnect and does not define typed modify, order lookup, order/trade history, positions, funds/margin, streaming updates, or reconciliation.
+**Important correction:** FYERS, Shoonya, Zerodha and m.Stock do have provider-specific read-only order/trade history adapters in `backend/app/brokers/`. They are not registered as general broker trading adapters. The earlier statement that those adapters did not exist was too broad and is corrected here.
 
-## 2. Account/session isolation findings
+The current `BrokerRegistry` registers only `AngelOneAdapter`. The generic `BrokerAdapter` protocol covers connect/place/cancel/disconnect and does not itself describe the provider-specific history operation.
 
-- Broker session dictionary and connection metadata are keyed by `(user_id, broker)`, so only one account per broker/user can be represented.
-- The stored adapter object is a mutable SDK session object in process memory. There is no durable per-account session registry or account foreign key.
-- The durable Box real-owner state is singular and bound to one broker account fingerprint. It intentionally blocks account switching without an explicit reset/review.
-- Connect flow disables real trading after successful login. Real-trading enable endpoint returns HTTP 503 until durable ownership and execution safety controls exist.
-- Disconnect/kill-switch paths fail closed, but process-local session metadata is not a multi-worker account/session system.
-- A broker-side client code/fingerprint must not be treated as a user authorization token. Every future account action must resolve the account from authenticated owner scope and verify account ownership.
+A separate common read-only contract already exists: `BrokerHistorySnapshotProvider` and `BrokerHistoryWindow` in `backend/app/brokers/history.py`. Five providers implement it: Angel One, FYERS, Shoonya, Zerodha and m.Stock. The structural conformance tests are in `backend/tests/test_broker_history_provider_conformance.py`; window invariants are tested in `backend/tests/test_broker_history_contract.py`. This audit does not propose recreating that contract.
 
-## 3. Market-data versus trading separation
+## 2. What the read-only adapters actually prove
 
-Shoonya files under `backend/app/market_data/` implement market-data transport, normalization, readiness evidence, and a supervisor. The inspected supervisor explicitly describes itself as isolated shadow diagnostics and does not route its quotes into scanner/order consumers. The provider readiness bridge is read-only and does not forward quotes to scanners, persistence, pairers, or order execution.
+- Each provider requires an authenticated session/client and checks the requested account identity against the authenticated profile/session before returning a snapshot.
+- Each history implementation requires both order and trade book/report responses; failed or malformed responses raise a provider-specific history-unavailable error rather than being silently represented as an empty book.
+- Angel One, Shoonya, Zerodha and m.Stock history providers accept only the complete current IST calendar-day window. FYERS report provider accepts closed IST calendar-day ranges and paginates order-history and trade-history reports; FYERS reports exclude pending orders, so they are not a current-day open-order substitute.
+- The normalized snapshot contains broker order ID, symbol, side, order quantity, filled quantity, broker trade ID, order linkage and trade quantity.
+- The common window carries timezone-aware requested bounds, page count, continuation state and a provider-window label. Completeness is false while the snapshot is incomplete or pagination remains.
+- These adapters do not implement live order placement, modification, cancellation, streaming order callbacks, positions, funds/margin, or a full partial-fill recovery workflow.
 
-Therefore:
-- Shoonya market-data WebSocket presence does not establish Shoonya trading support.
-- Broker order-update-shaped market-data callbacks must not be mistaken for a durable order/trade reconciliation feed.
-- Do not change shared market-data providers or WebSocket subscriptions as part of trading adapter work.
-- Future trading adapter sessions must be separate from market-data socket ownership and keyed by stable account identity.
+## 3. Registry and execution safety
 
-## 4. Required adapter certification before any broker is called supported
+- `BrokerRegistry.__init__` registers only `AngelOneAdapter`; the other read-only history providers are instantiated through their own provider/session paths, not via this trading registry.
+- All five adapters' order mutation methods are explicitly tested to fail closed. This is a safety gate, not evidence that live trading is supported.
+- No broker is certified for production Live execution by this source audit. Live remains OFF.
+- The existing Shoonya market-data WebSocket/supervisor is separate from the Shoonya read-only order/trade history adapter. Market-data presence is not order execution or durable reconciliation.
+- Do not change shared market-data providers, scanner behavior, or WebSocket subscriptions as part of this adapter audit.
 
-Each broker adapter needs a provider-specific evidence pack covering:
-1. Authentication, refresh, expiry, logout/revocation, and restart behavior.
-2. Account identity proof and multiple simultaneous accounts at the same broker.
-3. Place/modify/cancel request validation and broker-specific product/order-type support.
-4. Deterministic client order IDs and behavior on network timeout after request submission.
-5. Order status, order book, trade book, fills, positions, funds, and margin reconciliation.
-6. Partial fill, cancel race, rejection, duplicate callback, trade correction/bust, and reconnect behavior.
-7. Rate limits, throttling, retry-after semantics, and idempotent recovery.
-8. Secret redaction, encrypted secret references, audit trail, and per-account isolation tests.
-9. Paper/mock contract tests plus broker-approved test/sandbox validation where available.
-10. Failure-mode tests proving that ambiguous outcomes become `UNKNOWN/RECONCILIATION_REQUIRED`, never blind resubmission.
+## 4. Remaining certification gaps
 
-A broker must not appear as a supported live provider merely because its market-data feed, SDK dependency, or login call exists.
+Before any broker can be called Live-capable, add and verify:
 
-## 5. Implementation sequence recommendation
+1. Capability-aware composition of the existing read-only history protocol with positions, funds/margin, streaming events and separately gated order mutations.
+2. Durable authenticated account/session binding and restart/refresh/revocation behavior.
+3. Provider-specific pagination/completeness guarantees and explicit trading-date handling for order/trade books, including reconciliation of FYERS report exclusions with pending/current-day orderbook data.
+4. Order status normalization, modify semantics, cancel races, rejected orders, partial fills, trade corrections/busts and reconnect recovery.
+5. Deterministic client order IDs and a safe UNKNOWN/reconciliation-required outcome after ambiguous network timeouts.
+6. Per-account rate limits, retry-after handling, secret redaction, encrypted secret references and audit trails.
+7. Multi-account isolation tests for two accounts at one broker and across brokers.
+8. Broker-approved non-production certification for place/modify/cancel and multi-leg recovery.
+9. A separately approved release gate before any Live routing can be enabled.
 
-1. Define and test account-scoped provider-neutral order/event/reconciliation contracts without touching scanner/feed code.
-2. Add durable account/session metadata and secret-reference handling; keep all order routes disabled.
-3. Implement one broker adapter at a time, starting with Angel One only after order-book/trade-book/position reconciliation semantics are proven.
-4. Add multi-account isolation tests using two independent mock accounts for the same broker and cross-broker accounts.
-5. Certify place/modify/cancel/reconcile and partial multi-leg recovery in a broker-approved non-production environment.
-6. Only after a separate explicit release approval may any Live routing gate be considered.
+## 5. Safety decision
 
-## 6. Safety decision
-
-No current broker is certified for production Live order execution by this source audit. Angel One currently supports authentication only; Fyers, Shoonya, mStock, and Zerodha do not have trading adapters in the broker registry. Live remains OFF. No broker credentials, market-data sockets, scanner code, schema, deployment, or runtime settings were changed.
+Current verified state is **read-only reconciliation capability in five provider-specific history implementations sharing a common typed contract**, not full broker trading support. Angel One alone is registered in `BrokerRegistry`; all five brokers' order mutations fail closed. No broker credentials, market-data sockets, scanner code, schema, deployment, or runtime settings were changed by this audit.
