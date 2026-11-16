@@ -26,8 +26,27 @@ class ConcurrentTransitionError(RuntimeError):
 
 
 def _transaction(db: Session):
-    """Join a caller-owned transaction or own/commit a standalone operation."""
-    return db.begin_nested() if db.in_transaction() else db.begin()
+    """Join a caller transaction with a savepoint, ensuring SQLite has a real BEGIN.
+
+    SQLite's legacy transaction mode does not BEGIN for SELECT statements. A
+    SAVEPOINT as the first physical statement can therefore be released as an
+    implicit commit, defeating rollback of the logical outer transaction.
+    """
+    if db.in_transaction():
+        if db.get_bind().dialect.name == "sqlite":
+            connection = db.connection()
+            raw_connection = connection.connection.driver_connection
+            if not raw_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN")
+        return db.begin_nested()
+
+    transaction = db.begin()
+    if db.get_bind().dialect.name == "sqlite":
+        connection = db.connection()
+        raw_connection = connection.connection.driver_connection
+        if not raw_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
+    return transaction
 
 
 @dataclass(frozen=True)
