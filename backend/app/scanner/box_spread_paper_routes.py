@@ -938,6 +938,7 @@ async def _completed_entry_receipt_replay(
                 detail="Durable entry receipt does not match the original four-leg trade; manual review is required.",
             )
         replay_fills.append({
+            "fill_id": fill.fill_id,
             "role": fill.role,
             "action": fill.action,
             "quantity": fill.quantity,
@@ -955,6 +956,7 @@ async def _completed_entry_receipt_replay(
         "mode": "PAPER_ONLY",
         "broker_orders_enabled": False,
         "trade_id": trade_id,
+        "idempotency_key": request.idempotency_key,
         "status": summary["status"],
         "replayed": True,
         "fills": replay_fills,
