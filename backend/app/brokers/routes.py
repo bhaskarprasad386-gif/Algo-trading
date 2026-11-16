@@ -24,6 +24,7 @@ from app.execution.recovery_coordinator import review_account_recovery
 from app.execution.broker_snapshot_event_sync import sync_account_order_status_events
 from app.execution.broker_tradebook_fill_sync import sync_account_tradebook_fills
 from app.execution.broker_event_review import review_deferred_broker_events
+from app.execution.broker_event_replay_preview import preview_deferred_fill_replay
 from app.models import BoxSpreadRealOwnerState
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
@@ -247,6 +248,51 @@ def review_broker_callback_events(
         db.rollback()
         app_logger.exception("Read-only broker callback event review failed")
         raise HTTPException(status_code=503, detail="Broker callback event review is temporarily unavailable") from exc
+
+
+@router.get("/events/replay-preview")
+def preview_broker_fill_replay(
+    event_id: str = Field(min_length=1, max_length=192),
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
+) -> dict:
+    """Preview one exact deferred callback; this endpoint never replays it."""
+    owner_state = db.query(BoxSpreadRealOwnerState).filter(
+        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    ).first()
+    if owner_state is None or not owner_state.broker_name:
+        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+
+    broker = str(owner_state.broker_name).strip().lower()
+    adapter = broker_sessions.get(user_id, broker)
+    db.rollback()
+    if adapter is None or not bool(getattr(adapter, "connected", False)):
+        return {
+            "status": "BLOCKED", "reason": "BROKER_SESSION_NOT_CONNECTED",
+            "trading_authorized": False, "replay_performed": False,
+        }
+    if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
+        return {
+            "status": "BLOCKED", "reason": "BROKER_SESSION_IDENTITY_MISMATCH",
+            "trading_authorized": False, "replay_performed": False,
+        }
+    account_id = str(getattr(adapter, "account_id", "") or "").strip()
+    if not account_id:
+        return {
+            "status": "BLOCKED", "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+            "trading_authorized": False, "replay_performed": False,
+        }
+    try:
+        return preview_deferred_fill_replay(
+            db, broker=broker, account_id=account_id, event_id=event_id,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Broker fill replay preview request is invalid") from exc
+    except Exception as exc:
+        db.rollback()
+        app_logger.exception("Read-only broker fill replay preview failed")
+        raise HTTPException(status_code=503, detail="Broker fill replay preview is temporarily unavailable") from exc
 
 
 @router.get("/recovery/review")
