@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from contextlib import nullcontext
 from decimal import Decimal
 from dataclasses import dataclass
 
@@ -23,6 +24,11 @@ class IdempotencyConflict(ValueError):
 
 class ConcurrentTransitionError(RuntimeError):
     pass
+
+
+def _transaction(db: Session):
+    """Join a caller-owned transaction or own/commit a standalone operation."""
+    return nullcontext() if db.in_transaction() else db.begin()
 
 
 @dataclass(frozen=True)
@@ -61,7 +67,7 @@ def create_intent(db: Session, intent: ExecutionIntent, legs: tuple[ExecutionLeg
         raise ValueError("new execution intents must start in CREATED state")
     validate_basket_legs(legs)
     wanted = _payload(legs)
-    with db.begin():
+    with _transaction(db):
         existing = db.execute(select(ExecutionIntentRecord)
             .options(selectinload(ExecutionIntentRecord.legs))
             .where(ExecutionIntentRecord.account_id == intent.account_id,
@@ -96,7 +102,7 @@ def create_intent(db: Session, intent: ExecutionIntent, legs: tuple[ExecutionLeg
 
 
 def get_intent(db: Session, *, account_id: str, intent_id: str):
-    with db.begin():
+    with _transaction(db):
         record = db.execute(select(ExecutionIntentRecord)
             .options(selectinload(ExecutionIntentRecord.legs))
             .where(ExecutionIntentRecord.account_id == account_id,
@@ -110,7 +116,7 @@ def transition_intent(db: Session, *, account_id: str, intent_id: str,
                       occurred_at_ns: int | None = None, details: dict | None = None):
     """Validate and persist one transition plus immutable event atomically."""
     now = occurred_at_ns if occurred_at_ns is not None else time.time_ns()
-    with db.begin():
+    with _transaction(db):
         record = db.execute(select(ExecutionIntentRecord).where(
             ExecutionIntentRecord.account_id == account_id,
             ExecutionIntentRecord.intent_id == intent_id,
@@ -172,7 +178,7 @@ def record_fill(
     }, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    with db.begin():
+    with _transaction(db):
         duplicate = db.execute(select(ExecutionFillRecord).where(
             ExecutionFillRecord.account_id == account_id,
             ExecutionFillRecord.broker == broker,
@@ -304,7 +310,7 @@ def record_broker_order(
     }, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    with db.begin():
+    with _transaction(db):
         intent = db.execute(select(ExecutionIntentRecord).where(
             ExecutionIntentRecord.account_id == account_id,
             ExecutionIntentRecord.intent_id == intent_id,
