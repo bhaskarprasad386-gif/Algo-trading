@@ -1300,7 +1300,7 @@ def test_concurrent_distinct_partial_exit_baskets_close_only_available_lots(tmp_
         engine.dispose()
 
 
-def test_paper_entry_lifecycle_and_manual_review_are_audited_atomically(paper_ledger):
+def test_paper_entry_lifecycle_audit_rejects_review_after_completion(paper_ledger):
     trade = _trade(paper_ledger, account_key="audit-events", idempotency_key="audit-entry")
     claim = paper_ledger.claim_entry_attempt(trade_id=trade.id, account_key="audit-events")
     assert claim["created"] is True
@@ -1316,20 +1316,17 @@ def test_paper_entry_lifecycle_and_manual_review_are_audited_atomically(paper_le
             "LOW_PE": {"fill_id": "audit-low-pe", "action": "SELL", "quantity": quantity, "fill_price": 70},
         },
     )
-    paper_ledger.record_manual_review_decision(
-        trade_id=trade.id, account_key="audit-events", decision="ACKNOWLEDGED",
-        actor="operator-7", reason="Reviewed durable entry receipts",
-    )
+    with pytest.raises(ValueError, match="unresolved durable entry claim"):
+        paper_ledger.record_manual_review_decision(
+            trade_id=trade.id, account_key="audit-events", decision="ACKNOWLEDGED",
+            actor="operator-7", reason="Reviewed durable entry receipts",
+        )
 
     events = paper_ledger.list_audit_events(trade_id=trade.id, account_key="audit-events")
-    assert [event["event_type"] for event in events] == [
-        "ENTRY_CLAIMED", "ENTRY_COMPLETED", "MANUAL_REVIEW_DECISION",
-    ]
-    assert [(events[0]["from_state"], events[0]["to_state"])] == [("CREATED", "CLAIMED")]
+    assert [event["event_type"] for event in events] == ["ENTRY_CLAIMED", "ENTRY_COMPLETED"]
+    assert (events[0]["from_state"], events[0]["to_state"]) == ("CREATED", "CLAIMED")
     assert (events[1]["from_state"], events[1]["to_state"]) == ("CLAIMED", "COMPLETED")
     assert events[1]["details"] == {"leg_count": 4, "quantity_per_leg": quantity}
-    assert events[2]["actor"] == "operator-7"
-    assert events[2]["reason"] == "Reviewed durable entry receipts"
 
 
 def test_post_claim_failure_is_audited_without_releasing_claim(paper_ledger):
