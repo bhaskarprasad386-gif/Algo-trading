@@ -11,6 +11,7 @@ from app.brokers.angel_one import AngelOneAdapter
 from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
+from app.brokers.session_store import broker_sessions
 from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
 from app.brokers.real_owner_state import claim_authenticated_account, disable_owner_trading, set_owner_connection_state
 from app.core.database import get_db
@@ -32,8 +33,6 @@ class ConnectRequest(BaseModel):
 class RealTradingEnableRequest(BaseModel):
     confirmation: str = Field(min_length=1, max_length=100)
 
-
-_sessions: dict[tuple[int, str], AngelOneAdapter] = {}
 
 
 @router.post("/owner-auth/login")
@@ -134,10 +133,9 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
         db.rollback()
         app_logger.error("Durable Box Spread connection state update failed: %s", exc)
         raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
-    old = _sessions.get((user_id, broker))
+    old = broker_sessions.replace(user_id, broker, adapter)
     if old is not None:
         old.disconnect()
-    _sessions[(user_id, broker)] = adapter
     item = broker_connections.connect(user_id, broker, payload.display_name)
     trading_safety.disable(user_id)
     return {"connected": item.connected, "broker": item.broker, "display_name": item.display_name, "client_code": result.get("client_code"), "real_trading": False}
@@ -146,7 +144,7 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
 @router.get("/{broker}/status")
 def status(broker: str, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     key = (user_id, broker.strip().lower())
-    adapter = _sessions.get(key)
+    adapter = broker_sessions.get(*key)
     item = broker_connections.get(user_id, key[1])
     owner_state = db.query(BoxSpreadRealOwnerState).filter(
         BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
@@ -164,7 +162,7 @@ def status(broker: str, db: Session = Depends(get_db), user_id: int = Depends(re
 @router.delete("/{broker}")
 def disconnect(broker: str, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     name = broker.strip().lower()
-    adapter = _sessions.pop((user_id, name), None)
+    adapter = broker_sessions.remove(user_id, name)
     if adapter is not None:
         adapter.disconnect()
     broker_connections.disconnect(user_id, name)
