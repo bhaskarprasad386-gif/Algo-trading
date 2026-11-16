@@ -174,3 +174,17 @@ def test_unrecorded_broker_order_is_durably_blocked(db):
         issue.status.value == "UNRECORDED_BROKER_ORDER"
         for issue in result["report"].issues
     )
+
+
+def test_missing_broker_order_identity_on_any_persisted_leg_blocks_reconciliation(db):
+    _persist_order(db)
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot(), reconciliation_id="run-missing-leg-order",
+        intent_ids=("intent-reconcile",),
+    )
+    statuses = {issue.status.value for issue in result["report"].issues}
+    assert "MISSING_PERSISTED_BROKER_ORDER_ID" in statuses
+    assert result["report"].is_consistent is False
+    stored = db.scalar(select(BrokerReconciliationRecord))
+    assert stored.is_consistent is False
+    assert stored.issue_count >= 1
