@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import nullcontext
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.execution.broker_events import BrokerOrderEvent
 from app.models.broker_order_event import BrokerOrderEventRecord
+from app.models.execution_intent import ExecutionBrokerOrderRecord, ExecutionIntentRecord
+from app.execution.persistence import record_fill
+
+
+def _transaction(db: Session):
+    """Join a caller-owned transaction or own/commit a standalone operation."""
+    return nullcontext() if db.in_transaction() else db.begin()
 
 
 class BrokerEventConflict(ValueError):
@@ -48,7 +56,7 @@ def record_broker_order_event(db: Session, event: BrokerOrderEvent) -> dict:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    with db.begin():
+    with _transaction(db):
         existing = _find_event(
             db, broker=payload["broker"], account_id=payload["account_id"],
             event_id=payload["event_id"],
@@ -83,3 +91,79 @@ def record_broker_order_event(db: Session, event: BrokerOrderEvent) -> dict:
                     "broker event identity was replayed with a different payload"
                 )
             return {"created": False, "event_record_id": existing.id}
+
+
+
+def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) -> dict:
+    """Atomically persist one callback and, when fully identified, its fill.
+
+    Exact duplicate callbacks are no-ops and never call record_fill. Fill-bearing
+    callbacks must include fill ID, positive quantity and average price, and map
+    to a persisted broker order in the same account. Any validation/persistence
+    error rolls back both the callback row and fill/progress mutation.
+    """
+    fill_metadata = (event.fill_id, event.fill_quantity, event.average_fill_price)
+    has_any_fill_metadata = any(value is not None for value in fill_metadata)
+    is_fill_status = event.status.value in {"PARTIALLY_FILLED", "FILLED"}
+    if (has_any_fill_metadata or is_fill_status) and not all(
+        value is not None for value in fill_metadata
+    ):
+        raise ValueError(
+            "fill callback requires fill_id, fill_quantity and average_fill_price"
+        )
+
+    with db.begin():
+        event_result = record_broker_order_event(db, event)
+        if not event_result["created"]:
+            return {
+                "event_created": False,
+                "fill_created": False,
+                "event_record_id": event_result["event_record_id"],
+                "fill_result": None,
+            }
+
+        if not has_any_fill_metadata:
+            return {
+                "event_created": True,
+                "fill_created": False,
+                "event_record_id": event_result["event_record_id"],
+                "fill_result": None,
+            }
+
+        broker = event.broker.strip().lower()
+        account_id = event.account_id.strip()
+        order = db.execute(select(ExecutionBrokerOrderRecord).where(
+            ExecutionBrokerOrderRecord.account_id == account_id,
+            ExecutionBrokerOrderRecord.broker == broker,
+            ExecutionBrokerOrderRecord.broker_order_id == event.broker_order_id.strip(),
+        ).with_for_update()).scalar_one_or_none()
+        if order is None:
+            raise LookupError("broker order is not registered for this account")
+        intent = db.execute(select(ExecutionIntentRecord).where(
+            ExecutionIntentRecord.id == order.intent_record_id,
+            ExecutionIntentRecord.account_id == account_id,
+        )).scalar_one_or_none()
+        if intent is None:
+            raise LookupError("execution intent for broker order was not found")
+
+        fill_result = record_fill(
+            db,
+            account_id=account_id,
+            intent_id=intent.intent_id,
+            leg_id=order.leg_id if hasattr(order, "leg_id") else db.get(
+                __import__("app.models.execution_intent", fromlist=["ExecutionLegRecord"]).ExecutionLegRecord,
+                order.leg_record_id,
+            ).leg_id,
+            broker=broker,
+            broker_fill_id=event.fill_id,
+            broker_order_id=event.broker_order_id.strip(),
+            quantity=event.fill_quantity,
+            fill_price=event.average_fill_price,
+            occurred_at_ns=event.occurred_at_ns,
+        )
+        return {
+            "event_created": True,
+            "fill_created": fill_result["created"],
+            "event_record_id": event_result["event_record_id"],
+            "fill_result": fill_result,
+        }
