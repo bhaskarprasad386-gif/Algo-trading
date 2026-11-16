@@ -879,21 +879,94 @@ async def simulate_entry(trade_id: int, payload: SimulateEntry):
         return await _simulate_entry_locked(trade_id, payload)
 
 
+async def _completed_entry_receipt_replay(
+    trade_id: int, account_key: str, request: CreatePaperTrade,
+) -> dict[str, Any] | None:
+    """Return only a fully persisted four-leg entry receipt; never re-simulate."""
+    claim = await asyncio.to_thread(
+        _ledger.get_entry_claim, trade_id=trade_id, account_key=account_key,
+    )
+    if claim is None:
+        return None
+    if claim.get("status") != "COMPLETED":
+        raise HTTPException(
+            status_code=409,
+            detail="Paper entry attempt is durably claimed but not completed; automatic retry is blocked. Inspect recovery and the ledger before any manual decision.",
+        )
+
+    persisted = await asyncio.to_thread(
+        _ledger.list_fills, trade_id, account_key=account_key,
+    )
+    expected_actions = (
+        {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+        if request.direction == "LONG"
+        else {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+    )
+    expected = {
+        role: _ledger_fill_id(request.idempotency_key, role)
+        for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    }
+    by_fill_id = {item.fill_id: item for item in persisted if item.fill_id in set(expected.values())}
+    if len(by_fill_id) != 4:
+        raise HTTPException(
+            status_code=409,
+            detail="Completed entry claim does not have exactly four durable entry receipts; manual review is required.",
+        )
+
+    replay_fills = []
+    for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"):
+        fill = by_fill_id.get(expected[role])
+        if (
+            fill is None
+            or fill.role != role
+            or fill.action != expected_actions[role]
+            or fill.quantity != request.lots * _load_trade_lot_size(request)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Durable entry receipt does not match the original four-leg trade; manual review is required.",
+            )
+        replay_fills.append({
+            "role": fill.role,
+            "action": fill.action,
+            "quantity": fill.quantity,
+            "fill_price": str(fill.fill_price),
+            "notional": str(fill.notional),
+            "charges": str(fill.charges),
+            "cash_delta": str(fill.cash_delta),
+            "fee_schedule_version": fill.fee_schedule_version,
+        })
+
+    summary = await asyncio.to_thread(
+        _ledger.get_trade_summary, trade_id, account_key=account_key,
+    )
+    return {
+        "mode": "PAPER_ONLY",
+        "broker_orders_enabled": False,
+        "trade_id": trade_id,
+        "status": summary["status"],
+        "replayed": True,
+        "fills": replay_fills,
+        "summary": {
+            key: str(value) if isinstance(value, Decimal) else value
+            for key, value in summary.items()
+        },
+    }
+
+
 async def _simulate_entry_locked(trade_id: int, payload: SimulateEntry):
     try:
+        request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
+        replay = await _completed_entry_receipt_replay(
+            trade_id, payload.account_key, request,
+        )
+        if replay is not None:
+            return replay
+
         with _paper_execution_state_lock:
             enabled = _paper_execution_enabled
         if not enabled:
             raise HTTPException(status_code=423, detail="Live paper trading is OFF. Manually switch execution ON before starting a new paper entry.")
-        request = await asyncio.to_thread(_load_trade_request, trade_id, payload.account_key)
-        existing_claim = await asyncio.to_thread(
-            _ledger.get_entry_claim, trade_id=trade_id, account_key=payload.account_key
-        )
-        if existing_claim is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="Paper entry attempt is already durably claimed; automatic retry is blocked. Inspect recovery and the ledger before any manual decision.",
-            )
         # A process restart clears the in-memory execution registry. Never replay
         # a trade with durable fills against a newer quote snapshot: that could
         # conflict with the ledger's stable fill IDs or mix two entry snapshots.
