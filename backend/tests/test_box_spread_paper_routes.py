@@ -1106,18 +1106,35 @@ def test_manual_paper_execution_switch_defaults_off_and_requires_explicit_enable
     assert disabled["restart_default"] == "OFF"
 
 
-def test_simulate_entry_is_blocked_before_ledger_or_quote_access_when_switch_off(monkeypatch):
+def test_simulate_entry_is_blocked_before_quotes_or_new_entry_when_switch_off(monkeypatch):
     monkeypatch.setattr(routes, "_paper_execution_enabled", False)
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="toggle-off-test", account_key="toggle-off-test",
+    )
+
+    class ReadOnlyLedger:
+        def get_entry_claim(self, **kwargs):
+            return None
+
+        def list_fills(self, *args, **kwargs):
+            return []
+
+    monkeypatch.setattr(routes, "_ledger", ReadOnlyLedger())
+    monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
 
     def forbidden(*args, **kwargs):
-        pytest.fail("OFF must block entry before loading trade, quotes, or ledger")
+        pytest.fail("OFF must block contract resolution, quotes, simulation, and ledger writes")
 
-    monkeypatch.setattr(routes, "_load_trade_request", forbidden)
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
+    monkeypatch.setattr(routes._engine, "create_intent", forbidden)
+
     with pytest.raises(HTTPException) as raised:
         asyncio.run(routes.simulate_entry(123, routes.SimulateEntry(account_key="toggle-off-test")))
     assert raised.value.status_code == 423
     assert "OFF" in raised.value.detail
-
 def test_switching_off_during_entry_preparation_prevents_durable_claim(monkeypatch):
     request = routes.CreatePaperTrade(
         underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
