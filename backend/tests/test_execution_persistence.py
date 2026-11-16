@@ -135,7 +135,7 @@ def test_broker_order_identity_is_durable_and_idempotent(db):
         db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
         broker="ANGEL_ONE", broker_order_id="broker-ord-1",
         symbol="NFO:CE", side="BUY", quantity=50,
-        broker_status="OPEN", accepted_at_ns=500,
+        accepted_at_ns=500,
     )
     replay = record_broker_order(
         db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
