@@ -228,3 +228,56 @@ def test_epoch_trade_timestamps_normalize_to_nanoseconds(value, expected):
 def test_shoonya_full_fill_time_format_is_parsed_as_ist():
     timestamp = parse_trade_timestamp_ns("10:31:00 16-11-2026")
     assert timestamp is not None and timestamp > 0
+
+
+@pytest.mark.parametrize(
+    "raw,filled,expected",
+    [
+        (1, 0, BrokerOrderEventStatus.CANCELLED),
+        (2, 50, BrokerOrderEventStatus.FILLED),
+        (4, 0, BrokerOrderEventStatus.OPEN),
+        (5, 0, BrokerOrderEventStatus.REJECTED),
+        (6, 0, BrokerOrderEventStatus.OPEN),
+        (7, 0, BrokerOrderEventStatus.EXPIRED),
+        (7, 10, BrokerOrderEventStatus.EXPIRED),
+    ],
+)
+def test_fyers_snapshot_uses_provider_specific_numeric_status_codes(raw, filled, expected):
+    event = sync.snapshot_order_to_event(
+        broker="fyers", account_id="acct-1",
+        order=_order(raw_status=str(raw), filled_quantity=filled),
+    )
+    assert event.status is expected
+    assert event.cumulative_filled_quantity == filled
+    assert event.fill_id is None
+    assert event.fill_quantity is None
+    assert event.average_fill_price is None
+
+
+@pytest.mark.parametrize("broker", ["angel_one", "zerodha", "shoonya", "mstock"])
+def test_fyers_numeric_status_codes_are_not_applied_to_other_snapshot_adapters(broker):
+    event = sync.snapshot_order_to_event(
+        broker=broker, account_id="acct-1",
+        order=_order(raw_status="2", filled_quantity=0),
+    )
+    assert event.status is BrokerOrderEventStatus.UNKNOWN
+
+
+def test_partial_fill_then_cancel_preserves_terminal_status_and_cumulative_quantity():
+    event = sync.snapshot_order_to_event(
+        broker="zerodha", account_id="acct-1",
+        order=_order(raw_status="CANCELLED", filled_quantity=10),
+    )
+    assert event.status is BrokerOrderEventStatus.CANCELLED
+    assert event.cumulative_filled_quantity == 10
+
+
+def test_order_expiry_is_a_supported_immutable_broker_event_status():
+    from app.execution.broker_events import BrokerOrderEvent
+
+    event = BrokerOrderEvent(
+        broker="fyers", account_id="acct-1", event_id="expiry-1",
+        broker_order_id="order-1", status=BrokerOrderEventStatus.EXPIRED,
+        cumulative_filled_quantity=0,
+    )
+    assert event.status is BrokerOrderEventStatus.EXPIRED
