@@ -1330,3 +1330,21 @@ def test_paper_entry_lifecycle_and_manual_review_are_audited_atomically(paper_le
     assert events[1]["details"] == {"leg_count": 4, "quantity_per_leg": quantity}
     assert events[2]["actor"] == "operator-7"
     assert events[2]["reason"] == "Reviewed durable entry receipts"
+
+
+def test_post_claim_failure_is_audited_without_releasing_claim(paper_ledger):
+    trade = _trade(paper_ledger, account_key="audit-failure", idempotency_key="audit-failure-entry")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id, account_key="audit-failure")
+    paper_ledger.record_manual_review_required(
+        trade_id=trade.id, account_key="audit-failure",
+        reason="Simulator failed after claim", failure_type="RuntimeError",
+    )
+
+    events = paper_ledger.list_audit_events(trade_id=trade.id, account_key="audit-failure")
+    assert [event["event_type"] for event in events] == ["ENTRY_CLAIMED", "MANUAL_REVIEW_REQUIRED"]
+    assert events[1]["from_state"] == "CLAIMED"
+    assert events[1]["to_state"] == "MANUAL_REVIEW_REQUIRED"
+    assert events[1]["details"] == {"failure_type": "RuntimeError"}
+    assert paper_ledger.get_entry_claim(
+        trade_id=trade.id, account_key="audit-failure",
+    )["status"] == "CLAIMED"
