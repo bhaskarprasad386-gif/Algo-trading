@@ -48,6 +48,9 @@ def postgres_paper_ledgers():
         )
     finally:
         with factory.begin() as session:
+            session.execute(delete(BoxSpreadPaperAuditEvent).where(
+                BoxSpreadPaperAuditEvent.account_key == account_key,
+            ))
             session.execute(delete(BoxSpreadPaperLedgerEntry).where(
                 BoxSpreadPaperLedgerEntry.account_key == account_key,
             ))
