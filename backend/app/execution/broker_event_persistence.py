@@ -278,8 +278,10 @@ def review_unapplied_broker_fill_events(
             BrokerOrderEventRecord.average_fill_price.is_not(None),
         )
         .order_by(BrokerOrderEventRecord.occurred_at_ns, BrokerOrderEventRecord.id)
-        .limit(limit)
+        .limit(limit + 1)
     ).scalars().all()
+    truncated = len(events) > limit
+    events = events[:limit]
 
     fill_ids = {row.fill_id for row in events if row.fill_id}
     fills = db.execute(
@@ -332,6 +334,6 @@ def review_unapplied_broker_fill_events(
         "conflict_event_count": len(conflicts),
         "pending_events": pending,
         "conflict_events": conflicts,
-        "truncated": len(events) == limit,
+        "truncated": truncated,
         "read_only": True,
     }
