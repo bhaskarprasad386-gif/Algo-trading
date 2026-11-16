@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide
-from app.execution.persistence import ConcurrentTransitionError, IdempotencyConflict, create_intent, get_intent, transition_intent
+from app.execution.persistence import (\n    ConcurrentTransitionError, IdempotencyConflict, create_intent, get_intent,\n    record_broker_order, transition_intent,\n)
 from app.models.execution_intent import ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
 
 
@@ -113,3 +113,85 @@ def test_lookup_is_account_scoped_and_restart_state_reconciles(db):
     assert recovered.intent.status is IntentStatus.RECONCILIATION_REQUIRED
     with pytest.raises(ValueError, match="invalid intent transition"):
         transition_intent(db, account_id="acct-1", intent_id="intent-1", expected_version=7, target=IntentStatus.SUBMITTING)
+
+
+
+def _submitting_intent(db):
+    intent, legs = request()
+    create_intent(db, intent, legs)
+    for version, target in enumerate((
+        IntentStatus.VALIDATING, IntentStatus.RISK_CHECK, IntentStatus.APPROVED,
+        IntentStatus.RESERVED, IntentStatus.SUBMITTING,
+    )):
+        transition_intent(
+            db, account_id="acct-1", intent_id="intent-1",
+            expected_version=version, target=target,
+        )
+
+
+def test_broker_order_identity_is_durable_and_idempotent(db):
+    _submitting_intent(db)
+    first = record_broker_order(
+        db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="ANGEL_ONE", broker_order_id="broker-ord-1",
+        symbol="NFO:CE", side="BUY", quantity=50,
+        broker_status="OPEN", accepted_at_ns=500,
+    )
+    replay = record_broker_order(
+        db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="angel_one", broker_order_id="broker-ord-1",
+        symbol="NFO:CE", side="BUY", quantity=50,
+        broker_status="OPEN", accepted_at_ns=500,
+    )
+    assert first == {"created": True, "broker_order_id": "broker-ord-1"}
+    assert replay == {"created": False, "broker_order_id": "broker-ord-1"}
+    from app.models.execution_intent import ExecutionBrokerOrderRecord
+    saved = db.scalar(select(ExecutionBrokerOrderRecord))
+    assert (saved.account_id, saved.broker, saved.leg_record_id, saved.quantity) == (
+        "acct-1", "angel_one", saved.leg_record_id, 50,
+    )
+
+
+def test_broker_order_id_reuse_with_different_payload_is_rejected(db):
+    _submitting_intent(db)
+    args = dict(
+        account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="angel_one", broker_order_id="broker-ord-1",
+        symbol="NFO:CE", side="BUY", quantity=50,
+        broker_status="OPEN", accepted_at_ns=500,
+    )
+    record_broker_order(db, **args)
+    with pytest.raises(IdempotencyConflict, match="broker order ID"):
+        record_broker_order(db, **{**args, "quantity": 25})
+
+
+def test_broker_order_identity_is_account_scoped_and_leg_validated(db):
+    _submitting_intent(db)
+    with pytest.raises(LookupError, match="account"):
+        record_broker_order(
+            db, account_id="acct-2", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_order_id="broker-ord-1",
+            symbol="NFO:CE", side="BUY", quantity=50,
+            broker_status="OPEN", accepted_at_ns=500,
+        )
+    with pytest.raises(ValueError, match="execution leg"):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_order_id="broker-ord-2",
+            symbol="NFO:CE", side="SELL", quantity=50,
+            broker_status="OPEN", accepted_at_ns=500,
+        )
+
+
+def test_broker_order_identity_does_not_advance_intent_state(db):
+    _submitting_intent(db)
+    before = get_intent(db, account_id="acct-1", intent_id="intent-1")
+    record_broker_order(
+        db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="angel_one", broker_order_id="broker-ord-1",
+        symbol="NFO:CE", side="BUY", quantity=50,
+        broker_status="OPEN", accepted_at_ns=500,
+    )
+    after = get_intent(db, account_id="acct-1", intent_id="intent-1")
+    assert after.intent.status == before.intent.status == IntentStatus.SUBMITTING
+    assert after.version == before.version
