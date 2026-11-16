@@ -163,3 +163,21 @@ batch: `approval_granted=false`, `replay_authorized=false`, and
 `trading_authorized=false` remain explicit. A future operator workflow must
 perform a fresh eligibility review and independently revalidate evidence;
 this receipt is an audit record, not a reusable authorization token.
+
+
+## Broker callback arrival and sequence integrity
+
+The deferred callback review now includes a read-only per-order sequence diagnostic.
+It compares local persistence/arrival order with trusted broker occurrence
+timestamps and cumulative filled quantities, and reports late-arriving older
+callbacks, non-increasing cumulative sequences, and repeated fill identities
+under distinct callback IDs. Events without a fill identity, positive timestamp,
+and positive cumulative quantity are excluded from ordering conclusions.
+
+This is diagnostic evidence only: it does not reorder, discard, replay, or apply
+callbacks; it does not alter the immutable fill ledger or intent/leg state.
+The diagnostic is account-scoped by the existing review query and always
+reports `trading_authorized=false` and `fills_mutated=false`. It is provider
+agnostic and therefore applies uniformly to Angel One, Zerodha, FYERS, Shoonya,
+and m.Stock only after their adapters have emitted the shared normalized event
+contract; it does not claim independent live certification of each adapter.
