@@ -236,6 +236,29 @@ class BoxSpreadPaperLedger:
                 "created_at": _utc_iso(row.created_at),
             } for row in rows]
 
+    def record_manual_review_required(
+        self, *, trade_id: int, reason: str, account_key: str = "default",
+        failure_type: str | None = None,
+    ) -> None:
+        """Record a post-claim failure without releasing or replaying the claim."""
+        key = self._account_key(account_key)
+        with self._session_factory() as session, session.begin():
+            trade = session.get(BoxSpreadPaperTradeRecord, trade_id)
+            if trade is None or trade.account_key != key:
+                raise ValueError("paper trade not found for account")
+            claim = session.scalar(select(BoxSpreadPaperEntryClaim).where(
+                BoxSpreadPaperEntryClaim.account_key == key,
+                BoxSpreadPaperEntryClaim.trade_id == trade_id,
+            ))
+            if claim is None or claim.status == "COMPLETED":
+                return
+            self._append_audit_event(
+                session, account_key=key, trade_id=trade_id,
+                event_type="MANUAL_REVIEW_REQUIRED", from_state=claim.status,
+                to_state="MANUAL_REVIEW_REQUIRED", reason=reason,
+                details={"failure_type": failure_type} if failure_type else None,
+            )
+
     def record_manual_review_decision(
         self, *, trade_id: int, decision: str, actor: str, reason: str,
         account_key: str = "default",
