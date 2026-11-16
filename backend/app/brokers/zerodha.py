@@ -152,8 +152,16 @@ class ZerodhaAdapter:
 
     def disconnect(self) -> None:
         try:
-            self.client.set_access_token("")
+            logout = getattr(self.client, "logout", None)
+            if callable(logout):
+                logout()
+            else:
+                self.client.set_access_token("")
         except Exception:
-            pass
+            # Local adapter state is always cleared, even if remote logout fails.
+            try:
+                self.client.set_access_token("")
+            except Exception:
+                pass
         self.account_id = None
         self.connected = False
