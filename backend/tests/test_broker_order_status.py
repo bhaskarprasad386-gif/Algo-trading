@@ -78,6 +78,17 @@ def test_nonzero_fills_are_not_lost_when_terminal_or_unknown_status_arrives(raw)
     assert evidence.requires_reconciliation is True
 
 
+def test_partial_status_without_fill_quantity_requires_reconciliation():
+    evidence = normalize_order_status(
+        broker="shoonya",
+        raw_status="PARTIALLY FILLED",
+        quantity=50,
+        filled_quantity=0,
+    )
+    assert evidence.state is NormalizedOrderState.PARTIALLY_FILLED
+    assert evidence.requires_reconciliation is True
+
+
 def test_filled_status_without_fill_quantity_requires_reconciliation():
     evidence = normalize_order_status(
         broker="mstock",
