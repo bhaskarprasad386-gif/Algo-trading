@@ -47,3 +47,88 @@ def test_provider_protocol_exposes_only_history_snapshot_operation():
         if callable(value) and not name.startswith("_")
     }
     assert protocol_methods == {"fetch_order_trade_snapshot"}
+
+
+from datetime import datetime, timedelta, timezone
+
+from app.brokers.history import (
+    BrokerHistoryUnavailable,
+    BrokerHistoryWindow,
+    validated_daily_history_window,
+)
+from app.execution.broker_reconciliation import BrokerSnapshot
+
+
+def _history_snapshot(*, account_id="acct-1", broker="fyers", complete=True):
+    return BrokerSnapshot(
+        account_id=account_id,
+        broker=broker,
+        orders=(),
+        trades=(),
+        complete=complete,
+    )
+
+
+def _history_window():
+    start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    return start, start + timedelta(days=1)
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "message"),
+    [
+        (_history_snapshot(account_id="other-account"), "account scope"),
+        (_history_snapshot(broker="zerodha"), "broker identity"),
+        (_history_snapshot(complete=False), "incomplete snapshot"),
+    ],
+)
+def test_provider_boundary_rejects_wrong_or_incomplete_adapter_evidence(snapshot, message):
+    start, end = _history_window()
+
+    class Daily:
+        pass
+
+    daily = Daily()
+    daily.snapshot = snapshot
+    with pytest.raises(BrokerHistoryUnavailable, match=message):
+        validated_daily_history_window(
+            provider_name="fyers",
+            account_id="acct-1",
+            window_start=start,
+            window_end=end,
+            daily_history=daily,
+            provider_window="TEST",
+        )
+
+
+def test_provider_boundary_accepts_only_matching_complete_snapshot():
+    start, end = _history_window()
+
+    class Daily:
+        snapshot = _history_snapshot()
+
+    result = validated_daily_history_window(
+        provider_name="FYERS",
+        account_id="acct-1",
+        window_start=start,
+        window_end=end,
+        daily_history=Daily(),
+        provider_window="TEST",
+    )
+    assert result.complete is True
+    assert result.snapshot.account_id == "acct-1"
+    assert result.snapshot.broker == "fyers"
+    assert result.pages_fetched == 1
+
+
+def test_history_window_rejects_cursor_or_pagination_claimed_as_complete():
+    start, end = _history_window()
+    with pytest.raises(ValueError, match="paginated response"):
+        BrokerHistoryWindow(
+            snapshot=_history_snapshot(),
+            window_start=start,
+            window_end=end,
+            pages_fetched=1,
+            has_more=True,
+            next_cursor="page-2",
+        )
