@@ -134,6 +134,8 @@ def fyers_verify(
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="FYERS OAuth state is invalid, expired, or already used") from exc
 
+    # Re-authentication must disarm any prior process-local safety state first.
+    trading_safety.disable(user_id)
     authenticator = FyersTypeAAuthenticator()
     client: FyersRESTClient | None = None
     adapter: FyersAdapter | None = None
@@ -154,9 +156,9 @@ def fyers_verify(
         claim_authenticated_account(db, "fyers", authenticated.account_id)
         set_owner_connection_state(db, True)
 
-        previous = broker_sessions.replace(user_id, "fyers", adapter)
-        if previous is not None:
-            previous.disconnect()
+        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "fyers", adapter)
+        if logout_error is not None:
+            app_logger.error("Previous fyers provider logout failed during reconnect: %s", type(logout_error).__name__)
         item = broker_connections.connect(user_id, "fyers", payload.display_name)
         trading_safety.disable(user_id)
         return {
