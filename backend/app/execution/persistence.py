@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide, validate_basket_legs
-from app.models.execution_intent import ExecutionFillRecord, ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
+from app.models.execution_intent import (\n    ExecutionBrokerOrderRecord, ExecutionFillRecord, ExecutionIntentEventRecord,\n    ExecutionIntentRecord, ExecutionLegRecord,\n)
 
 
 class IdempotencyConflict(ValueError):
@@ -265,3 +265,88 @@ def record_fill(
             "intent_status": intent.status,
             "version": intent.version,
         }
+
+
+
+def record_broker_order(
+    db: Session, *, account_id: str, intent_id: str, leg_id: str,
+    broker: str, broker_order_id: str, symbol: str, side: str,
+    quantity: int, broker_status: str, accepted_at_ns: int,
+    client_order_id: str | None = None,
+):
+    """Persist a broker-assigned order identity without changing execution state.
+
+    The broker call necessarily occurs outside this database transaction. If a
+    process dies after broker acceptance but before this record is committed,
+    recovery must reconcile broker history; it must never blindly resubmit.
+    Identical callbacks are idempotent; conflicting reuse of an order ID fails.
+    """
+    broker = broker.strip().lower()
+    broker_order_id = broker_order_id.strip()
+    symbol = symbol.strip()
+    side = side.strip().upper()
+    broker_status = broker_status.strip().upper()
+    client_order_id = client_order_id.strip() if client_order_id else None
+    if not account_id.strip() or not intent_id.strip() or not leg_id.strip():
+        raise ValueError("account_id, intent_id and leg_id are required")
+    if not broker or not broker_order_id or not symbol:
+        raise ValueError("broker, broker_order_id and symbol are required")
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("side must be BUY or SELL")
+    if quantity <= 0 or accepted_at_ns <= 0:
+        raise ValueError("order quantity and accepted timestamp must be positive")
+    if broker_status not in {
+        "PENDING", "OPEN", "TRIGGER_PENDING", "PARTIALLY_FILLED",
+        "COMPLETE", "REJECTED", "CANCELLED", "UNKNOWN",
+    }:
+        raise ValueError("unsupported broker order status")
+    canonical = json.dumps({
+        "intent_id": intent_id, "leg_id": leg_id, "broker": broker,
+        "broker_order_id": broker_order_id, "symbol": symbol, "side": side,
+        "quantity": quantity, "client_order_id": client_order_id,
+        "broker_status": broker_status, "accepted_at_ns": accepted_at_ns,
+    }, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    with db.begin():
+        intent = db.execute(select(ExecutionIntentRecord).where(
+            ExecutionIntentRecord.account_id == account_id,
+            ExecutionIntentRecord.intent_id == intent_id,
+        ).with_for_update()).scalar_one_or_none()
+        if intent is None:
+            raise LookupError("execution intent not found for account")
+        leg = db.execute(select(ExecutionLegRecord).where(
+            ExecutionLegRecord.intent_record_id == intent.id,
+            ExecutionLegRecord.leg_id == leg_id,
+        ).with_for_update()).scalar_one_or_none()
+        if leg is None:
+            raise LookupError("execution leg not found for intent")
+        if symbol != leg.instrument or side != leg.side or quantity > leg.quantity:
+            raise ValueError("broker order does not match the persisted execution leg")
+        if intent.status not in {
+            IntentStatus.SUBMITTING.value, IntentStatus.UNKNOWN.value,
+            IntentStatus.RECONCILIATION_REQUIRED.value, IntentStatus.WORKING.value,
+            IntentStatus.PARTIALLY_FILLED.value,
+        }:
+            raise ValueError(f"broker order identity is not accepted while intent is {intent.status}")
+
+        existing = db.execute(select(ExecutionBrokerOrderRecord).where(
+            ExecutionBrokerOrderRecord.account_id == account_id,
+            ExecutionBrokerOrderRecord.broker == broker,
+            ExecutionBrokerOrderRecord.broker_order_id == broker_order_id,
+        )).scalar_one_or_none()
+        if existing is not None:
+            if existing.payload_hash != digest:
+                raise IdempotencyConflict("broker order ID was reused with different order data")
+            return {"created": False, "broker_order_id": existing.broker_order_id}
+
+        record = ExecutionBrokerOrderRecord(
+            intent_record_id=intent.id, leg_record_id=leg.id,
+            account_id=account_id, broker=broker, broker_order_id=broker_order_id,
+            symbol=symbol, side=side, quantity=quantity,
+            client_order_id=client_order_id, broker_status=broker_status,
+            accepted_at_ns=accepted_at_ns, payload_hash=digest,
+        )
+        db.add(record)
+        db.flush()
+        return {"created": True, "broker_order_id": broker_order_id}
