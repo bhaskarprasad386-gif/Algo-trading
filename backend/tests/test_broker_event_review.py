@@ -144,3 +144,19 @@ def test_reused_fill_identity_with_different_price_is_not_hidden(db):
 
     assert result["unresolved_count"] == 1
     assert result["events"][0]["reason"] == "FILL_IDENTITY_EVIDENCE_CONFLICT"
+
+
+
+def test_bounded_review_never_claims_clear_when_older_events_are_omitted(db):
+    db.add(_event(event_id="evt-new", occurred_at_ns=300))
+    db.add(_event(event_id="evt-old", occurred_at_ns=200))
+    db.flush()
+
+    result = review_deferred_broker_events(
+        db, broker="fyers", account_id="acct-1", limit=1,
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["event_count"] == 1
+    assert result["truncated"] is True
+    assert result["review_complete"] is False
