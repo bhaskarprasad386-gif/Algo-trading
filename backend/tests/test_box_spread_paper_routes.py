@@ -1047,6 +1047,7 @@ def test_simulation_atomic_basket_write_failure_blocks_replay_without_partial_fi
         routes._ledger, "claim_entry_attempt",
         lambda **kwargs: claim_state.update(claimed=True) or {"created": True, "status": "CLAIMED"},
     )
+    monkeypatch.setattr(routes._ledger, "record_manual_review_required", lambda **kwargs: None)
     monkeypatch.setattr(
         routes._ledger, "list_fills",
         lambda trade_id, account_key="default": list(durable_fills),
