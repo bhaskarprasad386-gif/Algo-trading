@@ -190,3 +190,29 @@ def test_tradebook_batch_rolls_back_when_a_later_fill_write_fails(db, monkeypatc
     assert db.query(ExecutionFillRecord).count() == 0
     legs = db.scalars(select(ExecutionLegRecord).order_by(ExecutionLegRecord.leg_id)).all()
     assert all(leg.filled_quantity == 0 for leg in legs)
+
+
+def test_unmanaged_manual_trades_are_reported_but_never_adopted(db):
+    _working_intent(db)
+    snapshot = BrokerSnapshot(
+        "acct-1", "angel_one",
+        (
+            BrokerOrderSnapshot("order-ce", "NFO:CE", "BUY", 50, 25, "PARTIALLY_FILLED"),
+            BrokerOrderSnapshot("manual-order", "NFO:MANUAL", "BUY", 10, 5, "PARTIALLY_FILLED"),
+        ),
+        (
+            BrokerTradeSnapshot("trade-1", "order-ce", 25, 101.25, 1_800_000_000_000_000_000),
+            BrokerTradeSnapshot("manual-trade-1", "manual-order", 5, None, None),
+        ),
+        True,
+    )
+    result = sync.sync_account_tradebook_fills(
+        db, adapter=_adapter(snapshot), account_id="acct-1",
+    )
+    assert result["status"] == "SYNCED_WITH_UNMATCHED"
+    assert result["managed_trade_count"] == 1
+    assert result["created_count"] == 1
+    assert result["unmatched_trade_count"] == 1
+    assert result["unmatched_trade_ids"] == ["manual-trade-1"]
+    assert db.query(ExecutionFillRecord).count() == 1
+    assert db.scalar(select(ExecutionFillRecord)).broker_fill_id == "trade-1"
