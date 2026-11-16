@@ -77,6 +77,7 @@ def _snapshot(*, account_id="acct-1", filled=0, complete=True, symbol="NFO:CE"):
         orders=tuple(BrokerOrderSnapshot(
             broker_order_id=order_id, symbol=order_symbol, side=side,
             quantity=50, filled_quantity=filled if index == 0 else 0,
+            raw_status="OPEN",
         ) for index, (order_id, order_symbol, side) in enumerate(rows)),
         trades=(),
         complete=complete,
@@ -195,3 +196,71 @@ def test_missing_broker_order_identity_on_any_persisted_leg_blocks_reconciliatio
     stored = db.scalar(select(BrokerReconciliationRecord))
     assert stored.is_consistent is False
     assert stored.issue_count >= 1
+
+
+def test_raw_status_is_durably_preserved_and_unknown_status_blocks_consistency(db):
+    import json
+
+    _persist_order(db)
+    snapshot = _snapshot()
+    snapshot = BrokerSnapshot(
+        account_id=snapshot.account_id,
+        broker=snapshot.broker,
+        orders=tuple(
+            BrokerOrderSnapshot(
+                broker_order_id=order.broker_order_id,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=order.quantity,
+                filled_quantity=order.filled_quantity,
+                raw_status="VENDOR_STATUS_NOT_MAPPED" if index == 0 else "OPEN",
+            )
+            for index, order in enumerate(snapshot.orders)
+        ),
+        trades=snapshot.trades,
+        complete=snapshot.complete,
+    )
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=snapshot, reconciliation_id="run-unknown-status",
+        intent_ids=("intent-reconcile",),
+    )
+    stored = db.scalar(select(BrokerReconciliationRecord))
+    payload = json.loads(stored.report_json)
+    assert result["report"].is_consistent is False
+    assert any(
+        issue.status.value == "ORDER_STATUS_REQUIRES_RECONCILIATION"
+        for issue in result["report"].issues
+    )
+    assert payload["source_snapshot"]["orders"][0]["raw_status"] == "VENDOR_STATUS_NOT_MAPPED"
+    assert payload["order_status_evidence"][0]["normalized_state"] == "UNKNOWN"
+    assert payload["order_status_evidence"][0]["requires_reconciliation"] is True
+
+
+def test_cancel_after_partial_fill_is_persisted_as_conflict_free_manual_reconciliation(db):
+    _persist_order(db)
+    snapshot = _snapshot(filled=10)
+    first = snapshot.orders[0]
+    cancelled = BrokerOrderSnapshot(
+        broker_order_id=first.broker_order_id,
+        symbol=first.symbol,
+        side=first.side,
+        quantity=first.quantity,
+        filled_quantity=first.filled_quantity,
+        raw_status="CANCELLED",
+    )
+    snapshot = BrokerSnapshot(
+        account_id=snapshot.account_id,
+        broker=snapshot.broker,
+        orders=(cancelled,) + snapshot.orders[1:],
+        trades=(),
+        complete=True,
+    )
+    result = reconcile_persisted_account_snapshot(
+        db, snapshot=snapshot, reconciliation_id="run-partial-cancel",
+        intent_ids=("intent-reconcile",),
+    )
+    assert result["report"].is_consistent is False
+    assert any(
+        issue.status.value == "ORDER_STATUS_REQUIRES_RECONCILIATION"
+        for issue in result["report"].issues
+    )
