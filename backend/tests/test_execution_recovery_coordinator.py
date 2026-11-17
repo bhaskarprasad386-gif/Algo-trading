@@ -26,11 +26,11 @@ def _candidate(intent_id):
     )
 
 
-def _history(*, account_id="acct-1", broker="zerodha", scope="CURRENT_TRADING_DAY"):
+def _history(*, account_id="acct-1", broker="zerodha", scope="CURRENT_TRADING_DAY", complete=True):
     snapshot = SimpleNamespace(
         account_id=account_id,
         broker=broker,
-        complete=True,
+        complete=complete,
         orders=(),
         trades=(),
     )
@@ -120,3 +120,17 @@ def test_recovery_coordinator_blocks_unsupported_history_scope(monkeypatch):
     assert result["status"] == "BLOCKED"
     assert result["reason"] == "BROKER_HISTORY_SCOPE_UNSUPPORTED"
     assert result["trading_authorized"] is False
+
+
+def test_recovery_coordinator_blocks_incomplete_broker_snapshot(monkeypatch):
+    adapter = _Adapter(_history(complete=False))
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates", lambda *a, **k: (_candidate("intent-a"),),
+    )
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker="zerodha", adapter=adapter,
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_HISTORY_SNAPSHOT_INCOMPLETE"
+    assert result["trading_authorized"] is False
+    assert result["reviews"] == []
