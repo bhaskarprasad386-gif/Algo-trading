@@ -345,12 +345,17 @@ def reconcile_snapshot(
 
 
 
-def parse_positive_trade_price(value: object) -> float:
-    """Parse a provider execution price without accepting missing/zero/NaN values."""
+def parse_positive_trade_price(value: object) -> float | None:
+    """Return trustworthy provider price evidence, or None when it is unavailable.
+
+    Missing or malformed prices do not invalidate a complete order/trade snapshot.
+    Downstream fill-ledger synchronization blocks trades without both positive
+    price and trustworthy execution-time evidence.
+    """
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        raise ValueError("trade fill price is missing or invalid") from None
+        return None
     if not math.isfinite(parsed) or parsed <= 0:
-        raise ValueError("trade fill price must be finite and positive")
+        return None
     return parsed
