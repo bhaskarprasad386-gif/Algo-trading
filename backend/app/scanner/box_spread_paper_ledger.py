@@ -1173,10 +1173,30 @@ class BoxSpreadPaperLedger:
             last_id = max(row.id for row in basket_rows)
             before = {role: 0 for role in roles}
             after = {role: 0 for role in roles}
+            entry_actions = (
+                {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+                if trade.direction == "LONG"
+                else {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+            )
             for row in rows:
-                if row.role not in before:
+                if row.id > last_id:
                     continue
-                signed = row.quantity * (1 if row.action == "BUY" else -1)
+                if row.role not in before or row.action not in {"BUY", "SELL"}:
+                    raise ValueError("historical paper ledger contains an invalid role or action; manual review required")
+                try:
+                    historical_quantity = _positive_quantity(row.quantity)
+                    historical_price = Decimal(str(row.fill_price))
+                except (InvalidOperation, TypeError, ValueError):
+                    raise ValueError("historical paper ledger contains invalid fill values; manual review required") from None
+                is_exit = row.fill_id.startswith(("EXIT:", "SETTLE:"))
+                if (
+                    not historical_price.is_finite()
+                    or historical_price < 0
+                    or (historical_price == 0 and not row.fill_id.startswith("SETTLE:"))
+                    or (not is_exit and row.action != entry_actions[row.role])
+                ):
+                    raise ValueError("historical paper ledger contains inconsistent entry evidence; manual review required")
+                signed = historical_quantity * (1 if row.action == "BUY" else -1)
                 if row.id < first_id:
                     before[row.role] += signed
                 if row.id <= last_id:
