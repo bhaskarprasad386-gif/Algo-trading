@@ -540,3 +540,29 @@ def test_paginated_history_window_cannot_be_reconciled_until_all_pages_are_fetch
     assert db.query(BrokerReconciliationRecord).filter_by(
         reconciliation_id="run-paginated-history-window-handoff"
     ).count() == 0
+
+
+def test_history_window_from_another_account_cannot_reconcile_local_intents(db):
+    _persist_order(db, account_id="acct-1")
+    start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    foreign_window = BrokerHistoryWindow(
+        snapshot=_snapshot(account_id="acct-2"),
+        window_start=start,
+        window_end=start + timedelta(days=1),
+        pages_fetched=1,
+        has_more=False,
+        provider_window="TEST_FOREIGN_ACCOUNT_WINDOW",
+    )
+
+    with pytest.raises(LookupError, match="do not belong to this broker account"):
+        reconcile_persisted_history_window(
+            db,
+            history_window=foreign_window,
+            reconciliation_id="run-cross-account-history-window",
+            intent_ids=("intent-reconcile",),
+        )
+
+    stored = db.scalar(select(BrokerReconciliationRecord).where(
+        BrokerReconciliationRecord.reconciliation_id == "run-cross-account-history-window"
+    ))
+    assert stored is None
