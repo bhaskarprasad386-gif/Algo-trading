@@ -105,6 +105,42 @@ def test_single_leg_event_set_cannot_pass_multi_leg_review(db):
                for item in result["events"] for reason in item["reasons"])
 
 
+
+def test_unselected_unresolved_fill_event_in_same_intent_blocks_subset(db):
+    intent, legs = _seed(db)
+    first_leg, first_order = legs[0]
+    db.add(BrokerOrderEventRecord(
+        broker="fyers", account_id="acct-1", event_id="evt-a-later",
+        broker_order_id=first_order.broker_order_id, status="PARTIALLY_FILLED",
+        cumulative_filled_quantity=15, fill_id="trade-a-later",
+        fill_quantity=5, average_fill_price=Decimal("101.50"),
+        occurred_at_ns=103, payload_hash="e" * 64, payload_json="{}",
+    ))
+    db.flush()
+
+    result = _review(db)
+    assert result["eligible"] is False
+    assert any(
+        "UNSELECTED_UNRESOLVED_FILL_EVENT_IN_INTENT" in reason
+        for item in result["events"] for reason in item["reasons"]
+    )
+
+
+def test_unselected_exact_duplicate_callback_does_not_block_selection(db):
+    _seed(db)
+    db.add(BrokerOrderEventRecord(
+        broker="fyers", account_id="acct-1", event_id="evt-a-duplicate",
+        broker_order_id="ord-leg-a", status="PARTIALLY_FILLED",
+        cumulative_filled_quantity=10, fill_id="trade-a",
+        fill_quantity=10, average_fill_price=Decimal("101.25"),
+        occurred_at_ns=101, payload_hash="f" * 64, payload_json="{}",
+    ))
+    db.flush()
+
+    result = _review(db)
+    assert result["eligible"] is True
+
+
 def test_wrong_account_event_is_not_disclosed_or_eligible(db):
     _seed(db)
     result = _review(db, ids=("evt-other",))
