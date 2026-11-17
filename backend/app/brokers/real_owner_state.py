@@ -26,6 +26,14 @@ def account_fingerprint(broker_name: str, client_code: str) -> str:
     return hmac.new(key, identity, hashlib.sha256).hexdigest()
 
 
+def matches_authenticated_account(state: BoxSpreadRealOwnerState, broker_name: str, client_code: str) -> bool:
+    """Check the live adapter identity against the durable single-account binding."""
+    if state is None or not state.account_fingerprint:
+        return False
+    candidate = account_fingerprint(broker_name, client_code)
+    return hmac.compare_digest(state.account_fingerprint, candidate)
+
+
 def claim_authenticated_account(db: Session, broker_name: str, client_code: str) -> BoxSpreadRealOwnerState:
     """Bind the dedicated owner to one broker account, failing closed on changes."""
     normalized_broker = (broker_name or "").strip().lower()
