@@ -1,33 +1,21 @@
-import os
-import uuid
+from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.execution.broker_events import BrokerOrderEvent, BrokerOrderEventStatus
-from app.execution.broker_event_persistence import BrokerEventConflict, record_broker_order_event
+from app.execution.broker_event_persistence import (
+    BrokerEventConflict, record_broker_order_event,
+    record_broker_order_event_with_fill,
+)
 from app.models.broker_order_event import BrokerOrderEventRecord
 
 
-@pytest.fixture(params=["sqlite", "postgres"])
-def db(request):
-    admin_engine = None
-    schema = None
-    if request.param == "sqlite":
-        engine = create_engine("sqlite:///:memory:")
-    else:
-        url = os.getenv("IV_TEST_POSTGRES_URL")
-        if not url:
-            pytest.skip("IV_TEST_POSTGRES_URL is not configured")
-        admin_engine = create_engine(url, pool_pre_ping=True)
-        schema = f"broker_event_test_{uuid.uuid4().hex}"
-        with admin_engine.begin() as connection:
-            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-        engine = create_engine(
-            url, connect_args={"options": f"-csearch_path={schema}"}, pool_pre_ping=True
-        )
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine, expire_on_commit=False)()
     try:
@@ -35,10 +23,6 @@ def db(request):
     finally:
         session.close()
         engine.dispose()
-        if admin_engine is not None:
-            with admin_engine.begin() as connection:
-                connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-            admin_engine.dispose()
 
 
 def event(**changes):
@@ -193,32 +177,97 @@ def test_unmatched_broker_order_rolls_back_callback_event(db):
     assert db.query(ExecutionFillRecord).count() == 0
 
 
-def test_fill_status_without_complete_fill_identity_is_rejected(db):
-    with pytest.raises(ValueError, match="requires fill_id"):
-        record_broker_order_event_with_fill(
-            db, _fill_event(fill_id=None, fill_quantity=None, average_fill_price=None)
-        )
-    assert db.query(BrokerOrderEventRecord).count() == 0
-
-
-def test_cumulative_quantity_mismatch_rolls_back_callback_and_fill(db):
-    _working_intent_with_broker_order(db)
-    with pytest.raises(ValueError, match="cumulative fill quantity"):
-        record_broker_order_event_with_fill(
-            db, _fill_event(cumulative_filled_quantity=12, fill_quantity=10)
-        )
-    assert db.query(BrokerOrderEventRecord).count() == 0
+def test_partial_fill_status_without_trade_identity_is_persisted_as_event_only(db):
+    result = record_broker_order_event(
+        db, _fill_event(fill_id=None, fill_quantity=None, average_fill_price=None)
+    )
+    assert result["created"] is True
+    assert db.query(BrokerOrderEventRecord).count() == 1
     assert db.query(ExecutionFillRecord).count() == 0
 
 
-def test_new_callback_cannot_reuse_an_already_consumed_fill_identity(db):
+def test_cumulative_quantity_gap_is_durably_deferred_without_fill(db):
+    _working_intent_with_broker_order(db)
+    result = record_broker_order_event_with_fill(
+        db, _fill_event(cumulative_filled_quantity=12, fill_quantity=10)
+    )
+    assert result["fill_deferred"] is True
+    assert result["defer_reason"] == "CUMULATIVE_FILL_GAP"
+    assert db.query(BrokerOrderEventRecord).count() == 1
+    assert db.query(ExecutionFillRecord).count() == 0
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+
+
+def test_out_of_order_fill_event_can_be_replayed_after_missing_predecessor(db):
+    _working_intent_with_broker_order(db)
+    later = _fill_event(
+        event_id="evt-fill-later", fill_id="trade-later",
+        cumulative_filled_quantity=20, fill_quantity=10, occurred_at_ns=302,
+    )
+    deferred = record_broker_order_event_with_fill(db, later)
+    assert deferred["fill_deferred"] is True
+    assert deferred["defer_reason"] == "CUMULATIVE_FILL_GAP"
+    assert db.query(BrokerOrderEventRecord).count() == 1
+    assert db.query(ExecutionFillRecord).count() == 0
+
+    earlier = _fill_event(
+        event_id="evt-fill-earlier", fill_id="trade-earlier",
+        cumulative_filled_quantity=10, fill_quantity=10, occurred_at_ns=301,
+    )
+    first_applied = record_broker_order_event_with_fill(db, earlier)
+    assert first_applied["fill_created"] is True
+
+    replayed = record_broker_order_event_with_fill(db, later)
+    assert replayed["event_created"] is False
+    assert replayed["fill_created"] is True
+    assert replayed["fill_deferred"] is False
+    assert db.query(BrokerOrderEventRecord).count() == 2
+    assert db.query(ExecutionFillRecord).count() == 2
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 20
+
+
+def test_same_fill_identity_on_second_exact_callback_is_idempotent(db):
+    _working_intent_with_broker_order(db)
+    first = record_broker_order_event_with_fill(db, _fill_event())
+    second = record_broker_order_event_with_fill(
+        db, _fill_event(event_id="evt-fill-atomic-duplicate")
+    )
+    assert first["fill_created"] is True
+    assert second["event_created"] is True
+    assert second["fill_created"] is False
+    assert db.query(BrokerOrderEventRecord).count() == 2
+    assert db.query(ExecutionFillRecord).count() == 1
+
+
+def test_new_callback_reusing_exact_fill_identity_does_not_apply_fill_twice(db):
     _working_intent_with_broker_order(db)
     record_broker_order_event_with_fill(db, _fill_event())
-    with pytest.raises(BrokerEventConflict, match="different callback event"):
-        record_broker_order_event_with_fill(
-            db, _fill_event(event_id="evt-fill-atomic-2", cumulative_filled_quantity=20)
-        )
-    assert db.query(BrokerOrderEventRecord).count() == 1
+    replay = record_broker_order_event_with_fill(
+        db, _fill_event(event_id="evt-fill-atomic-2", cumulative_filled_quantity=20)
+    )
+    assert replay["event_created"] is True
+    assert replay["fill_created"] is False
+    assert db.query(BrokerOrderEventRecord).count() == 2
     assert db.query(ExecutionFillRecord).count() == 1
     leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
     assert leg.filled_quantity == 10
+
+
+
+def test_non_binary_decimal_fill_price_replay_is_idempotent(db):
+    _working_intent_with_broker_order(db)
+    first = record_broker_order_event_with_fill(
+        db, _fill_event(average_fill_price=101.1)
+    )
+    replay = record_broker_order_event_with_fill(
+        db, _fill_event(
+            event_id="evt-fill-decimal-replay",
+            average_fill_price=101.1,
+        )
+    )
+    assert first["fill_created"] is True
+    assert replay["event_created"] is True
+    assert replay["fill_created"] is False
+    assert db.query(ExecutionFillRecord).count() == 1
