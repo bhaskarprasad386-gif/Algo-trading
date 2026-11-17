@@ -1,7 +1,7 @@
 # Batch 0 — Box Paper Lifecycle and Crash-Boundary Audit
 
-**Status:** Source/test audit completed; durable Box Paper lifecycle audit events are implemented on the Batch 0 follow-up branch and awaiting CI.  
-**Audited main commit:** `8da655f0c287251cf1602cae484714a7c26fcf15`.
+**Status:** Source/test audit updated after merged Batch 0 receipt-replay and lifecycle-audit work. This document is an implementation audit, not a live-trading certification.  
+**Updated against integration branch:** `6e9155df1db378cac38aa52fecdeae9fb0c4b6fa`.
 
 ## 1. Production caller inventory for the generic execution package
 
@@ -99,26 +99,28 @@ The inspected suite includes:
 - `test_box_spread_paper_restart_safety.py`: process-restart simulation with partial durable entry fill; duplicate claim/replay blocked and manual review required.
 - `test_box_spread_paper_schema_startup.py`: schema startup compatibility.
 
-These are source-level test inventory findings. No fresh test suite was executed in a local runtime during this audit; CI status is tracked separately on PR #504.
+These are repository test-inventory findings. PR #597 added `test_box_spread_paper_entry_replay.py`; its Full Backend Tests and Fast Broker Safety Gate both passed on the exact PR head before merge. No local test run is claimed here.
 
-## 7. Gaps to close before unified Paper cutover
+## 7. Remaining gaps before unified Paper cutover
 
-1. Add entry receipt replay after a successful commit / lost HTTP response, without re-running quote reads or simulation.
-2. Add deterministic crash-injection tests for each row in both crash matrices (before claim, after claim, after simulation, during commit, after commit/before response).
-3. Persist the simulator attempt/result in a durable normalized intent/event record before considering it recoverable.
-4. Add concurrent multi-worker tests for duplicate entry claims and concurrent exits against the same open basket on PostgreSQL (SQLite-only tests are not sufficient for production locking semantics).
-5. Add explicit state transition/audit events for `CLAIMED -> COMPLETED`, failed pre-claim validation, manual-review decisions, and operator recovery.
-6. Ensure any recovery action is authorized to the owner and account; caller-provided `account_key` must not become the future account authorization primitive.
-7. Preserve expiry settlement as disabled until trusted settlement verification is complete.
+1. Add deterministic crash-injection tests for each entry and exit boundary: before claim, after claim, after simulator result, during ledger commit, and after commit/before HTTP response. Existing receipt replay and restart tests cover selected boundaries, not the full matrix.
+2. Persist a normalized simulator attempt/result and deterministic event identifiers before treating an interrupted in-memory simulation as recoverable. Until then, post-claim ambiguity must remain blocked for manual review.
+3. Add concurrent multi-worker tests for duplicate entry claims and concurrent exits against the same open basket on PostgreSQL. Existing file-backed SQLite concurrency coverage is not a substitute for PostgreSQL row-lock semantics.
+4. Harden the operator recovery boundary before introducing distinct users/accounts. Current auth is one configured Box Paper owner; account_key is a caller-supplied virtual ledger partition, not an independently authenticated account identity. Do not reuse it as a future broker-account authorization primitive.
+5. Enforce audit-event immutability at the database/role boundary if the deployment threat model requires protection beyond the current append-only application contract.
+6. Keep official expiry settlement disabled until a trusted server-side settlement source and intrinsic-value derivation are implemented and verified.
+7. Complete runtime caller tracing before replacing/removing generic execution helpers; exact-symbol repository search cannot exclude dynamic dispatch or external callers.
+
+Completed in the current Batch 0 line: durable lifecycle event writes/read, authenticated single-owner manual-review evidence endpoint, and completed-entry receipt-only replay with LONG/SHORT four-leg validation. These do not resolve the remaining crash, durable-simulator, PostgreSQL concurrency, or ownership-boundary gaps.
 
 ## 8. Decision
 
-The current Box Paper ledger has robust atomic four-leg persistence, completed-entry receipt replay, and conservative restart protection for ambiguous claims. It is not yet a durable unified execution lifecycle: simulator state remains in memory and unresolved claims require manual review. Keep the no-blind-replay invariant while the durable intent/event layer and PostgreSQL crash/concurrency tests are built.
+The current Box Paper ledger has atomic four-leg persistence, durable lifecycle audit evidence, completed-entry and exit receipt replay, and conservative restart protection for ambiguous claims. It is not yet a durable unified execution lifecycle: simulator state remains in memory and unresolved claims require manual review. Keep the no-blind-replay invariant while the durable intent/event layer, deterministic crash-injection coverage, PostgreSQL concurrency tests, and ownership-boundary hardening are completed.
 
 **The lifecycle event implementation changes only the Box Paper ledger schema and authenticated audit endpoints. Scanner, WebSocket subscriptions, broker adapters, deployment, and Live Trading settings are unchanged.**
 
 
-## 7. Durable lifecycle audit events (Batch 0 follow-up)
+## 9. Durable lifecycle audit events (Batch 0 follow-up)
 
 The Box Paper ledger now has an append-only `box_spread_paper_audit_events` table, created through the existing SQLAlchemy startup metadata path. Events are written in the same database transaction as the corresponding durable claim or four-leg entry commit:
 
@@ -133,6 +135,6 @@ Events are read in stable insertion order through the ledger's account-scoped re
 Pre-claim HTTP 409/422 validation failures are captured by the entry route. The authenticated paper-owner subject is recorded for manual decisions; account-key authorization remains a separate ownership-hardening task. No Live broker path, scanner, WebSocket, or deployment behavior is changed by this work.
 
 
-## 9. Entry receipt replay conformance (Batch 0)
+## 10. Entry receipt replay conformance (Batch 0)
 
 `backend/tests/test_box_spread_paper_entry_replay.py` covers LONG and SHORT receipt replay; exact four-role/action/quantity validation; missing, malformed, or mismatched receipt rejection; incomplete-claim blocking before fill/summary reads; and the no-claim continuation path. These tests use synthetic receipts and do not contact a broker or enable execution. Replay responses must continue to set `broker_orders_enabled=false`.
