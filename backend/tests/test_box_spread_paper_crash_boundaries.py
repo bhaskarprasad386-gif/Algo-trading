@@ -306,3 +306,96 @@ def test_exit_commit_then_lost_response_replays_from_real_durable_ledger(monkeyp
     assert {item["role"] for item in replay["receipts"]} == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
     assert replay["broker_orders_enabled"] is False
     assert len(ledger.list_fills(trade.id, account_key=account_key)) == 8
+
+
+def test_completed_entry_receipt_replays_after_switch_off_without_market_or_engine_access(
+    monkeypatch, durable_ledger,
+):
+    ledger = durable_ledger
+    account_key = "entry-replay-off"
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-11-19",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="entry-replay-off", account_key=account_key, alert_edge=8,
+    )
+    trade = _trade(ledger, account_key, request.idempotency_key)
+    ledger.claim_entry_attempt(trade_id=trade.id, account_key=account_key)
+    legs = {
+        role: {
+            "fill_id": routes._ledger_fill_id(request.idempotency_key, role),
+            "action": action, "quantity": 25, "fill_price": price,
+        }
+        for role, action, price in (
+            ("LOW_CE", "BUY", 10), ("HIGH_CE", "SELL", 20),
+            ("HIGH_PE", "BUY", 30), ("LOW_PE", "SELL", 40),
+        )
+    }
+    ledger.record_entry_basket(trade_id=trade.id, account_key=account_key, legs=legs)
+
+    monkeypatch.setattr(routes, "_ledger", ledger)
+    monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
+    monkeypatch.setattr(routes, "_paper_execution_enabled", False)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("completed entry replay must precede switch, market data, contract resolution and simulation")
+
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
+    monkeypatch.setattr(routes, "_fresh_entry_depth_selection", forbidden)
+    monkeypatch.setattr(routes._engine, "create_intent", forbidden)
+    monkeypatch.setattr(routes._engine, "execute_intent", forbidden)
+
+    replay = asyncio.run(routes._simulate_entry_locked(
+        trade.id, routes.SimulateEntry(account_key=account_key),
+    ))
+
+    assert replay["replayed"] is True
+    assert replay["status"] == "FILLED"
+    assert replay["broker_orders_enabled"] is False
+    assert len(replay["fills"]) == 4
+    assert {item["role"] for item in replay["fills"]} == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
+    assert len(ledger.list_fills(trade.id, account_key=account_key)) == 4
+
+
+def test_completed_entry_claim_with_missing_receipt_fails_closed_without_resimulation(
+    monkeypatch, durable_ledger,
+):
+    ledger = durable_ledger
+    account_key = "entry-replay-corrupt"
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-11-19",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="entry-replay-corrupt", account_key=account_key, alert_edge=8,
+    )
+    trade = _trade(ledger, account_key, request.idempotency_key)
+    ledger.claim_entry_attempt(trade_id=trade.id, account_key=account_key)
+    legs = {
+        role: {
+            "fill_id": routes._ledger_fill_id(request.idempotency_key, role),
+            "action": action, "quantity": 25, "fill_price": price,
+        }
+        for role, action, price in (
+            ("LOW_CE", "BUY", 10), ("HIGH_CE", "SELL", 20),
+            ("HIGH_PE", "BUY", 30), ("LOW_PE", "SELL", 40),
+        )
+    }
+    ledger.record_entry_basket(trade_id=trade.id, account_key=account_key, legs=legs)
+    missing_fill_id = routes._ledger_fill_id(request.idempotency_key, "HIGH_PE")
+    with ledger._session_factory() as session, session.begin():
+        session.query(BoxSpreadPaperLedgerEntry).filter_by(
+            account_key=account_key, trade_id=trade.id, fill_id=missing_fill_id,
+        ).delete(synchronize_session=False)
+
+    monkeypatch.setattr(routes, "_ledger", ledger)
+    monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
+    monkeypatch.setattr(routes, "_resolve", lambda *args: pytest.fail("corrupt receipt must not resimulate"))
+
+    with pytest.raises(routes.HTTPException) as raised:
+        asyncio.run(routes._simulate_entry_locked(
+            trade.id, routes.SimulateEntry(account_key=account_key),
+        ))
+
+    assert raised.value.status_code == 409
+    assert "exactly four durable entry receipts" in raised.value.detail
+    assert len(ledger.list_fills(trade.id, account_key=account_key)) == 3
+    assert ledger.get_entry_claim(trade_id=trade.id, account_key=account_key)["status"] == "COMPLETED"
