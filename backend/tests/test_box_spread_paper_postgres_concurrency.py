@@ -119,6 +119,10 @@ def test_postgres_duplicate_entry_claim_is_serialized_across_ledger_workers(post
     assert first.get_entry_claim(
         trade_id=trade.id, account_key=account_key,
     )["status"] == "CLAIMED"
+    audit_events = first.list_audit_events(
+        trade_id=trade.id, account_key=account_key,
+    )
+    assert sum(event["event_type"] == "ENTRY_CLAIMED" for event in audit_events) == 1
 
 
 def test_postgres_concurrent_exit_replay_is_idempotent_across_ledger_workers(postgres_paper_ledgers):
