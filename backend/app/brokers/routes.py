@@ -23,9 +23,12 @@ from app.core.logger import app_logger
 from app.execution.recovery_coordinator import review_account_recovery
 from app.execution.broker_snapshot_event_sync import sync_account_order_status_events
 from app.execution.broker_tradebook_fill_sync import sync_account_tradebook_fills
+from app.execution.broker_event_review import review_deferred_broker_events
 from app.models import BoxSpreadRealOwnerState
+from app.brokers.broker_event_replay_review_routes import router as replay_eligibility_router
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
+router.include_router(replay_eligibility_router)
 router.include_router(shoonya_router)
 router.include_router(zerodha_router)
 router.include_router(fyers_router)
@@ -196,6 +199,71 @@ def sync_broker_tradebook_fills(
         db.rollback()
         app_logger.exception("Broker tradebook fill synchronization failed")
         raise HTTPException(status_code=503, detail="Broker tradebook fill synchronization is temporarily unavailable") from exc
+
+@router.get("/events/review")
+def review_broker_callback_events(
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
+) -> dict:
+    """Read-only visibility into persisted callbacks whose fill evidence is unresolved."""
+    owner_state = db.query(BoxSpreadRealOwnerState).filter(
+        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    ).first()
+    if owner_state is None or not owner_state.broker_name:
+        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+
+    broker = str(owner_state.broker_name).strip().lower()
+    adapter = broker_sessions.get(user_id, broker)
+    db.rollback()
+    if adapter is None or not bool(getattr(adapter, "connected", False)):
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_NOT_CONNECTED",
+            "event_count": 0,
+            "unresolved_count": 0,
+            "deferred_count": 0,
+            "events": [],
+            "trading_authorized": False,
+        }
+    if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_IDENTITY_MISMATCH",
+            "event_count": 0,
+            "unresolved_count": 0,
+            "deferred_count": 0,
+            "events": [],
+            "trading_authorized": False,
+        }
+    account_id = str(getattr(adapter, "account_id", "") or "").strip()
+    if not account_id:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+            "event_count": 0,
+            "unresolved_count": 0,
+            "deferred_count": 0,
+            "events": [],
+            "trading_authorized": False,
+        }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
+    try:
+        return review_deferred_broker_events(
+            db, broker=broker, account_id=account_id, limit=limit,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Broker event review request is invalid") from exc
+    except Exception as exc:
+        db.rollback()
+        app_logger.exception("Read-only broker callback event review failed")
+        raise HTTPException(status_code=503, detail="Broker callback event review is temporarily unavailable") from exc
+
 
 @router.get("/recovery/review")
 def review_execution_recovery(
