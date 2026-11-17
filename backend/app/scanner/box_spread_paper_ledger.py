@@ -1173,14 +1173,75 @@ class BoxSpreadPaperLedger:
             last_id = max(row.id for row in basket_rows)
             before = {role: 0 for role in roles}
             after = {role: 0 for role in roles}
+            entry_actions = (
+                {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+                if trade.direction == "LONG"
+                else {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+            )
             for row in rows:
-                if row.role not in before:
+                if row.id > last_id:
                     continue
-                signed = row.quantity * (1 if row.action == "BUY" else -1)
+                if row.role not in before or row.action not in {"BUY", "SELL"}:
+                    raise ValueError("historical paper ledger contains an invalid role or action; manual review required")
+                try:
+                    historical_quantity = _positive_quantity(row.quantity)
+                    historical_price = Decimal(str(row.fill_price))
+                except (InvalidOperation, TypeError, ValueError):
+                    raise ValueError("historical paper ledger contains invalid fill values; manual review required") from None
+                is_exit = row.fill_id.startswith(("EXIT:", "SETTLE:"))
+                is_requested_basket_receipt = row.fill_id.startswith(prefix)
+                if (
+                    (
+                        not is_requested_basket_receipt
+                        and (
+                            not historical_price.is_finite()
+                            or historical_price < 0
+                            or (historical_price == 0 and not row.fill_id.startswith("SETTLE:"))
+                        )
+                    )
+                    or (not is_exit and row.action != entry_actions[row.role])
+                ):
+                    raise ValueError("historical paper ledger contains inconsistent entry evidence; manual review required")
+                signed = historical_quantity * (1 if row.action == "BUY" else -1)
                 if row.id < first_id:
                     before[row.role] += signed
                 if row.id <= last_id:
                     after[row.role] += signed
+
+            # Snapshot reconstruction is a second trust boundary, independent
+            # of the HTTP route's replay validation. Never derive historical
+            # position from a receipt whose key, close action, quantity, or
+            # execution price is internally inconsistent.
+            expected_actions = {
+                role: ("SELL" if before[role] > 0 else "BUY")
+                for role in roles
+            }
+            for row in basket_rows:
+                try:
+                    price = Decimal(str(row.fill_price))
+                except (InvalidOperation, TypeError, ValueError):
+                    price = Decimal("0")
+                if (
+                    row.fill_id != f"{prefix}{row.role}"
+                    or row.action != expected_actions[row.role]
+                    or row.quantity <= 0
+                    or not price.is_finite()
+                    or price <= 0
+                ):
+                    raise ValueError("prior basket exit receipts are inconsistent; manual review required")
+            # A basket exit may reduce or flatten a leg, but it must never
+            # reverse its sign. Absolute quantities alone are insufficient:
+            # a corrupted 75-unit SELL against a 50-unit long position would
+            # otherwise look like a valid 25-unit short remainder.
+            for role in roles:
+                if before[role] == 0 or (
+                    after[role] != 0
+                    and (after[role] > 0) != (before[role] > 0)
+                ):
+                    raise ValueError(
+                        "prior basket exit reverses or lacks a pre-existing leg position; manual review required"
+                    )
+
             before_values = {abs(value) for value in before.values()}
             after_values = {abs(value) for value in after.values()}
             if len(before_values) != 1 or len(after_values) != 1:
@@ -1189,7 +1250,7 @@ class BoxSpreadPaperLedger:
             before_quantity = next(iter(before_values))
             after_quantity = next(iter(after_values))
             exited_quantity = basket_rows[0].quantity
-            if before_quantity - after_quantity != exited_quantity:
+            if exited_quantity > before_quantity or before_quantity - after_quantity != exited_quantity:
                 raise ValueError("prior basket exit does not reconcile with historical position")
             if any(quantity % lot_size for quantity in (before_quantity, after_quantity, exited_quantity)):
                 raise ValueError("historical paper position is not a whole number of lots")
