@@ -20,6 +20,7 @@ from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, requir
 from app.brokers.real_owner_state import claim_authenticated_account, disable_owner_trading, set_owner_connection_state
 from app.core.database import get_db
 from app.core.logger import app_logger
+from app.execution.recovery_coordinator import review_account_recovery
 from app.models import BoxSpreadRealOwnerState
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
@@ -81,6 +82,54 @@ def broker_capability_matrix(user_id: int = Depends(require_real_owner_access)) 
 @router.get("/connections")
 def connections(user_id: int = Depends(require_real_owner_access)) -> dict:
     return {"connections": [{"broker": c.broker, "connected": c.connected, "display_name": c.display_name, "connected_at": c.connected_at.isoformat() if c.connected_at else None} for c in broker_connections.list(user_id)]}
+
+
+
+@router.get("/recovery/review")
+def review_execution_recovery(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
+) -> dict:
+    """Read-only review of pending execution intents against the active broker session."""
+    owner_state = db.query(BoxSpreadRealOwnerState).filter(
+        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    ).first()
+    if owner_state is None or not owner_state.broker_name:
+        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+
+    broker = str(owner_state.broker_name).strip().lower()
+    adapter = broker_sessions.get(user_id, broker)
+    # Close the owner-state read transaction before the recovery inventory opens
+    # its own bounded transaction.
+    db.rollback()
+    if adapter is None or not bool(getattr(adapter, "connected", False)):
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_NOT_CONNECTED",
+            "trading_authorized": False,
+            "candidate_count": 0,
+            "reviews": [],
+        }
+    account_id = str(getattr(adapter, "account_id", "") or "").strip()
+    if not account_id:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+            "trading_authorized": False,
+            "candidate_count": 0,
+            "reviews": [],
+        }
+    try:
+        return review_account_recovery(
+            db, account_id=account_id, broker=broker, adapter=adapter,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Recovery review request is invalid") from exc
+    except Exception as exc:
+        db.rollback()
+        app_logger.exception("Read-only execution recovery review failed")
+        raise HTTPException(status_code=503, detail="Execution recovery review is temporarily unavailable") from exc
 
 
 @router.get("/safety")
