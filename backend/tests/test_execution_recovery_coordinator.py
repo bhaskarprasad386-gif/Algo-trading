@@ -1,4 +1,6 @@
+from datetime import datetime
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from app.execution import recovery_coordinator as coordinator
 
@@ -36,7 +38,7 @@ def _history(*, account_id="acct-1", broker="zerodha", scope="CURRENT_TRADING_DA
     )
     return SimpleNamespace(
         scope=scope,
-        trading_date="2026-11-16",
+        trading_date=datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
         snapshot=snapshot,
     )
 
@@ -132,5 +134,37 @@ def test_recovery_coordinator_blocks_incomplete_broker_snapshot(monkeypatch):
     )
     assert result["status"] == "BLOCKED"
     assert result["reason"] == "BROKER_HISTORY_SNAPSHOT_INCOMPLETE"
+    assert result["trading_authorized"] is False
+    assert result["reviews"] == []
+
+
+
+def test_recovery_coordinator_blocks_adapter_account_mismatch_before_ledger_read(monkeypatch):
+    adapter = _Adapter(_history())
+    adapter.account_id = "different-account"
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not query ledger")),
+    )
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker="zerodha", adapter=adapter,
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_SESSION_ACCOUNT_SCOPE_MISMATCH"
+    assert result["trading_authorized"] is False
+    assert adapter.fetch_count == 0
+
+
+def test_recovery_coordinator_blocks_stale_trading_date_before_review(monkeypatch):
+    adapter = _Adapter(_history())
+    adapter.history.trading_date = "2000-01-01"
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates", lambda *a, **k: (_candidate("intent-a"),),
+    )
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker="zerodha", adapter=adapter,
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_HISTORY_TRADING_DATE_STALE"
     assert result["trading_authorized"] is False
     assert result["reviews"] == []
