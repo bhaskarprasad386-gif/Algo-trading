@@ -53,7 +53,7 @@ Important: the atomicity guarantee in step 11 is a database transaction for Pape
 
 ### Critical nuance
 
-The current entry API intentionally does not automatically replay an ambiguous claim. This is fail-safe against duplicate simulation, but a retry after a successful DB commit and lost HTTP response currently receives a conflict instead of an idempotent success receipt. The ledger contains all four durable receipts, so the future normalized API should safely return those original receipts without executing again. This is a usability/reliability gap, not a reason to loosen the current replay guard.
+The entry route now checks the durable claim before the Paper execution switch, instrument resolution, scanner/depth reads, or simulator calls. A `COMPLETED` claim is replayable only when the exact four deterministic role-specific fill IDs, actions, and quantities are present; it returns the original ledger receipts and never re-simulates. A `CLAIMED` but incomplete attempt remains blocked for manual review. The remaining requirement is to keep this behavior covered at restart boundaries and fail closed on incomplete/corrupt receipt sets.
 
 ## 4. Current Box Paper exit lifecycle
 
@@ -129,3 +129,10 @@ The Box Paper ledger now has an append-only `box_spread_paper_audit_events` tabl
 Events are read in stable insertion order through the ledger's account-scoped read method. Event details are diagnostic only and do not authorize broker or Paper execution. The event table is append-only by application contract; database-level immutability enforcement and an authenticated operator-facing recovery workflow remain separate follow-up work.
 
 Pre-claim HTTP 409/422 validation failures are captured by the entry route. The authenticated paper-owner subject is recorded for manual decisions; account-key authorization remains a separate ownership-hardening task. No Live broker path, scanner, WebSocket, or deployment behavior is changed by this work.
+
+
+## 9. Entry receipt replay regression coverage
+
+The crash-boundary suite now exercises a completed four-leg entry against a fresh durable ledger state with the Paper switch OFF. The replay must return all four persisted receipts before any contract resolution, scanner/depth access, or simulator invocation. A second regression deletes one committed leg receipt and proves the completed claim returns HTTP 409 for manual review rather than resimulating or fabricating the missing leg.
+
+These tests verify replay behavior only; they do not authorize Live broker orders or automatic recovery of an incomplete claim.

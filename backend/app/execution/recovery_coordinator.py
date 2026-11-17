@@ -6,7 +6,9 @@ cancels, adopts, or resumes orders and never changes execution state.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.execution.recovery import list_recovery_candidates
 from app.execution.recovery_ledger import load_recovery_ledger_evidence
@@ -48,6 +50,15 @@ def review_account_recovery(
             "reviews": [],
         }
 
+    if str(getattr(adapter, "account_id", "") or "").strip() != account:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_ACCOUNT_SCOPE_MISMATCH",
+            "trading_authorized": False,
+            "candidate_count": 0,
+            "reviews": [],
+        }
+
     candidates = list_recovery_candidates(db, account_id=account, limit=limit)
     if not candidates:
         return {
@@ -80,8 +91,11 @@ def review_account_recovery(
 
     trading_date = getattr(history, "trading_date", None)
     snapshot = getattr(history, "snapshot", None)
+    current_trading_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
     if getattr(history, "scope", None) != "CURRENT_TRADING_DAY":
         reason = "BROKER_HISTORY_SCOPE_UNSUPPORTED"
+    elif trading_date != current_trading_date:
+        reason = "BROKER_HISTORY_TRADING_DATE_STALE"
     elif snapshot is None:
         reason = "BROKER_HISTORY_SNAPSHOT_MISSING"
     elif getattr(snapshot, "complete", None) is not True:
