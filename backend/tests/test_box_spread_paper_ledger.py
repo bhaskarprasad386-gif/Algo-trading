@@ -1391,3 +1391,38 @@ def test_exit_basket_snapshot_rejects_corrupt_durable_receipts(
             trade.id,
             fill_id=exit_id,
         )
+
+
+def test_exit_basket_snapshot_rejects_receipt_that_reverses_leg_positions(paper_ledger):
+    """An exit receipt must not close through zero and create opposite exposure."""
+    trade = _trade(paper_ledger, idempotency_key="snapshot-no-reversal", lots=2)
+    entry_legs = _entry_basket()
+    for leg in entry_legs.values():
+        leg["quantity"] = 50
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    paper_ledger.record_entry_basket(trade_id=trade.id, legs=entry_legs)
+
+    exit_id = "snapshot-over-exit"
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id,
+        fill_id=exit_id,
+        legs={
+            role: {"quantity": 25, "fill_price": "101"}
+            for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        },
+    )
+
+    # Simulate persisted receipt corruption after the atomic write: all four
+    # legs remain internally equal, but 75 units would flip each 50-unit leg.
+    with paper_ledger._session_factory() as session:
+        rows = session.query(BoxSpreadPaperLedgerEntry).filter(
+            BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+            BoxSpreadPaperLedgerEntry.fill_id.like(f"EXIT:BASKET:{exit_id}:%"),
+        ).all()
+        assert len(rows) == 4
+        for row in rows:
+            row.quantity = 75
+        session.commit()
+
+    with pytest.raises(ValueError, match="reverses or lacks a pre-existing leg position"):
+        paper_ledger.get_exit_basket_position_snapshot(trade.id, fill_id=exit_id)
