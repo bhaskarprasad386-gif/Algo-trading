@@ -333,6 +333,8 @@ def test_completed_entry_receipt_replays_after_switch_off_without_market_or_engi
     ledger.record_entry_basket(trade_id=trade.id, account_key=account_key, legs=legs)
 
     monkeypatch.setattr(routes, "_ledger", ledger)
+    # Route quantity lookup must use the same isolated durable DB as this fixture.
+    monkeypatch.setattr(routes, "SessionLocal", ledger._session_factory)
     monkeypatch.setattr(routes, "_load_trade_request", lambda *args: request)
     monkeypatch.setattr(routes, "_paper_execution_enabled", False)
 
