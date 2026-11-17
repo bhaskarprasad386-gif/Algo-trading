@@ -1455,7 +1455,7 @@ def test_exit_basket_snapshot_rejects_corrupt_historical_entry_receipts(
 
     with paper_ledger._session_factory() as session:
         row = session.query(BoxSpreadPaperLedgerEntry).filter_by(
-            trade_id=trade.id, fill_id="entry-low-ce",
+            trade_id=trade.id, fill_id="ENTRY:atomic:LOW_CE",
         ).one()
         setattr(row, field, value)
         session.commit()
