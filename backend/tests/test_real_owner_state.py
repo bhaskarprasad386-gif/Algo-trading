@@ -372,3 +372,14 @@ def test_reconnect_old_provider_logout_failure_keeps_new_session_consistent_and_
     assert persisted.real_trading_enabled is False
     assert persisted.kill_switch is True
     trading_safety.disable(7)
+
+
+def test_matches_authenticated_account_checks_durable_binding(db):
+    from app.brokers.real_owner_state import matches_authenticated_account
+
+    state = claim_authenticated_account(db, "angel_one", "CLIENT123")
+    assert matches_authenticated_account(state, "angel_one", "CLIENT123") is True
+    assert matches_authenticated_account(state, "angel_one", "CLIENT999") is False
+    assert matches_authenticated_account(state, "zerodha", "CLIENT123") is False
+    state.account_fingerprint = None
+    assert matches_authenticated_account(state, "angel_one", "CLIENT123") is False

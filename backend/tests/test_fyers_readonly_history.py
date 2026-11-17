@@ -49,7 +49,7 @@ def test_normalizes_complete_order_and_trade_books_read_only():
     client = FakeFyers(
         orders={"s": "ok", "code": 200, "orderBook": [{
             "id": "FO-1", "symbol": "NSE:NIFTY26NOV25000CE",
-            "side": 1, "qty": 50, "filledQty": 25,
+            "side": 1, "qty": 50, "filledQty": 25, "status": 8,
         }]},
         trades={"s": "ok", "code": 200, "tradeBook": [{
             "tradeNumber": "FT-1", "orderNumber": "FO-1", "tradedQty": 25,
@@ -64,6 +64,7 @@ def test_normalizes_complete_order_and_trade_books_read_only():
     assert result.snapshot.orders[0].broker_order_id == "FO-1"
     assert result.snapshot.orders[0].side == "BUY"
     assert result.snapshot.orders[0].filled_quantity == 25
+    assert result.snapshot.orders[0].raw_status == "8"
     assert result.snapshot.trades[0].broker_trade_id == "FT-1"
     assert result.snapshot.trades[0].quantity == 25
     assert client.calls == ["profile", "orders", "trades"]

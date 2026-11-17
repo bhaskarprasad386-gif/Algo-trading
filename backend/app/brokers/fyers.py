@@ -144,6 +144,7 @@ class FyersAdapter:
                 filled_quantity=self._integer(
                     row, positive=False, keys=("filledQty",)
                 ),
+                raw_status=str(row.get("status") or ""),
             )
             for row in order_rows
         )
