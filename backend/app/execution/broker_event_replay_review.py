@@ -124,6 +124,67 @@ def review_operator_replay_eligibility(
             ExecutionBrokerOrderRecord.account_id == account_key,
             ExecutionBrokerOrderRecord.broker == broker_key,
         )).scalars().all()
+        # An explicit subset must not hide another unresolved fill-bearing
+        # callback for the same intent. Exact duplicate callback evidence, or
+        # evidence already represented exactly in the immutable fill ledger,
+        # is not unresolved and therefore does not block the selected set.
+        related_order_ids = [order.broker_order_id for order in orders_for_intent]
+        related_events = []
+        if related_order_ids:
+            related_events = db.execute(select(BrokerOrderEventRecord).where(
+                BrokerOrderEventRecord.broker == broker_key,
+                BrokerOrderEventRecord.account_id == account_key,
+                BrokerOrderEventRecord.broker_order_id.in_(related_order_ids),
+                BrokerOrderEventRecord.status.in_(("PARTIALLY_FILLED", "FILLED")),
+            )).scalars().all()
+        related_fill_ids = {row.fill_id for row in related_events if row.fill_id}
+        related_fills = {}
+        if related_fill_ids:
+            related_fills = {
+                row.broker_fill_id: row
+                for row in db.execute(select(ExecutionFillRecord).where(
+                    ExecutionFillRecord.account_id == account_key,
+                    ExecutionFillRecord.broker == broker_key,
+                    ExecutionFillRecord.broker_fill_id.in_(related_fill_ids),
+                )).scalars().all()
+            }
+        selected_by_fill_id = {event.fill_id: event for event, _ in pairs if event.fill_id}
+        unresolved_outside_selection = False
+        for related in related_events:
+            if related.event_id in selected:
+                continue
+            selected_duplicate = selected_by_fill_id.get(related.fill_id) if related.fill_id else None
+            if selected_duplicate is not None:
+                same_selected_evidence = (
+                    related.broker_order_id == selected_duplicate.broker_order_id
+                    and related.fill_quantity == selected_duplicate.fill_quantity
+                    and related.occurred_at_ns == selected_duplicate.occurred_at_ns
+                    and related.average_fill_price is not None
+                    and selected_duplicate.average_fill_price is not None
+                    and Decimal(str(related.average_fill_price))
+                    == Decimal(str(selected_duplicate.average_fill_price))
+                )
+                if same_selected_evidence:
+                    continue
+            ledger_fill = related_fills.get(related.fill_id) if related.fill_id else None
+            if ledger_fill is not None:
+                ledger_evidence_matches = (
+                    ledger_fill.broker_order_id == related.broker_order_id
+                    and ledger_fill.quantity == related.fill_quantity
+                    and related.average_fill_price is not None
+                    and Decimal(str(ledger_fill.fill_price))
+                    == Decimal(str(related.average_fill_price))
+                    and ledger_fill.occurred_at_ns == related.occurred_at_ns
+                )
+                if ledger_evidence_matches:
+                    continue
+            unresolved_outside_selection = True
+        if unresolved_outside_selection:
+            for event, _ in pairs:
+                issues_by_event[event.event_id].append(
+                    "UNSELECTED_UNRESOLVED_FILL_EVENT_IN_INTENT"
+                )
+
         orders_by_leg: dict[int, list[ExecutionBrokerOrderRecord]] = defaultdict(list)
         for registered_order in orders_for_intent:
             orders_by_leg[registered_order.leg_record_id].append(registered_order)
