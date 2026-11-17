@@ -1,7 +1,7 @@
 """Append-only audit record for operator replay-eligibility reviews."""
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, DDL, Index, Integer, String, Text, event
+from sqlalchemy import BigInteger, Index, Integer, String, Text, event, inspect
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -27,62 +27,60 @@ class BrokerReplayEligibilityAuditRecord(Base):
     operator_scope: Mapped[str] = mapped_column(String(64), nullable=False, default="box-spread-real-owner")
 
 
-# Metadata after_create runs on every create_all(), including when this table
-# already exists. That makes the guards self-healing on application startup
-# after upgrades, rather than protecting only a freshly-created table.
-event.listen(
-    Base.metadata,
-    "after_create",
-    DDL("""
-        CREATE TRIGGER IF NOT EXISTS trg_replay_eligibility_audit_no_update
-        BEFORE UPDATE ON broker_replay_eligibility_audits
-        BEGIN
-            SELECT RAISE(ABORT, 'broker replay eligibility audits are append-only');
-        END
-    """).execute_if(dialect="sqlite"),
-)
-event.listen(
-    Base.metadata,
-    "after_create",
-    DDL("""
-        CREATE TRIGGER IF NOT EXISTS trg_replay_eligibility_audit_no_delete
-        BEFORE DELETE ON broker_replay_eligibility_audits
-        BEGIN
-            SELECT RAISE(ABORT, 'broker replay eligibility audits are append-only');
-        END
-    """).execute_if(dialect="sqlite"),
-)
-event.listen(
-    Base.metadata,
-    "after_create",
-    DDL("""
-        CREATE OR REPLACE FUNCTION broker_replay_eligibility_audit_reject_mutation()
-        RETURNS trigger
-        LANGUAGE plpgsql
-        AS $$
-        BEGIN
-            RAISE EXCEPTION 'broker replay eligibility audits are append-only';
-        END;
-        $$
-    """).execute_if(dialect="postgresql"),
-)
-event.listen(
-    Base.metadata,
-    "after_create",
-    DDL("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_trigger
+def _install_replay_eligibility_audit_guards(target, connection, **_kw) -> None:
+    """Install guards only when the audit table exists on this database.
+
+    Metadata after_create also fires for create_all() calls that create only a
+    subset of tables. Checking table presence prevents unrelated isolated test
+    schemas from failing while still repairing guards on existing deployments.
+    """
+    table_name = BrokerReplayEligibilityAuditRecord.__tablename__
+    if not inspect(connection).has_table(table_name):
+        return
+
+    dialect = connection.dialect.name
+    if dialect == "sqlite":
+        connection.exec_driver_sql("""
+            CREATE TRIGGER IF NOT EXISTS trg_replay_eligibility_audit_no_update
+            BEFORE UPDATE ON broker_replay_eligibility_audits
+            BEGIN
+                SELECT RAISE(ABORT, 'broker replay eligibility audits are append-only');
+            END
+        """)
+        connection.exec_driver_sql("""
+            CREATE TRIGGER IF NOT EXISTS trg_replay_eligibility_audit_no_delete
+            BEFORE DELETE ON broker_replay_eligibility_audits
+            BEGIN
+                SELECT RAISE(ABORT, 'broker replay eligibility audits are append-only');
+            END
+        """)
+    elif dialect == "postgresql":
+        connection.exec_driver_sql("""
+            CREATE OR REPLACE FUNCTION broker_replay_eligibility_audit_reject_mutation()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                RAISE EXCEPTION 'broker replay eligibility audits are append-only';
+            END;
+            $$
+        """)
+        trigger_exists = connection.exec_driver_sql("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_trigger
                 WHERE tgname = 'trg_replay_eligibility_audit_no_update_delete'
-                  AND tgrelid = 'broker_replay_eligibility_audits'::regclass
+                  AND tgrelid = to_regclass('broker_replay_eligibility_audits')
                   AND NOT tgisinternal
-            ) THEN
+            )
+        """).scalar()
+        if not trigger_exists:
+            connection.exec_driver_sql("""
                 CREATE TRIGGER trg_replay_eligibility_audit_no_update_delete
                 BEFORE UPDATE OR DELETE ON broker_replay_eligibility_audits
-                FOR EACH ROW EXECUTE FUNCTION broker_replay_eligibility_audit_reject_mutation();
-            END IF;
-        END;
-        $$
-    """).execute_if(dialect="postgresql"),
-)
+                FOR EACH ROW EXECUTE FUNCTION broker_replay_eligibility_audit_reject_mutation()
+            """)
+
+
+# Runs after normal metadata creation and on later create_all() startup calls.
+event.listen(Base.metadata, "after_create", _install_replay_eligibility_audit_guards)
