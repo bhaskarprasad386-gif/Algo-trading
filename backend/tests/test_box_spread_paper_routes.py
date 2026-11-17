@@ -1766,3 +1766,64 @@ def test_exit_basket_route_replays_durable_receipts_before_instrument_resolution
     assert result["exited_lots"] == 1
     assert result["remaining_open_lots"] == 0
     assert len(result["receipts"]) == 4
+
+
+def test_exit_route_lost_response_after_commit_replays_original_receipts_without_depth(monkeypatch):
+    import hashlib
+
+    _exit_basket_route_fixtures(monkeypatch)
+    fill_id = "exit-commit-response-lost"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    close_actions = {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+    durable_receipts = [
+        SimpleNamespace(
+            fill_id=f"EXIT:BASKET:exit:{digest}:BASKET:{role}",
+            role=role, action=close_actions[role], quantity=25,
+            fill_price=Decimal("11"), charges=Decimal("1"), cash_delta=Decimal("0"),
+        ) for role in roles
+    ]
+    persisted = []
+
+    def commit_then_lose_response(**kwargs):
+        assert set(kwargs["legs"]) == set(roles)
+        persisted.extend(durable_receipts)
+        raise RuntimeError("injected response loss after durable exit commit")
+
+    monkeypatch.setattr(routes._ledger, "list_fills", lambda *args, **kwargs: list(persisted))
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", commit_then_lose_response)
+    payload = routes.ExitBasket(account_key="basket-route-test", fill_id=fill_id, order_type="MARKET")
+
+    with pytest.raises(HTTPException) as lost:
+        routes.exit_basket(456, payload)
+    assert lost.value.status_code == 503
+    assert len(persisted) == 4
+
+    monkeypatch.setattr(
+        routes._ledger, "get_exit_basket_position_snapshot",
+        lambda *args, **kwargs: {
+            "requested_exit_lots": 1, "exited_lots": 1,
+            "remaining_open_lots": 0, "status": "CLOSED",
+        },
+    )
+    monkeypatch.setattr(
+        routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: {"status": "CLOSED", "realized_pnl": Decimal("12.00")},
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("committed exit retry must not resolve instruments, inspect open legs, or read depth")
+
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "_paper_open_basket_state", forbidden)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", forbidden)
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", forbidden)
+
+    replay = routes.exit_basket(456, payload)
+    assert replay["idempotent_replay"] is True
+    assert replay["status"] == "CLOSED"
+    assert replay["exited_lots"] == 1
+    assert replay["remaining_open_lots"] == 0
+    assert {item["role"] for item in replay["receipts"]} == set(roles)
+    assert len(replay["receipts"]) == 4
+    assert replay["broker_orders_enabled"] is False
