@@ -1,52 +1,37 @@
-"""Composition registry for the five read-only broker history providers.
+"""Registry for authenticated, read-only broker history capabilities.
 
-This registry is intentionally separate from BrokerRegistry: a history provider
-can be composed for reconciliation without registering an executable order
-adapter or granting any broker mutation capability.
+This registry is deliberately separate from BrokerRegistry: registering a
+history provider never makes a broker eligible for order placement, modify,
+or cancellation. Provider instances must already be bound to an authenticated
+single-account session by their caller.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
-
-from app.brokers.angel_one_history import AngelOneHistoryProvider
-from app.brokers.fyers_history import FyersHistoryProvider
 from app.brokers.history import BrokerHistorySnapshotProvider
-from app.brokers.mstock_history import MStockHistoryProvider
-from app.brokers.shoonya_history import ShoonyaHistoryProvider
-from app.brokers.zerodha_history import ZerodhaHistoryProvider
 
 
 class BrokerHistoryProviderRegistry:
-    """Build a provider only when its broker identity matches the session adapter."""
+    """Resolve read-only history providers without exposing order mutations."""
 
     def __init__(self) -> None:
-        self._factories: dict[str, Callable[[Any], BrokerHistorySnapshotProvider]] = {
-            "angel_one": AngelOneHistoryProvider,
-            "zerodha": ZerodhaHistoryProvider,
-            "fyers": FyersHistoryProvider,
-            "shoonya": ShoonyaHistoryProvider,
-            "mstock": MStockHistoryProvider,
-        }
+        self._providers: dict[str, BrokerHistorySnapshotProvider] = {}
+
+    def register(self, provider: BrokerHistorySnapshotProvider) -> None:
+        name = str(getattr(provider, "name", "") or "").strip().lower()
+        fetch = getattr(provider, "fetch_order_trade_snapshot", None)
+        if not name:
+            raise ValueError("broker history provider name cannot be empty")
+        if not callable(fetch):
+            raise TypeError("broker history provider must implement fetch_order_trade_snapshot")
+        if name in self._providers:
+            raise ValueError(f"broker history provider already registered: {name}")
+        self._providers[name] = provider
+
+    def get(self, name: str) -> BrokerHistorySnapshotProvider:
+        key = str(name or "").strip().lower()
+        if key not in self._providers:
+            raise KeyError(f"unsupported broker history provider: {name}")
+        return self._providers[key]
 
     def names(self) -> tuple[str, ...]:
-        return tuple(sorted(self._factories))
-
-    def build(self, broker: str, adapter: Any) -> BrokerHistorySnapshotProvider:
-        key = str(broker).strip().lower()
-        if not key:
-            raise KeyError("broker name is required")
-        factory = self._factories.get(key)
-        if factory is None:
-            raise KeyError(f"unsupported broker history provider: {key}")
-        adapter_name = str(getattr(adapter, "name", "")).strip().lower()
-        if adapter_name != key:
-            raise ValueError("broker history provider/session identity mismatch")
-        provider = factory(adapter)
-        if str(getattr(provider, "name", "")).strip().lower() != key:
-            raise ValueError("broker history provider factory returned a mismatched provider")
-        if not callable(getattr(provider, "fetch_order_trade_snapshot", None)):
-            raise TypeError("broker history provider does not implement the read-only contract")
-        return provider
-
-
-broker_history_providers = BrokerHistoryProviderRegistry()
+        return tuple(sorted(self._providers))
