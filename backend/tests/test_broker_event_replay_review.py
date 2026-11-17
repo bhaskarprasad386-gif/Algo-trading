@@ -198,3 +198,24 @@ def test_replay_eligibility_audit_record_is_append_only_evidence_metadata(db):
     assert stored.evidence_digest == "d" * 64
     assert stored.valid_until_ns - stored.reviewed_at_ns == 60_000
     assert stored.eligible is True
+
+
+def test_duplicate_selected_broker_fill_identity_is_blocked_even_when_totals_balance(db):
+    _seed(db, first_qty=10, second_qty=20)
+    db.add(BrokerOrderEventRecord(
+        broker="fyers", account_id="acct-1", event_id="evt-a-retry",
+        broker_order_id="ord-leg-a", status="PARTIALLY_FILLED",
+        cumulative_filled_quantity=20, fill_id="trade-a",
+        fill_quantity=10, average_fill_price=Decimal("101.25"),
+        occurred_at_ns=103, payload_hash="9" * 64, payload_json="{}",
+    ))
+    db.flush()
+
+    # Both legs would project to 20, and the cumulative sequence is valid.
+    # Reusing one broker trade ID in the selected set must still fail closed.
+    result = _review(db, ids=("evt-a", "evt-a-retry", "evt-b"))
+    assert result["eligible"] is False
+    assert all(
+        "DUPLICATE_SELECTED_BROKER_FILL_ID" in item["reasons"]
+        for item in result["events"] if item["event_id"] in {"evt-a", "evt-a-retry"}
+    )
