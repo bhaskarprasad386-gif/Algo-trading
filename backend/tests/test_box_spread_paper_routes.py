@@ -1967,3 +1967,76 @@ def test_exit_route_corrupt_prior_basket_receipts_fail_closed_without_new_market
     assert raised.value.status_code == 409
     assert expected_detail in raised.value.detail
     assert list_calls == [(456, "basket-route-test")]
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_detail"),
+    [
+        ("wrong_action", "prior basket exit receipts are inconsistent"),
+        ("wrong_receipt_key", "prior basket exit receipts are inconsistent"),
+        ("zero_quantity", "prior basket exit receipts are inconsistent"),
+        ("nonpositive_price", "prior basket exit receipts are inconsistent"),
+    ],
+)
+def test_exit_route_rejects_semantically_corrupt_complete_receipt_set_before_replay(
+    monkeypatch, corruption, expected_detail,
+):
+    """A complete-looking four-row set is not replayable if its receipt fields disagree."""
+    import hashlib
+
+    _exit_basket_route_fixtures(monkeypatch)
+    fill_id = f"semantic-corrupt-exit-{corruption}"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    close_actions = {
+        "LOW_CE": "SELL", "HIGH_CE": "BUY",
+        "HIGH_PE": "SELL", "LOW_PE": "BUY",
+    }
+    prior_receipts = []
+    for role in roles:
+        receipt_role = role
+        receipt_action = close_actions[role]
+        receipt_quantity = 25
+        receipt_price = Decimal("11")
+        receipt_fill_id = f"EXIT:BASKET:exit:{digest}:BASKET:{role}"
+        if corruption == "wrong_action" and role == "HIGH_CE":
+            receipt_action = "SELL"
+        elif corruption == "wrong_receipt_key" and role == "HIGH_PE":
+            receipt_fill_id = f"EXIT:BASKET:exit:{digest}:BASKET:LOW_PE"
+        elif corruption == "zero_quantity" and role == "LOW_PE":
+            receipt_quantity = 0
+        elif corruption == "nonpositive_price" and role == "LOW_CE":
+            receipt_price = Decimal("0")
+        prior_receipts.append(SimpleNamespace(
+            fill_id=receipt_fill_id, role=receipt_role, action=receipt_action,
+            quantity=receipt_quantity, fill_price=receipt_price,
+            charges=Decimal("1"), cash_delta=Decimal("0"),
+        ))
+
+    monkeypatch.setattr(
+        routes._ledger, "list_fills",
+        lambda *args, **kwargs: prior_receipts,
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("semantically corrupt receipts must not be replayed or trigger fresh execution")
+
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "_paper_open_basket_state", forbidden)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", forbidden)
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", forbidden)
+    monkeypatch.setattr(routes._ledger, "get_exit_basket_position_snapshot", forbidden)
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", forbidden)
+
+    with pytest.raises(HTTPException) as raised:
+        routes.exit_basket(
+            456,
+            routes.ExitBasket(
+                account_key="basket-route-test",
+                fill_id=fill_id,
+                order_type="MARKET",
+            ),
+        )
+
+    assert raised.value.status_code == 409
+    assert expected_detail in raised.value.detail
