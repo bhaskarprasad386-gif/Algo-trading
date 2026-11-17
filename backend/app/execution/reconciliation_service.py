@@ -122,6 +122,10 @@ def reconcile_persisted_account_snapshot(
             ExecutionFillRecord.broker_order_id.in_(order_ids) if order_ids else False,
         )).scalars().all()
         local_fills = {fill.broker_fill_id: fill.quantity for fill in fills}
+        local_fill_evidence = {
+            fill.broker_fill_id: (fill.quantity, fill.fill_price, fill.occurred_at_ns)
+            for fill in fills
+        }
 
         report = reconcile_snapshot(
             account_id=account_id,
@@ -129,6 +133,7 @@ def reconcile_persisted_account_snapshot(
             expected_orders=expected,
             local_fill_quantities=local_fills,
             snapshot=snapshot,
+            local_fill_evidence=local_fill_evidence,
         )
         # Preserve and classify provider status evidence alongside immutable
         # order/trade identities. Unknown/conflicting statuses become explicit
@@ -215,6 +220,8 @@ def reconcile_persisted_account_snapshot(
                         "broker_trade_id": row.broker_trade_id,
                         "broker_order_id": row.broker_order_id,
                         "quantity": row.quantity,
+                        "fill_price": row.fill_price,
+                        "occurred_at_ns": row.occurred_at_ns,
                     }
                     for row in snapshot.trades
                 ],

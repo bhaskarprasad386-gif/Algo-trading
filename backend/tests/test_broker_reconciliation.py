@@ -18,8 +18,8 @@ def _order(*, order_id="ord-1", symbol="NIFTY-CE", side="BUY", quantity=50, fill
     return BrokerOrderSnapshot(order_id, symbol, side, quantity, filled)
 
 
-def _trade(*, trade_id="trade-1", order_id="ord-1", quantity=25):
-    return BrokerTradeSnapshot(trade_id, order_id, quantity)
+def _trade(*, trade_id="trade-1", order_id="ord-1", quantity=25, fill_price=None, occurred_at_ns=None):
+    return BrokerTradeSnapshot(trade_id, order_id, quantity, fill_price, occurred_at_ns)
 
 
 def _snapshot(orders=(), trades=(), *, complete=True, account="acct-1", broker="angel_one"):
@@ -135,3 +135,56 @@ def test_broker_trade_must_reference_an_order_in_the_snapshot():
     assert ReconciliationStatus.TRADE_ORDER_MISSING in {
         issue.status for issue in report.issues
     }
+
+
+
+def test_fill_execution_price_and_timestamp_match_exactly():
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=_expected(),
+        local_fill_quantities={"trade-1": 25},
+        local_fill_evidence={"trade-1": (25, "101.25", 123456789)},
+        snapshot=_snapshot((_order(),), (_trade(fill_price=101.25, occurred_at_ns=123456789),)),
+    )
+    assert report.is_consistent is True
+
+
+def test_fill_price_and_timestamp_mismatches_are_both_reported():
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=_expected(),
+        local_fill_quantities={"trade-1": 25},
+        local_fill_evidence={"trade-1": (25, "101.25", 123456789)},
+        snapshot=_snapshot((_order(),), (_trade(fill_price=101.5, occurred_at_ns=123456790),)),
+    )
+    assert {issue.status for issue in report.issues} == {
+        ReconciliationStatus.FILL_PRICE_MISMATCH,
+        ReconciliationStatus.FILL_TIMESTAMP_MISMATCH,
+    }
+
+
+@pytest.mark.parametrize(
+    "trade",
+    [
+        _trade(fill_price=None, occurred_at_ns=123456789),
+        _trade(fill_price=101.25, occurred_at_ns=None),
+    ],
+)
+def test_fill_evidence_missing_in_broker_snapshot_is_reported(trade):
+    report = reconcile_snapshot(
+        account_id="acct-1", broker="angel_one", expected_orders=_expected(),
+        local_fill_quantities={"trade-1": 25},
+        local_fill_evidence={"trade-1": (25, "101.25", 123456789)},
+        snapshot=_snapshot((_order(),), (trade,)),
+    )
+    assert ReconciliationStatus.FILL_EXECUTION_EVIDENCE_MISSING in {
+        issue.status for issue in report.issues
+    }
+
+
+def test_fill_evidence_must_be_scoped_to_existing_local_fill_quantity():
+    with pytest.raises(ValueError, match="matching local fill quantity"):
+        reconcile_snapshot(
+            account_id="acct-1", broker="angel_one", expected_orders=(),
+            local_fill_quantities={},
+            local_fill_evidence={"trade-1": (25, "101.25", 123456789)},
+            snapshot=_snapshot(trades=(_trade(fill_price=101.25, occurred_at_ns=123456789),)),
+        )
