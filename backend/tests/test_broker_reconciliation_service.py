@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
+from app.brokers.history import BrokerHistoryUnavailable, BrokerHistoryWindow
 from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
@@ -15,6 +18,7 @@ from app.execution.persistence import create_intent, record_broker_order, record
 from app.execution.reconciliation_service import (
     ReconciliationIdentityConflict,
     reconcile_persisted_account_snapshot,
+    reconcile_persisted_history_window,
 )
 from app.models.broker_reconciliation import BrokerReconciliationRecord
 
@@ -456,3 +460,83 @@ def test_multiple_intents_with_repeated_leg_labels_reconcile_independently(db):
     )
     assert result["report"].is_consistent is True
     assert result["report"].matched_order_count == 8
+
+
+
+def test_complete_history_window_hands_off_to_durable_reconciliation(db):
+    _persist_order(db)
+    start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    window = BrokerHistoryWindow(
+        snapshot=_snapshot(),
+        window_start=start,
+        window_end=start + timedelta(days=1),
+        pages_fetched=2,
+        has_more=False,
+        provider_window="TEST_COMPLETE_PROVIDER_WINDOW",
+    )
+
+    result = reconcile_persisted_history_window(
+        db,
+        history_window=window,
+        reconciliation_id="run-history-window-handoff",
+        intent_ids=("intent-reconcile",),
+    )
+
+    stored = db.scalar(select(BrokerReconciliationRecord).where(
+        BrokerReconciliationRecord.reconciliation_id == "run-history-window-handoff"
+    ))
+    assert result["created"] is True
+    assert result["report"].is_consistent is True
+    assert stored is not None
+    assert stored.snapshot_complete is True
+
+
+def test_incomplete_history_window_is_rejected_before_reconciliation_persistence(db):
+    _persist_order(db)
+    start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    window = BrokerHistoryWindow(
+        snapshot=_snapshot(complete=False),
+        window_start=start,
+        window_end=start + timedelta(days=1),
+        pages_fetched=1,
+        has_more=False,
+        provider_window="TEST_INCOMPLETE_PROVIDER_WINDOW",
+    )
+
+    with pytest.raises(BrokerHistoryUnavailable, match="history window is incomplete"):
+        reconcile_persisted_history_window(
+            db,
+            history_window=window,
+            reconciliation_id="run-incomplete-history-window-handoff",
+            intent_ids=("intent-reconcile",),
+        )
+
+    assert db.query(BrokerReconciliationRecord).filter_by(
+        reconciliation_id="run-incomplete-history-window-handoff"
+    ).count() == 0
+
+
+def test_paginated_history_window_cannot_be_reconciled_until_all_pages_are_fetched(db):
+    _persist_order(db)
+    start = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    window = BrokerHistoryWindow(
+        snapshot=_snapshot(complete=False),
+        window_start=start,
+        window_end=start + timedelta(days=1),
+        pages_fetched=1,
+        has_more=True,
+        next_cursor="page-2",
+        provider_window="TEST_MORE_PAGES_REMAIN",
+    )
+
+    with pytest.raises(BrokerHistoryUnavailable, match="complete pagination"):
+        reconcile_persisted_history_window(
+            db,
+            history_window=window,
+            reconciliation_id="run-paginated-history-window-handoff",
+            intent_ids=("intent-reconcile",),
+        )
+
+    assert db.query(BrokerReconciliationRecord).filter_by(
+        reconciliation_id="run-paginated-history-window-handoff"
+    ).count() == 0

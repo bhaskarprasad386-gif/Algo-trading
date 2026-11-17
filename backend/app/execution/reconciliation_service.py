@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.brokers.history import BrokerHistoryUnavailable, BrokerHistoryWindow
 from app.brokers.order_status import normalize_order_status
 from app.execution.broker_reconciliation import (
     BrokerSnapshot,
@@ -326,3 +327,32 @@ def reconcile_persisted_account_snapshot(
             return {"created": False, "record_id": winner.id, "report": report}
 
         return {"created": True, "record_id": record.id, "report": report}
+
+
+
+def reconcile_persisted_history_window(
+    db: Session,
+    *,
+    history_window: BrokerHistoryWindow,
+    reconciliation_id: str,
+    intent_ids: tuple[str, ...],
+) -> dict:
+    """Reconcile only a provider-validated, fully paginated history window.
+
+    This is the explicit handoff between read-only broker history providers and
+    durable reconciliation. Partial pages or an incomplete source snapshot are
+    rejected before the persistence service can create a reconciliation record.
+    The function performs no broker I/O and never changes execution intent state.
+    """
+    if not isinstance(history_window, BrokerHistoryWindow):
+        raise BrokerHistoryUnavailable("reconciliation requires a validated broker history window")
+    if not history_window.complete:
+        raise BrokerHistoryUnavailable(
+            "broker history window is incomplete; reconciliation requires complete pagination and snapshot evidence"
+        )
+    return reconcile_persisted_account_snapshot(
+        db,
+        snapshot=history_window.snapshot,
+        reconciliation_id=reconciliation_id,
+        intent_ids=intent_ids,
+    )
