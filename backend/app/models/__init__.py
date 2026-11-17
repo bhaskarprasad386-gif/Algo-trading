@@ -37,3 +37,5 @@ __all__ = [
     "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact", "BoxSpreadRealOwnerState",
     "BoxSpreadIndexSelection", "IVScannerControl", "IVSpotLastPrice", "IVOptionObservation", "IVSpotObservation",
 ]
+
+from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAuditRecord
