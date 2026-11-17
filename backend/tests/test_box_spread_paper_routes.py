@@ -2040,3 +2040,70 @@ def test_exit_route_rejects_semantically_corrupt_complete_receipt_set_before_rep
 
     assert raised.value.status_code == 409
     assert expected_detail in raised.value.detail
+
+
+@pytest.mark.parametrize(
+    ("corruption", "bad_value"),
+    [
+        ("nonnumeric_quantity", "not-a-number"),
+        ("fractional_quantity", "25.5"),
+        ("nan_quantity", "NaN"),
+        ("nan_price", "NaN"),
+        ("infinite_price", "Infinity"),
+    ],
+)
+def test_exit_route_rejects_nonfinite_or_nonintegral_receipt_numbers(
+    monkeypatch, corruption, bad_value,
+):
+    """Receipt replay requires finite prices and positive integral share quantities."""
+    import hashlib
+
+    _exit_basket_route_fixtures(monkeypatch)
+    fill_id = f"numeric-corrupt-exit-{corruption}"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    close_actions = {
+        "LOW_CE": "SELL", "HIGH_CE": "BUY",
+        "HIGH_PE": "SELL", "LOW_PE": "BUY",
+    }
+    prior_receipts = []
+    for role in roles:
+        quantity = 25
+        fill_price = Decimal("11")
+        if corruption in {"nonnumeric_quantity", "fractional_quantity", "nan_quantity"} and role == "LOW_PE":
+            quantity = bad_value
+        elif corruption in {"nan_price", "infinite_price"} and role == "LOW_CE":
+            fill_price = Decimal(bad_value)
+        prior_receipts.append(SimpleNamespace(
+            fill_id=f"EXIT:BASKET:exit:{digest}:BASKET:{role}",
+            role=role, action=close_actions[role], quantity=quantity,
+            fill_price=fill_price, charges=Decimal("1"), cash_delta=Decimal("0"),
+        ))
+
+    monkeypatch.setattr(
+        routes._ledger, "list_fills",
+        lambda *args, **kwargs: prior_receipts,
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid numeric receipts must stop replay before any further work")
+
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "_paper_open_basket_state", forbidden)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", forbidden)
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", forbidden)
+    monkeypatch.setattr(routes._ledger, "get_exit_basket_position_snapshot", forbidden)
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", forbidden)
+
+    with pytest.raises(HTTPException) as raised:
+        routes.exit_basket(
+            456,
+            routes.ExitBasket(
+                account_key="basket-route-test",
+                fill_id=fill_id,
+                order_type="MARKET",
+            ),
+        )
+
+    assert raised.value.status_code == 409
+    assert "prior basket exit receipts are inconsistent" in raised.value.detail
