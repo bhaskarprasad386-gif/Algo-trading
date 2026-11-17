@@ -1426,3 +1426,39 @@ def test_exit_basket_snapshot_rejects_receipt_that_reverses_leg_positions(paper_
 
     with pytest.raises(ValueError, match="reverses or lacks a pre-existing leg position"):
         paper_ledger.get_exit_basket_position_snapshot(trade.id, fill_id=exit_id)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_error"),
+    [
+        ("action", "SELL", "inconsistent entry evidence"),
+        ("quantity", 0, "invalid fill values"),
+        ("fill_price", Decimal("Infinity"), "inconsistent entry evidence"),
+    ],
+)
+def test_exit_basket_snapshot_rejects_corrupt_historical_entry_receipts(
+    paper_ledger, field, value, expected_error,
+):
+    """Snapshot recovery must not trust malformed pre-exit entry ledger rows."""
+    trade = _trade(paper_ledger, idempotency_key=f"snapshot-entry-corrupt-{field}")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    paper_ledger.record_entry_basket(trade_id=trade.id, legs=_entry_basket())
+    exit_id = f"snapshot-entry-guard-{field}"
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id,
+        fill_id=exit_id,
+        legs={
+            role: {"quantity": 25, "fill_price": "101"}
+            for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        },
+    )
+
+    with paper_ledger._session_factory() as session:
+        row = session.query(BoxSpreadPaperLedgerEntry).filter_by(
+            trade_id=trade.id, fill_id="ENTRY:atomic:LOW_CE",
+        ).one()
+        setattr(row, field, value)
+        session.commit()
+
+    with pytest.raises(ValueError, match=expected_error):
+        paper_ledger.get_exit_basket_position_snapshot(trade.id, fill_id=exit_id)
