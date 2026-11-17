@@ -25,8 +25,10 @@ from app.execution.broker_snapshot_event_sync import sync_account_order_status_e
 from app.execution.broker_tradebook_fill_sync import sync_account_tradebook_fills
 from app.execution.broker_event_review import review_deferred_broker_events
 from app.models import BoxSpreadRealOwnerState
+from app.brokers.broker_event_replay_review_routes import router as replay_eligibility_router
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
+router.include_router(replay_eligibility_router)
 router.include_router(shoonya_router)
 router.include_router(zerodha_router)
 router.include_router(fyers_router)
