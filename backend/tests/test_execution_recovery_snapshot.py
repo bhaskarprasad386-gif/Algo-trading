@@ -151,3 +151,22 @@ def test_wrong_snapshot_scope_blocks_before_ledger(monkeypatch):
     )
     assert result.disposition is RecoveryDisposition.BLOCKED
     assert result.reason == "BROKER_HISTORY_ACCOUNT_SCOPE_MISMATCH"
+
+
+@pytest.mark.parametrize("broker", ["angel_one", "fyers", "mstock", "shoonya", "zerodha"])
+def test_wrong_snapshot_broker_blocks_before_ledger_for_every_broker(monkeypatch, broker):
+    adapter = _Adapter(SimpleNamespace(
+        scope="CURRENT_TRADING_DAY", trading_date="2026-11-16",
+        snapshot=BrokerSnapshot("acct-1", "different-broker", (), (), True),
+    ))
+    adapter.name = broker
+    monkeypatch.setattr(
+        module, "load_recovery_ledger_evidence",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("wrong broker snapshot must not read ledger")),
+    )
+    result = module.review_with_broker_history(
+        object(), candidate=_candidate(), broker=broker, adapter=adapter,
+    )
+    assert result.disposition is RecoveryDisposition.BLOCKED
+    assert result.review is None
+    assert result.reason == "BROKER_HISTORY_ACCOUNT_SCOPE_MISMATCH"
