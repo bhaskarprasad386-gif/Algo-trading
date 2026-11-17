@@ -17,7 +17,7 @@ from app.brokers.capabilities import broker_capabilities
 from app.brokers.safety import trading_safety
 from app.brokers.session_store import broker_sessions
 from app.brokers.real_owner_auth import RealOwnerLogin, login_real_owner, require_real_owner_access
-from app.brokers.real_owner_state import claim_authenticated_account, disable_owner_trading, set_owner_connection_state
+from app.brokers.real_owner_state import claim_authenticated_account, disable_owner_trading, matches_authenticated_account, set_owner_connection_state
 from app.core.database import get_db
 from app.core.logger import app_logger
 from app.execution.recovery_coordinator import review_account_recovery
@@ -120,6 +120,11 @@ def sync_broker_order_status_events(
             "created_count": 0,
             "trading_authorized": False,
         }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         return sync_account_order_status_events(
             db, adapter=adapter, account_id=account_id,
@@ -175,6 +180,11 @@ def sync_broker_tradebook_fills(
             "created_count": 0,
             "trading_authorized": False,
         }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         return sync_account_tradebook_fills(
             db, adapter=adapter, account_id=account_id,
@@ -221,6 +231,11 @@ def review_execution_recovery(
             "candidate_count": 0,
             "reviews": [],
         }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         return review_account_recovery(
             db, account_id=account_id, broker=broker, adapter=adapter,
