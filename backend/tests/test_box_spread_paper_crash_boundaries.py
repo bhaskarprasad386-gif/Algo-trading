@@ -222,6 +222,7 @@ def test_exit_commit_then_lost_response_replays_from_real_durable_ledger(monkeyp
         "HIGH_PE": {"fill_id": "entry:HIGH_PE", "action": "BUY", "quantity": 25, "fill_price": 30},
         "LOW_PE": {"fill_id": "entry:LOW_PE", "action": "SELL", "quantity": 25, "fill_price": 40},
     }
+    ledger.claim_entry_attempt(trade_id=trade.id, account_key=account_key)
     ledger.record_entry_basket(trade_id=trade.id, account_key=account_key, legs=entry_legs)
 
     contracts = SimpleNamespace(
