@@ -1,5 +1,8 @@
+import os
+import uuid
+
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
@@ -8,9 +11,23 @@ from app.execution.broker_event_persistence import BrokerEventConflict, record_b
 from app.models.broker_order_event import BrokerOrderEventRecord
 
 
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:")
+@pytest.fixture(params=["sqlite", "postgres"])
+def db(request):
+    admin_engine = None
+    schema = None
+    if request.param == "sqlite":
+        engine = create_engine("sqlite:///:memory:")
+    else:
+        url = os.getenv("IV_TEST_POSTGRES_URL")
+        if not url:
+            pytest.skip("IV_TEST_POSTGRES_URL is not configured")
+        admin_engine = create_engine(url, pool_pre_ping=True)
+        schema = f"broker_event_test_{uuid.uuid4().hex}"
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_engine(
+            url, connect_args={"options": f"-csearch_path={schema}"}, pool_pre_ping=True
+        )
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine, expire_on_commit=False)()
     try:
@@ -18,6 +35,10 @@ def db():
     finally:
         session.close()
         engine.dispose()
+        if admin_engine is not None:
+            with admin_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            admin_engine.dispose()
 
 
 def event(**changes):
