@@ -146,7 +146,8 @@ def test_each_broker_normalized_tradebook_fill_is_durably_persisted_and_replay_s
     assert replay["duplicate_count"] == 1
     assert fill.broker == broker
     assert fill.broker_fill_id == f"trade-{broker}"
-    assert fill.intent_id == intent_id
+    assert fill.intent.intent_id == intent_id
+    assert fill.intent_record_id == intent.id
     assert leg.filled_quantity == 25
     assert leg.status == "PARTIALLY_FILLED"
     assert intent.status == IntentStatus.PARTIALLY_FILLED.value
