@@ -34,7 +34,7 @@ def test_fetch_today_snapshot_normalizes_complete_order_and_trade_books():
             "transactiontype": "BUY", "quantity": "50", "filledshares": "25",
         }]},
         trades={"status": True, "data": [{
-            "tradeid": "AT-1", "orderid": "AO-1", "fillshares": "25",
+            "fillid": "AT-1", "orderid": "AO-1", "fillsize": "25", "fillprice": "101.25", "filltime": "10:31:00",
         }]},
     )
     result = connected_adapter(fake).fetch_today_broker_snapshot(account_id="account-123")
@@ -48,6 +48,8 @@ def test_fetch_today_snapshot_normalizes_complete_order_and_trade_books():
     assert result.snapshot.orders[0].filled_quantity == 25
     assert result.snapshot.trades[0].broker_trade_id == "AT-1"
     assert result.snapshot.trades[0].quantity == 25
+    assert result.snapshot.trades[0].fill_price == 101.25
+    assert result.snapshot.trades[0].occurred_at_ns is not None
     assert fake.calls == ["orderBook", "tradeBook"]
 
 

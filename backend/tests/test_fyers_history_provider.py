@@ -17,7 +17,9 @@ class FakeFyersReports:
         self.order_pages = order_pages or {1: [{"id_fyers": "FO-1", "symbol": "NSE:NIFTY26NOV25000CE",
                                                 "transaction_type": "BUY", "qty": 50, "tradedQty": 25}]}
         self.trade_pages = trade_pages or {1: [{"tradeNumber": "FT-1", "orderNumber": "FO-1",
-                                                 "side": 1, "traded_qty": 25}]}
+                                                 "side": 1, "traded_qty": 25,
+                                                 "trade_price": 101.25,
+                                                 "orderDateTime": "16-Nov-2026 10:31:00"}]}
         self.calls = []
 
     def get_profile(self):
@@ -61,6 +63,8 @@ def test_fyers_provider_fetches_date_range_and_normalizes_both_reports():
     assert result.snapshot.account_id == "FY-123"
     assert result.snapshot.orders[0].broker_order_id == "FO-1"
     assert result.snapshot.trades[0].broker_trade_id == "FT-1"
+    assert result.snapshot.trades[0].fill_price == 101.25
+    assert result.snapshot.trades[0].occurred_at_ns is not None
     assert result.pages_fetched == 2
     for _, request in client.calls:
         assert request["from_date"] == start.date().isoformat()

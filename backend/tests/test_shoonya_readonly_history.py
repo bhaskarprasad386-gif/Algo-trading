@@ -53,7 +53,7 @@ def test_normalizes_complete_order_and_trade_books_read_only():
             "trantype": "B", "qty": "50", "fillshares": "25",
         }],
         trades=[{
-            "stat": "Ok", "flid": "SF-1", "norenordno": "SO-1", "flqty": "25",
+            "stat": "Ok", "flid": "SF-1", "norenordno": "SO-1", "flqty": "25", "flprc": "101.25", "fltm": "16-11-2026 10:31:00",
         }],
     )
     result = connected_adapter(client).fetch_today_broker_snapshot(account_id="SH-123")
@@ -67,6 +67,8 @@ def test_normalizes_complete_order_and_trade_books_read_only():
     assert result.snapshot.orders[0].filled_quantity == 25
     assert result.snapshot.trades[0].broker_trade_id == "SF-1"
     assert result.snapshot.trades[0].quantity == 25
+    assert result.snapshot.trades[0].fill_price == 101.25
+    assert result.snapshot.trades[0].occurred_at_ns is not None
     assert client.calls == ["profile", "orders", "trades"]
 
 

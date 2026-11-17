@@ -55,7 +55,7 @@ def test_zerodha_normalizes_complete_order_and_trade_books_read_only():
             "transaction_type": "BUY", "quantity": 50, "filled_quantity": 25,
         }],
         trades=[{
-            "trade_id": "ZT-1", "order_id": "ZO-1", "quantity": 25,
+            "trade_id": "ZT-1", "order_id": "ZO-1", "quantity": 25, "average_price": 101.25, "fill_timestamp": "2026-11-16 10:31:00",
         }],
     )
     result = connected_adapter(client).fetch_today_broker_snapshot(account_id="ZER-123")
@@ -69,6 +69,8 @@ def test_zerodha_normalizes_complete_order_and_trade_books_read_only():
     assert result.snapshot.orders[0].filled_quantity == 25
     assert result.snapshot.trades[0].broker_trade_id == "ZT-1"
     assert result.snapshot.trades[0].quantity == 25
+    assert result.snapshot.trades[0].fill_price == 101.25
+    assert result.snapshot.trades[0].occurred_at_ns is not None
     assert [call[0] for call in client.calls if call[0] in {"orders", "trades"}] == ["orders", "trades"]
 
 

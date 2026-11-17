@@ -11,6 +11,8 @@ from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
     BrokerTradeSnapshot,
+    parse_positive_trade_price,
+    parse_trade_timestamp_ns,
 )
 
 
@@ -97,6 +99,12 @@ class FyersHistoryProvider:
             broker_order_id=FyersAdapter._text(row, "orderNumber", "order_number"),
             quantity=FyersAdapter._integer(
                 row, positive=True, keys=("traded_qty", "tradedQty", "quantity")
+            ),
+            fill_price=parse_positive_trade_price(
+                row.get("trade_price", row.get("tradePrice"))
+            ),
+            occurred_at_ns=parse_trade_timestamp_ns(
+                row.get("orderDateTime", row.get("order_date_time"))
             ),
         )
 

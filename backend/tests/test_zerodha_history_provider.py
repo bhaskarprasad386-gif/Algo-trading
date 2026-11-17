@@ -33,7 +33,7 @@ class FakeKite:
 
     def trades(self):
         self.calls.append(("trades",))
-        return [{"trade_id": "ZT-1", "order_id": "ZO-1", "quantity": 25}]
+        return [{"trade_id": "ZT-1", "order_id": "ZO-1", "quantity": 25, "average_price": 101.25, "fill_timestamp": "2026-11-16 10:31:00"}]
 
 
 def _connected():

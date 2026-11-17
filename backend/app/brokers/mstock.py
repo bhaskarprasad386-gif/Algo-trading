@@ -11,6 +11,8 @@ from app.execution.broker_reconciliation import (
     BrokerOrderSnapshot,
     BrokerSnapshot,
     BrokerTradeSnapshot,
+    parse_positive_trade_price,
+    parse_trade_timestamp_ns,
 )
 
 
@@ -268,6 +270,8 @@ class MStockAdapter:
                 broker_trade_id=self._required_text(row, "TRADE_NUMBER", "trade_id"),
                 broker_order_id=self._required_text(row, "ORDER_NUMBER", "order_id"),
                 quantity=self._integer(row, positive=True, keys=("QUANTITY", "quantity")),
+                fill_price=parse_positive_trade_price(row.get("PRICE")),
+                occurred_at_ns=parse_trade_timestamp_ns(row.get("ORDER_DATE_TIME")),
             )
             for row in trade_rows
         )

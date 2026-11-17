@@ -8,6 +8,9 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
+from datetime import date, datetime
+import math
+from zoneinfo import ZoneInfo
 
 
 class ReconciliationStatus(str, Enum):
@@ -68,12 +71,52 @@ class BrokerTradeSnapshot:
     broker_trade_id: str
     broker_order_id: str
     quantity: int
+    fill_price: float | None = None
+    occurred_at_ns: int | None = None
 
     def __post_init__(self) -> None:
         if not self.broker_trade_id.strip() or not self.broker_order_id.strip():
             raise ValueError("broker trade and order identities are required")
         if self.quantity <= 0:
             raise ValueError("trade quantity must be positive")
+        if self.fill_price is not None and (
+            not math.isfinite(self.fill_price) or self.fill_price <= 0
+        ):
+            raise ValueError("trade fill price must be finite and positive")
+        if self.occurred_at_ns is not None and self.occurred_at_ns <= 0:
+            raise ValueError("trade timestamp must be positive when supplied")
+
+
+def parse_trade_timestamp_ns(value: object, *, trading_date: str | None = None) -> int | None:
+    """Parse a provider trade timestamp into IST epoch ns; reject placeholders.
+
+    A time-only provider field is anchored to the adapter's current trading date.
+    Known placeholder dates (notably Shoonya's 1980 example value) are not
+    represented as real execution times.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    formats = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%b-%Y %H:%M:%S",
+        "%H:%M:%S",
+    )
+    parsed = None
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            if fmt == "%H:%M:%S":
+                day = trading_date or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+                parsed = datetime.combine(date.fromisoformat(day), parsed.time())
+            break
+        except ValueError:
+            continue
+    if parsed is None or parsed.date().isoformat() == "1980-01-01":
+        return None
+    return int(parsed.replace(tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 @dataclass(frozen=True)
@@ -240,3 +283,20 @@ def reconcile_snapshot(
         matched_order_count=matched,
         issues=tuple(issues),
     )
+
+
+
+def parse_positive_trade_price(value: object) -> float | None:
+    """Return trustworthy provider price evidence, or None when it is unavailable.
+
+    A missing, malformed, non-finite, or non-positive provider field must not
+    invalidate an otherwise complete order/trade snapshot. Downstream fill-ledger
+    synchronization independently blocks trades without complete price/time evidence.
+    """
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed <= 0:
+        return None
+    return parsed
