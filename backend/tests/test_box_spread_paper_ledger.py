@@ -1345,3 +1345,165 @@ def test_post_claim_failure_is_audited_without_releasing_claim(paper_ledger):
     assert paper_ledger.get_entry_claim(
         trade_id=trade.id, account_key="audit-failure",
     )["status"] == "CLAIMED"
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_error"),
+    [
+        ("wrong_close_action", "prior basket exit receipts are inconsistent"),
+        ("wrong_role_key", "prior basket exit receipts are inconsistent"),
+        ("nonpositive_price", "prior basket exit receipts are inconsistent"),
+    ],
+)
+def test_exit_basket_snapshot_rejects_corrupt_durable_receipts(
+    paper_ledger, corruption, expected_error,
+):
+    """The ledger snapshot must independently reject corrupt receipt rows."""
+    trade = _trade(paper_ledger, idempotency_key=f"snapshot-corrupt-{corruption}")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    paper_ledger.record_entry_basket(trade_id=trade.id, legs=_entry_basket())
+    exit_id = f"snapshot-guard-{corruption}"
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id,
+        fill_id=exit_id,
+        legs={
+            role: {"quantity": 25, "fill_price": "101"}
+            for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        },
+    )
+
+    with paper_ledger._session_factory() as session:
+        target_role = "HIGH_CE" if corruption == "wrong_close_action" else "LOW_PE"
+        row = session.query(BoxSpreadPaperLedgerEntry).filter_by(
+            trade_id=trade.id,
+            fill_id=f"EXIT:BASKET:{exit_id}:{target_role}",
+        ).one()
+        if corruption == "wrong_close_action":
+            row.action = "SELL"
+        elif corruption == "wrong_role_key":
+            row.fill_id = f"EXIT:BASKET:{exit_id}:HIGH_PE"
+        elif corruption == "nonpositive_price":
+            row.fill_price = Decimal("0")
+        session.commit()
+
+    with pytest.raises(ValueError, match=expected_error):
+        paper_ledger.get_exit_basket_position_snapshot(
+            trade.id,
+            fill_id=exit_id,
+        )
+
+
+def test_exit_basket_snapshot_rejects_receipt_that_reverses_leg_positions(paper_ledger):
+    """An exit receipt must not close through zero and create opposite exposure."""
+    trade = _trade(paper_ledger, idempotency_key="snapshot-no-reversal", lots=2)
+    entry_legs = _entry_basket()
+    for leg in entry_legs.values():
+        leg["quantity"] = 50
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    paper_ledger.record_entry_basket(trade_id=trade.id, legs=entry_legs)
+
+    exit_id = "snapshot-over-exit"
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id,
+        fill_id=exit_id,
+        legs={
+            role: {"quantity": 25, "fill_price": "101"}
+            for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        },
+    )
+
+    # Simulate persisted receipt corruption after the atomic write: all four
+    # legs remain internally equal, but 75 units would flip each 50-unit leg.
+    with paper_ledger._session_factory() as session:
+        rows = session.query(BoxSpreadPaperLedgerEntry).filter(
+            BoxSpreadPaperLedgerEntry.trade_id == trade.id,
+            BoxSpreadPaperLedgerEntry.fill_id.like(f"EXIT:BASKET:{exit_id}:%"),
+        ).all()
+        assert len(rows) == 4
+        for row in rows:
+            row.quantity = 75
+        session.commit()
+
+    with pytest.raises(ValueError, match="reverses or lacks a pre-existing leg position"):
+        paper_ledger.get_exit_basket_position_snapshot(trade.id, fill_id=exit_id)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_error"),
+    [
+        ("action", "SELL", "inconsistent entry evidence"),
+        ("quantity", 0, "invalid fill values"),
+        ("fill_price", Decimal("Infinity"), "inconsistent entry evidence"),
+    ],
+)
+def test_exit_basket_snapshot_rejects_corrupt_historical_entry_receipts(
+    paper_ledger, field, value, expected_error,
+):
+    """Snapshot recovery must not trust malformed pre-exit entry ledger rows."""
+    trade = _trade(paper_ledger, idempotency_key=f"snapshot-entry-corrupt-{field}")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    paper_ledger.record_entry_basket(trade_id=trade.id, legs=_entry_basket())
+    exit_id = f"snapshot-entry-guard-{field}"
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id,
+        fill_id=exit_id,
+        legs={
+            role: {"quantity": 25, "fill_price": "101"}
+            for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        },
+    )
+
+    with paper_ledger._session_factory() as session:
+        row = session.query(BoxSpreadPaperLedgerEntry).filter_by(
+            trade_id=trade.id, fill_id="ENTRY:atomic:LOW_CE",
+        ).one()
+        setattr(row, field, value)
+        session.commit()
+
+    with pytest.raises(ValueError, match=expected_error):
+        paper_ledger.get_exit_basket_position_snapshot(trade.id, fill_id=exit_id)
+
+
+
+def test_four_leg_entry_basket_rolls_back_every_leg_if_a_mid_basket_write_fails(paper_ledger):
+    trade = _trade(paper_ledger, account_key="entry-rollback", idempotency_key="entry-rollback")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id, account_key="entry-rollback")
+    before_balance = paper_ledger.ensure_account("entry-rollback")
+    entry_rows_seen = 0
+
+    def fail_on_third_entry_flush(session, flush_context, instances):
+        nonlocal entry_rows_seen
+        new_entry_rows = [
+            row for row in session.new
+            if isinstance(row, BoxSpreadPaperLedgerEntry)
+            and str(row.fill_id).startswith("ENTRY:atomic:")
+        ]
+        if new_entry_rows:
+            entry_rows_seen += len(new_entry_rows)
+            if entry_rows_seen >= 3:
+                raise RuntimeError("injected third-leg entry persistence failure")
+
+    event.listen(Session, "before_flush", fail_on_third_entry_flush)
+    try:
+        with pytest.raises(RuntimeError, match="third-leg entry persistence failure"):
+            paper_ledger.record_entry_basket(
+                trade_id=trade.id,
+                account_key="entry-rollback",
+                legs=_entry_basket(),
+            )
+    finally:
+        event.remove(Session, "before_flush", fail_on_third_entry_flush)
+
+    assert entry_rows_seen == 3
+    assert paper_ledger.list_fills(trade.id, account_key="entry-rollback") == []
+    assert paper_ledger.ensure_account("entry-rollback") == before_balance
+    assert paper_ledger.get_trade_summary(
+        trade.id, account_key="entry-rollback",
+    )["status"] == "CREATED"
+    assert paper_ledger.get_entry_claim(
+        trade_id=trade.id, account_key="entry-rollback",
+    )["status"] == "CLAIMED"
+    events = paper_ledger.list_audit_events(
+        trade_id=trade.id, account_key="entry-rollback",
+    )
+    assert [item["event_type"] for item in events] == ["ENTRY_CLAIMED"]
