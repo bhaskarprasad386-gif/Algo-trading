@@ -122,8 +122,13 @@ def review_deferred_broker_events(
         1 for item in unresolved
         if item["reason"] == "CUMULATIVE_FILL_GAP"
     )
+    # A truncated page cannot summarize the full account event set. Keep
+    # INCOMPLETE as the top-level status even when visible rows need review;
+    # unresolved_count/events still expose those known issues.
+    overall_status = "INCOMPLETE" if truncated else ("REQUIRES_REVIEW" if unresolved else "CLEAR")
     return {
-        "status": "INCOMPLETE" if truncated else ("REQUIRES_REVIEW" if unresolved else "CLEAR"),
+        "status": overall_status,
+        "requires_review": bool(unresolved),
         "broker": broker_key,
         "account_id": account_key,
         "event_count": len(events),
