@@ -120,6 +120,11 @@ def sync_broker_order_status_events(
             "created_count": 0,
             "trading_authorized": False,
         }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         return sync_account_order_status_events(
             db, adapter=adapter, account_id=account_id,
@@ -226,6 +231,11 @@ def review_execution_recovery(
             "candidate_count": 0,
             "reviews": [],
         }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         return review_account_recovery(
             db, account_id=account_id, broker=broker, adapter=adapter,
