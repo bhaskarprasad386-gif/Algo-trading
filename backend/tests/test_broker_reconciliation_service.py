@@ -541,8 +541,6 @@ def test_paginated_history_window_cannot_be_reconciled_until_all_pages_are_fetch
     ).count() == 0
 
 def test_history_window_from_another_account_cannot_reconcile_local_intents(db):
-    import json
-
     _persist_order(db, account_id="acct-1")
     start = datetime(2026, 11, 16, tzinfo=timezone.utc)
     foreign_window = BrokerHistoryWindow(
