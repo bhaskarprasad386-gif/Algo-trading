@@ -1181,6 +1181,28 @@ class BoxSpreadPaperLedger:
                     before[row.role] += signed
                 if row.id <= last_id:
                     after[row.role] += signed
+
+            # Snapshot reconstruction is a second trust boundary, independent
+            # of the HTTP route's replay validation. Never derive historical
+            # position from a receipt whose key, close action, quantity, or
+            # execution price is internally inconsistent.
+            expected_actions = {
+                role: ("SELL" if before[role] > 0 else "BUY")
+                for role in roles
+            }
+            for row in basket_rows:
+                try:
+                    price = Decimal(str(row.fill_price))
+                except (InvalidOperation, TypeError, ValueError):
+                    price = Decimal("0")
+                if (
+                    row.fill_id != f"{prefix}{row.role}"
+                    or row.action != expected_actions[row.role]
+                    or row.quantity <= 0
+                    or not price.is_finite()
+                    or price <= 0
+                ):
+                    raise ValueError("prior basket exit receipts are inconsistent; manual review required")
             before_values = {abs(value) for value in before.values()}
             after_values = {abs(value) for value in after.values()}
             if len(before_values) != 1 or len(after_values) != 1:
