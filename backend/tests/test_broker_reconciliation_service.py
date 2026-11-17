@@ -490,6 +490,18 @@ def test_complete_history_window_hands_off_to_durable_reconciliation(db):
     assert stored is not None
     assert stored.snapshot_complete is True
 
+    import json
+    payload = json.loads(stored.report_json)
+    assert payload["history_window"] == {
+        "window_start": start.isoformat(),
+        "window_end": (start + timedelta(days=1)).isoformat(),
+        "pages_fetched": 2,
+        "has_more": False,
+        "next_cursor": None,
+        "provider_window": "TEST_COMPLETE_PROVIDER_WINDOW",
+        "complete": True,
+    }
+
 
 def test_incomplete_history_window_is_rejected_before_reconciliation_persistence(db):
     _persist_order(db)
