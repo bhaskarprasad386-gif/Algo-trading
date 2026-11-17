@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -248,3 +250,21 @@ def test_new_callback_reusing_exact_fill_identity_does_not_apply_fill_twice(db):
     assert db.query(ExecutionFillRecord).count() == 1
     leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
     assert leg.filled_quantity == 10
+
+
+
+def test_non_binary_decimal_fill_price_replay_is_idempotent(db):
+    _working_intent_with_broker_order(db)
+    first = record_broker_order_event_with_fill(
+        db, _fill_event(average_fill_price=Decimal("101.1"))
+    )
+    replay = record_broker_order_event_with_fill(
+        db, _fill_event(
+            event_id="evt-fill-decimal-replay",
+            average_fill_price=Decimal("101.1"),
+        )
+    )
+    assert first["fill_created"] is True
+    assert replay["event_created"] is True
+    assert replay["fill_created"] is False
+    assert db.query(ExecutionFillRecord).count() == 1
