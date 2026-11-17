@@ -259,12 +259,12 @@ def test_new_callback_reusing_exact_fill_identity_does_not_apply_fill_twice(db):
 def test_non_binary_decimal_fill_price_replay_is_idempotent(db):
     _working_intent_with_broker_order(db)
     first = record_broker_order_event_with_fill(
-        db, _fill_event(average_fill_price=Decimal("101.1"))
+        db, _fill_event(average_fill_price=101.1)
     )
     replay = record_broker_order_event_with_fill(
         db, _fill_event(
             event_id="evt-fill-decimal-replay",
-            average_fill_price=Decimal("101.1"),
+            average_fill_price=101.1,
         )
     )
     assert first["fill_created"] is True
