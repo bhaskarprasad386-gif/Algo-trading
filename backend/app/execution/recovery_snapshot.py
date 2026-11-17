@@ -57,6 +57,24 @@ def review_with_broker_history(
     if not account_id or not account_id.strip():
         raise ValueError("recovery candidate account identity is required")
 
+    # Validate the authenticated session before contacting the provider or
+    # reading any persisted order/fill evidence.
+    if str(getattr(adapter, "name", "") or "").strip().lower() != broker_key:
+        return RecoverySnapshotResult(
+            RecoveryDisposition.BLOCKED, None,
+            "BROKER_SESSION_IDENTITY_MISMATCH", None,
+        )
+    if not bool(getattr(adapter, "connected", False)):
+        return RecoverySnapshotResult(
+            RecoveryDisposition.BLOCKED, None,
+            "BROKER_SESSION_NOT_CONNECTED", None,
+        )
+    if str(getattr(adapter, "account_id", "") or "").strip() != account_id:
+        return RecoverySnapshotResult(
+            RecoveryDisposition.BLOCKED, None,
+            "BROKER_SESSION_ACCOUNT_MISMATCH", None,
+        )
+
     fetch = getattr(adapter, "fetch_today_broker_snapshot", None)
     if not callable(fetch):
         return RecoverySnapshotResult(
@@ -83,6 +101,21 @@ def review_with_broker_history(
         return RecoverySnapshotResult(
             RecoveryDisposition.BLOCKED, None,
             "BROKER_HISTORY_SNAPSHOT_MISSING", getattr(history, "trading_date", None),
+        )
+    if getattr(snapshot, "complete", False) is not True:
+        return RecoverySnapshotResult(
+            RecoveryDisposition.BLOCKED, None,
+            "BROKER_HISTORY_INCOMPLETE_OR_SCOPE_MISMATCH",
+            getattr(history, "trading_date", None),
+        )
+    if (
+        getattr(snapshot, "account_id", None) != account_id
+        or str(getattr(snapshot, "broker", "") or "").strip().lower() != broker_key
+    ):
+        return RecoverySnapshotResult(
+            RecoveryDisposition.BLOCKED, None,
+            "BROKER_HISTORY_ACCOUNT_SCOPE_MISMATCH",
+            getattr(history, "trading_date", None),
         )
 
     try:
