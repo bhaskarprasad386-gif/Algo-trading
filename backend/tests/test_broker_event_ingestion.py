@@ -169,3 +169,68 @@ def test_partial_fill_status_without_trade_identity_is_evidence_only(monkeypatch
     )
     assert result["created"] is True
     assert calls == [("event", event)]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"fill_id": "trade-price-pending", "fill_quantity": 2},
+        {"average_fill_price": 101.5},
+    ],
+)
+def test_incomplete_fill_metadata_is_persisted_as_evidence_only(monkeypatch, metadata):
+    adapter = SimpleNamespace(name="angel_one", account_id="acct-123", connected=True)
+    event = _event(
+        status=BrokerOrderEventStatus.PARTIALLY_FILLED,
+        cumulative_filled_quantity=2,
+        **metadata,
+    )
+    calls = []
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event",
+        lambda db, value: calls.append(value) or {"created": True},
+    )
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event_with_fill",
+        lambda *args, **kwargs: pytest.fail("incomplete evidence must not mutate fills"),
+    )
+
+    result = ingestion.ingest_broker_order_event(object(), adapter=adapter, event=event)
+
+    assert result == {"created": True}
+    assert calls == [event]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        BrokerOrderEventStatus.NEW,
+        BrokerOrderEventStatus.OPEN,
+        BrokerOrderEventStatus.CANCEL_PENDING,
+        BrokerOrderEventStatus.CANCELLED,
+        BrokerOrderEventStatus.REJECTED,
+    ],
+)
+def test_non_fill_status_with_complete_trade_metadata_is_evidence_only(monkeypatch, status):
+    adapter = SimpleNamespace(name="angel_one", account_id="acct-123", connected=True)
+    event = _event(
+        status=status,
+        cumulative_filled_quantity=2,
+        fill_id="trade-provisional",
+        fill_quantity=2,
+        average_fill_price=101.5,
+    )
+    seen = []
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event",
+        lambda db, value: seen.append(value) or {"created": True},
+    )
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event_with_fill",
+        lambda *args, **kwargs: pytest.fail("non-fill status must never mutate fill ledger"),
+    )
+
+    result = ingestion.ingest_broker_order_event(object(), adapter=adapter, event=event)
+
+    assert result == {"created": True}
+    assert seen == [event]
