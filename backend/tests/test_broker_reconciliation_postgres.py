@@ -205,7 +205,8 @@ def test_postgres_reconciliation_cannot_cross_account_boundary(db):
 
 def test_postgres_caller_rollback_removes_reconciliation_record(db):
     _persist_four_leg_intent(db)
+    outer = db.begin()
     _reconcile(db)
-    db.rollback()
+    outer.rollback()
 
     assert db.scalar(select(BrokerReconciliationRecord)) is None
