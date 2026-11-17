@@ -1,5 +1,7 @@
-from types import SimpleNamespace
+from datetime import datetime
 from decimal import Decimal
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -76,11 +78,23 @@ def _snapshot(*, trades=None, filled=25, broker="angel_one", account="acct-1", c
     return BrokerSnapshot(account, broker, tuple(orders), trade_rows, complete)
 
 
-def _adapter(snapshot, *, connected=True, account_id="acct-1", name="angel_one", scope="CURRENT_TRADING_DAY"):
-    history = SimpleNamespace(snapshot=snapshot, scope=scope, trading_date="2026-11-16")
+def _adapter(
+    snapshot, *, connected=True, account_id="acct-1", name="angel_one",
+    scope="CURRENT_TRADING_DAY", trading_date=None, fetch_error=False,
+):
+    history = SimpleNamespace(
+        snapshot=snapshot, scope=scope,
+        trading_date=trading_date or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
+    )
+
+    def fetch(**kwargs):
+        if fetch_error:
+            raise RuntimeError("provider unavailable")
+        return history
+
     return SimpleNamespace(
         name=name, account_id=account_id, connected=connected,
-        fetch_today_broker_snapshot=lambda **kwargs: history,
+        fetch_today_broker_snapshot=fetch,
     )
 
 
@@ -254,3 +268,26 @@ def test_empty_tradebook_reports_unmanaged_manual_orders(db):
     assert result["status"] == "SYNCED_WITH_UNMATCHED"
     assert result["unmatched_order_count"] == 1
     assert result["unmatched_order_ids"] == ["manual-order"]
+
+
+
+def test_tradebook_sync_blocks_stale_trading_date_before_any_fill_write(db):
+    _working_intent(db)
+    result = sync.sync_account_tradebook_fills(
+        db,
+        adapter=_adapter(_snapshot(), trading_date="2026-11-16"),
+        account_id="acct-1",
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_HISTORY_TRADING_DATE_STALE"
+    assert db.query(ExecutionFillRecord).count() == 0
+
+
+def test_tradebook_sync_handles_provider_history_failure_without_mutation(db):
+    _working_intent(db)
+    result = sync.sync_account_tradebook_fills(
+        db, adapter=_adapter(_snapshot(), fetch_error=True), account_id="acct-1",
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_HISTORY_FETCH_FAILED"
+    assert db.query(ExecutionFillRecord).count() == 0
