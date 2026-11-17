@@ -139,6 +139,12 @@ identity, and unequal projected quantities across the intent's legs block
 eligibility. The operator must select a complete event set whose projected
 per-leg fill quantities balance; the review never infers missing fills.
 
+A selected set containing the same broker fill ID more than once is blocked,
+even when its projected per-leg totals would otherwise balance. Duplicate
+callback IDs cannot be counted as separate executions or used to inflate a
+projected quantity; an exact duplicate callback outside the selected set may
+remain harmless when it matches the selected execution evidence exactly.
+
 An eligible response means only that the selected evidence passed these
 preconditions for a separately designed operator workflow. It does not replay
 callbacks, write fill rows, mutate intent/leg state, poll a broker, submit,
