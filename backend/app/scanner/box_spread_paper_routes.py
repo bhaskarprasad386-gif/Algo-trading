@@ -1444,21 +1444,24 @@ def _execute_exit_basket_from_row(
             "LOW_CE": "SELL", "HIGH_CE": "BUY",
             "HIGH_PE": "SELL", "LOW_PE": "BUY",
         }
-        # A four-row count and role set alone are not enough to trust a replay:
-        # each durable key must belong to its row, and every action/quantity/
-        # execution price must describe a valid close receipt.
+        # Validate the semantic contents, not just the number of rows and roles.
+        # Decimal parsing avoids silently truncating fractional quantities and
+        # safely rejects malformed/NaN/Infinity values before replay.
+        normalized_quantities = []
         for item in prior_fills:
             role = str(item.role)
             try:
-                quantity = int(item.quantity)
+                quantity = Decimal(str(item.quantity))
                 fill_price = Decimal(str(item.fill_price))
             except (TypeError, ValueError, ArithmeticError):
-                quantity = 0
+                quantity = Decimal("0")
                 fill_price = Decimal("0")
             if (
                 str(item.fill_id) != f"{basket_prefix}{role}"
                 or str(item.action).upper() != expected_close_actions.get(role)
+                or not quantity.is_finite()
                 or quantity <= 0
+                or quantity != quantity.to_integral_value()
                 or not fill_price.is_finite()
                 or fill_price <= 0
             ):
@@ -1466,7 +1469,8 @@ def _execute_exit_basket_from_row(
                     status_code=409,
                     detail="prior basket exit receipts are inconsistent; manual review required",
                 )
-        if len({int(item.quantity) for item in prior_fills}) != 1:
+            normalized_quantities.append(quantity)
+        if len(set(normalized_quantities)) != 1:
             raise HTTPException(
                 status_code=409,
                 detail="prior basket exit quantities are inconsistent; manual review required",
