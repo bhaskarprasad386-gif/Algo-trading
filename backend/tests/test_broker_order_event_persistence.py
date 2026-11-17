@@ -6,7 +6,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.execution.broker_events import BrokerOrderEvent, BrokerOrderEventStatus
-from app.execution.broker_event_persistence import BrokerEventConflict, record_broker_order_event
+from app.execution.broker_event_persistence import (
+    BrokerEventConflict, record_broker_order_event,
+    record_broker_order_event_with_fill,
+)
 from app.models.broker_order_event import BrokerOrderEventRecord
 
 
