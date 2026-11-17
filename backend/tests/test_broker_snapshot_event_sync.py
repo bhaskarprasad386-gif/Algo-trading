@@ -201,9 +201,12 @@ def test_time_only_trade_timestamp_is_anchored_to_explicit_ist_trading_date():
 
 
 @pytest.mark.parametrize("price", [None, "", "bad", 0, -1, float("nan"), float("inf")])
-def test_invalid_provider_fill_price_is_rejected(price):
-    with pytest.raises(ValueError):
-        parse_positive_trade_price(price)
+def test_untrusted_provider_fill_price_remains_unknown(price):
+    assert parse_positive_trade_price(price) is None
+
+
+def test_valid_provider_fill_price_is_preserved():
+    assert parse_positive_trade_price("101.25") == 101.25
 
 
 def test_normalized_trade_snapshot_rejects_invalid_optional_execution_evidence():
