@@ -257,7 +257,8 @@ def test_cancel_after_partial_fill_is_persisted_as_conflict_free_manual_reconcil
         account_id=snapshot.account_id,
         broker=snapshot.broker,
         orders=(cancelled,) + snapshot.orders[1:],
-        trades=(),        complete=True,
+        trades=(),
+        complete=True,
     )
     result = reconcile_persisted_account_snapshot(
         db, snapshot=snapshot, reconciliation_id="run-partial-cancel",
@@ -539,6 +540,7 @@ def test_paginated_history_window_cannot_be_reconciled_until_all_pages_are_fetch
     assert db.query(BrokerReconciliationRecord).filter_by(
         reconciliation_id="run-paginated-history-window-handoff"
     ).count() == 0
+
 
 def test_history_window_from_another_account_cannot_reconcile_local_intents(db):
     _persist_order(db, account_id="acct-1")
