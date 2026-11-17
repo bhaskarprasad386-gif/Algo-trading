@@ -31,7 +31,7 @@ class _Adapter:
 
 
 def test_orchestrator_calls_read_only_history_for_candidate_account(monkeypatch):
-    snapshot = BrokerSnapshot("acct-1", "zerodha", (), (), False)
+    snapshot = BrokerSnapshot("acct-1", "zerodha", (), (), True)
     adapter = _Adapter(SimpleNamespace(
         scope="CURRENT_TRADING_DAY", trading_date="2026-11-16",
         snapshot=snapshot,
@@ -58,9 +58,10 @@ def test_adapter_failure_fails_closed_without_ledger_or_review(monkeypatch):
         raise AssertionError("ledger must not be consulted after history failure")
 
     monkeypatch.setattr(module, "load_recovery_ledger_evidence", must_not_load)
+    adapter = _Adapter(error=RuntimeError("provider response contains secrets"))
+    adapter.name = "fyers"
     result = module.review_with_broker_history(
-        object(), candidate=_candidate(), broker="fyers",
-        adapter=_Adapter(error=RuntimeError("provider response contains secrets")),
+        object(), candidate=_candidate(), broker="fyers", adapter=adapter,
     )
     assert result.disposition is RecoveryDisposition.BLOCKED
     assert result.review is None
