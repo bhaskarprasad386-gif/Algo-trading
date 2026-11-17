@@ -9,17 +9,19 @@ Supported normalized states:
 - `OPEN`
 - `PARTIALLY_FILLED`
 - `PARTIALLY_FILLED_CANCELLED`
+- `PARTIALLY_FILLED_EXPIRED`
 - `FILLED`
 - `CANCELLED`
+- `EXPIRED`
 - `REJECTED`
 - `UNKNOWN`
 
 ## Safety behavior
 
 - Supports the five named broker identities only.
-- Unknown/numeric vendor codes remain `UNKNOWN`; numeric mappings are not guessed.
+- Unknown numeric vendor codes remain `UNKNOWN`. FYERS API v3 numeric codes are mapped only for FYERS: `1` cancelled, `2` traded/filled, `4` transit/open, `5` rejected, `6` pending/open, `7` expired; `3` and unrecognized codes remain `UNKNOWN`. These codes are never applied to the other four brokers.
 - Filled quantity is preserved even when the broker reports cancellation or rejection.
-- A partial fill followed by cancellation is represented as a distinct terminal
+- A partial fill followed by cancellation or expiry is represented as a distinct terminal
   state and always requires reconciliation.
 - A filled quantity that conflicts with OPEN/CANCELLED/REJECTED/UNKNOWN provider
   status is preserved as FILLED but marked as a conflict requiring reconciliation.
@@ -56,5 +58,7 @@ classification in the hash-protected report payload.
   the same ID with changed status evidence is rejected as an identity conflict.
 
 This is still read-only evidence handling. It does not cancel, retry, modify,
-submit, or resume orders. Provider-specific status aliases remain conservative;
-unknown values stay blocked until verified fixtures support an explicit mapping.
+submit, or resume orders. Provider-specific status aliases remain conservative; the snapshot-to-event polling path
+uses this same normalizer. A provider-reported FILLED/PARTIAL status without cumulative
+fill quantity remains UNKNOWN in the event ledger until tradebook evidence arrives.
+Unknown values stay blocked until verified fixtures support an explicit mapping.

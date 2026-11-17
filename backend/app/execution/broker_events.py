@@ -18,6 +18,7 @@ class BrokerOrderEventStatus(str, Enum):
     FILLED = "FILLED"
     CANCEL_PENDING = "CANCEL_PENDING"
     CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
     REJECTED = "REJECTED"
     UNKNOWN = "UNKNOWN"
 

@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.core.logger import app_logger
 from app.execution.recovery_coordinator import review_account_recovery
 from app.execution.broker_snapshot_event_sync import sync_account_order_status_events
+from app.execution.broker_tradebook_fill_sync import sync_account_tradebook_fills
 from app.models import BoxSpreadRealOwnerState
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
@@ -120,7 +121,10 @@ def sync_broker_order_status_events(
             "trading_authorized": False,
         }
     if not matches_authenticated_account(owner_state, broker, account_id):
-        raise HTTPException(status_code=409, detail="Active broker session does not match the durably bound Box Spread account")
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         return sync_account_order_status_events(
             db, adapter=adapter, account_id=account_id,
@@ -133,6 +137,65 @@ def sync_broker_order_status_events(
         app_logger.exception("Broker order-status snapshot sync failed")
         raise HTTPException(status_code=503, detail="Broker order-status synchronization is temporarily unavailable") from exc
 
+
+
+
+@router.post("/events/sync-fills")
+def sync_broker_tradebook_fills(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
+) -> dict:
+    """Atomically ingest real tradebook fills for the one authenticated Box Spread account."""
+    owner_state = db.query(BoxSpreadRealOwnerState).filter(
+        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    ).first()
+    if owner_state is None or not owner_state.broker_name:
+        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+
+    broker = str(owner_state.broker_name).strip().lower()
+    adapter = broker_sessions.get(user_id, broker)
+    db.rollback()
+    if adapter is None or not bool(getattr(adapter, "connected", False)):
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_NOT_CONNECTED",
+            "trade_count": 0,
+            "created_count": 0,
+            "trading_authorized": False,
+        }
+    if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_IDENTITY_MISMATCH",
+            "trade_count": 0,
+            "created_count": 0,
+            "trading_authorized": False,
+        }
+    account_id = str(getattr(adapter, "account_id", "") or "").strip()
+    if not account_id:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+            "trade_count": 0,
+            "created_count": 0,
+            "trading_authorized": False,
+        }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
+    try:
+        return sync_account_tradebook_fills(
+            db, adapter=adapter, account_id=account_id,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Broker tradebook snapshot is invalid") from exc
+    except Exception as exc:
+        db.rollback()
+        app_logger.exception("Broker tradebook fill synchronization failed")
+        raise HTTPException(status_code=503, detail="Broker tradebook fill synchronization is temporarily unavailable") from exc
 
 @router.get("/recovery/review")
 def review_execution_recovery(
@@ -169,7 +232,10 @@ def review_execution_recovery(
             "reviews": [],
         }
     if not matches_authenticated_account(owner_state, broker, account_id):
-        raise HTTPException(status_code=409, detail="Active broker session does not match the durably bound Box Spread account")
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         return review_account_recovery(
             db, account_id=account_id, broker=broker, adapter=adapter,

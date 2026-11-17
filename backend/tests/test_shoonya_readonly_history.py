@@ -53,7 +53,7 @@ def test_normalizes_complete_order_and_trade_books_read_only():
             "trantype": "B", "qty": "50", "fillshares": "25",
         }],
         trades=[{
-            "stat": "Ok", "flid": "SF-1", "norenordno": "SO-1", "flqty": "25", "flprc": "101.25", "fltm": "16-11-2026 10:31:00",
+            "stat": "Ok", "flid": "SF-1", "norenordno": "SO-1", "flqty": "25", "flprc": "101.25", "fltm": "01-01-1980 00:00:00", "exch_tm": "10:31:00 16-11-2026",
         }],
     )
     result = connected_adapter(client).fetch_today_broker_snapshot(account_id="SH-123")

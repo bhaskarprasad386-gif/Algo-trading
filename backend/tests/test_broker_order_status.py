@@ -21,7 +21,6 @@ from app.brokers.order_status import (
         ("rejected", NormalizedOrderState.REJECTED),
         ("some-new-vendor-code", NormalizedOrderState.UNKNOWN),
         (None, NormalizedOrderState.UNKNOWN),
-        (2, NormalizedOrderState.UNKNOWN),
     ],
 )
 def test_normalizes_conservative_text_statuses_for_all_brokers(broker, raw, expected):
@@ -123,3 +122,61 @@ def test_unsupported_broker_fails_closed(broker):
             quantity=1,
             filled_quantity=0,
         )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("1", NormalizedOrderState.CANCELLED),
+        (2, NormalizedOrderState.FILLED),
+        ("4", NormalizedOrderState.OPEN),
+        ("5", NormalizedOrderState.REJECTED),
+        ("6", NormalizedOrderState.OPEN),
+        ("7", NormalizedOrderState.EXPIRED),
+        ("3", NormalizedOrderState.UNKNOWN),
+        ("999", NormalizedOrderState.UNKNOWN),
+    ],
+)
+def test_fyers_documented_numeric_status_codes_are_provider_scoped(raw, expected):
+    evidence = normalize_order_status(
+        broker="fyers", raw_status=raw, quantity=50, filled_quantity=0,
+    )
+    assert evidence.state is expected
+
+
+@pytest.mark.parametrize("broker", ["angel_one", "zerodha", "shoonya", "mstock"])
+@pytest.mark.parametrize("raw", ["1", "2", "4", "5", "6", "7"])
+def test_fyers_numeric_status_codes_are_not_applied_to_other_brokers(broker, raw):
+    evidence = normalize_order_status(
+        broker=broker, raw_status=raw, quantity=50, filled_quantity=0,
+    )
+    assert evidence.state is NormalizedOrderState.UNKNOWN
+
+
+def test_fyers_expired_after_partial_fill_preserves_filled_quantity():
+    evidence = normalize_order_status(
+        broker="fyers", raw_status=7, quantity=50, filled_quantity=20,
+    )
+    assert evidence.state is NormalizedOrderState.PARTIALLY_FILLED_EXPIRED
+    assert evidence.terminal is True
+    assert evidence.requires_reconciliation is True
+    assert evidence.filled_quantity == 20
+    assert evidence.remaining_quantity == 30
+
+
+def test_fyers_fully_filled_quantity_conflicts_with_cancelled_code():
+    evidence = normalize_order_status(
+        broker="fyers", raw_status=1, quantity=50, filled_quantity=50,
+    )
+    assert evidence.state is NormalizedOrderState.FILLED
+    assert evidence.status_conflict is True
+    assert evidence.requires_reconciliation is True
+
+
+def test_fyers_expired_status_conflicts_with_fully_filled_quantity():
+    evidence = normalize_order_status(
+        broker="fyers", raw_status=7, quantity=50, filled_quantity=50,
+    )
+    assert evidence.state is NormalizedOrderState.FILLED
+    assert evidence.status_conflict is True
+    assert evidence.requires_reconciliation is True
