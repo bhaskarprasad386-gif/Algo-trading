@@ -7,7 +7,9 @@ adopted. The whole managed subset is validated before any fill is written.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from sqlalchemy import select
@@ -53,10 +55,16 @@ def sync_account_tradebook_fills(
     fetch = getattr(adapter, "fetch_today_broker_snapshot", None)
     if not callable(fetch):
         return _blocked("BROKER_HISTORY_UNAVAILABLE")
-    history = fetch(account_id=account)
+    try:
+        history = fetch(account_id=account)
+    except Exception:
+        return _blocked("BROKER_HISTORY_FETCH_FAILED")
     snapshot = getattr(history, "snapshot", None)
     if getattr(history, "scope", None) != "CURRENT_TRADING_DAY" or snapshot is None:
         return _blocked("BROKER_HISTORY_SCOPE_UNSUPPORTED")
+    current_trading_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    if getattr(history, "trading_date", None) != current_trading_date:
+        return _blocked("BROKER_HISTORY_TRADING_DATE_STALE", trade_count=len(getattr(snapshot, "trades", ())))
     if (
         getattr(snapshot, "complete", False) is not True
         or getattr(snapshot, "account_id", None) != account
