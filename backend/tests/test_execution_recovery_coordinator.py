@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace
 
 from app.execution import recovery_coordinator as coordinator
@@ -134,3 +135,34 @@ def test_recovery_coordinator_blocks_incomplete_broker_snapshot(monkeypatch):
     assert result["reason"] == "BROKER_HISTORY_SNAPSHOT_INCOMPLETE"
     assert result["trading_authorized"] is False
     assert result["reviews"] == []
+
+
+@pytest.mark.parametrize("broker", ["angel_one", "zerodha", "fyers", "shoonya", "mstock"])
+def test_recovery_coordinator_uses_one_scoped_snapshot_for_each_supported_broker(monkeypatch, broker):
+    adapter = _Adapter(_history(broker=broker))
+    adapter.name = broker
+    candidates = (_candidate("intent-a"), _candidate("intent-b"))
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates", lambda *a, **k: candidates,
+    )
+    monkeypatch.setattr(
+        coordinator, "load_recovery_ledger_evidence",
+        lambda *a, **k: SimpleNamespace(local_orders=(), local_fill_quantities={}),
+    )
+    monkeypatch.setattr(
+        coordinator, "review_recovery_candidate",
+        lambda **kwargs: SimpleNamespace(
+            disposition=SimpleNamespace(value="CONSISTENT_READ_ONLY"),
+            matched_order_count=4,
+            issues=(),
+        ),
+    )
+
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker=broker, adapter=adapter,
+    )
+
+    assert adapter.fetch_count == 1
+    assert result["status"] == "REVIEWED"
+    assert result["candidate_count"] == 2
+    assert result["trading_authorized"] is False
