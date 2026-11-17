@@ -1351,7 +1351,7 @@ def test_post_claim_failure_is_audited_without_releasing_claim(paper_ledger):
     ("corruption", "expected_error"),
     [
         ("wrong_close_action", "prior basket exit receipts are inconsistent"),
-        ("wrong_role_key", "incomplete prior basket exit record"),
+        ("wrong_role_key", "prior basket exit receipts are inconsistent"),
         ("nonpositive_price", "prior basket exit receipts are inconsistent"),
     ],
 )
