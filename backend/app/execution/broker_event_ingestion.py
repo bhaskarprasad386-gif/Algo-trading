@@ -43,13 +43,14 @@ def ingest_broker_order_event(
     if event.account_id.strip() != account_id:
         raise BrokerEventIngestionBlocked("event account does not match authenticated adapter")
 
-    has_fill_metadata = any(
+    has_complete_fill_evidence = all(
         value is not None
         for value in (event.fill_id, event.fill_quantity, event.average_fill_price)
     )
-    # Order-status updates may report cumulative partial/full quantities without
-    # a trade-level identity or price. Persist that status evidence only; never
-    # invent a fill. Only trade-identified payloads may mutate the fill ledger.
-    if has_fill_metadata:
+    # Providers can send partial execution metadata (for example, a trade ID
+    # and quantity before the average price is available). Preserve that
+    # immutable callback as evidence, but do not enter the atomic fill path
+    # until the full trade identity, quantity, and price are present.
+    if has_complete_fill_evidence:
         return record_broker_order_event_with_fill(db, event)
     return record_broker_order_event(db, event)
