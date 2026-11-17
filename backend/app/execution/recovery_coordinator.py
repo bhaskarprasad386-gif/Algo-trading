@@ -84,6 +84,8 @@ def review_account_recovery(
         reason = "BROKER_HISTORY_SCOPE_UNSUPPORTED"
     elif snapshot is None:
         reason = "BROKER_HISTORY_SNAPSHOT_MISSING"
+    elif getattr(snapshot, "complete", None) is not True:
+        reason = "BROKER_HISTORY_SNAPSHOT_INCOMPLETE"
     elif (
         getattr(snapshot, "account_id", None) != account
         or str(getattr(snapshot, "broker", "")).strip().lower() != broker_key
