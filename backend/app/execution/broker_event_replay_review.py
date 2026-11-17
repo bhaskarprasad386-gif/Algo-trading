@@ -8,6 +8,7 @@ workflow. Eligibility is not authorization to execute.
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import Decimal
 import math
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
