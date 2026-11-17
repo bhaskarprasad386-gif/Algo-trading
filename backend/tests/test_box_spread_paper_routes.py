@@ -1827,3 +1827,74 @@ def test_exit_route_lost_response_after_commit_replays_original_receipts_without
     assert {item["role"] for item in replay["receipts"]} == set(roles)
     assert len(replay["receipts"]) == 4
     assert replay["broker_orders_enabled"] is False
+
+
+def test_exit_route_failure_before_durable_commit_can_retry_same_four_leg_request(monkeypatch):
+    """A confirmed pre-commit failure leaves no receipt; retry may make one fresh attempt."""
+    import hashlib
+
+    _exit_basket_route_fixtures(monkeypatch)
+    fill_id = "exit-precommit-failure-retry"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+    close_actions = {
+        "LOW_CE": "SELL", "HIGH_CE": "BUY",
+        "HIGH_PE": "SELL", "LOW_PE": "BUY",
+    }
+    receipts = [
+        SimpleNamespace(
+            fill_id=f"EXIT:BASKET:exit:{digest}:BASKET:{role}",
+            role=role, action=close_actions[role], quantity=25,
+            fill_price=Decimal("11"), charges=Decimal("1"), cash_delta=Decimal("0"),
+        )
+        for role in roles
+    ]
+    persisted = []
+    ledger_calls = {"count": 0}
+    depth_reads = {"count": 0}
+
+    def read_fills(*args, **kwargs):
+        return list(persisted)
+
+    def fail_before_commit_then_commit(**kwargs):
+        ledger_calls["count"] += 1
+        assert set(kwargs["legs"]) == set(roles)
+        if ledger_calls["count"] == 1:
+            raise RuntimeError("injected failure before durable exit commit")
+        persisted.extend(receipts)
+        return receipts
+
+    real_depth = routes.fresh_box_paper_depth
+
+    def count_depth(contracts):
+        depth_reads["count"] += 1
+        return real_depth(contracts)
+
+    monkeypatch.setattr(routes._ledger, "list_fills", read_fills)
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", fail_before_commit_then_commit)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", count_depth)
+    monkeypatch.setattr(
+        routes._ledger, "get_trade_summary",
+        lambda *args, **kwargs: {"status": "CLOSED"},
+    )
+    payload = routes.ExitBasket(
+        account_key="basket-route-test", fill_id=fill_id, order_type="MARKET",
+    )
+
+    with pytest.raises(HTTPException) as failed:
+        routes.exit_basket(456, payload)
+    assert failed.value.status_code == 503
+    assert persisted == []
+    assert ledger_calls["count"] == 1
+    assert depth_reads["count"] == 1
+
+    result = routes.exit_basket(456, payload)
+    assert result["status"] == "CLOSED"
+    assert result["broker_orders_enabled"] is False
+    assert result["exited_lots"] == 1
+    assert result["remaining_open_lots"] == 0
+    assert len(result["receipts"]) == 4
+    assert {item["role"] for item in result["receipts"]} == set(roles)
+    assert len(persisted) == 4
+    assert ledger_calls["count"] == 2
+    assert depth_reads["count"] == 2
