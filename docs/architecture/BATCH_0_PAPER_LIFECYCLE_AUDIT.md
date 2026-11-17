@@ -48,12 +48,14 @@ Important: the atomicity guarantee in step 11 is a database transaction for Pape
 | During in-memory simulation | Claim remains `CLAIMED`; no ledger fills | Simulator is process-local; restart loses its progress; retry blocked | Simulator must emit durable execution attempt and deterministic event IDs |
 | After simulation, before ledger transaction | Claim remains `CLAIMED`; no ledger fills | Simulated result is lost on process death; no blind replay | Persist simulator result/intent before commit, or use one transaction/outbox boundary |
 | During four-leg ledger transaction | Transaction commits all four rows or none | DB transaction prevents a half-written four-leg basket | Keep atomic ledger invariant and add crash-injection tests |
-| After ledger transaction commit, before HTTP response | Four fills durable; trade `FILLED`; claim `COMPLETED` | Client retry is blocked at the existing-claim check, not receipt-replayed by entry endpoint | Add an authenticated read/replay endpoint keyed by immutable request ID; never resimulate |
+| After ledger transaction commit, before HTTP response | Four fills durable; trade `FILLED`; claim `COMPLETED` | A retry validates the completed claim and exact four durable entry receipts, then returns the original receipt without simulator or market-data access | Preserve receipt-only replay; fail closed on any missing/mismatched leg |
 | After response | Four fills durable | Ledger/history are source of truth | Normal read-only history/recovery |
 
-### Critical nuance
+### Entry receipt replay invariant
 
-The current entry API intentionally does not automatically replay an ambiguous claim. This is fail-safe against duplicate simulation, but a retry after a successful DB commit and lost HTTP response currently receives a conflict instead of an idempotent success receipt. The ledger contains all four durable receipts, so the future normalized API should safely return those original receipts without executing again. This is a usability/reliability gap, not a reason to loosen the current replay guard.
+For a `COMPLETED` claim, the entry route derives four stable fill IDs from the persisted trade idempotency key, requires exactly one durable receipt for each role, validates each role's direction-specific action and selected quantity, then returns the original fill economics and current trade summary. This path does not resolve instruments, read quotes/depth, call the in-memory simulator, or write ledger rows. It remains available when the Paper execution switch is OFF because it is read-only.
+
+A missing claim may proceed through normal new-entry validation. Any non-completed claim, or a completed claim whose receipts do not match, remains HTTP 409 and requires manual review; it is never automatically retried or resimulated.
 
 ## 4. Current Box Paper exit lifecycle
 
@@ -79,7 +81,7 @@ The exit execution route:
 | Retry with same fill ID but incomplete/mismatched prior rows | Corrupt/legacy partial receipt set | Returns conflict/manual review; no new exit |
 | Retry with a new fill ID after previous exit | New request | Remaining open quantity is recalculated; only complete lots supported by all legs can close |
 
-The exit path has stronger request-level receipt replay than the entry path. Preserve this asymmetry only until entry gains a tested durable replay endpoint.
+Entry and exit both have receipt-only retry behavior after a fully committed basket. Entry replay is keyed by the original trade idempotency key and validates all four role/action/quantity receipts; exit replay is keyed by the exit request fill ID. Neither replay path re-reads market data or repeats simulator/ledger mutation.
 
 ## 5. Expiry settlement and recovery
 
@@ -111,7 +113,7 @@ These are source-level test inventory findings. No fresh test suite was executed
 
 ## 8. Decision
 
-The current Box Paper ledger has robust atomic four-leg persistence and conservative restart replay protection. It is not yet a durable unified execution lifecycle: simulator state is in memory, entry response replay is incomplete, and ambiguous claims require manual review. Keep the existing behavior unchanged while the durable intent/event layer and PostgreSQL concurrency tests are built.
+The current Box Paper ledger has robust atomic four-leg persistence, completed-entry receipt replay, and conservative restart protection for ambiguous claims. It is not yet a durable unified execution lifecycle: simulator state remains in memory and unresolved claims require manual review. Keep the no-blind-replay invariant while the durable intent/event layer and PostgreSQL crash/concurrency tests are built.
 
 **The lifecycle event implementation changes only the Box Paper ledger schema and authenticated audit endpoints. Scanner, WebSocket subscriptions, broker adapters, deployment, and Live Trading settings are unchanged.**
 
@@ -129,3 +131,8 @@ The Box Paper ledger now has an append-only `box_spread_paper_audit_events` tabl
 Events are read in stable insertion order through the ledger's account-scoped read method. Event details are diagnostic only and do not authorize broker or Paper execution. The event table is append-only by application contract; database-level immutability enforcement and an authenticated operator-facing recovery workflow remain separate follow-up work.
 
 Pre-claim HTTP 409/422 validation failures are captured by the entry route. The authenticated paper-owner subject is recorded for manual decisions; account-key authorization remains a separate ownership-hardening task. No Live broker path, scanner, WebSocket, or deployment behavior is changed by this work.
+
+
+## 9. Entry receipt replay conformance (Batch 0)
+
+`backend/tests/test_box_spread_paper_entry_replay.py` covers LONG and SHORT receipt replay; exact four-role/action/quantity validation; missing, malformed, or mismatched receipt rejection; incomplete-claim blocking before fill/summary reads; and the no-claim continuation path. These tests use synthetic receipts and do not contact a broker or enable execution. Replay responses must continue to set `broker_orders_enabled=false`.
