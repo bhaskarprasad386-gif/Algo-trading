@@ -184,6 +184,56 @@ def reconcile_persisted_account_snapshot(
                     if leg.intent_record_id == intent.id
                 ),
             )
+        # A multi-leg Box Spread is not complete unless every persisted leg has
+        # the same broker-confirmed cumulative filled quantity. This is a
+        # read-only safety classification; it never repairs or balances legs.
+        snapshot_orders_by_id = {
+            row.broker_order_id: row for row in snapshot.orders
+        }
+        multi_leg_issues = []
+        for intent in intents:
+            intent_legs = [
+                leg for leg in persisted_legs
+                if leg.intent_record_id == intent.id
+            ]
+            if len(intent_legs) < 2:
+                continue
+            leg_fill_quantities = {}
+            for leg in intent_legs:
+                matching_order = next(
+                    (
+                        order for order, _owner, order_leg in orders
+                        if order_leg.id == leg.id
+                    ),
+                    None,
+                )
+                if matching_order is None:
+                    continue
+                broker_order = snapshot_orders_by_id.get(
+                    matching_order.broker_order_id
+                )
+                if broker_order is not None:
+                    leg_fill_quantities[leg.leg_id] = broker_order.filled_quantity
+            if len(leg_fill_quantities) >= 2 and len(set(leg_fill_quantities.values())) > 1:
+                quantities = ", ".join(
+                    f"{leg_id}={quantity}"
+                    for leg_id, quantity in sorted(leg_fill_quantities.items())
+                )
+                multi_leg_issues.append(ReconciliationIssue(
+                    ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH,
+                    intent.intent_id,
+                    "Broker-confirmed cumulative fill quantities differ across "
+                    f"execution legs ({quantities}); the spread is incomplete "
+                    "and requires operator reconciliation.",
+                ))
+        if multi_leg_issues:
+            report = ReconciliationReport(
+                account_id=report.account_id,
+                broker=report.broker,
+                snapshot_complete=report.snapshot_complete,
+                matched_order_count=report.matched_order_count,
+                issues=report.issues + tuple(multi_leg_issues),
+            )
         payload = {
             "report": _report_payload(report),
             "intent_ids": list(intent_ids),

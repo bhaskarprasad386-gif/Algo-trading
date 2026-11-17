@@ -62,3 +62,110 @@ submit, or resume orders. Provider-specific status aliases remain conservative; 
 uses this same normalizer. A provider-reported FILLED/PARTIAL status without cumulative
 fill quantity remains UNKNOWN in the event ledger until tradebook evidence arrives.
 Unknown values stay blocked until verified fixtures support an explicit mapping.
+
+
+## Multi-leg spread fill completeness
+
+Account reconciliation also compares broker-confirmed cumulative filled
+quantities across every persisted leg in each multi-leg intent. If one leg has
+filled 25 units while another has filled 0 (or any other unequal quantity), the
+durable report includes `MULTI_LEG_FILL_QUANTITY_MISMATCH` and remains
+inconsistent. Equal partial quantities are not classified as a leg imbalance,
+but the existing per-order tradebook and status checks still apply.
+
+This check is read-only and uses broker order snapshot cumulative quantities;
+it does not infer fills from local estimates, alter the immutable fill ledger,
+submit compensating orders, or authorize execution resume.
+
+
+The same multi-leg quantity-balance guard is applied during read-only restart
+recovery review. A spread with different broker-confirmed cumulative fill
+quantities across persisted legs is classified as blocked for operator
+reconciliation; equal partial quantities across all known legs are not
+misclassified as an imbalance. This closes the gap between the standalone
+reconciliation report and the recovery-review path.
+
+
+## Out-of-order callback fill evidence
+
+Trade-identified callback events are stored immutably before attempting fill
+progress. If a callback's cumulative filled quantity is ahead of the currently
+persisted tradebook/callback fills, the callback is retained as
+`CUMULATIVE_FILL_GAP` evidence and no fill ledger or intent progress is
+changed. Replaying that exact callback after its missing predecessor arrives
+re-attempts application. Exact broker trade IDs remain idempotent across
+different callback IDs; changed execution data under an existing trade ID is
+a conflict.
+
+A cumulative quantity below already persisted fills, or a cumulative quantity
+above the registered order size, remains a hard fail-closed error. Deferred
+events do not trigger polling, retry, order mutation, automatic adoption, or
+execution resume. Reconciliation remains the authority for unresolved gaps.
+
+
+## Deferred callback event visibility
+
+The owner-authenticated `GET /api/v1/brokers/events/review` endpoint exposes a
+bounded, account- and broker-scoped read-only view of callback events whose
+fill evidence is not yet reconciled. It distinguishes cumulative fill gaps,
+conflicting cumulative quantities, missing trade identity, unresolved broker
+order identity, and fill application that has not reached the immutable fill
+ledger. Exact fill evidence already present in the ledger is omitted from the
+unresolved list.
+
+The review is bounded to the requested limit (maximum 1,000). If more events
+exist than the requested limit, it returns `INCOMPLETE` with `truncated=true`
+rather than falsely claiming the account is clear. The review never replays
+callbacks, writes fills, changes intent state, polls a provider, or authorizes
+order actions. Results are limited to the authenticated
+single broker account, and `trading_authorized` remains false. The endpoint
+returns only event identity and quantity/timestamp diagnostics, not callback
+payload JSON or average fill prices.
+
+
+## Operator-requested deferred callback replay eligibility (dry-run only)
+
+The owner-authenticated `POST /api/v1/brokers/events/replay-eligibility`
+endpoint accepts an explicit list of persisted callback event IDs and the
+confirmation phrase `REVIEW DEFERRED FILL REPLAY ELIGIBILITY`. It is a
+read-only eligibility calculation, not a replay endpoint.
+
+The review is scoped to the single broker/account bound to the authenticated
+owner session. Every selected event must exist in that scope and have a
+trade identity, positive quantity, execution price, and trustworthy timestamp.
+The broker order must map exactly to a persisted intent leg. Existing fill IDs,
+quantity overruns, cumulative sequence gaps/conflicts, incomplete leg-to-order
+identity, and unequal projected quantities across the intent's legs block
+eligibility. The operator must select a complete event set whose projected
+per-leg fill quantities balance; the review never infers missing fills.
+
+A selected set containing the same broker fill ID more than once is blocked,
+even when its projected per-leg totals would otherwise balance. Duplicate
+callback IDs cannot be counted as separate executions or used to inflate a
+projected quantity; an exact duplicate callback outside the selected set may
+remain harmless when it matches the selected execution evidence exactly.
+
+An eligible response means only that the selected evidence passed these
+preconditions for a separately designed operator workflow. It does not replay
+callbacks, write fill rows, mutate intent/leg state, poll a broker, submit,
+cancel, modify, retry, adopt, or resume orders. The response always includes
+`replay_performed=false`, `fill_ledger_mutated=false`,
+`intent_state_mutated=false`, and `trading_authorized=false`.
+
+
+## Replay eligibility audit receipts and expiry
+
+Each owner-authenticated eligibility review now writes an append-only audit
+receipt scoped to the currently bound broker/account. The receipt records the
+explicit event-ID set, a SHA-256 digest of the reviewed evidence/result, the
+result status, and review timestamps; callback payloads and credentials are
+not copied into the audit row.
+
+A review receipt is current for 60 seconds only. The account-scoped
+`GET /api/v1/brokers/events/replay-eligibility/audit/{review_id}` endpoint
+reports `CURRENT` or `EXPIRED`. Expiry never grants or implies approval.
+There is deliberately no approval, replay, or execution endpoint in this
+batch: `approval_granted=false`, `replay_authorized=false`, and
+`trading_authorized=false` remain explicit. A future operator workflow must
+perform a fresh eligibility review and independently revalidate evidence;
+this receipt is an audit record, not a reusable authorization token.
