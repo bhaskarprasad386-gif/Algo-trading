@@ -372,3 +372,27 @@ def test_reconnect_old_provider_logout_failure_keeps_new_session_consistent_and_
     assert persisted.real_trading_enabled is False
     assert persisted.kill_switch is True
     trading_safety.disable(7)
+
+
+
+def test_tradebook_fill_route_rejects_session_account_outside_durable_binding(db, monkeypatch):
+    from types import SimpleNamespace
+    from app.brokers import routes
+    from app.brokers.real_owner_state import claim_authenticated_account
+
+    claim_authenticated_account(db, "angel_one", "BOUND-ACCOUNT")
+    adapter = SimpleNamespace(
+        name="angel_one",
+        connected=True,
+        account_id="OTHER-ACCOUNT",
+    )
+    monkeypatch.setattr(routes.broker_sessions, "get", lambda user_id, broker: adapter)
+
+    def must_not_sync(*args, **kwargs):
+        raise AssertionError("fill sync must not run for an unbound account")
+
+    monkeypatch.setattr(routes, "sync_account_tradebook_fills", must_not_sync)
+    with pytest.raises(HTTPException) as raised:
+        routes.sync_broker_tradebook_fills(db, user_id=1)
+
+    assert raised.value.status_code == 409
