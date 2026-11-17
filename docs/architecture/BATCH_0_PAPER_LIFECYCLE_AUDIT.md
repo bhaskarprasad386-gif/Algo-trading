@@ -1,7 +1,7 @@
 # Batch 0 — Box Paper Lifecycle and Crash-Boundary Audit
 
 **Status:** Source/test audit updated after merged Batch 0 receipt-replay and lifecycle-audit work. This document is an implementation audit, not a live-trading certification.  
-**Updated against integration branch:** `6e9155df1db378cac38aa52fecdeae9fb0c4b6fa`.
+**Updated against integration branch:** `5c418d02ce0e34f6fffd883b8881416e44725794`.
 
 ## 1. Production caller inventory for the generic execution package
 
@@ -105,7 +105,7 @@ These are repository test-inventory findings. PR #597 added `test_box_spread_pap
 
 1. Add deterministic crash-injection tests for each entry and exit boundary: before claim, after claim, after simulator result, during ledger commit, and after commit/before HTTP response. Existing receipt replay and restart tests cover selected boundaries, not the full matrix.
 2. Persist a normalized simulator attempt/result and deterministic event identifiers before treating an interrupted in-memory simulation as recoverable. Until then, post-claim ambiguity must remain blocked for manual review.
-3. Add concurrent multi-worker tests for duplicate entry claims and concurrent exits against the same open basket on PostgreSQL. Existing file-backed SQLite concurrency coverage is not a substitute for PostgreSQL row-lock semantics.
+3. PostgreSQL multi-worker concurrency coverage is now present in `backend/tests/test_box_spread_paper_postgres_concurrency.py`: duplicate entry claim serialization (including exactly one `ENTRY_CLAIMED` audit event), same-exit replay idempotency, and rejection of competing distinct exits against one open basket. CI run on PR #600 used a healthy PostgreSQL 16 service; the full backend suite reported 4,222 passed, 2 skipped, 1 deselected, and 1 xpassed. This verifies the tested database paths, not the entire Paper lifecycle or simulator crash recovery.
 4. Harden the operator recovery boundary before introducing distinct users/accounts. Current auth is one configured Box Paper owner; account_key is a caller-supplied virtual ledger partition, not an independently authenticated account identity. Do not reuse it as a future broker-account authorization primitive.
 5. Enforce audit-event immutability at the database/role boundary if the deployment threat model requires protection beyond the current append-only application contract.
 6. Keep official expiry settlement disabled until a trusted server-side settlement source and intrinsic-value derivation are implemented and verified.
