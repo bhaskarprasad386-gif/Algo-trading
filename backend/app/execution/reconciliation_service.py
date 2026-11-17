@@ -70,6 +70,7 @@ def reconcile_persisted_account_snapshot(
     snapshot: BrokerSnapshot,
     reconciliation_id: str,
     intent_ids: tuple[str, ...],
+    history_window: BrokerHistoryWindow | None = None,
 ) -> dict:
     """Compare a supplied complete-window broker snapshot with persisted evidence.
 
@@ -77,6 +78,11 @@ def reconcile_persisted_account_snapshot(
     window represented by the broker snapshot. The function never calls a broker,
     submits/cancels orders, changes execution intents, or authorizes Live trading.
     """
+    if history_window is not None:
+        if not isinstance(history_window, BrokerHistoryWindow) or not history_window.complete:
+            raise BrokerHistoryUnavailable("audit evidence requires a complete validated broker history window")
+        if history_window.snapshot is not snapshot:
+            raise BrokerHistoryUnavailable("history window snapshot must match the reconciled snapshot")
     reconciliation_id = reconciliation_id.strip()
     intent_ids = tuple(dict.fromkeys(x.strip() for x in intent_ids if x and x.strip()))
     if not reconciliation_id:
@@ -241,6 +247,19 @@ def reconcile_persisted_account_snapshot(
         payload = {
             "report": _report_payload(report),
             "intent_ids": list(intent_ids),
+            "history_window": (
+                {
+                    "window_start": history_window.window_start.isoformat(),
+                    "window_end": history_window.window_end.isoformat(),
+                    "pages_fetched": history_window.pages_fetched,
+                    "has_more": history_window.has_more,
+                    "next_cursor": history_window.next_cursor,
+                    "provider_window": history_window.provider_window,
+                    "complete": history_window.complete,
+                }
+                if history_window is not None
+                else None
+            ),
             "order_status_evidence": [
                 {
                     "raw_status": item.raw_status,
@@ -355,4 +374,5 @@ def reconcile_persisted_history_window(
         snapshot=history_window.snapshot,
         reconciliation_id=reconciliation_id,
         intent_ids=intent_ids,
+        history_window=history_window,
     )
