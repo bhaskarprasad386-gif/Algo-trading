@@ -77,6 +77,17 @@ def review_operator_replay_eligibility(
     order_by_id = {row.broker_order_id: row for row in orders}
 
     issues_by_event: dict[str, list[str]] = defaultdict(list)
+    selected_fill_id_counts: dict[str, int] = defaultdict(int)
+    for event in events:
+        if event.fill_id:
+            selected_fill_id_counts[event.fill_id] += 1
+    for event in events:
+        if event.fill_id and selected_fill_id_counts[event.fill_id] > 1:
+            # A broker trade identity may be represented by multiple callback
+            # IDs, but it must never be projected more than once in one review.
+            # Keep the explicitly selected set blocked rather than guessing
+            # which callback is canonical or counting duplicate execution data.
+            issues_by_event[event.event_id].append("DUPLICATE_SELECTED_BROKER_FILL_ID")
     intent_groups: dict[int, list[tuple[BrokerOrderEventRecord, ExecutionBrokerOrderRecord]]] = defaultdict(list)
     for event in events:
         if event.status not in {"PARTIALLY_FILLED", "FILLED"}:
