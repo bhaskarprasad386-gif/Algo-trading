@@ -1189,10 +1189,16 @@ class BoxSpreadPaperLedger:
                 except (InvalidOperation, TypeError, ValueError):
                     raise ValueError("historical paper ledger contains invalid fill values; manual review required") from None
                 is_exit = row.fill_id.startswith(("EXIT:", "SETTLE:"))
+                is_requested_basket_receipt = row.fill_id.startswith(prefix)
                 if (
-                    not historical_price.is_finite()
-                    or historical_price < 0
-                    or (historical_price == 0 and not row.fill_id.startswith("SETTLE:"))
+                    (
+                        not is_requested_basket_receipt
+                        and (
+                            not historical_price.is_finite()
+                            or historical_price < 0
+                            or (historical_price == 0 and not row.fill_id.startswith("SETTLE:"))
+                        )
+                    )
                     or (not is_exit and row.action != entry_actions[row.role])
                 ):
                     raise ValueError("historical paper ledger contains inconsistent entry evidence; manual review required")
