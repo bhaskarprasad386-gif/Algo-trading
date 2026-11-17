@@ -161,3 +161,22 @@ def test_recovery_coordinator_blocks_authenticated_session_account_mismatch(monk
     assert result["reason"] == "BROKER_SESSION_ACCOUNT_MISMATCH"
     assert result["trading_authorized"] is False
     assert adapter.fetch_count == 0
+
+
+@pytest.mark.parametrize("broker", ["angel_one", "fyers", "mstock", "shoonya", "zerodha"])
+def test_recovery_coordinator_blocks_disconnected_session_for_every_broker(monkeypatch, broker):
+    adapter = _Adapter(_history(broker=broker))
+    adapter.name = broker
+    adapter.connected = False
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("disconnected session must not query ledger")),
+    )
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker=broker, adapter=adapter,
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_SESSION_NOT_CONNECTED"
+    assert result["trading_authorized"] is False
+    assert result["candidate_count"] == 0
+    assert adapter.fetch_count == 0
