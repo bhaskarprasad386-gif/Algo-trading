@@ -1,10 +1,11 @@
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAuditRecord
+from app.models.execution_intent import ExecutionIntentRecord
 
 
 @pytest.fixture
@@ -86,3 +87,20 @@ def test_create_all_repairs_missing_guards_on_existing_table(audit_engine, audit
     with pytest.raises(DBAPIError, match="append-only"):
         audit_session.commit()
     audit_session.rollback()
+
+
+def test_unrelated_partial_schema_creation_skips_audit_guards(audit_engine):
+    # Many isolated tests create only a subset of Base.metadata. The audit
+    # guard listener must not install triggers against a table not created.
+    partial_engine = create_engine("sqlite:///:memory:")
+    try:
+        Base.metadata.create_all(
+            partial_engine,
+            tables=[ExecutionIntentRecord.__table__],
+        )
+        inspector = inspect(partial_engine)
+        assert inspector.has_table(ExecutionIntentRecord.__tablename__)
+        assert not inspector.has_table(BrokerReplayEligibilityAuditRecord.__tablename__)
+    finally:
+        partial_engine.dispose()
+
