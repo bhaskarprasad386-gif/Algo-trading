@@ -79,6 +79,7 @@ def _working_intent(db, broker):
     )
     legs = (
         ExecutionLeg("leg-1", "NFO:NIFTY26NOV25000CE", OrderSide.BUY, 50, limit_price=100),
+        ExecutionLeg("leg-2", "NFO:NIFTY26NOV25000PE", OrderSide.SELL, 50, limit_price=100),
     )
     create_intent(db, intent, legs)
     saved = None
@@ -109,6 +110,18 @@ def _working_intent(db, broker):
         quantity=50,
         accepted_at_ns=200,
     )
+    record_broker_order(
+        db,
+        account_id="acct-1",
+        intent_id=intent.intent_id,
+        leg_id="leg-2",
+        broker=broker,
+        broker_order_id=f"order-{broker}-2",
+        symbol="NFO:NIFTY26NOV25000PE",
+        side="SELL",
+        quantity=50,
+        accepted_at_ns=200,
+    )
     return intent.intent_id
 
 
@@ -124,6 +137,14 @@ def _adapter(broker, *, account_id="acct-1", snapshot_account="acct-1", complete
                 quantity=50,
                 filled_quantity=25,
                 raw_status="PARTIALLY_FILLED",
+            ),
+            BrokerOrderSnapshot(
+                broker_order_id=f"order-{broker}-2",
+                symbol="NFO:NIFTY26NOV25000PE",
+                side="SELL",
+                quantity=50,
+                filled_quantity=0,
+                raw_status="OPEN",
             ),
         ),
         trades=(
@@ -159,7 +180,7 @@ def test_each_broker_normalized_tradebook_fill_is_durably_persisted_and_replay_s
     replay = sync_account_tradebook_fills(db, adapter=adapter, account_id="acct-1")
 
     fill = db.scalar(select(ExecutionFillRecord))
-    leg = db.scalar(select(ExecutionLegRecord))
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "leg-1"))
     intent = db.scalar(select(ExecutionIntentRecord))
 
     assert first["status"] == "SYNCED"
