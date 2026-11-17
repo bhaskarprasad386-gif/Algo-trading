@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.brokers.real_owner_auth import require_real_owner_access
+from app.brokers.real_owner_state import matches_authenticated_account
 from app.brokers.session_store import broker_sessions
 from app.core.database import get_db
 from app.core.logger import app_logger
@@ -68,6 +69,11 @@ def review_requested_replay_eligibility(
             "eligible": False, "events": [], "replay_performed": False,
             "trading_authorized": False,
         }
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     try:
         result = review_operator_replay_eligibility(
             db, broker=broker, account_id=account_id,
@@ -133,6 +139,11 @@ def get_replay_eligibility_audit(
     account_id = str(getattr(adapter, "account_id", "") or "").strip()
     if not account_id:
         raise HTTPException(status_code=409, detail="Bound broker account identity is unavailable")
+    if not matches_authenticated_account(owner_state, broker, account_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Active broker session does not match the durably bound Box Spread account",
+        )
     audit = db.query(BrokerReplayEligibilityAuditRecord).filter(
         BrokerReplayEligibilityAuditRecord.review_id == review_id,
         BrokerReplayEligibilityAuditRecord.broker == broker,
