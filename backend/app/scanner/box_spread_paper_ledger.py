@@ -1203,6 +1203,19 @@ class BoxSpreadPaperLedger:
                     or price <= 0
                 ):
                     raise ValueError("prior basket exit receipts are inconsistent; manual review required")
+            # A basket exit may reduce or flatten a leg, but it must never
+            # reverse its sign. Absolute quantities alone are insufficient:
+            # a corrupted 75-unit SELL against a 50-unit long position would
+            # otherwise look like a valid 25-unit short remainder.
+            for role in roles:
+                if before[role] == 0 or (
+                    after[role] != 0
+                    and (after[role] > 0) != (before[role] > 0)
+                ):
+                    raise ValueError(
+                        "prior basket exit reverses or lacks a pre-existing leg position; manual review required"
+                    )
+
             before_values = {abs(value) for value in before.values()}
             after_values = {abs(value) for value in after.values()}
             if len(before_values) != 1 or len(after_values) != 1:
@@ -1211,7 +1224,7 @@ class BoxSpreadPaperLedger:
             before_quantity = next(iter(before_values))
             after_quantity = next(iter(after_values))
             exited_quantity = basket_rows[0].quantity
-            if before_quantity - after_quantity != exited_quantity:
+            if exited_quantity > before_quantity or before_quantity - after_quantity != exited_quantity:
                 raise ValueError("prior basket exit does not reconcile with historical position")
             if any(quantity % lot_size for quantity in (before_quantity, after_quantity, exited_quantity)):
                 raise ValueError("historical paper position is not a whole number of lots")
