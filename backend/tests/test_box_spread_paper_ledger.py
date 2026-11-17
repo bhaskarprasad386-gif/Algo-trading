@@ -1389,5 +1389,5 @@ def test_exit_basket_snapshot_rejects_corrupt_durable_receipts(
     with pytest.raises(ValueError, match=expected_error):
         paper_ledger.get_exit_basket_position_snapshot(
             trade.id,
-            fill_id=f"exit:{__import__('hashlib').sha256(exit_id.encode('utf-8')).hexdigest()[:40]}:BASKET",
+            fill_id=exit_id,
         )
