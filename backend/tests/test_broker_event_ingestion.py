@@ -199,3 +199,38 @@ def test_incomplete_fill_metadata_is_persisted_as_evidence_only(monkeypatch, met
 
     assert result == {"created": True}
     assert calls == [event]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        BrokerOrderEventStatus.NEW,
+        BrokerOrderEventStatus.OPEN,
+        BrokerOrderEventStatus.CANCEL_PENDING,
+        BrokerOrderEventStatus.CANCELLED,
+        BrokerOrderEventStatus.REJECTED,
+    ],
+)
+def test_non_fill_status_with_complete_trade_metadata_is_evidence_only(monkeypatch, status):
+    adapter = SimpleNamespace(name="angel_one", account_id="acct-123", connected=True)
+    event = _event(
+        status=status,
+        cumulative_filled_quantity=2,
+        fill_id="trade-provisional",
+        fill_quantity=2,
+        average_fill_price=101.5,
+    )
+    seen = []
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event",
+        lambda db, value: seen.append(value) or {"created": True},
+    )
+    monkeypatch.setattr(
+        ingestion, "record_broker_order_event_with_fill",
+        lambda *args, **kwargs: pytest.fail("non-fill status must never mutate fill ledger"),
+    )
+
+    result = ingestion.ingest_broker_order_event(object(), adapter=adapter, event=event)
+
+    assert result == {"created": True}
+    assert seen == [event]
