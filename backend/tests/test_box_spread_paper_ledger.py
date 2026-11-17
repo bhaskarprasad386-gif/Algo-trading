@@ -1433,7 +1433,7 @@ def test_exit_basket_snapshot_rejects_receipt_that_reverses_leg_positions(paper_
     [
         ("action", "SELL", "inconsistent entry evidence"),
         ("quantity", 0, "invalid fill values"),
-        ("fill_price", Decimal("NaN"), "inconsistent entry evidence"),
+        ("fill_price", Decimal("Infinity"), "inconsistent entry evidence"),
     ],
 )
 def test_exit_basket_snapshot_rejects_corrupt_historical_entry_receipts(
