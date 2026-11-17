@@ -48,6 +48,17 @@ def review_account_recovery(
             "reviews": [],
         }
 
+    # The adapter's authenticated account must match the requested ledger scope.
+    # Do this before reading candidates or making any provider request.
+    if str(getattr(adapter, "account_id", "") or "").strip() != account:
+        return {
+            "status": "BLOCKED",
+            "reason": "BROKER_SESSION_ACCOUNT_MISMATCH",
+            "trading_authorized": False,
+            "candidate_count": 0,
+            "reviews": [],
+        }
+
     candidates = list_recovery_candidates(db, account_id=account, limit=limit)
     if not candidates:
         return {
@@ -84,6 +95,8 @@ def review_account_recovery(
         reason = "BROKER_HISTORY_SCOPE_UNSUPPORTED"
     elif snapshot is None:
         reason = "BROKER_HISTORY_SNAPSHOT_MISSING"
+    elif getattr(snapshot, "complete", False) is not True:
+        reason = "BROKER_HISTORY_INCOMPLETE_OR_SCOPE_MISMATCH"
     elif (
         getattr(snapshot, "account_id", None) != account
         or str(getattr(snapshot, "broker", "")).strip().lower() != broker_key
