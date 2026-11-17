@@ -27,13 +27,14 @@ class BrokerReplayEligibilityAuditRecord(Base):
     operator_scope: Mapped[str] = mapped_column(String(64), nullable=False, default="box-spread-real-owner")
 
 
-# Register database-level guards on table creation. ORM hooks alone are not
-# sufficient because bulk UPDATE/DELETE and direct SQL bypass mapper events.
+# Metadata after_create runs on every create_all(), including when this table
+# already exists. That makes the guards self-healing on application startup
+# after upgrades, rather than protecting only a freshly-created table.
 event.listen(
-    BrokerReplayEligibilityAuditRecord.__table__,
+    Base.metadata,
     "after_create",
     DDL("""
-        CREATE TRIGGER trg_replay_eligibility_audit_no_update
+        CREATE TRIGGER IF NOT EXISTS trg_replay_eligibility_audit_no_update
         BEFORE UPDATE ON broker_replay_eligibility_audits
         BEGIN
             SELECT RAISE(ABORT, 'broker replay eligibility audits are append-only');
@@ -41,10 +42,10 @@ event.listen(
     """).execute_if(dialect="sqlite"),
 )
 event.listen(
-    BrokerReplayEligibilityAuditRecord.__table__,
+    Base.metadata,
     "after_create",
     DDL("""
-        CREATE TRIGGER trg_replay_eligibility_audit_no_delete
+        CREATE TRIGGER IF NOT EXISTS trg_replay_eligibility_audit_no_delete
         BEFORE DELETE ON broker_replay_eligibility_audits
         BEGIN
             SELECT RAISE(ABORT, 'broker replay eligibility audits are append-only');
@@ -52,7 +53,7 @@ event.listen(
     """).execute_if(dialect="sqlite"),
 )
 event.listen(
-    BrokerReplayEligibilityAuditRecord.__table__,
+    Base.metadata,
     "after_create",
     DDL("""
         CREATE OR REPLACE FUNCTION broker_replay_eligibility_audit_reject_mutation()
@@ -66,11 +67,22 @@ event.listen(
     """).execute_if(dialect="postgresql"),
 )
 event.listen(
-    BrokerReplayEligibilityAuditRecord.__table__,
+    Base.metadata,
     "after_create",
     DDL("""
-        CREATE TRIGGER trg_replay_eligibility_audit_no_update_delete
-        BEFORE UPDATE OR DELETE ON broker_replay_eligibility_audits
-        FOR EACH ROW EXECUTE FUNCTION broker_replay_eligibility_audit_reject_mutation()
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_replay_eligibility_audit_no_update_delete'
+                  AND tgrelid = 'broker_replay_eligibility_audits'::regclass
+                  AND NOT tgisinternal
+            ) THEN
+                CREATE TRIGGER trg_replay_eligibility_audit_no_update_delete
+                BEFORE UPDATE OR DELETE ON broker_replay_eligibility_audits
+                FOR EACH ROW EXECUTE FUNCTION broker_replay_eligibility_audit_reject_mutation();
+            END IF;
+        END;
+        $$
     """).execute_if(dialect="postgresql"),
 )
