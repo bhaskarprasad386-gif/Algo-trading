@@ -1462,3 +1462,48 @@ def test_exit_basket_snapshot_rejects_corrupt_historical_entry_receipts(
 
     with pytest.raises(ValueError, match=expected_error):
         paper_ledger.get_exit_basket_position_snapshot(trade.id, fill_id=exit_id)
+
+
+
+def test_four_leg_entry_basket_rolls_back_every_leg_if_a_mid_basket_write_fails(paper_ledger):
+    trade = _trade(paper_ledger, account_key="entry-rollback", idempotency_key="entry-rollback")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id, account_key="entry-rollback")
+    before_balance = paper_ledger.ensure_account("entry-rollback")
+    entry_rows_seen = 0
+
+    def fail_on_third_entry_flush(session, flush_context, instances):
+        nonlocal entry_rows_seen
+        new_entry_rows = [
+            row for row in session.new
+            if isinstance(row, BoxSpreadPaperLedgerEntry)
+            and str(row.fill_id).startswith("ENTRY:atomic:")
+        ]
+        if new_entry_rows:
+            entry_rows_seen += len(new_entry_rows)
+            if entry_rows_seen >= 3:
+                raise RuntimeError("injected third-leg entry persistence failure")
+
+    event.listen(Session, "before_flush", fail_on_third_entry_flush)
+    try:
+        with pytest.raises(RuntimeError, match="third-leg entry persistence failure"):
+            paper_ledger.record_entry_basket(
+                trade_id=trade.id,
+                account_key="entry-rollback",
+                legs=_entry_basket(),
+            )
+    finally:
+        event.remove(Session, "before_flush", fail_on_third_entry_flush)
+
+    assert entry_rows_seen == 3
+    assert paper_ledger.list_fills(trade.id, account_key="entry-rollback") == []
+    assert paper_ledger.ensure_account("entry-rollback") == before_balance
+    assert paper_ledger.get_trade_summary(
+        trade.id, account_key="entry-rollback",
+    )["status"] == "CREATED"
+    assert paper_ledger.get_entry_claim(
+        trade_id=trade.id, account_key="entry-rollback",
+    )["status"] == "CLAIMED"
+    events = paper_ledger.list_audit_events(
+        trade_id=trade.id, account_key="entry-rollback",
+    )
+    assert [item["event_type"] for item in events] == ["ENTRY_CLAIMED"]
