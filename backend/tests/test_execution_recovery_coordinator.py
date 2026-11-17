@@ -1,3 +1,5 @@
+import pytest
+
 from types import SimpleNamespace
 
 from app.execution import recovery_coordinator as coordinator
