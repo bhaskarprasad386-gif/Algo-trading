@@ -1345,3 +1345,49 @@ def test_post_claim_failure_is_audited_without_releasing_claim(paper_ledger):
     assert paper_ledger.get_entry_claim(
         trade_id=trade.id, account_key="audit-failure",
     )["status"] == "CLAIMED"
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_error"),
+    [
+        ("wrong_close_action", "prior basket exit receipts are inconsistent"),
+        ("wrong_role_key", "incomplete prior basket exit record"),
+        ("nonpositive_price", "prior basket exit receipts are inconsistent"),
+    ],
+)
+def test_exit_basket_snapshot_rejects_corrupt_durable_receipts(
+    paper_ledger, corruption, expected_error,
+):
+    """The ledger snapshot must independently reject corrupt receipt rows."""
+    trade = _trade(paper_ledger, idempotency_key=f"snapshot-corrupt-{corruption}")
+    paper_ledger.claim_entry_attempt(trade_id=trade.id)
+    paper_ledger.record_entry_basket(trade_id=trade.id, legs=_entry_basket())
+    exit_id = f"snapshot-guard-{corruption}"
+    paper_ledger.record_exit_basket(
+        trade_id=trade.id,
+        fill_id=exit_id,
+        legs={
+            role: {"quantity": 25, "fill_price": "101"}
+            for role in ("LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE")
+        },
+    )
+
+    with paper_ledger._session_factory() as session:
+        target_role = "HIGH_CE" if corruption == "wrong_close_action" else "LOW_PE"
+        row = session.query(BoxSpreadPaperLedgerEntry).filter_by(
+            trade_id=trade.id,
+            fill_id=f"EXIT:BASKET:{exit_id}:{target_role}",
+        ).one()
+        if corruption == "wrong_close_action":
+            row.action = "SELL"
+        elif corruption == "wrong_role_key":
+            row.fill_id = f"EXIT:BASKET:{exit_id}:HIGH_PE"
+        elif corruption == "nonpositive_price":
+            row.fill_price = Decimal("0")
+        session.commit()
+
+    with pytest.raises(ValueError, match=expected_error):
+        paper_ledger.get_exit_basket_position_snapshot(
+            trade.id,
+            fill_id=f"exit:{__import__('hashlib').sha256(exit_id.encode('utf-8')).hexdigest()[:40]}:BASKET",
+        )
