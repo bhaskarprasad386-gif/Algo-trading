@@ -29,13 +29,13 @@ def db():
 
 def _event(*, account_id="acct-1", event_id="evt-1", fill_id="trade-1",
            fill_quantity=10, cumulative=20, status="PARTIALLY_FILLED",
-           occurred_at_ns=200):
+           occurred_at_ns=200, fill_price=Decimal("101.25")):
     row = BrokerOrderEventRecord(
         broker="fyers", account_id=account_id, event_id=event_id,
         broker_order_id="order-1", status=status,
         cumulative_filled_quantity=cumulative, fill_id=fill_id,
         fill_quantity=fill_quantity,
-        average_fill_price=Decimal("101.25") if fill_id else None,
+        average_fill_price=fill_price if fill_id else None,
         occurred_at_ns=occurred_at_ns, payload_hash="a" * 64, payload_json="{}",
     )
     return row
@@ -160,3 +160,23 @@ def test_bounded_review_never_claims_clear_when_older_events_are_omitted(db):
     assert result["event_count"] == 1
     assert result["truncated"] is True
     assert result["review_complete"] is False
+
+
+
+def test_non_binary_decimal_fill_price_is_compared_exactly(db):
+    intent, leg, _ = _registered_order(db)
+    db.add(_event(cumulative=10, fill_price=Decimal("101.1")))
+    db.add(ExecutionFillRecord(
+        intent_record_id=intent.id, leg_record_id=leg.id,
+        account_id="acct-1", broker="fyers", broker_fill_id="trade-1",
+        broker_order_id="order-1", quantity=10, fill_price=Decimal("101.1"),
+        occurred_at_ns=200, payload_hash="e" * 64,
+    ))
+    db.flush()
+
+    result = review_deferred_broker_events(
+        db, broker="fyers", account_id="acct-1",
+    )
+
+    assert result["status"] == "CLEAR"
+    assert result["unresolved_count"] == 0
