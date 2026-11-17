@@ -1,6 +1,8 @@
 """Read-only visibility for broker callback events awaiting fill reconciliation."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -83,7 +85,7 @@ def review_deferred_broker_events(
                     fill.broker_order_id != event.broker_order_id
                     or fill.quantity != event.fill_quantity
                     or event.average_fill_price is None
-                    or float(fill.fill_price) != float(event.average_fill_price)
+                    or Decimal(str(fill.fill_price)) != Decimal(str(event.average_fill_price))
                     or fill.occurred_at_ns != event.occurred_at_ns
                 ):
                     reason = "FILL_IDENTITY_EVIDENCE_CONFLICT"
