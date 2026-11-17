@@ -26,11 +26,11 @@ def _candidate(intent_id):
     )
 
 
-def _history(*, account_id="acct-1", broker="zerodha", scope="CURRENT_TRADING_DAY"):
+def _history(*, account_id="acct-1", broker="zerodha", scope="CURRENT_TRADING_DAY", complete=True):
     snapshot = SimpleNamespace(
         account_id=account_id,
         broker=broker,
-        complete=True,
+        complete=complete,
         orders=(),
         trades=(),
     )
@@ -120,3 +120,42 @@ def test_recovery_coordinator_blocks_unsupported_history_scope(monkeypatch):
     assert result["status"] == "BLOCKED"
     assert result["reason"] == "BROKER_HISTORY_SCOPE_UNSUPPORTED"
     assert result["trading_authorized"] is False
+
+
+
+@pytest.mark.parametrize("broker", ["angel_one", "fyers", "mstock", "shoonya", "zerodha"])
+def test_recovery_coordinator_blocks_incomplete_snapshot_for_every_broker(monkeypatch, broker):
+    adapter = _Adapter(_history(broker=broker, complete=False))
+    adapter.name = broker
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates", lambda *a, **k: (_candidate("intent-a"),),
+    )
+    monkeypatch.setattr(
+        coordinator, "load_recovery_ledger_evidence",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("incomplete snapshot must not reach ledger review")),
+    )
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker=broker, adapter=adapter,
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_HISTORY_INCOMPLETE_OR_SCOPE_MISMATCH"
+    assert result["trading_authorized"] is False
+    assert result["reviews"] == []
+
+
+@pytest.mark.parametrize("broker", ["angel_one", "fyers", "mstock", "shoonya", "zerodha"])
+def test_recovery_coordinator_blocks_authenticated_session_account_mismatch(monkeypatch, broker):
+    adapter = _Adapter(_history(broker=broker))
+    adapter.name = broker
+    adapter.account_id = "other-account"
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must reject before ledger read")),
+    )
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker=broker, adapter=adapter,
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_SESSION_ACCOUNT_MISMATCH"
+    assert result["trading_authorized"] is False
+    assert adapter.fetch_count == 0
