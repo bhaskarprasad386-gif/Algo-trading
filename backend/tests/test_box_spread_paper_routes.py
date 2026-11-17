@@ -1898,3 +1898,72 @@ def test_exit_route_failure_before_durable_commit_can_retry_same_four_leg_reques
     assert len(persisted) == 4
     assert ledger_calls["count"] == 2
     assert depth_reads["count"] == 2
+
+
+
+@pytest.mark.parametrize(
+    ("receipt_shape", "expected_detail"),
+    [
+        ("missing_role", "incomplete prior basket exit record"),
+        ("duplicate_role", "incomplete prior basket exit record"),
+        ("unequal_quantities", "prior basket exit quantities are inconsistent"),
+    ],
+)
+def test_exit_route_corrupt_prior_basket_receipts_fail_closed_without_new_market_or_ledger_work(
+    monkeypatch, receipt_shape, expected_detail,
+):
+    """A partial or contradictory durable receipt set must never trigger a second exit."""
+    import hashlib
+
+    _exit_basket_route_fixtures(monkeypatch)
+    fill_id = f"corrupt-prior-exit-{receipt_shape}"
+    digest = hashlib.sha256(fill_id.encode("utf-8")).hexdigest()[:40]
+    roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"]
+    close_actions = {
+        "LOW_CE": "SELL", "HIGH_CE": "BUY",
+        "HIGH_PE": "SELL", "LOW_PE": "BUY",
+    }
+    if receipt_shape == "missing_role":
+        roles = roles[:3]
+    elif receipt_shape == "duplicate_role":
+        roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "HIGH_PE"]
+
+    prior_receipts = [
+        SimpleNamespace(
+            fill_id=f"EXIT:BASKET:exit:{digest}:BASKET:{role}",
+            role=role, action=close_actions[role],
+            quantity=50 if receipt_shape == "unequal_quantities" and index == 3 else 25,
+            fill_price=Decimal("11"), charges=Decimal("1"), cash_delta=Decimal("0"),
+        )
+        for index, role in enumerate(roles)
+    ]
+    list_calls = []
+
+    def read_fills(trade_id, *, account_key):
+        list_calls.append((trade_id, account_key))
+        return prior_receipts
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("corrupt prior receipts must block all fresh execution and ledger writes")
+
+    monkeypatch.setattr(routes._ledger, "list_fills", read_fills)
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "_paper_open_basket_state", forbidden)
+    monkeypatch.setattr(routes, "fresh_box_paper_depth", forbidden)
+    monkeypatch.setattr(routes._ledger, "record_exit_basket", forbidden)
+    monkeypatch.setattr(routes._ledger, "get_exit_basket_position_snapshot", forbidden)
+    monkeypatch.setattr(routes._ledger, "get_trade_summary", forbidden)
+
+    with pytest.raises(HTTPException) as raised:
+        routes.exit_basket(
+            456,
+            routes.ExitBasket(
+                account_key="basket-route-test",
+                fill_id=fill_id,
+                order_type="MARKET",
+            ),
+        )
+
+    assert raised.value.status_code == 409
+    assert expected_detail in raised.value.detail
+    assert list_calls == [(456, "basket-route-test")]
