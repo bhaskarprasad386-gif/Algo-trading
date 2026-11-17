@@ -201,3 +201,95 @@ def test_lost_http_response_after_commit_replays_original_four_receipts(monkeypa
     assert {item["role"] for item in replay["fills"]} == {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}
     assert len(ledger.list_fills(trade.id, account_key=account_key)) == 4
     assert engine_calls == {"create": 1, "execute": 1}
+
+
+
+def test_simulator_result_then_ledger_commit_failure_is_manual_review_and_never_reexecutes(
+    monkeypatch, durable_ledger,
+):
+    """A completed in-memory simulation is not durable recovery evidence."""
+    ledger = durable_ledger
+    account_key = "crash-after-simulator-result"
+    request = routes.CreatePaperTrade(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-11-19",
+        low_strike=25000, high_strike=25100, direction="LONG", lots=1,
+        idempotency_key="simulator-result-not-durable", account_key=account_key, alert_edge=8,
+    )
+    trade = _trade(ledger, account_key, request.idempotency_key)
+    contracts = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-11-19",
+        low_strike=25000.0, high_strike=25100.0, direction="LONG", lot_size=25,
+    )
+    row = {
+        "symbol": "NIFTY", "instrument_class": "INDEX", "expiry": "2026-11-19",
+        "low_strike": 25000, "high_strike": 25100, "direction": "LONG",
+    }
+    monkeypatch.setattr(routes, "_ledger", ledger)
+    monkeypatch.setattr(routes, "_paper_execution_enabled", True)
+    monkeypatch.setattr(routes, "_load_trade_request", lambda trade_id, key: request)
+    monkeypatch.setattr(routes, "_resolve", lambda payload: contracts)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", lambda **kwargs: {"data": [row]})
+    monkeypatch.setattr(routes, "_fresh_entry_depth_selection", lambda *args, **kwargs: {
+        "lots": 1, "quantity": 25,
+        "prices": {"LOW_CE": 100, "HIGH_CE": 90, "HIGH_PE": 80, "LOW_PE": 70},
+    })
+    monkeypatch.setattr(routes, "validate_entry_edge", lambda **kwargs: {
+        "alert_edge": 8, "minimum_entry_edge": 5, "effective_entry_edge": 7,
+    })
+
+    roles = (
+        ("LOW_CE", "BUY", "100"), ("HIGH_CE", "SELL", "90"),
+        ("HIGH_PE", "BUY", "80"), ("LOW_PE", "SELL", "70"),
+    )
+    calls = {"create": 0, "execute": 0, "persist": 0}
+
+    async def create_intent(**kwargs):
+        calls["create"] += 1
+
+    async def execute_intent(**kwargs):
+        calls["execute"] += 1
+        fills = [SimpleNamespace(
+            role=role, action=action, quantity=25, fill_price=Decimal(price),
+            reference_price=Decimal(price), slippage=Decimal("0"),
+            notional=Decimal(price) * 25,
+        ) for role, action, price in roles]
+        return SimpleNamespace(
+            fills=fills, latency_seconds=0.01, slippage_rate=Decimal("0"),
+        )
+
+    def fail_durable_commit(**kwargs):
+        calls["persist"] += 1
+        raise RuntimeError("injected database failure after simulator result")
+
+    monkeypatch.setattr(routes._engine, "create_intent", create_intent)
+    monkeypatch.setattr(routes._engine, "execute_intent", execute_intent)
+    monkeypatch.setattr(ledger, "record_entry_basket", fail_durable_commit)
+
+    with pytest.raises(routes.HTTPException):
+        asyncio.run(routes._simulate_entry_locked(
+            trade.id, routes.SimulateEntry(account_key=account_key),
+        ))
+
+    claim = ledger.get_entry_claim(trade_id=trade.id, account_key=account_key)
+    assert claim["status"] == "CLAIMED"
+    assert ledger.list_fills(trade.id, account_key=account_key) == []
+    recovery = ledger.list_open_trades(account_key=account_key)
+    assert len(recovery) == 1
+    assert recovery[0]["manual_review_required"] is True
+    assert recovery[0]["automatic_replay"] is False
+    assert calls == {"create": 1, "execute": 1, "persist": 1}
+
+    # A second worker/restarted process must stop at the durable claim before
+    # obtaining new quotes or executing the non-durable simulator result again.
+    def forbidden(*args, **kwargs):
+        pytest.fail("ambiguous simulator outcome must not refresh quotes or execute again")
+
+    monkeypatch.setattr(routes, "_resolve", forbidden)
+    monkeypatch.setattr(routes, "live_box_spread_opportunities", forbidden)
+    with pytest.raises(routes.HTTPException) as blocked:
+        asyncio.run(routes._simulate_entry_locked(
+            trade.id, routes.SimulateEntry(account_key=account_key),
+        ))
+    assert blocked.value.status_code == 409
+    assert "not completed" in blocked.value.detail
+    assert calls == {"create": 1, "execute": 1, "persist": 1}
