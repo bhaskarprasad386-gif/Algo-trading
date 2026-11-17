@@ -149,6 +149,36 @@ def review_recovery_candidate(
         snapshot=scoped_snapshot,
     )
     issues.extend(report.issues)
+
+    # A multi-leg spread cannot be considered recovered when the broker's
+    # cumulative filled quantities differ across its persisted legs. This
+    # check deliberately uses broker order snapshots, not inferred local
+    # fills, and never repairs or resumes an incomplete spread.
+    broker_orders_by_id = {
+        order.broker_order_id: order for order in scoped_snapshot.orders
+    }
+    leg_fill_quantities = {}
+    for leg_id, local in local_by_leg.items():
+        broker_order = broker_orders_by_id.get(local.broker_order_id)
+        if broker_order is not None:
+            leg_fill_quantities[leg_id] = broker_order.filled_quantity
+    if (
+        len(candidate.persisted.legs) > 1
+        and len(leg_fill_quantities) > 1
+        and len(set(leg_fill_quantities.values())) > 1
+    ):
+        quantities = ", ".join(
+            f"{leg_id}={quantity}"
+            for leg_id, quantity in sorted(leg_fill_quantities.items())
+        )
+        issues.append(ReconciliationIssue(
+            ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH,
+            intent.intent_id,
+            "Broker-confirmed cumulative fill quantities differ across "
+            f"execution legs ({quantities}); recovery remains blocked for "
+            "operator reconciliation.",
+        ))
+
     disposition = (
         RecoveryDisposition.CONSISTENT_READ_ONLY
         if not issues and report.is_consistent

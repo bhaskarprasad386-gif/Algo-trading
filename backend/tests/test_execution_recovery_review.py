@@ -57,9 +57,12 @@ def test_matching_intent_is_consistent_but_never_authorizes_resume():
             trades=(BrokerTradeSnapshot("trade-1", "ord-1", 25),),
         ),
     )
-    assert review.disposition is RecoveryDisposition.CONSISTENT_READ_ONLY
-    assert review.is_consistent is True
+    assert review.disposition is RecoveryDisposition.BLOCKED
+    assert review.is_consistent is False
     assert review.matched_order_count == 2
+    assert ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH in {
+        issue.status for issue in review.issues
+    }
 
 
 def test_under_sized_persisted_broker_order_is_blocked():
@@ -142,3 +145,24 @@ def test_cross_account_or_broker_snapshot_is_rejected():
         assert "scope" in str(exc)
     else:
         raise AssertionError("cross-account snapshot must be rejected")
+
+
+
+def test_equal_partial_fills_across_all_spread_legs_are_not_imbalance():
+    review = review_recovery_candidate(
+        candidate=_candidate(),
+        broker="zerodha",
+        local_orders=_local_orders(),
+        local_fill_quantities={"trade-cb": 25, "trade-cs": 25},
+        snapshot=_snapshot(orders=(
+            BrokerOrderSnapshot("ord-1", "NIFTY-CE", "BUY", 50, 25),
+            BrokerOrderSnapshot("ord-2", "NIFTY-CE-HIGH", "SELL", 50, 25),
+        ), trades=(
+            BrokerTradeSnapshot("trade-cb", "ord-1", 25),
+            BrokerTradeSnapshot("trade-cs", "ord-2", 25),
+        )),
+    )
+    assert review.disposition is RecoveryDisposition.CONSISTENT_READ_ONLY
+    assert ReconciliationStatus.MULTI_LEG_FILL_QUANTITY_MISMATCH not in {
+        issue.status for issue in review.issues
+    }
