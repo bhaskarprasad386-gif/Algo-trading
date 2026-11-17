@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.execution.broker_events import BrokerOrderEvent
+from app.execution.broker_events import BrokerOrderEvent, BrokerOrderEventStatus
 from app.execution.broker_event_persistence import (
     record_broker_order_event,
     record_broker_order_event_with_fill,
@@ -29,8 +29,8 @@ def ingest_broker_order_event(
 
     The adapter's authenticated identity is authoritative. Event-supplied broker
     or account values are assertions only and must match exactly after broker
-    case normalization. The fill path atomically writes event + fill progress;
-    status-only events write immutable event evidence only.
+    case normalization. Only a normalized fill status with complete trade
+    identity, quantity, and price can enter the atomic event+fill path.
     """
     broker = str(getattr(adapter, "name", "") or "").strip().lower()
     account_id = str(getattr(adapter, "account_id", "") or "").strip()
@@ -43,13 +43,17 @@ def ingest_broker_order_event(
     if event.account_id.strip() != account_id:
         raise BrokerEventIngestionBlocked("event account does not match authenticated adapter")
 
-    has_fill_metadata = any(
+    has_complete_fill_evidence = all(
         value is not None
         for value in (event.fill_id, event.fill_quantity, event.average_fill_price)
     )
-    # Order-status updates may report cumulative partial/full quantities without
-    # a trade-level identity or price. Persist that status evidence only; never
-    # invent a fill. Only trade-identified payloads may mutate the fill ledger.
-    if has_fill_metadata:
+    is_fill_status = event.status in {
+        BrokerOrderEventStatus.PARTIALLY_FILLED,
+        BrokerOrderEventStatus.FILLED,
+    }
+    # A provider may attach stale or provisional execution metadata to an
+    # OPEN/CANCELLED/REJECTED callback. Preserve it as immutable event evidence;
+    # never let a non-fill status mutate the fill ledger.
+    if is_fill_status and has_complete_fill_evidence:
         return record_broker_order_event_with_fill(db, event)
     return record_broker_order_event(db, event)
