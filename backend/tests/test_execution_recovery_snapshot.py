@@ -14,6 +14,10 @@ def _candidate():
 
 
 class _Adapter:
+    name = "zerodha"
+    connected = True
+    account_id = "acct-1"
+
     def __init__(self, history=None, error=None):
         self.history = history
         self.error = error
@@ -96,3 +100,50 @@ def test_incomplete_current_day_snapshot_remains_blocked(monkeypatch):
     )
     assert result.disposition is RecoveryDisposition.BLOCKED
     assert result.reason == "RECONCILIATION_REQUIRES_REVIEW"
+
+
+
+def test_wrong_authenticated_session_identity_blocks_before_provider_or_ledger(monkeypatch):
+    adapter = _Adapter(SimpleNamespace(scope="CURRENT_TRADING_DAY", snapshot=None))
+    adapter.name = "fyers"
+    monkeypatch.setattr(
+        module, "load_recovery_ledger_evidence",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not read ledger")),
+    )
+    result = module.review_with_broker_history(
+        object(), candidate=_candidate(), broker="zerodha", adapter=adapter,
+    )
+    assert result.disposition is RecoveryDisposition.BLOCKED
+    assert result.reason == "BROKER_SESSION_IDENTITY_MISMATCH"
+    assert adapter.accounts == []
+
+
+def test_disconnected_or_wrong_account_session_blocks_before_provider(monkeypatch):
+    for attr, value, expected in (
+        ("connected", False, "BROKER_SESSION_NOT_CONNECTED"),
+        ("account_id", "other-account", "BROKER_SESSION_ACCOUNT_MISMATCH"),
+    ):
+        adapter = _Adapter(SimpleNamespace(scope="CURRENT_TRADING_DAY", snapshot=None))
+        setattr(adapter, attr, value)
+        result = module.review_with_broker_history(
+            object(), candidate=_candidate(), broker="zerodha", adapter=adapter,
+        )
+        assert result.disposition is RecoveryDisposition.BLOCKED
+        assert result.reason == expected
+        assert adapter.accounts == []
+
+
+def test_wrong_snapshot_scope_blocks_before_ledger(monkeypatch):
+    adapter = _Adapter(SimpleNamespace(
+        scope="CURRENT_TRADING_DAY", trading_date="2026-11-16",
+        snapshot=BrokerSnapshot("acct-2", "zerodha", (), (), True),
+    ))
+    monkeypatch.setattr(
+        module, "load_recovery_ledger_evidence",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not read ledger")),
+    )
+    result = module.review_with_broker_history(
+        object(), candidate=_candidate(), broker="zerodha", adapter=adapter,
+    )
+    assert result.disposition is RecoveryDisposition.BLOCKED
+    assert result.reason == "BROKER_HISTORY_ACCOUNT_SCOPE_MISMATCH"
