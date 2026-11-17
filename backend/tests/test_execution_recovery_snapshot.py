@@ -72,12 +72,14 @@ def test_unsupported_history_scope_fails_closed(monkeypatch):
         raise AssertionError("unsupported scope must not be reconciled")
 
     monkeypatch.setattr(module, "load_recovery_ledger_evidence", must_not_load)
+    adapter = _Adapter(SimpleNamespace(
+        scope="MULTI_DAY_UNVERIFIED", trading_date="2026-11-16",
+        snapshot=BrokerSnapshot("acct-1", "mstock", (), (), True),
+    ))
+    adapter.name = "mstock"
     result = module.review_with_broker_history(
         object(), candidate=_candidate(), broker="mstock",
-        adapter=_Adapter(SimpleNamespace(
-            scope="MULTI_DAY_UNVERIFIED", trading_date="2026-11-16",
-            snapshot=BrokerSnapshot("acct-1", "mstock", (), (), True),
-        )),
+        adapter=adapter,
     )
     assert result.disposition is RecoveryDisposition.BLOCKED
     assert result.reason == "BROKER_HISTORY_SCOPE_UNSUPPORTED"
@@ -86,20 +88,21 @@ def test_unsupported_history_scope_fails_closed(monkeypatch):
 def test_incomplete_current_day_snapshot_remains_blocked(monkeypatch):
     snapshot = BrokerSnapshot("acct-1", "shoonya", (), (), False)
     evidence = SimpleNamespace(local_orders=(), local_fill_quantities={})
-    monkeypatch.setattr(module, "load_recovery_ledger_evidence", lambda *a, **k: evidence)
-    review = SimpleNamespace(
-        disposition=RecoveryDisposition.BLOCKED, is_consistent=False,
+    monkeypatch.setattr(
+        module, "load_recovery_ledger_evidence",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("incomplete snapshot must not read ledger")),
     )
-    monkeypatch.setattr(module, "review_recovery_candidate", lambda **kwargs: review)
+    adapter = _Adapter(SimpleNamespace(
+        scope="CURRENT_TRADING_DAY", trading_date="2026-11-16",
+        snapshot=snapshot,
+    ))
+    adapter.name = "shoonya"
     result = module.review_with_broker_history(
-        object(), candidate=_candidate(), broker="shoonya",
-        adapter=_Adapter(SimpleNamespace(
-            scope="CURRENT_TRADING_DAY", trading_date="2026-11-16",
-            snapshot=snapshot,
-        )),
+        object(), candidate=_candidate(), broker="shoonya", adapter=adapter,
     )
     assert result.disposition is RecoveryDisposition.BLOCKED
-    assert result.reason == "RECONCILIATION_REQUIRES_REVIEW"
+    assert result.review is None
+    assert result.reason == "BROKER_HISTORY_INCOMPLETE_OR_SCOPE_MISMATCH"
 
 
 
