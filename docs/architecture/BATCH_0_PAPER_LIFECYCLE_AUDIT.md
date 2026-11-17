@@ -94,12 +94,13 @@ Entry and exit both have receipt-only retry behavior after a fully committed bas
 
 The inspected suite includes:
 - `test_box_spread_paper_engine.py`: intent validation, idempotency, adverse slippage, limit validation, partial fills, matched quantities, residual exposure, duplicate fill IDs, and overfill protection.
-- `test_box_spread_paper_ledger.py`: durable account/trade/fill/charge/cash-ledger invariants, atomic basket writes, and duplicate handling.
+- `test_box_spread_paper_ledger.py`: durable account/trade/fill/charge/cash-ledger invariants, atomic basket writes, duplicate handling, and injected mid-basket entry/exit transaction failures.
+- `test_box_spread_paper_postgres_concurrency.py`: PostgreSQL 16 multi-worker claim serialization, same-key exit replay, and distinct-key over-close prevention.
 - `test_box_spread_paper_routes.py`: route-level create/entry/exit/recovery behavior.
 - `test_box_spread_paper_restart_safety.py`: process-restart simulation with partial durable entry fill; duplicate claim/replay blocked and manual review required.
 - `test_box_spread_paper_schema_startup.py`: schema startup compatibility.
 
-These are repository test-inventory findings. PR #597 added `test_box_spread_paper_entry_replay.py`; its Full Backend Tests and Fast Broker Safety Gate both passed on the exact PR head before merge. No local test run is claimed here.
+These are repository test-inventory findings. PR #597 added `test_box_spread_paper_entry_replay.py`; PR #598's Full Backend Tests and Fast Broker Safety Gate both passed on the exact tested head before merge. The PostgreSQL concurrency fixture is configured to skip when `IV_TEST_POSTGRES_URL` is absent; its execution must be confirmed from CI job evidence rather than inferred from the overall test count. No local test run is claimed here.
 
 ## 7. Remaining gaps before unified Paper cutover
 
