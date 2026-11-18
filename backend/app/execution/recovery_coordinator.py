@@ -144,7 +144,10 @@ def review_account_recovery(
                     for issue in review.issues
                 ],
             })
-        except (ValueError, LookupError):
+        except Exception:
+            # Provider/ledger exception details may contain account data or
+            # response payloads. Preserve a review-only result without leaking
+            # them or implying that the affected intent is safe to resume.
             reviews.append({
                 "intent_id": intent.intent_id,
                 "disposition": "BLOCKED",

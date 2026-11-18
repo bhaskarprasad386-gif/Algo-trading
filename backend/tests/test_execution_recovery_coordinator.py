@@ -199,3 +199,74 @@ def test_recovery_coordinator_blocks_stale_trading_date_before_review(monkeypatc
     assert result["reason"] == "BROKER_HISTORY_TRADING_DATE_STALE"
     assert result["trading_authorized"] is False
     assert result["reviews"] == []
+
+
+def test_recovery_coordinator_contains_unexpected_ledger_failure_without_leaking_details(monkeypatch):
+    adapter = _Adapter(_history())
+    candidates = (_candidate("intent-a"), _candidate("intent-b"))
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates", lambda *a, **k: candidates,
+    )
+
+    def fail_with_sensitive_payload(*args, **kwargs):
+        raise RuntimeError("provider payload contains account-secret")
+
+    monkeypatch.setattr(
+        coordinator, "load_recovery_ledger_evidence", fail_with_sensitive_payload,
+    )
+
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker="zerodha", adapter=adapter,
+    )
+
+    assert result["status"] == "REQUIRES_REVIEW"
+    assert result["candidate_count"] == 2
+    assert result["blocked_count"] == 2
+    assert result["trading_authorized"] is False
+    assert all(item["disposition"] == "BLOCKED" for item in result["reviews"])
+    assert all(
+        issue["detail"] == "Persisted execution evidence could not be safely reconciled."
+        for item in result["reviews"]
+        for issue in item["issues"]
+    )
+    assert "account-secret" not in repr(result)
+
+
+def test_recovery_coordinator_blocks_broker_identity_mismatch_in_snapshot(monkeypatch):
+    adapter = _Adapter(_history(broker="fyers"))
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates", lambda *a, **k: (_candidate("intent-a"),),
+    )
+    monkeypatch.setattr(
+        coordinator, "load_recovery_ledger_evidence",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not read ledger")),
+    )
+
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker="zerodha", adapter=adapter,
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_HISTORY_ACCOUNT_SCOPE_MISMATCH"
+    assert result["reviews"] == []
+    assert result["trading_authorized"] is False
+
+
+def test_recovery_coordinator_blocks_missing_snapshot_without_review(monkeypatch):
+    adapter = _Adapter(SimpleNamespace(
+        scope="CURRENT_TRADING_DAY",
+        trading_date=datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
+        snapshot=None,
+    ))
+    monkeypatch.setattr(
+        coordinator, "list_recovery_candidates", lambda *a, **k: (_candidate("intent-a"),),
+    )
+
+    result = coordinator.review_account_recovery(
+        object(), account_id="acct-1", broker="zerodha", adapter=adapter,
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "BROKER_HISTORY_SNAPSHOT_MISSING"
+    assert result["reviews"] == []
+    assert result["trading_authorized"] is False
