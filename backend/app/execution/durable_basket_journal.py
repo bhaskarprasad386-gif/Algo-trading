@@ -120,16 +120,25 @@ class DurableBasketJournal:
                 return False
 
     async def record_submission_started(self, *, account_id: str, intent_id: str,
-                                        client_order_ids: tuple[str, ...]) -> None:
+                                        client_order_ids: tuple[str, ...],
+                                        expected_quantities: dict[str, int]) -> None:
         if not client_order_ids or len(set(client_order_ids)) != len(client_order_ids):
             raise ValueError("unique client order IDs are required for every basket leg")
+        if (
+            set(expected_quantities) != set(client_order_ids)
+            or any(isinstance(q, bool) or not isinstance(q, int) or q <= 0
+                   for q in expected_quantities.values())
+        ):
+            raise ValueError("positive expected quantities are required for every basket leg")
         await self._call(
             self._record_submission_started, account_id=account_id,
             intent_id=intent_id, client_order_ids=client_order_ids,
+            expected_quantities=expected_quantities,
         )
 
     def _record_submission_started(self, *, account_id: str, intent_id: str,
-                                   client_order_ids: tuple[str, ...]) -> None:
+                                   client_order_ids: tuple[str, ...],
+                                   expected_quantities: dict[str, int]) -> None:
         with self._session_factory() as db, db.begin():
             row = db.execute(select(BasketExecutionJournalRecord).where(
                 BasketExecutionJournalRecord.account_id == account_id,
@@ -140,9 +149,13 @@ class DurableBasketJournal:
             if row.state != "CLAIMED":
                 raise ValueError("submission can start only from a fresh durable claim")
             row.state = "SUBMITTING"
+            if set(expected_quantities) != set(client_order_ids):
+                raise ValueError("expected quantities must match the durable basket leg IDs")
             row.client_order_ids_json = json.dumps(list(client_order_ids))
+            row.expected_quantities_json = json.dumps(expected_quantities, sort_keys=True)
             self._append(db, row, "SUBMISSION_STARTED", {
                 "client_order_ids": list(client_order_ids),
+                "expected_quantities": expected_quantities,
             })
 
     async def record_order_ack(self, *, account_id: str, intent_id: str,
@@ -196,17 +209,19 @@ class DurableBasketJournal:
             if row.state != "SUBMITTING":
                 raise ValueError("only a submitting basket can complete as filled")
             expected = json.loads(row.client_order_ids_json)
+            expected_quantities = json.loads(row.expected_quantities_json or "{}")
             by_id = {leg.client_order_id: leg for leg in reconciliation.legs}
             if (
-                not expected or len(by_id) != len(expected) or set(by_id) != set(expected)
+                not expected or set(expected_quantities) != set(expected)
+                or len(by_id) != len(expected) or set(by_id) != set(expected)
                 or any(
                     not by_id[key].broker_order_id
                     or not by_id[key].order_terminal
-                    or by_id[key].filled_quantity <= 0
+                    or by_id[key].filled_quantity != expected_quantities[key]
                     for key in expected
                 )
             ):
-                raise ValueError("reconciliation does not prove every basket leg fully executed")
+                raise ValueError("reconciliation does not prove every basket leg filled its exact target quantity")
             row.state = "FILLED"
             row.reconciliation_json = json.dumps({
                 "authoritative": reconciliation.authoritative,
