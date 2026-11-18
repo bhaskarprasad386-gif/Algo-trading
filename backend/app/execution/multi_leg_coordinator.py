@@ -11,7 +11,7 @@ import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from enum import Enum
-from typing import Awaitable, Callable, Mapping, Protocol, Sequence
+from typing import Callable, Mapping, Protocol
 
 
 class BasketStrategy(str, Enum):
@@ -67,6 +67,10 @@ class BasketIntent:
             raise ValueError("leg IDs must be unique")
         if len({x.role for x in self.legs}) != len(self.legs):
             raise ValueError("leg roles must be unique")
+        if len({x.symbol for x in self.legs}) != len(self.legs):
+            raise ValueError("each basket leg must reference a distinct instrument")
+        if {symbol for symbol, _ in self.baseline_positions} != {x.symbol for x in self.legs}:
+            raise ValueError("pre-entry baseline must cover every basket instrument exactly once")
         if len({x.expiry for x in self.legs}) != 1:
             raise ValueError("all basket legs must share one expiry")
         if len({x.option_type for x in self.legs}) != 1 and self.strategy is not BasketStrategy.BOX_SPREAD:
@@ -279,10 +283,17 @@ class MultiLegBasketCoordinator:
             return BasketResult(BasketResultState.PREFLIGHT_REJECTED, reason, ())
 
         client_ids = tuple(self._client_order_id(intent, leg) for leg in intent.legs)
-        claimed = await self._journal.claim_submission(
-            account_id=intent.account_id, intent_id=intent.intent_id,
-            strategy=intent.strategy.value, snapshot_id=evidence.edge.snapshot_id,
-        )
+        try:
+            claimed = await self._journal.claim_submission(
+                account_id=intent.account_id, intent_id=intent.intent_id,
+                strategy=intent.strategy.value, snapshot_id=evidence.edge.snapshot_id,
+            )
+        except Exception as exc:
+            await self._journal.require_manual_review(
+                account_id=intent.account_id, intent_id=intent.intent_id,
+                reason=f"durable submission claim failed: {type(exc).__name__}",
+            )
+            return BasketResult(BasketResultState.MANUAL_REVIEW, "durable submission claim failed", client_ids)
         if not claimed:
             return BasketResult(
                 BasketResultState.DUPLICATE_BLOCKED,
@@ -290,10 +301,21 @@ class MultiLegBasketCoordinator:
                 client_ids,
             )
 
-        await self._journal.record_submission_started(
-            account_id=intent.account_id, intent_id=intent.intent_id,
-            client_order_ids=client_ids,
-        )
+        try:
+            await self._journal.record_submission_started(
+                account_id=intent.account_id, intent_id=intent.intent_id,
+                client_order_ids=client_ids,
+            )
+        except Exception as exc:
+            await self._journal.freeze_intent(
+                account_id=intent.account_id, intent_id=intent.intent_id,
+                reason="durable submission-start record failed before broker calls",
+            )
+            await self._journal.require_manual_review(
+                account_id=intent.account_id, intent_id=intent.intent_id,
+                reason=f"submission not sent because durable journal failed: {type(exc).__name__}",
+            )
+            return BasketResult(BasketResultState.MANUAL_REVIEW, "submission journal unavailable; no broker call sent", client_ids)
         acks: list[BrokerOrderAck | Exception] = []
         async def submit(leg: BasketLeg, client_id: str) -> BrokerOrderAck:
             return await asyncio.wait_for(
@@ -313,9 +335,15 @@ class MultiLegBasketCoordinator:
             if isinstance(ack, Exception):
                 all_accepted = False
                 continue
-            await self._journal.record_order_ack(
-                account_id=intent.account_id, intent_id=intent.intent_id, ack=ack,
-            )
+            try:
+                await self._journal.record_order_ack(
+                    account_id=intent.account_id, intent_id=intent.intent_id, ack=ack,
+                )
+            except Exception:
+                # The deterministic client ID lets recovery find an accepted
+                # broker order even if the acknowledgement write was lost.
+                all_accepted = False
+                continue
             if ack.client_order_id != expected_id or not ack.accepted or ack.status.upper() in {
                 "REJECTED", "UNKNOWN", "ERROR",
             }:
