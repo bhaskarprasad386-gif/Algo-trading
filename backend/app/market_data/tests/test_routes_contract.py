@@ -43,3 +43,24 @@ def test_runtime_feed_health_marks_a_stale_required_exchange():
     assert summary["status"] == "STALE"
     assert summary["age_seconds"] == 8.0
     assert summary["exchange_freshness"]["NFO"]["status"] == "STALE"
+
+
+def test_cloudflare_staging_origin_is_allowed_by_cors():
+    client = TestClient(app)
+    response = client.get("/health", headers={"Origin": "https://algo-trading.bhaskarprasad386.workers.dev"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://algo-trading.bhaskarprasad386.workers.dev"
+
+
+def test_untrusted_workers_dev_origin_is_not_allowed_by_cors():
+    client = TestClient(app)
+    response = client.get("/health", headers={"Origin": "https://untrusted-project.workers.dev"})
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_vercel_origin_remains_allowed_by_cors():
+    client = TestClient(app)
+    response = client.get("/health", headers={"Origin": "https://algo-trading.vercel.app"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://algo-trading.vercel.app"
