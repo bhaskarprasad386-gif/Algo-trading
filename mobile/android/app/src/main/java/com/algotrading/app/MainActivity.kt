@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ApiService.initializeOwnerSession(applicationContext)
         setContentView(R.layout.activity_main)
         tvStatus = findViewById(R.id.tvStatus)
         mainScroll = findViewById(R.id.mainScroll)
