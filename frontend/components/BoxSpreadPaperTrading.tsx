@@ -77,6 +77,7 @@ export default function BoxSpreadPaperTrading() {
   const [token, setToken] = useState<string | null>(null);
   const [privateWsStatus, setPrivateWsStatus] = useState<"DISCONNECTED" | "CONNECTING" | "LIVE" | "STALE">("DISCONNECTED");
   const [privateSnapshotComplete, setPrivateSnapshotComplete] = useState(false);
+  const [privateLedgerRefreshVersion, setPrivateLedgerRefreshVersion] = useState(0);
   const privateWsRef = useRef<WebSocket | null>(null);
   const privateSequenceRef = useRef(0);
   const privateEventIdsRef = useRef(new Set<string>());
@@ -329,6 +330,9 @@ export default function BoxSpreadPaperTrading() {
                 privateEventIdsRef.current = new Set(Array.from(privateEventIdsRef.current).slice(-256));
               }
             }
+            if (frame.event_type !== "MARKET_DATA_CHANGED") {
+              setPrivateLedgerRefreshVersion(version => version + 1);
+            }
             setPrivateWsStatus("LIVE");
           } catch {
             setPrivateWsStatus("STALE");
@@ -514,10 +518,20 @@ export default function BoxSpreadPaperTrading() {
   }
 
   async function loadLedger(tradeId: number) {
+    setSelectedTrade(tradeId);
     setError(null);
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
+
+  useEffect(() => {
+    if (!token || selectedTrade == null || privateWsStatus !== "LIVE" || privateLedgerRefreshVersion === 0) return;
+    let active = true;
+    void request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account))
+      .then(body => { if (active) setLedger(body); })
+      .catch(() => { /* Keep the last confirmed ledger on transient read failure. */ });
+    return () => { active = false; };
+  }, [token, selectedTrade, account, privateWsStatus, privateLedgerRefreshVersion, request]);
 
   const allowedEntrySymbols = entryExpiryType === "WEEKLY"
     ? ["NIFTY", "SENSEX"]
