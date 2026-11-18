@@ -6,6 +6,7 @@ on:
       - "deploy/vps-deploy-job-runner.sh"
       - "deploy/bootstrap-vps.sh"
       - ".github/workflows/vps-durable-deploy-job.yml"
+      - ".github/workflows/vps-deploy-job-status.yml"
       - ".github/workflows/vps-deploy-runner-validation.yml"
   pull_request:
     paths:
