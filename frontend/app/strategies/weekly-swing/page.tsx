@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePagePush } from "@/components/page-push-provider";
 import { appConfig } from "@/lib/config";
 import { Activity, AlertCircle, CheckCircle2, LoaderCircle, Search } from "lucide-react";
 
@@ -24,6 +25,7 @@ export default function WeeklySwingScannerPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("weekly-swing");
 
   // Restore a scan already running on the backend after a page reload, then
   // keep its status current without requiring the user to press Resume.
@@ -49,10 +51,24 @@ export default function WeeklySwingScannerPage() {
       }
     };
     void refresh();
-    // Poll from server-returned status, not stale React state; never starts a scan.
-    const timer = window.setInterval(() => { if (shouldPoll) void refresh(); }, 3000);
+    // WebSocket is authoritative while connected; REST is recovery-only.
+    if (pagePushStatus === "LIVE") return () => { active = false; };
+    const timer = window.setInterval(() => { if (shouldPoll) void refresh(); }, 15000);
     return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  }, [pagePushStatus]);
+
+  useEffect(() => {
+    if (!pagePushData) return;
+    const body = pagePushData as unknown as UniverseStatus;
+    setUniverseStatus(body);
+    if (body.status === "completed") {
+      setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
+      setLoading(false);
+    } else if (body.status === "failed" || body.status === "paused") {
+      setError(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+      setLoading(false);
+    }
+  }, [pagePushData]);
 
   async function scan() {
     setLoading(true); setError(""); setResult(null); setUniverseStatus(null);

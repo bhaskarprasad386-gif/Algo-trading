@@ -63,7 +63,7 @@ from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
-from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop
+from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
@@ -378,6 +378,10 @@ def _box_page_push_snapshot():
     return payload
 
 
+configure_page_push_snapshot("weekly-swing", nifty200_scan_status)
+configure_weekly_swing_page_push(
+    lambda payload: publish_page_update("weekly-swing", "PATCH", payload)
+)
 configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 def _cash_future_page_push_snapshot():
     stats = live_cash_future_scanner.health()

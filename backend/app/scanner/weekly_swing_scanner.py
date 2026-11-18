@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, time as clock_time
 import asyncio
 from pathlib import Path
 import json
+import copy
 from zoneinfo import ZoneInfo
 from statistics import mean, pstdev
 from math import isfinite
@@ -33,6 +34,31 @@ _SCAN_STATE = {
     "failed": 0, "matches": [], "failures": [], "current_symbol": None, "started_at": None, "finished_at": None,
 }
 _SCAN_THREAD = None
+
+_PAGE_UPDATE_CALLBACK = None
+
+
+def configure_page_update_callback(callback):
+    global _PAGE_UPDATE_CALLBACK
+    if callback is not None and not callable(callback):
+        raise ValueError("weekly swing page update callback must be callable")
+    _PAGE_UPDATE_CALLBACK = callback
+
+
+def _notify_page_update():
+    callback = _PAGE_UPDATE_CALLBACK
+    if not callable(callback):
+        return
+    with _SCAN_LOCK:
+        payload = copy.deepcopy(_SCAN_STATE)
+    payload["orders_placed"] = False
+    try:
+        callback(payload)
+    except Exception:
+        # Browser telemetry must never interrupt the historical scan worker.
+        pass
+
+
 
 
 def _nifty200_symbols():
@@ -206,6 +232,7 @@ def _run_nifty200_scan():
             "started_at": time.time(), "finished_at": None, "batch_size": SCAN_BATCH_SIZE,
             "cache_mode": "persistent_daily_incremental",
         }
+    _notify_page_update()
     try:
         symbols = _nifty200_symbols()
         master = InstrumentMaster()
@@ -243,6 +270,7 @@ def _run_nifty200_scan():
                 finally:
                     with _SCAN_LOCK:
                         _SCAN_STATE["scanned"] += 1
+                    _notify_page_update()
             if batch_start + SCAN_BATCH_SIZE < len(symbols):
                 remaining = SCAN_BATCH_INTERVAL_SECONDS - (time.monotonic() - batch_started)
                 if remaining > 0:
@@ -254,12 +282,14 @@ def _run_nifty200_scan():
             _SCAN_STATE["status"] = "completed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["finished_at"] = time.time()
+        _notify_page_update()
     except Exception as exc:
         with _SCAN_LOCK:
             _SCAN_STATE["status"] = "paused" if isinstance(exc, HTTPException) and exc.status_code == 409 else "failed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["fatal_error"] = str(exc.detail if isinstance(exc, HTTPException) else exc)[:240]
             _SCAN_STATE["finished_at"] = time.time()
+        _notify_page_update()
 
 
 async def weekly_swing_daily_refresh_loop():
@@ -286,6 +316,7 @@ async def weekly_swing_daily_refresh_loop():
             global _SCAN_THREAD
             _SCAN_THREAD = threading.Thread(target=_run_nifty200_scan, daemon=True, name="weekly-nifty200-daily")
             _SCAN_THREAD.start()
+        _notify_page_update()
 
 
 def weekly_bars(rows):
