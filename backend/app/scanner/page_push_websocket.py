@@ -101,6 +101,11 @@ def _latest_page_sequence(page: str) -> int:
     return int(value or 0)
 
 
+def _sequence_gap(last_sequence: int, incoming_sequence: int) -> bool:
+    """Detect missing journal frames even when the initial snapshot is sequence zero."""
+    return incoming_sequence != last_sequence + 1
+
+
 def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
     with engine.connect() as connection:
         rows = connection.execute(
@@ -371,7 +376,7 @@ async def page_updates(websocket: WebSocket) -> None:
                     if page in channels:
                         sequence = int(frame.get("sequence") or 0)
                         last = client_sequences.get(page, 0)
-                        if frame.get("event") == "SNAPSHOT_REQUIRED" or (last and sequence != last + 1):
+                        if frame.get("event") == "SNAPSHOT_REQUIRED" or _sequence_gap(last, sequence):
                             sequence = await asyncio.to_thread(_latest_page_sequence, page)
                             await websocket.send_json(_snapshot_frame(page, _snapshot(page), sequence))
                             client_sequences[page] = sequence
