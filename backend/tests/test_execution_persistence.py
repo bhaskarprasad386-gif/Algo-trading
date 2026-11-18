@@ -460,3 +460,37 @@ def test_partial_fill_callbacks_accumulate_per_leg_before_four_leg_completion(db
     assert restored.intent.status is IntentStatus.FILLED
     assert all(leg.filled_quantity == leg.quantity == 50 for leg in restored.legs)
     assert db.query(ExecutionFillRecord).count() == 5
+
+
+def test_cumulative_partial_fill_overrun_rolls_back_only_the_rejected_callback(db):
+    _submitting_intent(db)
+    _register_first_leg_order(db)
+
+    accepted = record_fill(
+        db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="angel_one", broker_fill_id="cumulative-fill-1",
+        broker_order_id="broker-order-1", quantity=30,
+        fill_price="100.10", occurred_at_ns=1401,
+    )
+    assert accepted["filled_quantity"] == 30
+    assert accepted["intent_status"] == IntentStatus.PARTIALLY_FILLED.value
+    before_events = db.query(ExecutionIntentEventRecord).count()
+
+    with pytest.raises(ValueError, match="exceed requested leg quantity"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_fill_id="cumulative-fill-2",
+            broker_order_id="broker-order-1", quantity=21,
+            fill_price="100.20", occurred_at_ns=1402,
+        )
+
+    restored = get_intent(db, account_id="acct-1", intent_id="intent-1")
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    fills = db.scalars(select(ExecutionFillRecord)).all()
+    assert len(fills) == 1
+    assert fills[0].broker_fill_id == "cumulative-fill-1"
+    assert leg.filled_quantity == 30
+    assert leg.status == "PARTIALLY_FILLED"
+    assert restored.intent.status is IntentStatus.PARTIALLY_FILLED
+    assert restored.version == accepted["version"]
+    assert db.query(ExecutionIntentEventRecord).count() == before_events
