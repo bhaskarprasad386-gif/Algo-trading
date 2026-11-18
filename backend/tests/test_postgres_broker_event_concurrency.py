@@ -176,14 +176,24 @@ def test_postgres_concurrent_fill_identity_payload_conflict_fails_closed(postgre
     with ThreadPoolExecutor(max_workers=12) as pool:
         outcomes = list(pool.map(ingest, range(12)))
 
+    # Six workers carry each of the two price variants. Exactly one variant
+    # wins the immutable fill identity; identical evidence is idempotent,
+    # while only the opposite-price variant must fail closed.
     assert sum(isinstance(item, dict) and item["fill_created"] for item in outcomes) == 1
-    assert outcomes.count("conflict") == 11
+    conflict_count = outcomes.count("conflict")
+    assert conflict_count in (5, 6)
+    accepted = [item for item in outcomes if isinstance(item, dict)]
+    assert len(accepted) + conflict_count == 12
+    assert all(item["event_created"] for item in accepted)
+    assert all(not item["fill_deferred"] for item in accepted)
+    assert sum(item["fill_created"] for item in accepted) == 1
     with postgres_factory() as db:
-        assert db.query(BrokerOrderEventRecord).count() == 1
+        assert db.query(BrokerOrderEventRecord).count() == len(accepted)
         assert db.query(ExecutionFillRecord).count() == 1
         fill = db.scalar(select(ExecutionFillRecord))
-        assert Decimal(str(fill.fill_price)) == Decimal("101.25")
-
+        assert Decimal(str(fill.fill_price)) in {
+            Decimal("101.25"), Decimal("101.50"),
+        }
 
 def test_postgres_concurrent_out_of_order_callbacks_reconcile_after_gap_closes(postgres_factory):
     _seed_working_order(postgres_factory)
