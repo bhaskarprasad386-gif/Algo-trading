@@ -170,6 +170,8 @@ class DurableRecoveryJournal:
             row = self._control(db, account_id, intent_id)
             if row.state == RecoveryState.FLAT.value and state is not RecoveryState.FLAT:
                 raise ValueError("verified flat recovery state is terminal")
+            if row.state == RecoveryState.MANUAL_REVIEW.value and state is RecoveryState.RECOVERING:
+                raise ValueError("manual review cannot resume automated unwind without a new approved intent")
             row.state = state.value
             row.reason = reason
             self._event(db, row, "RECOVERY_STATE_CHANGED", {
