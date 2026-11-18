@@ -104,41 +104,41 @@ def sync_broker_order_status_events(
         raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
-    adapter = broker_sessions.get(user_id, broker)
-    db.rollback()
-    if adapter is None or not bool(getattr(adapter, "connected", False)):
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_NOT_CONNECTED",
-            "event_count": 0,
-            "created_count": 0,
-            "trading_authorized": False,
-        }
-    account_id = str(getattr(adapter, "account_id", "") or "").strip()
-    if not account_id:
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
-            "event_count": 0,
-            "created_count": 0,
-            "trading_authorized": False,
-        }
-    if not matches_authenticated_account(owner_state, broker, account_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
-        )
-    try:
-        return sync_account_order_status_events(
-            db, adapter=adapter, account_id=account_id,
-        )
-    except ValueError as exc:
+    with broker_sessions.lease(user_id, broker) as adapter:
         db.rollback()
-        raise HTTPException(status_code=422, detail="Broker order snapshot is invalid") from exc
-    except Exception as exc:
-        db.rollback()
-        app_logger.exception("Broker order-status snapshot sync failed")
-        raise HTTPException(status_code=503, detail="Broker order-status synchronization is temporarily unavailable") from exc
+        if adapter is None or not bool(getattr(adapter, "connected", False)):
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_NOT_CONNECTED",
+                "event_count": 0,
+                "created_count": 0,
+                "trading_authorized": False,
+            }
+        account_id = str(getattr(adapter, "account_id", "") or "").strip()
+        if not account_id:
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+                "event_count": 0,
+                "created_count": 0,
+                "trading_authorized": False,
+            }
+        if not matches_authenticated_account(owner_state, broker, account_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Active broker session does not match the durably bound Box Spread account",
+            )
+        try:
+            return sync_account_order_status_events(
+                db, adapter=adapter, account_id=account_id,
+            )
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Broker order snapshot is invalid") from exc
+        except Exception as exc:
+            db.rollback()
+            app_logger.exception("Broker order-status snapshot sync failed")
+            raise HTTPException(status_code=503, detail="Broker order-status synchronization is temporarily unavailable") from exc
 
 
 
@@ -156,49 +156,49 @@ def sync_broker_tradebook_fills(
         raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
-    adapter = broker_sessions.get(user_id, broker)
-    db.rollback()
-    if adapter is None or not bool(getattr(adapter, "connected", False)):
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_NOT_CONNECTED",
-            "trade_count": 0,
-            "created_count": 0,
-            "trading_authorized": False,
-        }
-    if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_IDENTITY_MISMATCH",
-            "trade_count": 0,
-            "created_count": 0,
-            "trading_authorized": False,
-        }
-    account_id = str(getattr(adapter, "account_id", "") or "").strip()
-    if not account_id:
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
-            "trade_count": 0,
-            "created_count": 0,
-            "trading_authorized": False,
-        }
-    if not matches_authenticated_account(owner_state, broker, account_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
-        )
-    try:
-        return sync_account_tradebook_fills(
-            db, adapter=adapter, account_id=account_id,
-        )
-    except ValueError as exc:
+    with broker_sessions.lease(user_id, broker) as adapter:
         db.rollback()
-        raise HTTPException(status_code=422, detail="Broker tradebook snapshot is invalid") from exc
-    except Exception as exc:
-        db.rollback()
-        app_logger.exception("Broker tradebook fill synchronization failed")
-        raise HTTPException(status_code=503, detail="Broker tradebook fill synchronization is temporarily unavailable") from exc
+        if adapter is None or not bool(getattr(adapter, "connected", False)):
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_NOT_CONNECTED",
+                "trade_count": 0,
+                "created_count": 0,
+                "trading_authorized": False,
+            }
+        if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_IDENTITY_MISMATCH",
+                "trade_count": 0,
+                "created_count": 0,
+                "trading_authorized": False,
+            }
+        account_id = str(getattr(adapter, "account_id", "") or "").strip()
+        if not account_id:
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+                "trade_count": 0,
+                "created_count": 0,
+                "trading_authorized": False,
+            }
+        if not matches_authenticated_account(owner_state, broker, account_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Active broker session does not match the durably bound Box Spread account",
+            )
+        try:
+            return sync_account_tradebook_fills(
+                db, adapter=adapter, account_id=account_id,
+            )
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Broker tradebook snapshot is invalid") from exc
+        except Exception as exc:
+            db.rollback()
+            app_logger.exception("Broker tradebook fill synchronization failed")
+            raise HTTPException(status_code=503, detail="Broker tradebook fill synchronization is temporarily unavailable") from exc
 
 @router.get("/events/review")
 def review_broker_callback_events(
@@ -214,55 +214,55 @@ def review_broker_callback_events(
         raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
-    adapter = broker_sessions.get(user_id, broker)
-    db.rollback()
-    if adapter is None or not bool(getattr(adapter, "connected", False)):
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_NOT_CONNECTED",
-            "event_count": 0,
-            "unresolved_count": 0,
-            "deferred_count": 0,
-            "events": [],
-            "trading_authorized": False,
-        }
-    if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_IDENTITY_MISMATCH",
-            "event_count": 0,
-            "unresolved_count": 0,
-            "deferred_count": 0,
-            "events": [],
-            "trading_authorized": False,
-        }
-    account_id = str(getattr(adapter, "account_id", "") or "").strip()
-    if not account_id:
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
-            "event_count": 0,
-            "unresolved_count": 0,
-            "deferred_count": 0,
-            "events": [],
-            "trading_authorized": False,
-        }
-    if not matches_authenticated_account(owner_state, broker, account_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
-        )
-    try:
-        return review_deferred_broker_events(
-            db, broker=broker, account_id=account_id, limit=limit,
-        )
-    except ValueError as exc:
+    with broker_sessions.lease(user_id, broker) as adapter:
         db.rollback()
-        raise HTTPException(status_code=422, detail="Broker event review request is invalid") from exc
-    except Exception as exc:
-        db.rollback()
-        app_logger.exception("Read-only broker callback event review failed")
-        raise HTTPException(status_code=503, detail="Broker callback event review is temporarily unavailable") from exc
+        if adapter is None or not bool(getattr(adapter, "connected", False)):
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_NOT_CONNECTED",
+                "event_count": 0,
+                "unresolved_count": 0,
+                "deferred_count": 0,
+                "events": [],
+                "trading_authorized": False,
+            }
+        if str(getattr(adapter, "name", "") or "").strip().lower() != broker:
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_IDENTITY_MISMATCH",
+                "event_count": 0,
+                "unresolved_count": 0,
+                "deferred_count": 0,
+                "events": [],
+                "trading_authorized": False,
+            }
+        account_id = str(getattr(adapter, "account_id", "") or "").strip()
+        if not account_id:
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+                "event_count": 0,
+                "unresolved_count": 0,
+                "deferred_count": 0,
+                "events": [],
+                "trading_authorized": False,
+            }
+        if not matches_authenticated_account(owner_state, broker, account_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Active broker session does not match the durably bound Box Spread account",
+            )
+        try:
+            return review_deferred_broker_events(
+                db, broker=broker, account_id=account_id, limit=limit,
+            )
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Broker event review request is invalid") from exc
+        except Exception as exc:
+            db.rollback()
+            app_logger.exception("Read-only broker callback event review failed")
+            raise HTTPException(status_code=503, detail="Broker callback event review is temporarily unavailable") from exc
 
 
 @router.get("/recovery/review")
@@ -278,43 +278,43 @@ def review_execution_recovery(
         raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
-    adapter = broker_sessions.get(user_id, broker)
-    # Close the owner-state read transaction before the recovery inventory opens
-    # its own bounded transaction.
-    db.rollback()
-    if adapter is None or not bool(getattr(adapter, "connected", False)):
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_NOT_CONNECTED",
-            "trading_authorized": False,
-            "candidate_count": 0,
-            "reviews": [],
-        }
-    account_id = str(getattr(adapter, "account_id", "") or "").strip()
-    if not account_id:
-        return {
-            "status": "BLOCKED",
-            "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
-            "trading_authorized": False,
-            "candidate_count": 0,
-            "reviews": [],
-        }
-    if not matches_authenticated_account(owner_state, broker, account_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
-        )
-    try:
-        return review_account_recovery(
-            db, account_id=account_id, broker=broker, adapter=adapter,
-        )
-    except ValueError as exc:
+    with broker_sessions.lease(user_id, broker) as adapter:
+        # Close the owner-state read transaction before the recovery inventory opens
+        # its own bounded transaction.
         db.rollback()
-        raise HTTPException(status_code=422, detail="Recovery review request is invalid") from exc
-    except Exception as exc:
-        db.rollback()
-        app_logger.exception("Read-only execution recovery review failed")
-        raise HTTPException(status_code=503, detail="Execution recovery review is temporarily unavailable") from exc
+        if adapter is None or not bool(getattr(adapter, "connected", False)):
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_NOT_CONNECTED",
+                "trading_authorized": False,
+                "candidate_count": 0,
+                "reviews": [],
+            }
+        account_id = str(getattr(adapter, "account_id", "") or "").strip()
+        if not account_id:
+            return {
+                "status": "BLOCKED",
+                "reason": "BROKER_SESSION_ACCOUNT_ID_UNAVAILABLE",
+                "trading_authorized": False,
+                "candidate_count": 0,
+                "reviews": [],
+            }
+        if not matches_authenticated_account(owner_state, broker, account_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Active broker session does not match the durably bound Box Spread account",
+            )
+        try:
+            return review_account_recovery(
+                db, account_id=account_id, broker=broker, adapter=adapter,
+            )
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Recovery review request is invalid") from exc
+        except Exception as exc:
+            db.rollback()
+            app_logger.exception("Read-only execution recovery review failed")
+            raise HTTPException(status_code=503, detail="Execution recovery review is temporarily unavailable") from exc
 
 
 @router.get("/safety")
