@@ -10,9 +10,11 @@ type PagePushValue = {
   data: Record<string, unknown> | null;
   lastMessageAt: number | null;
   resync: () => void;
+  command: (name: string, payload?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 };
 const PagePushContext = createContext<PagePushValue>({
   page: null, status: "DISCONNECTED", data: null, lastMessageAt: null, resync: () => undefined,
+  command: async () => { throw new Error("Scanner WebSocket is not connected"); },
 });
 
 export function PagePushProvider({ page, children }: { page: string | null; children: ReactNode }) {
@@ -22,6 +24,16 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
   const socketRef = useRef<WebSocket | null>(null);
   const sequenceRef = useRef(0);
   const resyncPendingRef = useRef(false);
+  const pendingCommandsRef = useRef(new Map<string, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>());
+  const command = useCallback((name: string, payload: Record<string, unknown> = {}) => new Promise<Record<string, unknown>>((resolve, reject) => {
+    const socket = socketRef.current;
+    if (!page || socket?.readyState !== WebSocket.OPEN) { reject(new Error("Scanner WebSocket is not connected")); return; }
+    const requestId = String(Date.now()) + "-" + Math.random().toString(36).slice(2, 10);
+    const timeout = setTimeout(() => { pendingCommandsRef.current.delete(requestId); reject(new Error("Scanner command timed out")); }, 15000);
+    pendingCommandsRef.current.set(requestId, { resolve, reject, timeout });
+    try { socket.send(JSON.stringify({ action: "command", page, command: name, payload, request_id: requestId })); }
+    catch (error) { clearTimeout(timeout); pendingCommandsRef.current.delete(requestId); reject(error instanceof Error ? error : new Error("Could not send scanner command")); }
+  }), [page]);
 
   const resync = useCallback(() => {
     const socket = socketRef.current;
@@ -72,6 +84,17 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         // Only timestamp actual page updates for the UI's "Last refresh" label.
         lastTransportAt = Date.now();
         if (message.type === "heartbeat") return;
+        if (message.type === "command_ack") {
+          const requestId = String(message.request_id || "");
+          const pending = pendingCommandsRef.current.get(requestId);
+          if (pending) {
+            clearTimeout(pending.timeout);
+            pendingCommandsRef.current.delete(requestId);
+            if (message.ok === true) pending.resolve(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {});
+            else pending.reject(new Error(String(message.error || "Scanner command rejected")));
+          }
+          return;
+        }
         if (message.type !== "page_update" || message.page !== page) return;
         setLastMessageAt(Date.now());
         const sequence = Number(message.sequence);
@@ -96,6 +119,11 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       };
       socket.onerror = () => socket.close();
       socket.onclose = () => {
+        for (const [requestId, pending] of pendingCommandsRef.current) {
+          clearTimeout(pending.timeout);
+          pending.reject(new Error("Scanner WebSocket disconnected before acknowledgement"));
+          pendingCommandsRef.current.delete(requestId);
+        }
         if (disposed) return;
         setStatus("RECONNECTING");
         retryTimer = setTimeout(connect, retryMs);
@@ -119,11 +147,16 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       if (watchdogTimer) clearInterval(watchdogTimer);
       socketRef.current?.close();
       socketRef.current = null;
+      for (const [requestId, pending] of pendingCommandsRef.current) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error("Scanner page unmounted"));
+        pendingCommandsRef.current.delete(requestId);
+      }
     };
   }, [page, resync]);
 
   return (
-    <PagePushContext.Provider value={{ page, status, data, lastMessageAt, resync }}>
+    <PagePushContext.Provider value={{ page, status, data, lastMessageAt, resync, command }}>
       {children}
     </PagePushContext.Provider>
   );
@@ -132,7 +165,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
 export function usePagePush(expectedPage: string) {
   const value = useContext(PagePushContext);
   if (value.page !== expectedPage) {
-    return { status: "DISCONNECTED" as const, data: null, lastMessageAt: null, resync: () => undefined };
+    return { status: "DISCONNECTED" as const, data: null, lastMessageAt: null, resync: () => undefined, command: async () => { throw new Error("This page has no active scanner WebSocket"); } };
   }
   return value;
 }
