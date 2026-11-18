@@ -221,6 +221,19 @@ class DurableRecoveryJournal:
         if notional != expected_notional:
             return False
         with self._session_factory() as db, db.begin():
+            control = db.execute(select(RecoveryControlRecord).where(
+                RecoveryControlRecord.account_id == account_id,
+                RecoveryControlRecord.intent_id == intent_id,
+            ).with_for_update()).scalar_one_or_none()
+            if control is None or not control.frozen or not control.risk_reserved:
+                return False
+            lease = db.execute(select(RecoveryInstrumentLeaseRecord).where(
+                RecoveryInstrumentLeaseRecord.account_id == account_id,
+                RecoveryInstrumentLeaseRecord.intent_id == intent_id,
+                RecoveryInstrumentLeaseRecord.symbol == symbol,
+            ).with_for_update()).scalar_one_or_none()
+            if lease is None:
+                return False
             budget = db.execute(select(RecoveryBudgetRecord).where(
                 RecoveryBudgetRecord.account_id == account_id,
                 RecoveryBudgetRecord.intent_id == intent_id,
@@ -232,7 +245,6 @@ class DurableRecoveryJournal:
                 return False
             budget.notional_used = Decimal(budget.notional_used) + notional
             budget.updated_at_ns = time.time_ns()
-            control = self._control(db, account_id, intent_id)
             self._event(db, control, "EMERGENCY_CLOSE_BUDGET_APPROVED", {
                 "symbol": symbol, "side": side, "quantity": quantity,
                 "limit_price": str(limit_price), "notional": str(notional),
