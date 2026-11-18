@@ -583,7 +583,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|https://algo-trading\.bhaskarprasad386\.workers\.dev$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|https://algo-trading\.bhaskarprasad386\.workers\.dev$|https://fix-cloudflare-cors-algo-trading\.bhaskarprasad386\.workers\.dev$|https://fix-cloudflare-workers-cors-algo-trading\.bhaskarprasad386\.workers\.dev$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
