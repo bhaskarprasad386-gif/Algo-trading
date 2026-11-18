@@ -70,7 +70,7 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot, live as calendar_spread_live_page, pairs as calendar_spread_pairs_page, pair_diagnostics as calendar_spread_diagnostics_page, feed_diagnostics as calendar_spread_feed_page
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs, live as synthetic_live_page, pairs as synthetic_pairs_page, diagnostics as synthetic_diagnostics_page
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
@@ -375,6 +375,16 @@ def _box_page_push_snapshot():
         payload["index_selection_runtime"] = supervisor if isinstance(supervisor, dict) else {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
     except Exception:
         payload["index_selection_runtime"] = {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
+    # Shadow panel is part of the same Box page snapshot. This getter is read-only
+    # and evaluates only the runner's existing shared quote/depth snapshot.
+    try:
+        payload["shadow"] = get_box_shadow_snapshot(5.0, 2.0)
+    except Exception:
+        payload["shadow"] = {
+            "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
+            "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
+            "result_count": 0, "results": [], "live_coverage": [],
+        }
     return payload
 
 
