@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type TraceRow = Record<string, unknown> & {
   trace_id: string;
@@ -97,6 +98,7 @@ export function SyntheticTracePanel() {
   const [message, setMessage] = useState("");
   const [statusByTrace, setStatusByTrace] = useState<Record<string, Record<string, unknown>>>({});
   const [checkingTraceIds, setCheckingTraceIds] = useState<string[]>([]);
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("synthetic-arbitrage");
 
   useEffect(() => {
     const localRows = readStored();
@@ -153,10 +155,19 @@ export function SyntheticTracePanel() {
   }, []);
 
   useEffect(() => {
+    const livePayload = pagePushData?.live as { data?: unknown[] } | undefined;
+    if (!Array.isArray(livePayload?.data)) return;
+    const rows = livePayload.data.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+    setLiveRows(rows.filter((row) => keyPart(row.instrument_class) === "INDEX" && INDEX_ORDER.includes(keyPart(row.underlying))));
+    setLiveLoading(false);
+  }, [pagePushData]);
+
+  useEffect(() => {
+    if (pagePushStatus === "LIVE") return;
     void loadLive();
-    const timer = window.setInterval(() => void loadLive(), 1500);
+    const timer = window.setInterval(() => void loadLive(), 15000);
     return () => window.clearInterval(timer);
-  }, [loadLive]);
+  }, [loadLive, pagePushStatus]);
 
   const tracedKeys = useMemo(() => new Set(traces.map((item) => item.trace_key)), [traces]);
 
@@ -290,7 +301,7 @@ export function SyntheticTracePanel() {
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-sm font-semibold theme-text">Trace Capture</h2>
-            <p className="mt-1 text-xs theme-muted">Opportunity list refreshes automatically; saved Trace status is checked only when you press CHECK LIVE STATUS.</p>
+            <p className="mt-1 text-xs theme-muted">Live opportunities update through the page WebSocket; REST is recovery-only. Saved Trace status is checked only when you press CHECK LIVE STATUS.</p>
           </div>
           <span className="text-xs font-semibold theme-muted">{liveRows.length} live opportunities</span>
         </div>
