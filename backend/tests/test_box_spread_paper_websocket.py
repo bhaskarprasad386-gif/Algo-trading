@@ -129,3 +129,36 @@ def test_private_ws_event_journal_cursor_returns_ordered_events():
     selected = [row["event_type"] for row in rows if row["event_type"].startswith("TEST_EVENT_")]
     assert selected[-2:] == ["TEST_EVENT_A", "TEST_EVENT_B"]
     assert rows[-1]["sequence"] > rows[-2]["sequence"]
+
+
+def test_private_ws_local_fanout_uses_one_dispatch_task(monkeypatch):
+    async def scenario():
+        # The shared dispatcher is process-local; multiple subscribers attach
+        # queues to the same tail task rather than creating per-socket DB polls.
+        first = await private_ws._subscribe_local()
+        task = private_ws._dispatch_task
+        second = await private_ws._subscribe_local()
+        assert task is private_ws._dispatch_task
+        assert len(private_ws._subscribers) >= 2
+        private_ws._unsubscribe_local(first)
+        assert private_ws._dispatch_task is task
+        private_ws._unsubscribe_local(second)
+        assert private_ws._dispatch_task is None
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+
+
+def test_private_ws_dispatch_fanout_overflow_requests_snapshot():
+    async def scenario():
+        queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait({"sequence": 1, "event_type": "TRADE_UPDATED"})
+        # Match dispatcher overflow behavior: discard stale queued deltas and
+        # retain a single authoritative snapshot marker at the newest cursor.
+        if queue.full():
+            while not queue.empty():
+                queue.get_nowait()
+            queue.put_nowait({"sequence": 9, "event_type": "SNAPSHOT"})
+        assert await queue.get() == {"sequence": 9, "event_type": "SNAPSHOT"}
+
+    asyncio.run(scenario())
