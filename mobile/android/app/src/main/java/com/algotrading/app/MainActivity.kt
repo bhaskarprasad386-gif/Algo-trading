@@ -279,7 +279,7 @@ class MainActivity : AppCompatActivity() {
                     try {
                         val response = ApiService.retrofitService.loginRealOwner(RealOwnerLoginRequest(password))
                         if (response.access_token.isBlank()) throw IllegalStateException("Server returned no owner token")
-                        ApiService.setRealOwnerAccessToken(response.access_token)
+                        ApiService.setRealOwnerAccessToken(response.access_token, response.expires_in)
                         withContext(Dispatchers.Main) {
                             ownerLoginPromptShown = false
                             tvBrokerStatus.text = "Broker Status: Owner authenticated • Real Trading OFF"
