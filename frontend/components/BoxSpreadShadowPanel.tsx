@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -30,26 +30,30 @@ export default function BoxSpreadShadowPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("box-spread");
+  const requestSequence = useRef(0);
   const refresh = useCallback(async () => {
+    const requestId = ++requestSequence.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + "/api/v1/scanner/box-spread/shadow/butterfly-condor", { cache: "no-store", signal: AbortSignal.timeout(12000) });
       if (!response.ok) throw new Error("Shadow diagnostics HTTP " + response.status);
       const body = await response.json() as ShadowResult;
+      if (requestId !== requestSequence.current) return;
       if (body?.strategy !== "box-spread-shadow" || body?.execution_mode !== "SHADOW_ONLY" || body?.order_routing_enabled !== false) throw new Error("Unexpected or unsafe shadow response");
       setData(body); setError(null);
-    } catch (e) { setError(e instanceof Error ? e.message : "Unable to load shadow diagnostics"); }
-    finally { setLoading(false); }
+    } catch (e) { if (requestId === requestSequence.current) setError(e instanceof Error ? e.message : "Unable to load shadow diagnostics"); }
+    finally { if (requestId === requestSequence.current) setLoading(false); }
   }, []);
   useEffect(() => {
     if (pagePushStatus === "LIVE") return;
     void refresh();
     const id = window.setInterval(() => void refresh(), 15000);
-    return () => window.clearInterval(id);
+    return () => { window.clearInterval(id); requestSequence.current += 1; };
   }, [refresh, pagePushStatus]);
   useEffect(() => {
     const pushed = pagePushData?.shadow as ShadowResult | undefined;
     if (!pushed || pushed.strategy !== "box-spread-shadow" || pushed.execution_mode !== "SHADOW_ONLY" || pushed.order_routing_enabled !== false) return;
+    requestSequence.current += 1;
     setData(pushed);
     setError(null);
     setLoading(false);
