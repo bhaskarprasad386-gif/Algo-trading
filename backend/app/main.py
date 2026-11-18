@@ -2053,10 +2053,14 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
     # Saved selection is public scanner configuration, not account/ledger data.
     # Broadcast only after persistence and any staged handoff were accepted.
     try:
-        page_snapshot = _box_page_push_snapshot()
+        supervisor_snapshot = (
+            live_box_spread_supervisor.snapshot()
+            if live_box_spread_supervisor is not None
+            else {"active_symbols": [], "handoff": {"state": "not_running"}}
+        )
         publish_page_update("box-spread", "PATCH", {
             "index_selection": {"symbols": list(saved), "weekly_only_symbols": list(weekly_only)},
-            "index_selection_runtime": page_snapshot.get("index_selection_runtime", {}),
+            "index_selection_runtime": supervisor_snapshot,
         })
     except Exception as exc:
         app_logger.warning("Unable to push saved Box Spread index selection: {}", exc)
