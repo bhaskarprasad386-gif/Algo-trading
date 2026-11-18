@@ -182,6 +182,11 @@ class DurableRecoveryJournal:
             row = self._control(db, account_id, intent_id)
             if row.state != RecoveryState.FLAT.value:
                 raise ValueError("risk reservation and instrument leases remain until broker-confirmed FLAT")
+            # The control row is locked by _control(). Treat retries after a
+            # committed release as idempotent: concurrent/restarted callers
+            # must not append duplicate release events or repeat side effects.
+            if not row.risk_reserved:
+                return
             row.risk_reserved = False
             leases = db.execute(select(RecoveryInstrumentLeaseRecord).where(
                 RecoveryInstrumentLeaseRecord.account_id == account_id,
