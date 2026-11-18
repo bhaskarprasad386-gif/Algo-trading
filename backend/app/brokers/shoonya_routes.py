@@ -137,11 +137,11 @@ def shoonya_auth_url(
 
 @router.post("/shoonya/verify")
 def shoonya_verify(
-    with broker_sessions.transition(user_id):
-        payload: ShoonyaVerifyRequest,
-        db: Session = Depends(get_db),
-        user_id: int = Depends(require_real_owner_access),
+    payload: ShoonyaVerifyRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
     ) -> dict:
+    with broker_sessions.transition(user_id):
         try:
             pending = shoonya_oauth_flows.consume(
                 flow_id=payload.flow_id,
