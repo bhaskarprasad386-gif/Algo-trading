@@ -272,6 +272,11 @@ class DurableRecoveryJournal:
                 RecoveryJournalEventRecord.control_id == control.id,
                 RecoveryJournalEventRecord.event == "EMERGENCY_CLOSE_BUDGET_APPROVED",
             )).scalars().all()
+            if any(
+                json.loads(event.details_json).get("client_order_id") == client_order_id
+                for event in prior_approvals
+            ):
+                return False
             approvals_for_symbol = sum(
                 1 for event in prior_approvals
                 if json.loads(event.details_json).get("symbol") == symbol
