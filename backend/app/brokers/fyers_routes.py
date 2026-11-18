@@ -123,7 +123,7 @@ def fyers_verify(
     payload: FyersVerifyRequest,
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
-    ) -> dict:
+) -> dict:
     with broker_sessions.transition(user_id):
         """Consume OAuth state, exchange the auth code, verify fy_id and bind one owner account."""
         try:
