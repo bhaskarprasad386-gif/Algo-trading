@@ -46,7 +46,7 @@ _sequence = 0
 _lock = threading.Lock()
 
 
-def configure_snapshot_provider(provider: Callable[[], dict[str, Any]] | None) -> None:
+def configure_snapshot_provider(provider: Callable[[str, str], dict[str, Any]] | None) -> None:
     global _snapshot_provider
     _snapshot_provider = provider
 
