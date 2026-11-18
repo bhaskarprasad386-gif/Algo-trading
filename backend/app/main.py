@@ -70,7 +70,7 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot, live as calendar_spread_live_page, pairs as calendar_spread_pairs_page, pair_diagnostics as calendar_spread_diagnostics_page, feed_diagnostics as calendar_spread_feed_page
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs, live as synthetic_live_page, pairs as synthetic_pairs_page, diagnostics as synthetic_diagnostics_page
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router, list_trace_opportunities as get_synthetic_trace_opportunities
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot, edge_timing_analysis as get_box_edge_timing_analysis
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
@@ -345,6 +345,26 @@ configure_live_box_spread_websocket_depth(
 
 _box_shadow_page_cache = None
 _box_shadow_page_cache_at = 0.0
+_box_edge_timing_page_cache = None
+_box_edge_timing_page_cache_at = 0.0
+
+
+def _box_edge_timing_page_snapshot():
+    """Bound full-history aggregation cost while sharing it over the page socket."""
+    global _box_edge_timing_page_cache, _box_edge_timing_page_cache_at
+    now = time_module.monotonic()
+    if _box_edge_timing_page_cache is not None and now - _box_edge_timing_page_cache_at < 30.0:
+        return _box_edge_timing_page_cache
+    try:
+        payload = get_box_edge_timing_analysis()
+        if isinstance(payload, dict) and payload.get("strategy") == "box-spread":
+            _box_edge_timing_page_cache = payload
+            _box_edge_timing_page_cache_at = now
+    except Exception as exc:
+        app_logger.warning("Box Spread edge-timing page snapshot unavailable: {}", exc)
+    return _box_edge_timing_page_cache
+
+
 
 
 def _box_shadow_page_snapshot():
@@ -405,6 +425,11 @@ def _box_page_push_snapshot():
     # Shadow panel is part of the same page snapshot, with a one-second
     # evaluation cache so 250 ms scanner bursts do not repeat the calculation.
     payload["shadow"] = _box_shadow_page_snapshot()
+    # This is a durable-history aggregate, not a quote-by-quote calculation.
+    # Recompute at most every 30 seconds and distribute through the page channel.
+    edge_timing = _box_edge_timing_page_snapshot()
+    if edge_timing is not None:
+        payload["edge_timing_analysis"] = edge_timing
     return payload
 
 
