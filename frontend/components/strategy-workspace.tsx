@@ -940,9 +940,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     } catch (e) {
       if (saveRequestSequence === indexSelectionRequestSequence.current) setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
     } finally {
-      setIndexSelectionSaving(false);
+      if (saveRequestSequence === indexSelectionRequestSequence.current) setIndexSelectionSaving(false);
     }
   };
+
 
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) return;
