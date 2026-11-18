@@ -113,6 +113,7 @@ def test_emergency_close_budget_checks_exact_notional_and_cumulative_cap(journal
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         max_attempts=2, max_notional=Decimal("1000"), approved=True,
     )
+    durable.claim_recovery_attempt(account_id="acct-a", intent_id="intent-1", symbol="OPT:CE")
     assert not durable.approve_emergency_close(
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
