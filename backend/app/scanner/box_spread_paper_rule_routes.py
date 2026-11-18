@@ -89,9 +89,9 @@ def create_rule(payload: PaperRulePayload):
         session.commit()
         session.refresh(row)
         result = {"mode": "PAPER_ONLY", "broker_orders_enabled": False,
-                "rule_id": row.id, "name": row.name, "enabled": row.enabled, "config": config}
-        _publish_rules_changed()
-        return result
+                  "rule_id": row.id, "name": row.name, "enabled": row.enabled, "config": config}
+    _publish_rules_changed()
+    return result
 
 
 @router.put("/rules/{rule_id}")
