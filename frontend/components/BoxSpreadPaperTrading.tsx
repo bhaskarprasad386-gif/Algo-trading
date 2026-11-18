@@ -81,6 +81,7 @@ export default function BoxSpreadPaperTrading() {
   const [privateLedgerRefreshVersion, setPrivateLedgerRefreshVersion] = useState(0);
   const privateWsRef = useRef<WebSocket | null>(null);
   const privateSequenceRef = useRef(0);
+  const privateResyncPendingRef = useRef(false);
   const privateEventIdsRef = useRef(new Set<string>());
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -377,7 +378,10 @@ export default function BoxSpreadPaperTrading() {
           // bootstrap/resync snapshot, including when its sequence is zero.
           if (!isSnapshot && sequence !== privateSequenceRef.current + 1) {
             setPrivateWsStatus("STALE");
-            socket?.send(JSON.stringify({ action: "resync" }));
+            if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
+              privateResyncPendingRef.current = true;
+              socket.send(JSON.stringify({ action: "resync" }));
+            }
             return;
           }
           try {
@@ -387,6 +391,7 @@ export default function BoxSpreadPaperTrading() {
               applyPrivateSnapshot(frame.payload);
             }
             privateSequenceRef.current = sequence;
+            if (isSnapshot) privateResyncPendingRef.current = false;
             if (eventId) {
               privateEventIdsRef.current.add(eventId);
               if (privateEventIdsRef.current.size > 512) {
@@ -399,7 +404,10 @@ export default function BoxSpreadPaperTrading() {
             setPrivateWsStatus("LIVE");
           } catch {
             setPrivateWsStatus("STALE");
-            socket?.send(JSON.stringify({ action: "resync" }));
+            if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
+              privateResyncPendingRef.current = true;
+              socket.send(JSON.stringify({ action: "resync" }));
+            }
           }
         };
         watchdogTimer = window.setInterval(() => {
@@ -410,6 +418,7 @@ export default function BoxSpreadPaperTrading() {
         }, 10000);
         socket.onerror = () => socket?.close();
         socket.onclose = () => {
+          privateResyncPendingRef.current = false;
           if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
           watchdogTimer = undefined;
           if (privateWsRef.current === socket) privateWsRef.current = null;
