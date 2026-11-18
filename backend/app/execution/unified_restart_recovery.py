@@ -189,7 +189,10 @@ class UnifiedRestartRecoveryInventory:
                 control.frozen = True
                 control.risk_reserved = True
                 control.reason = reason
-                control.state = RecoveryState.RECOVERING.value
+                # Never downgrade an operator/manual-review decision during a
+                # later startup scan.
+                if control.state != RecoveryState.MANUAL_REVIEW.value:
+                    control.state = RecoveryState.RECOVERING.value
                 control.updated_at_ns = now
 
             seq = db.execute(select(func.coalesce(
