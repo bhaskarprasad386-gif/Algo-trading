@@ -1,8 +1,8 @@
-# Batch 0 — Butterfly / Condor Multi-Leg Execution Safety Contract
+# Batch 0 — Box Spread / Butterfly / Condor Multi-Leg Execution Safety Contract
 
 **Status:** Required design and acceptance contract; not live-routing authorization.  
 **Parent:** `batch0/cumulative-overfill-rollback-guard` (PR #631).  
-**Scope:** Credit Butterfly and Credit Condor scanner alerts entering the same account-scoped execution safety lifecycle as Box Spread.  
+**Scope:** Box Spread, Credit Butterfly and Credit Condor alerts using one shared account-scoped all-legs-or-recover execution lifecycle.  
 **Non-goals:** No scanner/WebSocket subscription changes, no backtesting, no cash-future/calendar/synthetic strategy work, no live-order enablement in this change.
 
 ## 1. Review findings from the current implementation
@@ -23,6 +23,7 @@ The current multi-leg watchdog only returns a WAIT/ROLLBACK/SQUARE_OFF decision.
 
 A strategy intent is successful only when every required leg reaches its required filled quantity in the intended ratio, all fills are persisted and reconciled, and the final basket still satisfies its approved risk/price limits.
 
+- Box Spread: 4 distinct option legs; the strategy definition declares the exact CE/PE strike pairing and side ratios.
 - Butterfly: 3 distinct option legs; the body leg has a 2x quantity multiplier relative to each wing.
 - Condor: 4 distinct option legs; all four legs use the defined equal lot ratio unless a strategy contract explicitly declares another ratio.
 - The coordinator must derive the expected leg count and ratio from the immutable strategy definition. It must not infer a 3-leg/4-leg basket from a client-supplied count.
@@ -65,6 +66,8 @@ After all preflight checks pass and risk is durably reserved:
 6. The basket reaches FILLED only when every required leg's cumulative confirmed fill equals its target quantity and all fill records are durable. A filled wing/body by itself never counts as a completed trade.
 
 ## 5. Any-leg failure, partial fill, or timeout — emergency unwind
+
+**Safest default:** cancel and reconcile first, then close the exact broker-confirmed residual option positions with bounded, side-aware LIMIT IOC orders. Do not automatically add a new hedge leg by default: an improvised hedge can introduce basis, gamma, volatility, margin and additional execution risk. A hedge may be used only when a strategy-specific hedge instrument, ratio, freshness gate, loss budget and exit path were approved before entry. Never use an unbounded market order or chase indefinitely.
 
 If any leg rejects, partially fills outside the permitted synchronized ratio, times out, or becomes UNKNOWN:
 
@@ -139,4 +142,4 @@ Every scenario must be covered in pure unit tests and broker-adapter contract/in
 6. Add restart/late-fill/duplicate-event recovery and broker capability conformance.
 7. Prove the complete workflow in Paper first. Keep Live routing disabled until all broker-specific acceptance gates and operational recovery tests pass.
 
-This work extends the existing Box Spread execution safety foundation. It must not alter Box Spread scanner subscriptions, the existing server WebSocket, or unrelated runners.
+This shared invariant applies equally to Box Spread, Credit Butterfly and Condor. It must not alter Box Spread scanner subscriptions, the existing server WebSocket, or unrelated runners.
