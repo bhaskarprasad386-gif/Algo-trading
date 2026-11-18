@@ -155,6 +155,14 @@ class BrokerOrderAck:
     status: str
     accepted: bool
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.client_order_id, str) or not self.client_order_id.strip():
+            raise ValueError("broker acknowledgement requires a client order ID")
+        if self.broker_order_id is not None and not self.broker_order_id.strip():
+            raise ValueError("broker order ID cannot be blank")
+        if not isinstance(self.status, str) or not self.status.strip() or not isinstance(self.accepted, bool):
+            raise ValueError("broker acknowledgement status and accepted flag are required")
+
 
 @dataclass(frozen=True)
 class ReconciledLeg:
@@ -162,6 +170,12 @@ class ReconciledLeg:
     broker_order_id: str | None
     filled_quantity: int
     order_terminal: bool
+
+    def __post_init__(self) -> None:
+        if not self.client_order_id.strip() or isinstance(self.filled_quantity, bool) or not isinstance(self.filled_quantity, int) or self.filled_quantity < 0:
+            raise ValueError("reconciled leg identity and non-negative integer fill are required")
+        if not isinstance(self.order_terminal, bool):
+            raise ValueError("reconciled order terminal flag must be boolean")
 
 
 @dataclass(frozen=True)
@@ -171,6 +185,12 @@ class BasketReconciliation:
     trades_complete: bool
     positions_reconciled: bool
     legs: tuple[ReconciledLeg, ...]
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(x, bool) for x in (
+            self.authoritative, self.orders_complete, self.trades_complete, self.positions_reconciled,
+        )):
+            raise ValueError("reconciliation evidence flags must be boolean")
 
 
 @dataclass(frozen=True)
@@ -378,7 +398,7 @@ class MultiLegBasketCoordinator:
                 # broker order even if the acknowledgement write was lost.
                 all_accepted = False
                 continue
-            if ack.client_order_id != expected_id or not ack.accepted or ack.status.upper() in {
+            if ack.client_order_id != expected_id or ack.accepted is not True or ack.status.strip().upper() in {
                 "REJECTED", "UNKNOWN", "ERROR",
             }:
                 all_accepted = False
