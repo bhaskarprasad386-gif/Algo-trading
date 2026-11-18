@@ -69,7 +69,7 @@ from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot, live as calendar_spread_live_page, pairs as calendar_spread_pairs_page, pair_diagnostics as calendar_spread_diagnostics_page, feed_diagnostics as calendar_spread_feed_page
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs, live as synthetic_live_page, pairs as synthetic_pairs_page, diagnostics as synthetic_diagnostics_page
-from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
+from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router, list_trace_opportunities as get_synthetic_trace_opportunities
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
@@ -426,7 +426,18 @@ def _synthetic_page_push_snapshot():
 
 configure_page_push_snapshot("cash-future", _cash_future_page_push_snapshot)
 configure_page_push_snapshot("calendar-spread", _calendar_spread_page_push_snapshot)
-configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_snapshot)
+def _synthetic_page_push_recovery_snapshot():
+    # Durable trace rows are loaded only for subscribe/reconnect recovery, not
+    # on each market-data push.
+    payload = _synthetic_page_push_snapshot()
+    try:
+        payload["trace_opportunities"] = get_synthetic_trace_opportunities(500).get("data", [])
+    except Exception:
+        payload["trace_opportunities"] = []
+    return payload
+
+
+configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_recovery_snapshot)
 configure_paper_private_ws_snapshot(build_paper_private_snapshot)
 configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
