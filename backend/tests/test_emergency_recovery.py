@@ -15,6 +15,7 @@ class FakeJournal:
     def __init__(self):
         self.events = []
         self.states = []
+        self.current_state = RecoveryState.RECOVERING
         self.kill_switches = []
         self.alerts = []
         self.released = []
@@ -33,6 +34,9 @@ class FakeJournal:
         self.events.append(kwargs)
 
     def set_state(self, **kwargs):
+        if self.current_state is RecoveryState.MANUAL_REVIEW and kwargs["state"] is RecoveryState.RECOVERING:
+            raise ValueError("manual review cannot resume automated unwind without a new approved intent")
+        self.current_state = kwargs["state"]
         self.states.append(kwargs)
 
     def release_risk_reservation(self, **kwargs):
@@ -410,3 +414,16 @@ def test_terminal_prior_close_is_reconciled_before_new_bounded_attempt():
     assert result.state is RecoveryState.FLAT
     assert journal.reconciled_authorizations == ["REC-previously-authorized"]
     assert len(broker.closes) == 1
+
+
+def test_restart_manual_review_returns_controlled_result_without_broker_actions():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.current_state = RecoveryState.MANUAL_REVIEW
+
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert "manual review cannot resume" in result.reason
+    assert not broker.cancelled
+    assert not broker.closes
+    assert journal.alerts
