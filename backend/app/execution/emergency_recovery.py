@@ -249,11 +249,13 @@ class EmergencyRecoveryCoordinator:
 
             # A second authoritative read is mandatory after cancel requests.
             snapshot = self._snapshot(account_id, intent_id)
+            if self._positions_are_safe(snapshot):
+                residuals = self._residuals(snapshot, symbol_set, baseline)
             if self._unresolved(snapshot):
                 return self._manual(
                     account_id=account_id, intent_id=intent_id,
                     reason="broker still reports non-terminal orders; closing could race a late fill",
-                    residuals=(), attempts=attempts,
+                    residuals=residuals, attempts=attempts,
                 )
             if not self._positions_are_safe(snapshot):
                 return self._manual(
@@ -267,18 +269,19 @@ class EmergencyRecoveryCoordinator:
                 return self._manual(
                     account_id=account_id, intent_id=intent_id,
                     reason="exclusive basket instrument lease is missing; residual attribution is unsafe",
-                    residuals=(), attempts=attempts,
+                    residuals=residuals, attempts=attempts,
                 )
-            residuals = self._residuals(snapshot, symbol_set, baseline)
 
             for attempt in range(1, self._policy.max_attempts + 1):
                 attempts = attempt
                 snapshot = self._snapshot(account_id, intent_id)
+                if self._positions_are_safe(snapshot):
+                    residuals = self._residuals(snapshot, symbol_set, baseline)
                 if self._unresolved(snapshot):
                     return self._manual(
                         account_id=account_id, intent_id=intent_id,
                         reason="an order became non-terminal during recovery",
-                        residuals=(), attempts=attempts,
+                        residuals=residuals, attempts=attempts,
                     )
                 if not self._positions_are_safe(snapshot):
                     return self._manual(
