@@ -64,6 +64,7 @@ def test_submission_ack_and_full_reconciliation_are_durable(journal):
         await durable.record_submission_started(
             account_id="acct-a", intent_id="intent-2",
             client_order_ids=client_ids,
+            expected_quantities={client_id: 50 for client_id in client_ids},
         )
         for index, client_id in enumerate(client_ids, start=1):
             await durable.record_order_ack(
@@ -121,6 +122,7 @@ def test_incomplete_or_zero_fill_reconciliation_cannot_mark_filled(journal):
         await durable.record_submission_started(
             account_id="acct-a", intent_id="intent-3",
             client_order_ids=("c1", "c2"),
+            expected_quantities={"c1": 50, "c2": 50},
         )
         with pytest.raises(ValueError, match="authoritative complete"):
             await durable.complete_filled_basket(
@@ -131,7 +133,7 @@ def test_incomplete_or_zero_fill_reconciliation_cannot_mark_filled(journal):
                     legs=(),
                 ),
             )
-        with pytest.raises(ValueError, match="fully executed"):
+        with pytest.raises(ValueError, match="exact target quantity"):
             await durable.complete_filled_basket(
                 account_id="acct-a", intent_id="intent-3",
                 reconciliation=BasketReconciliation(
@@ -156,6 +158,7 @@ def test_acknowledgement_must_belong_to_claimed_basket(journal):
         await durable.record_submission_started(
             account_id="acct-a", intent_id="intent-4",
             client_order_ids=("allowed-client", "other-client"),
+            expected_quantities={"allowed-client": 25, "other-client": 25},
         )
         with pytest.raises(ValueError, match="not part of this basket"):
             await durable.record_order_ack(
@@ -183,5 +186,6 @@ def test_submission_start_is_one_way_and_cannot_replace_client_ids(journal):
             await durable.record_submission_started(
                 account_id="acct-a", intent_id="intent-5",
                 client_order_ids=("replacement-1", "replacement-2"),
+                expected_quantities={"replacement-1": 25, "replacement-2": 25},
             )
     asyncio.run(run())
