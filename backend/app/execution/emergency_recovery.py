@@ -307,7 +307,7 @@ class EmergencyRecoveryCoordinator:
         except Exception as exc:
             try:
                 snapshot = self._snapshot(account_id, intent_id)
-                residuals = self._residuals(snapshot, symbol_set)
+                residuals = self._residuals(snapshot, symbol_set, baseline)
             except Exception:
                 residuals = ()  # unknown is not flat; kill switch and reservation remain latched
             return self._manual(
