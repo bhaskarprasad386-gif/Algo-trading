@@ -18,6 +18,7 @@ class FakeJournal:
         self.kill_switches = []
         self.alerts = []
         self.released = []
+        self.attempts = {}
 
     def latch_entry_kill_switch(self, **kwargs):
         self.kill_switches.append(kwargs)
@@ -33,6 +34,11 @@ class FakeJournal:
 
     def alert_operator(self, **kwargs):
         self.alerts.append(kwargs)
+
+    def claim_recovery_attempt(self, *, account_id, intent_id, symbol):
+        key = (account_id, intent_id, symbol)
+        self.attempts[key] = self.attempts.get(key, 0) + 1
+        return self.attempts[key]
 
 
 class FakeBroker:
@@ -55,6 +61,7 @@ class FakeBroker:
             account_id=account_id,
             broker=self.name,
             authoritative=True,
+            positions_reconciled=True,
             orders=tuple(self.orders),
             positions=(
                 RecoveryPosition("NFO:CE", self.position),
@@ -97,7 +104,9 @@ def run(broker, journal, *, quantity_symbol=("NFO:CE",), policy=None):
     coordinator = EmergencyRecoveryCoordinator(broker, journal, policy=policy)
     return coordinator.recover(
         account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
-        symbols=quantity_symbol, now_ns=1_000_000_000,
+        symbols=quantity_symbol,
+        baseline_positions=tuple(RecoveryPosition(symbol, 0) for symbol in quantity_symbol),
+        now_ns=1_000_000_000,
     )
 
 
@@ -160,7 +169,7 @@ def test_wrong_broker_account_identity_fails_closed():
     broker, journal = FakeBroker(50), FakeJournal()
     broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
         account_id="another-account", broker="zerodha", authoritative=True,
-        orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
+        positions_reconciled=True, orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
     )
     result = run(broker, journal)
 
@@ -173,7 +182,7 @@ def test_non_authoritative_snapshot_is_never_treated_as_flat():
     broker, journal = FakeBroker(0), FakeJournal()
     broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
         account_id="acct-1", broker="angel_one", authoritative=False,
-        orders=(), positions=(),
+        positions_reconciled=False, orders=(), positions=(),
     )
     result = run(broker, journal)
 
