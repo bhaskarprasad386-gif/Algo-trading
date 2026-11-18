@@ -72,6 +72,10 @@ class DurableBasketJournal:
             if row is None:
                 raise LookupError("durable basket submission claim not found")
             if state is not None:
+                if row.state in {"PREFLIGHT_REJECTED", "FILLED"}:
+                    raise ValueError(
+                        f"terminal basket state {row.state} cannot transition to {state}"
+                    )
                 row.state = state
             if reason is not None:
                 row.reason = reason
