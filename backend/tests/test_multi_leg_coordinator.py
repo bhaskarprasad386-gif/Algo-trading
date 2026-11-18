@@ -200,7 +200,7 @@ def test_one_rejected_leg_freezes_basket_and_invokes_recovery():
     broker = FakeBroker(intent, reject_index=2)
     result, broker, journal, recovery_calls = execute(intent, broker=broker)
 
-    assert result.state is BasketResultState.RECOVERY_STARTED
+    assert result.state is BasketResultState.RECOVERED_FLAT
     assert len(broker.calls) == 4
     assert journal.frozen
     assert len(recovery_calls) == 1
@@ -212,7 +212,7 @@ def test_one_partial_fill_never_marks_basket_filled():
     broker = FakeBroker(intent, fill_overrides={"high-ce": 25})
     result, _, journal, recovery_calls = execute(intent, broker=broker)
 
-    assert result.state is BasketResultState.RECOVERY_STARTED
+    assert result.state is BasketResultState.RECOVERED_FLAT
     assert journal.frozen
     assert recovery_calls
     assert not journal.completed
@@ -223,7 +223,7 @@ def test_unknown_submission_timeout_uses_deterministic_recovery_path():
     broker = FakeBroker(intent, timeout_index=1)
     result, _, journal, recovery_calls = execute(intent, broker=broker)
 
-    assert result.state is BasketResultState.RECOVERY_STARTED
+    assert result.state is BasketResultState.RECOVERED_FLAT
     assert journal.frozen
     assert recovery_calls
     assert not journal.completed
@@ -307,7 +307,7 @@ def test_ack_persistence_failure_triggers_recovery_not_success():
     journal = FakeJournal(fail_ack=True)
     result, broker, journal, recovery_calls = execute(intent, journal=journal)
 
-    assert result.state is BasketResultState.RECOVERY_STARTED
+    assert result.state is BasketResultState.RECOVERED_FLAT
     assert len(broker.calls) == 4
     assert journal.frozen
     assert recovery_calls
