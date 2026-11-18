@@ -99,6 +99,13 @@ class DurableRecoveryJournal:
         with self._session_factory() as db:
             try:
                 with db.begin():
+                    # Serialize lease acquisition with state transitions and
+                    # reservation release for this intent. A verified-FLAT or
+                    # already-released intent must never regain instrument leases.
+                    control = self._control(db, account_id, intent_id)
+                    if (control.state == RecoveryState.FLAT.value
+                            or not control.risk_reserved):
+                        return False
                     for symbol in normalized:
                         db.add(RecoveryInstrumentLeaseRecord(
                             account_id=account_id, intent_id=intent_id,
