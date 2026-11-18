@@ -192,7 +192,27 @@ class DurableRecoveryJournal:
             self._event(db, row, "RISK_RESERVATION_RELEASED", {"leases_released": len(leases)})
 
     def claim_recovery_attempt(self, *, account_id: str, intent_id: str, symbol: str) -> int:
+        self._identity(account_id, intent_id)
+        if not symbol.strip():
+            raise ValueError("recovery symbol is required")
         with self._session_factory() as db, db.begin():
+            # Lock order is control -> lease -> budget for both claim and approval.
+            # This serializes workers and avoids consuming attempts before recovery
+            # has an active frozen intent and exclusive ownership of the instrument.
+            control = db.execute(select(RecoveryControlRecord).where(
+                RecoveryControlRecord.account_id == account_id,
+                RecoveryControlRecord.intent_id == intent_id,
+            ).with_for_update()).scalar_one_or_none()
+            if (control is None or not control.frozen or not control.risk_reserved
+                or control.state == RecoveryState.FLAT.value):
+                raise RuntimeError("frozen risk-reserved recovery intent is required")
+            lease = db.execute(select(RecoveryInstrumentLeaseRecord).where(
+                RecoveryInstrumentLeaseRecord.account_id == account_id,
+                RecoveryInstrumentLeaseRecord.intent_id == intent_id,
+                RecoveryInstrumentLeaseRecord.symbol == symbol,
+            ).with_for_update()).scalar_one_or_none()
+            if lease is None:
+                raise RuntimeError("exclusive instrument lease is required")
             budget = db.execute(select(RecoveryBudgetRecord).where(
                 RecoveryBudgetRecord.account_id == account_id,
                 RecoveryBudgetRecord.intent_id == intent_id,
@@ -204,7 +224,6 @@ class DurableRecoveryJournal:
                 raise RuntimeError("approved recovery attempt budget is exhausted")
             budget.attempts_used += 1
             budget.updated_at_ns = time.time_ns()
-            control = self._control(db, account_id, intent_id)
             self._event(db, control, "RECOVERY_ATTEMPT_CLAIMED", {
                 "symbol": symbol, "attempt": budget.attempts_used,
             })
@@ -225,7 +244,8 @@ class DurableRecoveryJournal:
                 RecoveryControlRecord.account_id == account_id,
                 RecoveryControlRecord.intent_id == intent_id,
             ).with_for_update()).scalar_one_or_none()
-            if control is None or not control.frozen or not control.risk_reserved:
+            if (control is None or not control.frozen or not control.risk_reserved
+                or control.state == RecoveryState.FLAT.value):
                 return False
             lease = db.execute(select(RecoveryInstrumentLeaseRecord).where(
                 RecoveryInstrumentLeaseRecord.account_id == account_id,
@@ -240,6 +260,19 @@ class DurableRecoveryJournal:
                 RecoveryBudgetRecord.symbol == symbol,
             ).with_for_update()).scalar_one_or_none()
             if budget is None or not budget.approved or budget.attempts_used < 1:
+                return False
+            # A claimed attempt may authorize at most one close request. The
+            # control row lock serializes approvals; the append-only journal is
+            # the durable consumed-attempt ledger, avoiding a second counter.
+            prior_approvals = db.execute(select(RecoveryJournalEventRecord).where(
+                RecoveryJournalEventRecord.control_id == control.id,
+                RecoveryJournalEventRecord.event == "EMERGENCY_CLOSE_BUDGET_APPROVED",
+            )).scalars().all()
+            approvals_for_symbol = sum(
+                1 for event in prior_approvals
+                if json.loads(event.details_json).get("symbol") == symbol
+            )
+            if approvals_for_symbol >= budget.attempts_used:
                 return False
             if Decimal(budget.notional_used) + notional > Decimal(budget.max_notional):
                 return False
