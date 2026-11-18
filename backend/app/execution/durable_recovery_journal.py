@@ -233,8 +233,10 @@ class DurableRecoveryJournal:
 
     def approve_emergency_close(self, *, account_id: str, intent_id: str,
                                 symbol: str, side: str, quantity: int,
-                                limit_price: Decimal, notional: Decimal) -> bool:
-        if side not in {"BUY", "SELL"} or isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+                                limit_price: Decimal, notional: Decimal,
+                                client_order_id: str) -> bool:
+        if (not client_order_id.strip() or side not in {"BUY", "SELL"}
+            or isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0):
             return False
         if not limit_price.is_finite() or limit_price <= 0 or not notional.is_finite() or notional <= 0:
             return False
@@ -283,8 +285,59 @@ class DurableRecoveryJournal:
             self._event(db, control, "EMERGENCY_CLOSE_BUDGET_APPROVED", {
                 "symbol": symbol, "side": side, "quantity": quantity,
                 "limit_price": str(limit_price), "notional": str(notional),
+                "client_order_id": client_order_id,
             })
             return True
+
+
+    def pending_close_authorizations(self, *, account_id: str, intent_id: str) -> tuple[str, ...]:
+        """Return approved close IDs not yet reconciled against an authoritative broker snapshot."""
+        self._identity(account_id, intent_id)
+        with self._session_factory() as db:
+            control = db.execute(select(RecoveryControlRecord).where(
+                RecoveryControlRecord.account_id == account_id,
+                RecoveryControlRecord.intent_id == intent_id,
+            )).scalar_one_or_none()
+            if control is None:
+                return ()
+            events = db.execute(select(RecoveryJournalEventRecord).where(
+                RecoveryJournalEventRecord.control_id == control.id,
+            ).order_by(RecoveryJournalEventRecord.sequence)).scalars().all()
+            approved = []
+            reconciled = set()
+            for event in events:
+                details = json.loads(event.details_json)
+                if event.event == "EMERGENCY_CLOSE_BUDGET_APPROVED":
+                    client_id = details.get("client_order_id")
+                    if client_id:
+                        approved.append(client_id)
+                elif event.event == "EMERGENCY_CLOSE_RECONCILED":
+                    client_id = details.get("client_order_id")
+                    if client_id:
+                        reconciled.add(client_id)
+            return tuple(client_id for client_id in approved if client_id not in reconciled)
+
+    def mark_close_authorization_reconciled(self, *, account_id: str, intent_id: str,
+                                            client_order_id: str) -> None:
+        self._identity(account_id, intent_id)
+        if not client_order_id.strip():
+            raise ValueError("client order identity is required")
+        with self._session_factory() as db, db.begin():
+            control = db.execute(select(RecoveryControlRecord).where(
+                RecoveryControlRecord.account_id == account_id,
+                RecoveryControlRecord.intent_id == intent_id,
+            ).with_for_update()).scalar_one_or_none()
+            if control is None:
+                raise LookupError("recovery control does not exist")
+            pending = db.execute(select(RecoveryJournalEventRecord).where(
+                RecoveryJournalEventRecord.control_id == control.id,
+                RecoveryJournalEventRecord.event == "EMERGENCY_CLOSE_RECONCILED",
+            )).scalars().all()
+            if any(json.loads(event.details_json).get("client_order_id") == client_order_id for event in pending):
+                return
+            self._event(db, control, "EMERGENCY_CLOSE_RECONCILED", {
+                "client_order_id": client_order_id,
+            })
 
     def alert_operator(self, *, account_id: str, intent_id: str, reason: str) -> None:
         self.append_event(account_id=account_id, intent_id=intent_id,
