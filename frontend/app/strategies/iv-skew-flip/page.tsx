@@ -403,7 +403,7 @@ export default function IVSkewFlipPage() {
   const [savedEnabled,setSavedEnabled]=useState(false);
   const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
-  const { data: pagePushData } = usePagePush("iv-skew-flip");
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("iv-skew-flip");
   const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
@@ -453,9 +453,10 @@ export default function IVSkewFlipPage() {
       }catch(e){if(active)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
     };
     void poll();
-    const timer=window.setInterval(()=>{if(active)void poll();},3000);
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    const timer=window.setInterval(()=>{if(active)void poll();},15000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,alertAudioEnabled]);
+  },[base,alertAudioEnabled,pagePushStatus]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -466,9 +467,10 @@ export default function IVSkewFlipPage() {
       }catch{/* keep last known basket registry state */}
     };
     void poll();
-    const timer=window.setInterval(()=>{if(active)void poll();},10000);
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    const timer=window.setInterval(()=>{if(active)void poll();},30000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base]);
+  },[base,pagePushStatus]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -546,6 +548,20 @@ export default function IVSkewFlipPage() {
       if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
     }
   },[pagePushData,settingDirty]);
+  useEffect(()=>{
+    if(!pagePushData)return;
+    if(Array.isArray(pagePushData.alerts)){
+      const incoming=pagePushData.alerts.filter((row):row is EarlyAlert=>!!row&&typeof row==="object"&&Number.isFinite(Number((row as EarlyAlert).id)));
+      setEarlyAlerts(current=>{
+        const merged=new Map<number,EarlyAlert>();
+        [...current,...incoming].forEach(row=>merged.set(Number(row.id),row));
+        return [...merged.values()].sort(compareAlertTime);
+      });
+    }
+    if(pagePushData.alert_live&&typeof pagePushData.alert_live==="object")setEarlyAlertLive(pagePushData.alert_live as Row);
+    if(pagePushData.baskets&&typeof pagePushData.baskets==="object")setBasketRegistry(pagePushData.baskets as BasketRegistry);
+  },[pagePushData]);
+
   async function saveRunnerSetting(){
     setBusy(true);setError("");
     try{
