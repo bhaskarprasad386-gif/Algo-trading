@@ -76,3 +76,37 @@ def test_publish_after_success_supports_async_handlers(monkeypatch):
 
     assert asyncio.run(successful_handler()) == {"ok": True}
     assert published == ["EXIT_COMMITTED"]
+
+
+
+def test_private_ws_origin_allowlist_is_exact(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(private_ws, "settings", SimpleNamespace(
+        BOX_SPREAD_PAPER_WS_ALLOWED_ORIGINS="https://app.example.com,https://preview.example.com:8443",
+        environment="production",
+    ))
+    assert private_ws._origin_allowed(SimpleNamespace(headers={"origin": "https://app.example.com"}))
+    assert private_ws._origin_allowed(SimpleNamespace(headers={"origin": "https://preview.example.com:8443"}))
+    assert not private_ws._origin_allowed(SimpleNamespace(headers={"origin": "https://evil-app.example.com"}))
+    assert not private_ws._origin_allowed(SimpleNamespace(headers={"origin": "https://app.example.com.evil.test"}))
+    assert not private_ws._origin_allowed(SimpleNamespace(headers={"origin": "https://app.example.com/path"}))
+    assert not private_ws._origin_allowed(SimpleNamespace(headers={"origin": "null"}))
+
+
+def test_private_ws_origin_allows_localhost_only_in_development(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(private_ws, "settings", SimpleNamespace(
+        BOX_SPREAD_PAPER_WS_ALLOWED_ORIGINS="", environment="development",
+    ))
+    assert private_ws._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
+    monkeypatch.setattr(private_ws, "settings", SimpleNamespace(
+        BOX_SPREAD_PAPER_WS_ALLOWED_ORIGINS="", environment="production",
+    ))
+    assert not private_ws._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
+
+
+def test_private_ws_origin_rejects_credentials_and_non_http_schemes():
+    assert private_ws._normalize_origin("https://user:pass@app.example.com") is None
+    assert private_ws._normalize_origin("javascript://app.example.com") is None
+    assert private_ws._normalize_origin("https://app.example.com/path") is None
+    assert private_ws._normalize_origin("https://app.example.com:invalid") is None
