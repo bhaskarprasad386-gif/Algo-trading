@@ -430,3 +430,83 @@ def test_cancel_ack_followed_by_authoritative_late_partial_fill_blocks_close():
     assert journal.kill_switches
     assert journal.alerts
     assert not journal.released
+
+
+
+def test_position_reconciliation_loss_after_ioc_fill_never_releases_risk():
+    broker, journal = FakeBroker(50), FakeJournal()
+    broker.positions_reconciled = True
+    original_snapshot = broker.recovery_snapshot
+
+    def snapshot(*, account_id, intent_id):
+        result = original_snapshot(account_id=account_id, intent_id=intent_id)
+        return RecoverySnapshot(
+            account_id=result.account_id, broker=result.broker,
+            authoritative=result.authoritative,
+            positions_reconciled=broker.positions_reconciled,
+            position_attribution_complete=broker.positions_reconciled,
+            orders=result.orders, positions=result.positions,
+        )
+
+    broker.recovery_snapshot = snapshot
+    original_close = broker.place_ioc_limit
+
+    def fill_then_lose_reconciliation(*, account_id, order):
+        result = original_close(account_id=account_id, order=order)
+        # The IOC fills, but the broker's next position reconciliation is
+        # incomplete. A local fill acknowledgement alone cannot prove FLAT.
+        broker.positions_reconciled = False
+        return result
+
+    broker.place_ioc_limit = fill_then_lose_reconciliation
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert len(broker.closes) == 1
+    assert broker.position == 0
+    assert not journal.released
+    assert journal.kill_switches
+    assert journal.alerts
+    assert result.residual_positions == ()
+
+
+
+def test_restarted_recovery_coordinator_does_not_duplicate_unknown_ioc():
+    broker, journal = FakeBroker(50), FakeJournal()
+
+    def accept_then_lose_ack(*, account_id, order):
+        broker.closes.append(order)
+        broker.orders.append(RecoveryOrder(
+            broker_order_id="close-accepted-ack-lost",
+            client_order_id=order.client_order_id,
+            symbol=order.symbol, role="RECOVERY", status="WORKING",
+            remaining_quantity=order.quantity,
+        ))
+        raise TimeoutError("acknowledgement lost after broker acceptance")
+
+    broker.place_ioc_limit = accept_then_lose_ack
+    first = EmergencyRecoveryCoordinator(
+        broker, journal, policy=RecoveryPolicy(max_attempts=3),
+    ).recover(
+        account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+        symbols=("NFO:CE",), baseline_positions=(RecoveryPosition("NFO:CE", 0),),
+        now_ns=1_000_000_000,
+    )
+
+    # Simulate a process restart: construct a fresh coordinator while the
+    # durable journal and broker's authoritative WORKING order survive.
+    second = EmergencyRecoveryCoordinator(
+        broker, journal, policy=RecoveryPolicy(max_attempts=3),
+    ).recover(
+        account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+        symbols=("NFO:CE",), baseline_positions=(RecoveryPosition("NFO:CE", 0),),
+        now_ns=1_000_000_000,
+    )
+
+    assert first.state is RecoveryState.MANUAL_REVIEW
+    assert second.state is RecoveryState.MANUAL_REVIEW
+    assert len(broker.closes) == 1
+    assert journal.attempts[("acct-1", "intent-1", "NFO:CE")] == 1
+    assert second.residual_positions == (RecoveryPosition("NFO:CE", 50),)
+    assert not journal.released
+    assert journal.kill_switches
