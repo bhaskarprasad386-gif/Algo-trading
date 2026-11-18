@@ -964,9 +964,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) return;
-    const opportunities = pagePushData.opportunities;
+    const isSnapshot = pagePushData.__event === "SNAPSHOT";
+    const opportunities = isSnapshot ? pagePushData.opportunities : (pagePushData.opportunity_updates ?? pagePushData.opportunities);
     if (Array.isArray(opportunities)) {
-      const nextRows = opportunities.filter((item: unknown): item is Row => !!item && typeof item === "object");
+      const incoming = opportunities.filter((item: unknown): item is Row => !!item && typeof item === "object");
+      const nextRows = isSnapshot ? incoming : (() => {
+        const merged = new Map<string, Row>();
+        for (const row of rowsRef.current) merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
+        for (const row of incoming) merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
+        return Array.from(merged.values());
+      })();
       rowsRef.current = nextRows;
       setRows(nextRows);
       setRowsStale(false);
@@ -996,6 +1003,21 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setIndexHandoffState(String(state.handoff?.state ?? "UNKNOWN"));
     }
   }, [slug, pagePushData]);
+
+  useEffect(() => {
+    if (slug !== "box-spread") return;
+    const timer = window.setInterval(() => {
+      const nowNs = Date.now() * 1_000_000;
+      const fresh = rowsRef.current.filter(row => {
+        const stamp = Number(row.last_update_timestamp_ns ?? row.timestamp_ns ?? 0);
+        return Number.isFinite(stamp) && stamp > 0 && nowNs >= stamp && nowNs - stamp <= 5_000_000_000;
+      });
+      if (fresh.length !== rowsRef.current.length) {
+        rowsRef.current = fresh; setRows(fresh);
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [slug]);
 
   useEffect(() => {
     if (isCustom) return;

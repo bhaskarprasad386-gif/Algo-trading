@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
@@ -53,6 +54,7 @@ function ScannerContent() {
   const [pairBackendStats, setPairBackendStats] = useState<Row>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
 
   const load = async () => {
     setLoading(true);
@@ -117,32 +119,36 @@ function ScannerContent() {
       }
     };
     void loadMarketSession();
-    const sessionTimer = window.setInterval(loadMarketSession, 5000);
+    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    const sessionTimer = window.setInterval(loadMarketSession, 15000);
     return () => { cancelled = true; window.clearInterval(sessionTimer); };
-  }, []);
+  }, [pagePushStatus]);
 
   useEffect(() => {
     if (marketSession === "OPEN") {
-      void load();
-      void loadPairLive();
-    } else {
-      setLoading(false);
-      setRows([]);
-      setPairRows([]);
-      setError(null);
+      if (pagePushStatus !== "LIVE") { void load(); void loadPairLive(); }
+    } else if (pagePushStatus !== "LIVE") {
+      setLoading(false); setRows([]); setPairRows([]); setError(null);
     }
     void loadPairHistory();
+    if (pagePushStatus === "LIVE") return;
     const liveTimer = window.setInterval(() => {
       if (marketSession !== "OPEN") return;
-      void load();
-      void loadPairLive();
-    }, 1500);
-    const historyTimer = window.setInterval(() => { void loadPairHistory(); }, 10000);
-    return () => {
-      window.clearInterval(liveTimer);
-      window.clearInterval(historyTimer);
-    };
-  }, [marketSession]);
+      void load(); void loadPairLive();
+    }, 15000);
+    return () => window.clearInterval(liveTimer);
+  }, [marketSession, pagePushStatus]);
+
+  useEffect(() => {
+    if (!pagePushData) return;
+    if (Array.isArray(pagePushData.rows)) {
+      setRows(pagePushData.rows.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      setLoading(false); setError(null);
+    }
+    if (Array.isArray(pagePushData.pairs)) setPairRows(pagePushData.pairs.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+    if (pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
+    if (typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
+  }, [pagePushData]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();
