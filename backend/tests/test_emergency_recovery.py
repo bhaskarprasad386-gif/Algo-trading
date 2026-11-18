@@ -378,3 +378,30 @@ def test_recovery_budget_must_approve_close_before_broker_submission():
     assert not broker.closes
     assert journal.approved_closes
     assert not journal.released
+
+
+def test_recovery_ioc_acceptance_with_lost_ack_is_not_retried(recovery_store=None):
+    broker, journal = FakeBroker(50), FakeJournal()
+    def accept_then_lose_ack(*, account_id, order):
+        # Broker has accepted the IOC, but the client process loses the
+        # acknowledgement. The authoritative snapshot still reports it open.
+        broker.closes.append(order)
+        broker.orders.append(RecoveryOrder(
+            broker_order_id="close-accepted-ack-lost",
+            client_order_id=order.client_order_id,
+            symbol=order.symbol, role="RECOVERY", status="WORKING",
+            remaining_quantity=order.quantity,
+        ))
+        raise TimeoutError("simulated acknowledgement lost after broker acceptance")
+
+    broker.place_ioc_limit = accept_then_lose_ack
+    result = run(broker, journal, policy=RecoveryPolicy(max_attempts=3))
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert len(broker.closes) == 1
+    assert broker.closes[0].client_order_id.startswith("REC-")
+    assert result.residual_positions == (RecoveryPosition("NFO:CE", 50),)
+    assert not journal.released
+    assert journal.kill_switches
+    assert journal.alerts
+    assert any(event["event"] == "OPERATOR_ALERT" for event in journal.events) is False
