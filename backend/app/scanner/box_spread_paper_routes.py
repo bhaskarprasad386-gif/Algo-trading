@@ -1653,6 +1653,19 @@ def recovery(account_key: str = "default"):
 
 
 
+def build_paper_market_snapshot(account_key: str = "default"):
+    """Return only quote-sensitive position marks for high-frequency market events.
+
+    Account balance, execution control and recovery state change only on business
+    mutations; do not reload those ledgers for every market quote callback.
+    """
+    return {
+        "portfolio_summary": portfolio_summary(account_key=account_key),
+        "positions": trades(account_key=account_key, limit=500, offset=0,
+                            include_ledger=True, position_state="ALL"),
+    }
+
+
 def build_paper_private_snapshot(account_key: str = "default"):
     """Return the authenticated single-owner paper read model for WS bootstrap/resync."""
     return {
@@ -1667,4 +1680,4 @@ def build_paper_private_snapshot(account_key: str = "default"):
     }
 
 
-__all__ = ["router", "build_paper_private_snapshot"]
+__all__ = ["router", "build_paper_private_snapshot", "build_paper_market_snapshot"]
