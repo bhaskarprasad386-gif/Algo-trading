@@ -299,7 +299,7 @@ export default function BoxSpreadPaperTrading() {
       try {
         const ticketBody = await request("/ws-ticket", { method: "POST" });
         if (stopped || typeof ticketBody.ticket !== "string") return;
-        const wsUrl = api.replace(/^http/i, "ws") + "/ws/box-spread-paper";
+        const wsUrl = appConfig.apiBaseUrl.replace(/\/$/, "").replace(/^http/i, "ws") + "/ws/box-spread-paper";
         socket = new WebSocket(wsUrl);
         privateWsRef.current = socket;
         socket.onopen = () => {

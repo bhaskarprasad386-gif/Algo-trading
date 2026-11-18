@@ -253,7 +253,7 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
                 if not isinstance(command, dict) or command.get("action") != "resync":
                     await websocket.send_json({"type": "error", "code": "INVALID_ACTION"})
                     continue
-                await websocket.send_json(await asyncio.to_thread(_snapshot_frame))
+                await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key))
             if event_task in done:
                 marker = event_task.result()
                 event_type = marker.get("event_type", "UPDATE") if isinstance(marker, dict) else "UPDATE"
