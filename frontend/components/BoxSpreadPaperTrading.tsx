@@ -284,7 +284,8 @@ export default function BoxSpreadPaperTrading() {
     });
     if (validRows.length || isSnapshot) {
       setOpportunityError(null);
-      setOpportunityStatus(validRows.length > 0 || (!isSnapshot && opportunities.length > 0) ? "LIVE" : "EMPTY");
+      if (validRows.length > 0) setOpportunityStatus("LIVE");
+      else if (isSnapshot) setOpportunityStatus("EMPTY");
       setLastOpportunityCheck(Date.now());
     }
   }, [pagePush.data]);
