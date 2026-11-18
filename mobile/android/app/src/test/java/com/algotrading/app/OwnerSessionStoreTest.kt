@@ -40,6 +40,8 @@ class OwnerSessionStoreTest {
         }
     }
 
+    private fun expiry(): Long = System.currentTimeMillis() + 60_000L
+
     private fun tempFile(): File {
         val directory = Files.createTempDirectory("owner-session-test").toFile()
         directory.deleteOnExit()
@@ -50,19 +52,19 @@ class OwnerSessionStoreTest {
     fun encryptedSessionSurvivesStoreRecreationWithoutPlaintextAtRest() {
         val file = tempFile()
         val token = "owner-access-token-secret"
-        EncryptedOwnerSessionStore(file, TestCipher()).save(token)
+        EncryptedOwnerSessionStore(file, TestCipher()).save(token, expiry())
 
         assertTrue(file.isFile)
         assertFalse(String(file.readBytes(), StandardCharsets.UTF_8).contains(token))
         assertArrayEquals(token.toByteArray(StandardCharsets.UTF_8),
-            EncryptedOwnerSessionStore(file, TestCipher()).load()!!.toByteArray(StandardCharsets.UTF_8))
+            EncryptedOwnerSessionStore(file, TestCipher()).load()!!.accessToken.toByteArray(StandardCharsets.UTF_8))
     }
 
     @Test
     fun clearRemovesDurableOwnerSession() {
         val file = tempFile()
         val store = EncryptedOwnerSessionStore(file, TestCipher())
-        store.save("owner-token")
+        store.save("owner-token", expiry())
         store.clear()
 
         assertFalse(file.exists())
@@ -97,10 +99,21 @@ class OwnerSessionStoreTest {
     fun newOwnerLoginReplacesPriorEncryptedSession() {
         val file = tempFile()
         val store = EncryptedOwnerSessionStore(file, TestCipher())
-        store.save("old-token")
-        store.save("new-token")
+        store.save("old-token", expiry())
+        store.save("new-token", expiry())
 
         assertTrue(file.isFile)
-        assertTrue(store.load() == "new-token")
+        assertTrue(store.load()?.accessToken == "new-token")
     }
 }
+
+
+    @Test
+    fun expiredOwnerSessionIsDiscardedBeforeAuthenticationCanResume() {
+        val file = tempFile()
+        val store = EncryptedOwnerSessionStore(file, TestCipher())
+        store.save("expired-token", System.currentTimeMillis() + 60_000L)
+
+        assertNull(store.load(nowEpochMs = System.currentTimeMillis() + 120_000L))
+        assertFalse(file.exists())
+    }
