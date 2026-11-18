@@ -79,6 +79,7 @@ export default function BoxSpreadPaperTrading() {
   const [privateSnapshotComplete, setPrivateSnapshotComplete] = useState(false);
   const [privateRuleState, setPrivateRuleState] = useState<{ rules: any[]; evaluations: Record<string, any[]> }>({ rules: [], evaluations: {} });
   const privateWsRef = useRef<WebSocket | null>(null);
+  const selectedTradeRef = useRef<number | null>(null);
   const exitPreviewRef = useRef<any | null>(null);
   const privateSequenceRef = useRef(0);
   const privateEventIdsRef = useRef(new Set<string>());
@@ -178,6 +179,7 @@ export default function BoxSpreadPaperTrading() {
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
 
   useEffect(() => { exitPreviewRef.current = exitPreview; }, [exitPreview]);
+  useEffect(() => { selectedTradeRef.current = selectedTrade; }, [selectedTrade]);
 
   const applyPrivateSnapshot = useCallback((payload: any, eventType: string) => {
     const accountBody = payload?.account;
@@ -191,6 +193,12 @@ export default function BoxSpreadPaperTrading() {
     setPortfolioSummary(summaryBody as PortfolioSummary);
     setExecutionEnabled(payload?.execution_control?.enabled === true);
     setTrades(positionsBody.data as PaperTrade[]);
+    setLedger(previous => {
+      const activeId = selectedTradeRef.current;
+      if (!previous || activeId == null) return previous;
+      const activeTrade = (positionsBody.data as PaperTrade[]).find(row => row.trade_id === activeId);
+      return activeTrade ? { ...previous, summary: activeTrade.summary, entries: activeTrade.entries } : previous;
+    });
     setPrivateSnapshotComplete(true);
     const openCount = Number(summaryBody.open_position_count ?? 0);
     const closedCount = Number(summaryBody.closed_position_count ?? 0);
@@ -532,6 +540,7 @@ export default function BoxSpreadPaperTrading() {
   }
 
   async function loadLedger(tradeId: number) {
+    setSelectedTrade(tradeId);
     setError(null);
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
