@@ -334,3 +334,75 @@ def test_broker_order_and_fill_ids_are_isolated_between_accounts(db):
             ExecutionLegRecord.leg_id == "cb",
         ))
         assert leg.filled_quantity == 10
+
+
+
+def test_fill_replay_is_idempotent_and_conflicting_reuse_is_rejected(db):
+    _submitting_intent(db)
+    _register_first_leg_order(db)
+
+    args = dict(
+        account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="ANGEL_ONE", broker_fill_id="provider-fill-1",
+        broker_order_id="broker-order-1", quantity=10,
+        fill_price="100.250", occurred_at_ns=900,
+    )
+    first = record_fill(db, **args)
+    replay = record_fill(db, **{**args, "broker": "angel_one", "fill_price": "100.25"})
+
+    assert first["created"] is True
+    assert replay == {
+        "created": False,
+        "filled_quantity": None,
+        "intent_status": None,
+    }
+    assert db.query(ExecutionFillRecord).count() == 1
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 10
+
+    with pytest.raises(IdempotencyConflict, match="broker fill ID"):
+        record_fill(db, **{**args, "fill_price": "100.26"})
+
+    assert db.query(ExecutionFillRecord).count() == 1
+    assert leg.filled_quantity == 10
+
+
+def test_four_leg_fill_completion_is_atomic_and_reaches_filled_only_after_last_leg(db):
+    _submitting_intent(db)
+    legs = (
+        ("cb", "NFO:CE", "BUY"),
+        ("cs", "NFO:CE-HIGH", "SELL"),
+        ("pb", "NFO:PE", "BUY"),
+        ("ps", "NFO:PE-HIGH", "SELL"),
+    )
+    for index, (leg_id, symbol, side) in enumerate(legs, start=1):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
+            broker="angel_one", broker_order_id=f"four-leg-order-{index}",
+            symbol=symbol, side=side, quantity=50,
+            accepted_at_ns=1000 + index,
+        )
+
+    for index, (leg_id, _symbol, _side) in enumerate(legs, start=1):
+        result = record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
+            broker="angel_one", broker_fill_id=f"four-leg-fill-{index}",
+            broker_order_id=f"four-leg-order-{index}", quantity=50,
+            fill_price="100.00", occurred_at_ns=1100 + index,
+        )
+        if index < len(legs):
+            assert result["intent_status"] == IntentStatus.PARTIALLY_FILLED.value
+        else:
+            assert result["intent_status"] == IntentStatus.FILLED.value
+
+    restored = get_intent(db, account_id="acct-1", intent_id="intent-1")
+    assert restored.intent.status is IntentStatus.FILLED
+    assert all(leg.quantity == leg.filled_quantity == 50 for leg in restored.legs)
+    assert db.query(ExecutionFillRecord).count() == 4
+    events = db.scalars(
+        select(ExecutionIntentEventRecord).order_by(ExecutionIntentEventRecord.sequence)
+    ).all()
+    assert [event.to_status for event in events][-2:] == [
+        IntentStatus.PARTIALLY_FILLED.value,
+        IntentStatus.FILLED.value,
+    ]
