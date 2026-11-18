@@ -100,12 +100,12 @@ class FakeBroker:
         return result
 
 
-def run(broker, journal, *, quantity_symbol=("NFO:CE",), policy=None):
+def run(broker, journal, *, quantity_symbol=("NFO:CE",), baseline=None, policy=None):
     coordinator = EmergencyRecoveryCoordinator(broker, journal, policy=policy)
     return coordinator.recover(
         account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
         symbols=quantity_symbol,
-        baseline_positions=tuple(RecoveryPosition(symbol, 0) for symbol in quantity_symbol),
+        baseline_positions=baseline or tuple(RecoveryPosition(symbol, 0) for symbol in quantity_symbol),
         now_ns=1_000_000_000,
     )
 
@@ -195,6 +195,32 @@ def test_insufficient_depth_for_one_lot_fails_closed_without_market_order():
     broker.recovery_quote = lambda **kwargs: RecoveryQuote(
         bid=Decimal("100"), ask=Decimal("100.10"), bid_depth=10, ask_depth=10,
         tick_size=Decimal("0.05"), lot_size=25, observed_at_ns=1_000_000_000,
+    )
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert not journal.released
+
+
+def test_recovery_closes_only_position_delta_above_pre_entry_baseline():
+    broker, journal = FakeBroker(75), FakeJournal()
+    result = run(
+        broker, journal,
+        baseline=(RecoveryPosition("NFO:CE", 25),),
+    )
+
+    assert result.state is RecoveryState.FLAT
+    assert broker.closes[0].quantity == 50
+    assert broker.position == 25
+
+
+def test_reconciled_flag_is_required_even_when_snapshot_is_authoritative():
+    broker, journal = FakeBroker(50), FakeJournal()
+    original = broker.recovery_snapshot
+    broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
+        account_id="acct-1", broker="angel_one", authoritative=True,
+        positions_reconciled=False, orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
     )
     result = run(broker, journal)
 
