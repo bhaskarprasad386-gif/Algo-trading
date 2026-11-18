@@ -31,7 +31,12 @@ class RecoveryOrder:
     def __post_init__(self) -> None:
         if not self.broker_order_id.strip() or not self.client_order_id.strip() or not self.symbol.strip():
             raise ValueError("recovery order identities and symbol are required")
-        if not self.status.strip() or (self.remaining_quantity is not None and self.remaining_quantity < 0):
+        if not self.status.strip() or (
+            self.remaining_quantity is not None and (
+                isinstance(self.remaining_quantity, bool) or not isinstance(self.remaining_quantity, int)
+                or self.remaining_quantity < 0
+            )
+        ):
             raise ValueError("recovery order status and remaining quantity are invalid")
 
     @property
@@ -48,7 +53,7 @@ class RecoveryPosition:
     quantity: int  # positive = long, negative = short
 
     def __post_init__(self) -> None:
-        if not self.symbol.strip() or not isinstance(self.quantity, int):
+        if not self.symbol.strip() or isinstance(self.quantity, bool) or not isinstance(self.quantity, int):
             raise ValueError("position symbol and integer quantity are required")
 
 
@@ -85,8 +90,10 @@ class RecoveryQuote:
         if (
             not self.bid.is_finite() or not self.ask.is_finite()
             or not self.tick_size.is_finite() or self.tick_size <= 0
-            or self.bid_depth < 0 or self.ask_depth < 0 or self.lot_size <= 0
-            or self.observed_at_ns <= 0
+            or isinstance(self.bid_depth, bool) or not isinstance(self.bid_depth, int) or self.bid_depth < 0
+            or isinstance(self.ask_depth, bool) or not isinstance(self.ask_depth, int) or self.ask_depth < 0
+            or isinstance(self.lot_size, bool) or not isinstance(self.lot_size, int) or self.lot_size <= 0
+            or isinstance(self.observed_at_ns, bool) or not isinstance(self.observed_at_ns, int) or self.observed_at_ns <= 0
         ):
             raise ValueError("recovery quote values, depth, lot size and timestamp must be valid")
 
@@ -101,7 +108,7 @@ class EmergencyClose:
     client_order_id: str
 
     def __post_init__(self) -> None:
-        if self.side not in {"BUY", "SELL"} or self.quantity <= 0:
+        if self.side not in {"BUY", "SELL"} or isinstance(self.quantity, bool) or not isinstance(self.quantity, int) or self.quantity <= 0:
             raise ValueError("emergency close side and quantity are invalid")
         if not self.limit_price.is_finite() or self.limit_price <= 0:
             raise ValueError("emergency close requires a finite positive limit price")
@@ -116,7 +123,11 @@ class RecoveryPolicy:
     max_attempts: int = 2
 
     def __post_init__(self) -> None:
-        if self.max_quote_age_ns <= 0 or self.max_attempts < 1:
+        if (
+            isinstance(self.max_quote_age_ns, bool) or not isinstance(self.max_quote_age_ns, int)
+            or self.max_quote_age_ns <= 0 or isinstance(self.max_attempts, bool)
+            or not isinstance(self.max_attempts, int) or self.max_attempts < 1
+        ):
             raise ValueError("recovery age and attempt limits must be positive")
         if not self.max_slippage_bps.is_finite() or not Decimal("0") <= self.max_slippage_bps <= Decimal("500"):
             raise ValueError("max_slippage_bps must be between 0 and 500")
