@@ -213,3 +213,30 @@ def test_verified_flat_is_terminal_and_does_not_clear_kill_switch(journal):
         account_id="acct-a", strategy="BOX_SPREAD", reason="recovery event",
     )
     assert durable.is_entry_kill_switch_latched(account_id="acct-a", strategy="BOX_SPREAD")
+
+
+def test_manual_review_state_never_authorizes_another_close(journal):
+    durable, _ = journal
+    durable.configure_recovery_budget(
+        account_id="acct-a", intent_id="intent-manual", symbol="OPT:CE",
+        max_attempts=2, max_notional=Decimal("1000"), approved=True,
+    )
+    assert durable.acquire_instrument_leases(
+        account_id="acct-a", intent_id="intent-manual", symbols=("OPT:CE",),
+    )
+    durable.freeze_intent(
+        account_id="acct-a", intent_id="intent-manual", reason="recovery ambiguity",
+    )
+    durable.set_state(
+        account_id="acct-a", intent_id="intent-manual",
+        state=RecoveryState.MANUAL_REVIEW, reason="broker snapshot became ambiguous",
+    )
+    with pytest.raises(RuntimeError, match="EMERGENCY_UNWIND"):
+        durable.claim_recovery_attempt(
+            account_id="acct-a", intent_id="intent-manual", symbol="OPT:CE",
+        )
+    assert not durable.approve_emergency_close(
+        account_id="acct-a", intent_id="intent-manual", symbol="OPT:CE",
+        side="SELL", quantity=1, limit_price=Decimal("10"),
+        notional=Decimal("10"),
+    )
