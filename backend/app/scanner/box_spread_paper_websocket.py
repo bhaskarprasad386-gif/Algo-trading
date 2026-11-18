@@ -32,6 +32,10 @@ MAX_MESSAGE_BYTES = 2048
 QUEUE_SIZE = 16
 HEARTBEAT_SECONDS = 20.0
 MAX_CONNECTIONS_PER_PROCESS = 50
+DISPATCH_POLL_SECONDS = 0.25
+_subscribers: dict[int, asyncio.Queue[dict[str, Any]]] = {}
+_dispatch_task: asyncio.Task | None = None
+_dispatch_loop: asyncio.AbstractEventLoop | None = None
 RESYNC_MIN_INTERVAL_SECONDS = 1.0
 RESYNC_MAX_PER_MINUTE = 10
 _active_connections: set[int] = set()
@@ -170,6 +174,67 @@ def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
     return [{"sequence": int(row[0]), "event_type": str(row[1])} for row in rows]
 
 
+async def _journal_dispatch_loop() -> None:
+    """One shared DB journal tailer per worker; fan out to local sockets."""
+    cursor = await asyncio.to_thread(_latest_event_id)
+    while _subscribers:
+        try:
+            rows = await asyncio.to_thread(_events_after, cursor)
+            if rows:
+                latest = rows[-1]
+                first_sequence = int(rows[0]["sequence"])
+                latest_sequence = int(latest["sequence"])
+                event_type = (
+                    str(latest["event_type"])
+                    if len(rows) == 1 and first_sequence == cursor + 1
+                    else "SNAPSHOT"
+                )
+                cursor = latest_sequence
+                frame = {"sequence": cursor, "event_type": event_type}
+                for queue in tuple(_subscribers.values()):
+                    if queue.full():
+                        while not queue.empty():
+                            try:
+                                queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                        queue.put_nowait({"sequence": cursor, "event_type": "SNAPSHOT"})
+                    else:
+                        queue.put_nowait(frame)
+            else:
+                await asyncio.sleep(DISPATCH_POLL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Keep sockets alive; the next journal poll retries. Heartbeats are
+            # handled by each connection and never imply market-data freshness.
+            await asyncio.sleep(DISPATCH_POLL_SECONDS)
+
+
+async def _subscribe_local() -> asyncio.Queue[dict[str, Any]]:
+    global _dispatch_task, _dispatch_loop
+    loop = asyncio.get_running_loop()
+    if _dispatch_task is not None and _dispatch_loop is not loop:
+        _dispatch_task.cancel()
+        _dispatch_task = None
+        _subscribers.clear()
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=QUEUE_SIZE)
+    _subscribers[id(queue)] = queue
+    _dispatch_loop = loop
+    if _dispatch_task is None or _dispatch_task.done():
+        _dispatch_task = loop.create_task(_journal_dispatch_loop())
+    return queue
+
+
+def _unsubscribe_local(queue: asyncio.Queue[dict[str, Any]]) -> None:
+    global _dispatch_task, _dispatch_loop
+    _subscribers.pop(id(queue), None)
+    if not _subscribers and _dispatch_task is not None:
+        _dispatch_task.cancel()
+        _dispatch_task = None
+        _dispatch_loop = None
+
+
 def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default", sequence: int | None = None) -> dict[str, Any]:
     provider = _market_snapshot_provider if event_type == "MARKET_DATA_CHANGED" else _snapshot_provider
     try:
@@ -255,13 +320,15 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
             await websocket.close(code=1008)
             return
 
+        local_queue = await _subscribe_local()
         cursor = await asyncio.to_thread(_latest_event_id)
         await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key, cursor))
         last_heartbeat = time.monotonic()
         while True:
             receive_task = asyncio.create_task(websocket.receive_text())
+            queue_task = asyncio.create_task(local_queue.get())
             done, pending = await asyncio.wait(
-                {receive_task}, timeout=0.25,
+                {receive_task, queue_task}, timeout=0.25,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in pending:
@@ -269,30 +336,25 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
             if not done:
-                journal_rows = await asyncio.to_thread(_events_after, cursor)
-                if journal_rows:
-                    latest = journal_rows[-1]
-                    first_sequence = int(journal_rows[0]["sequence"])
-                    latest_sequence = int(latest["sequence"])
-                    # Multiple events are deliberately coalesced into one authoritative
-                    # snapshot. Also resync if retention has removed any cursor successor.
-                    # Sending a delta with a skipped sequence makes clients reject it forever.
-                    requires_snapshot = (
-                        len(journal_rows) > 1
-                        or first_sequence != cursor + 1
-                        or len(journal_rows) > 100
-                    )
-                    event_type = "SNAPSHOT" if requires_snapshot else str(latest["event_type"])
-                    cursor = latest_sequence
-                    await websocket.send_json(await asyncio.to_thread(
-                        _snapshot_frame, event_type, account_key, cursor,
-                    ))
-                elif time.monotonic() - last_heartbeat >= HEARTBEAT_SECONDS:
+                if time.monotonic() - last_heartbeat >= HEARTBEAT_SECONDS:
                     await websocket.send_json({
                         "type": "heartbeat", "channel": CHANNEL,
                         "server_time": datetime.now(timezone.utc).isoformat(),
                     })
                     last_heartbeat = time.monotonic()
+                continue
+            if queue_task in done:
+                journal_event = queue_task.result()
+                sequence = int(journal_event["sequence"])
+                if sequence <= cursor:
+                    continue
+                event_type = str(journal_event["event_type"])
+                if event_type != "SNAPSHOT" and sequence != cursor + 1:
+                    event_type = "SNAPSHOT"
+                cursor = sequence
+                await websocket.send_json(await asyncio.to_thread(
+                    _snapshot_frame, event_type, account_key, cursor,
+                ))
                 continue
             if receive_task in done:
                 incoming = receive_task.result()
@@ -318,9 +380,12 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
                 cursor = await asyncio.to_thread(_latest_event_id)
                 await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key, cursor))
                 last_heartbeat = time.monotonic()
+
     except (WebSocketDisconnect, asyncio.TimeoutError):
         pass
     finally:
+        if 'local_queue' in locals():
+            _unsubscribe_local(local_queue)
         with _connection_lock:
             _active_connections.discard(connection_id)
 
