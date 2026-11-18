@@ -160,3 +160,18 @@ This shared invariant applies equally to Box Spread, Credit Butterfly and Condor
 - Releases risk reservation only after a reconciled broker snapshot proves every basket residual is flat and all orders are terminal. Any uncertainty leaves the kill switch latched and escalates to manual review.
 
 This is not yet a live broker integration: the supported broker adapters and durable recovery journal must implement the protocol and pass adapter contract tests before the coordinator can be enabled. Live routing remains disabled.
+
+
+## 11. All-legs-or-recover coordinator implementation
+
+`backend/app/execution/multi_leg_coordinator.py` now defines the adapter-neutral entry orchestration contract for Box Spread, Credit Butterfly and Condor:
+
+- Validates the declared strategy shape (Box 4 x 1:1:1:1 with the CE/PE role map; Credit Butterfly 1:2:1 with the body exactly 2x; Condor 4 x 1:1:1:1, including two CE + two PE for an iron condor).
+- Requires a complete pre-entry position baseline, unique instrument/role/leg identities and one expiry across the basket.
+- Rejects stale/crossed quotes, cross-leg timestamp skew, insufficient full-ratio depth, invalid lot/tick sizes, missing risk/margin approvals and price collars before any broker submission.
+- Requires a strategy-specific edge evaluator to recompute net edge after fees from the exact current executable quote snapshot. The scanner alert's old edge alone is never authorization.
+- Claims submission durably and persists every deterministic per-leg client order ID before concurrent broker calls. Each leg uses BUY-at-ask / SELL-at-bid executable-side limit prices supplied by the approved preflight.
+- Treats ack persistence errors, mismatched client IDs, rejected orders, timeouts, partial fills, unknown status and incomplete reconciliation as basket failure. It freezes the intent and calls emergency recovery; it never resubmits an uncertain entry.
+- Returns FILLED only after authoritative order, trade and position reconciliation proves every leg reached its exact target quantity and terminal state.
+
+This coordinator is not connected to the current broker registry. Its journal and broker protocols must be implemented by durable production adapters and certified with broker-approved non-production tests. Separate broker orders remain non-atomic at the exchange; the coordinator implements the strict application-level all-legs-or-recover rule only.
