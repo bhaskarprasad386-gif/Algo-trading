@@ -50,11 +50,11 @@ def mstock_begin_login(
 
 @router.post("/mstock/verify")
 def mstock_verify_login(
-    with broker_sessions.transition(user_id):
-        payload: MStockVerifyRequest,
-        db: Session = Depends(get_db),
-        user_id: int = Depends(require_real_owner_access),
+    payload: MStockVerifyRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
     ) -> dict:
+    with broker_sessions.transition(user_id):
         """Exchange OTP/TOTP, verify broker-returned identity, then bind one owner account."""
         if payload.auth_method == "OTP" and (not payload.otp or payload.totp):
             raise HTTPException(status_code=422, detail="Provide otp only when auth_method is OTP")
