@@ -166,3 +166,22 @@ def test_acknowledgement_must_belong_to_claimed_basket(journal):
                 ),
             )
     asyncio.run(run())
+
+
+def test_submission_start_is_one_way_and_cannot_replace_client_ids(journal):
+    durable = journal[0]
+    async def run():
+        await durable.claim_submission(
+            account_id="acct-a", intent_id="intent-5",
+            strategy="BOX_SPREAD", snapshot_id="snap-5",
+        )
+        await durable.record_submission_started(
+            account_id="acct-a", intent_id="intent-5",
+            client_order_ids=("c1", "c2"),
+        )
+        with pytest.raises(ValueError, match="fresh durable claim"):
+            await durable.record_submission_started(
+                account_id="acct-a", intent_id="intent-5",
+                client_order_ids=("replacement-1", "replacement-2"),
+            )
+    asyncio.run(run())
