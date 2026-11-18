@@ -467,3 +467,22 @@ def test_current_edge_snapshot_must_match_preflight_quote_snapshot():
     assert result.state is BasketResultState.PREFLIGHT_REJECTED
     assert not broker.calls
     assert journal.rejected
+
+
+def test_early_rejection_cancels_leg_submissions_not_yet_sent():
+    intent = make_intent()
+    class EarlyRejectBroker(FakeBroker):
+        async def place_limit(self, *, account_id, client_order_id, symbol, side, quantity, limit_price):
+            if symbol == self.intent.legs[0].symbol:
+                self.calls.append((client_order_id, symbol, side, quantity, limit_price))
+                return BrokerOrderAck(client_order_id, "broker-rejected", "REJECTED", False)
+            await asyncio.sleep(1)
+            self.calls.append((client_order_id, symbol, side, quantity, limit_price))
+            return BrokerOrderAck(client_order_id, f"broker-{symbol}", "OPEN", True)
+    broker = EarlyRejectBroker(intent)
+    result, broker, journal, recovery_calls = execute(intent, broker=broker)
+    assert result.state is BasketResultState.RECOVERED_FLAT
+    assert len(broker.calls) == 1
+    assert journal.frozen
+    assert recovery_calls
+    assert not journal.completed
