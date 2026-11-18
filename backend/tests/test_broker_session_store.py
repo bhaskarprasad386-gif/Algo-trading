@@ -269,3 +269,45 @@ def test_bulk_cleanup_waits_for_active_request_lease(cleanup):
     assert not worker.is_alive()
     assert not revoker.is_alive()
     assert cleaned.is_set()
+
+
+
+def test_disconnect_all_waits_for_active_lease_before_provider_logout():
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("angel_one")
+    store.replace(7, "angel_one", adapter)
+    acquired = Event()
+    release = Event()
+    finished = Event()
+    failures = []
+
+    def request():
+        with store.lease(7, "angel_one") as leased:
+            assert leased is adapter
+            acquired.set()
+            assert release.wait(2)
+
+    def shutdown():
+        failures.extend(store.disconnect_all())
+        finished.set()
+
+    worker = Thread(target=request)
+    worker.start()
+    assert acquired.wait(2)
+
+    shutdown_worker = Thread(target=shutdown)
+    shutdown_worker.start()
+    assert not finished.wait(0.05)
+    assert adapter.connected is True
+    assert store.get(7, "angel_one") is None
+
+    release.set()
+    worker.join(2)
+    shutdown_worker.join(2)
+    assert not worker.is_alive()
+    assert not shutdown_worker.is_alive()
+    assert finished.is_set()
+    assert failures == []
+    assert adapter.connected is False
