@@ -1,2 +1,0 @@
-CI trigger checkpoint
-cash-future rollover historical sync integration

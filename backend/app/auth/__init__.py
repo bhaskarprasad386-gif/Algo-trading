@@ -1,1 +1,0 @@
-"""User authentication API package."""

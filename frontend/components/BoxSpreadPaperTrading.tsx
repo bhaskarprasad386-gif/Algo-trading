@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { appConfig } from "@/lib/config";
 import BoxSpreadPaperRuleControls from "@/components/BoxSpreadPaperRuleControls";
+import { usePagePush } from "@/components/page-push-provider";
 
 type LiveOpportunity = {
   symbol: string; instrument_class: string; expiry: string; expiry_type?: string; low_strike: number;
@@ -70,6 +71,7 @@ const roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"] as const;
 type Role = typeof roles[number];
 
 export default function BoxSpreadPaperTrading() {
+  const pagePush = usePagePush("box-spread");
   const api = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread-paper";
   const [account, setAccount] = useState("default");
   const [token, setToken] = useState<string | null>(null);
@@ -225,19 +227,39 @@ export default function BoxSpreadPaperTrading() {
 
   useEffect(() => { setToken(window.sessionStorage.getItem("box-spread-paper-token")); }, []);
 
+  // Public market opportunities arrive through the same Box Spread page-push
+  // channel as the scanner. Never put private paper ledger/account data on it.
+  useEffect(() => {
+    const pushed = pagePush.data?.opportunities;
+    if (!Array.isArray(pushed)) return;
+    const rows = pushed.filter((row): row is LiveOpportunity => {
+      if (!row || typeof row !== "object") return false;
+      const item = row as LiveOpportunity;
+      return [item.low_call_price, item.high_call_price, item.high_put_price, item.low_put_price]
+        .every(value => Number.isFinite(Number(value)) && Number(value) > 0);
+    });
+    setOpportunities(rows);
+    setOpportunityError(null);
+    setOpportunityStatus(rows.length > 0 ? "LIVE" : "EMPTY");
+    setLastOpportunityCheck(Date.now());
+  }, [pagePush.data]);
+
   useEffect(() => {
     if (!token) return;
     void refresh();
-    void loadOpportunities();
-    // Keep the control and ledger in sync with backend state (including restart-default OFF),
-    // independently of the faster live-opportunity refresh.
+    if (pagePush.status !== "LIVE") void loadOpportunities();
+    // Private account/ledger REST refresh remains temporarily until its own
+    // authenticated private channel is implemented. Public market rows do not poll
+    // while the shared Box Spread WebSocket is live.
     const statusTimer = window.setInterval(() => { void refresh(); }, 7000);
-    const opportunitiesTimer = window.setInterval(() => { void loadOpportunities(); }, 7000);
+    const opportunitiesTimer = pagePush.status === "LIVE"
+      ? undefined
+      : window.setInterval(() => { void loadOpportunities(); }, 30000);
     return () => {
       window.clearInterval(statusTimer);
-      window.clearInterval(opportunitiesTimer);
+      if (opportunitiesTimer !== undefined) window.clearInterval(opportunitiesTimer);
     };
-  }, [token, refresh, loadOpportunities]);
+  }, [token, refresh, loadOpportunities, pagePush.status]);
 
   async function togglePaperExecution() {
     setControlBusy(true); setError(null); setMessage(null);
