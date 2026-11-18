@@ -33,6 +33,8 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState<string|null>(null);
   const [notice,setNotice]=useState<string|null>(null);
+  const rulesRequestSequence=useRef(0);
+  const historyRequestSequence=useRef(0);
 
   const request=useCallback(async(path:string,init?:RequestInit)=>{
     const response=await fetch(api+path,{...init,cache:"no-store",headers:{"Content-Type":"application/json",...(token ? { Authorization:"Bearer "+token } : {}),...(init?.headers??{})},signal:AbortSignal.timeout(12000)});
@@ -43,14 +45,16 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
 
   const load=useCallback(async()=>{
     if(!token)return;
-    try{const body=await request("/rules?account_key="+encodeURIComponent(account));setRules(Array.isArray(body.data)?body.data:[]);setError(null);}
-    catch(e){setError(e instanceof Error?e.message:"Unable to load rules");}
+    const requestSequence=++rulesRequestSequence.current;
+    try{const body=await request("/rules?account_key="+encodeURIComponent(account));if(requestSequence!==rulesRequestSequence.current)return;setRules(Array.isArray(body.data)?body.data:[]);setError(null);}
+    catch(e){if(requestSequence===rulesRequestSequence.current)setError(e instanceof Error?e.message:"Unable to load rules");}
   },[account,request,token]);
   useEffect(()=>{void load();},[load,refreshVersion]);
   const loadHistory=useCallback(async(id:number)=>{
-    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");setEvaluations(Array.isArray(body.data)?body.data:[]);}
-    catch(e){setError(e instanceof Error?e.message:"Unable to load evaluation history");}
-  },[account,request]);
+    const requestSequence=++historyRequestSequence.current;
+    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");if(requestSequence!==historyRequestSequence.current||historyRuleId!==id)return;setEvaluations(Array.isArray(body.data)?body.data:[]);}
+    catch(e){if(requestSequence===historyRequestSequence.current&&historyRuleId===id)setError(e instanceof Error?e.message:"Unable to load evaluation history");}
+  },[account,request,historyRuleId]);
   useEffect(()=>{if(historyRuleId!==null)void loadHistory(historyRuleId);},[historyRuleId,loadHistory,refreshVersion]);
   useEffect(()=>{setConfig(current=>({...current,entry:{...current.entry,expiry_type:selection.expiryType,symbols:selection.symbols,lots:selection.lots}}));},[selection.expiryType,selection.symbols.join(","),selection.lots]);
 
