@@ -52,7 +52,8 @@ class FakeJournal:
         return self.approve_close
 
     def pending_close_authorizations(self, **kwargs):
-        return self.pending_authorizations
+        reconciled = set(self.reconciled_authorizations)
+        return tuple(value for value in self.pending_authorizations if value not in reconciled)
 
     def mark_close_authorization_reconciled(self, **kwargs):
         self.reconciled_authorizations.append(kwargs["client_order_id"])
