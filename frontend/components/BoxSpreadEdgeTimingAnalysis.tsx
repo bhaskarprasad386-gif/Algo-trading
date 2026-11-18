@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type TimingGroup = {
   key: string;
@@ -43,6 +44,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const requestSequence = useRef(0);
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("box-spread");
 
   const refresh = useCallback(async () => {
     const requestId = ++requestSequence.current;
@@ -69,13 +71,25 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   }, []);
 
   useEffect(() => {
+    if (pagePushStatus === "LIVE") return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => {
       window.clearInterval(timer);
       requestSequence.current += 1;
     };
-  }, [refresh]);
+  }, [refresh, pagePushStatus]);
+
+  useEffect(() => {
+    const pushed = pagePushData?.edge_timing_analysis as TimingAnalysis | undefined;
+    if (!pushed || pushed.strategy !== "box-spread" || !Array.isArray(pushed.by_day) || !Array.isArray(pushed.by_time)) return;
+    // A pushed aggregate is authoritative; invalidate an older REST response.
+    requestSequence.current += 1;
+    setData(pushed);
+    setError(null);
+    setLoading(false);
+    setUpdatedAt(new Date().toISOString());
+  }, [pagePushData]);
 
   const groupTable = (title: string, rows: TimingGroup[], label: string) => (
     <div className="min-w-0">
@@ -115,7 +129,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
         <div className="flex items-start gap-3">
           <Activity className="mt-0.5 h-5 w-5 theme-accent" />
           <div><h2 className="text-base font-semibold theme-text">Box Spread Edge Timing Analysis</h2>
-            <p className="mt-1 text-xs theme-muted">Complete retained snapshot history · weekday and 30-minute IST buckets · read-only analysis</p>
+            <p className="mt-1 text-xs theme-muted">Complete retained snapshot history · weekday and 30-minute IST buckets · read-only analysis · pushed with page updates</p>
           </div>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={loading} className="inline-flex min-h-9 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">
@@ -145,7 +159,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
           <p className="text-xs font-semibold uppercase tracking-wide theme-muted">Historical conclusion</p>
           <p className="mt-2 text-sm leading-6 theme-text">{data.conclusion}</p>
           <p className="mt-2 text-[11px] theme-muted">Source: {data.source} · Timezone: {data.timezone} · Average patterns require at least {data.minimum_distinct_dates_for_average_conclusion} distinct trading dates per bucket. Historical edge is not a guarantee of future returns.</p>
-          <p className="mt-1 text-[11px] theme-muted">Latest saved observation: {data.latest_observed_at ? new Date(data.latest_observed_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) + " IST" : "None"}{updatedAt ? " · Checked " + new Date(updatedAt).toLocaleTimeString("en-IN") : ""}</p>
+          <p className="mt-1 text-[11px] theme-muted">Latest saved observation: {data.latest_observed_at ? new Date(data.latest_observed_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) + " IST" : "None"}{updatedAt ? " · " + (pagePushStatus === "LIVE" ? "Pushed / checked " : "Checked ") + new Date(updatedAt).toLocaleTimeString("en-IN") : ""}</p>
         </div>
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
           {groupTable("Weekday breakdown", data.by_day, "Weekday")}
