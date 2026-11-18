@@ -403,7 +403,7 @@ export default function IVSkewFlipPage() {
   const [savedEnabled,setSavedEnabled]=useState(false);
   const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
-  const { data: pagePushData } = usePagePush("iv-skew-flip");
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("iv-skew-flip");
   const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
@@ -453,9 +453,12 @@ export default function IVSkewFlipPage() {
       }catch(e){if(active)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
     };
     void poll();
-    const timer=window.setInterval(()=>{if(active)void poll();},3000);
+    // The live alert stream is pushed with IV runtime snapshots. Keep REST as
+    // a slow recovery path only while the page WebSocket is unavailable.
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    const timer=window.setInterval(()=>{if(active)void poll();},15000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,alertAudioEnabled]);
+  },[base,alertAudioEnabled,pagePushStatus]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -540,7 +543,21 @@ export default function IVSkewFlipPage() {
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
-    if(pagePushData.runtime&&typeof pagePushData.runtime==="object")setRuntime(pagePushData.runtime as Runtime);
+    if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
+      const pushedRuntime=pagePushData.runtime as Runtime;
+      setRuntime(pushedRuntime);
+      const alertState=pushedRuntime.early_entry_alerts as Row|undefined;
+      const pushedAlerts=Array.isArray(alertState?.alerts)?alertState.alerts as EarlyAlert[]:[];
+      if(pushedAlerts.length){
+        setEarlyAlerts(current=>{
+          const merged=new Map<number,EarlyAlert>();
+          [...current,...pushedAlerts].forEach(alert=>merged.set(alert.id,alert));
+          return [...merged.values()].sort(compareAlertTime).slice(0,100);
+        });
+        const newest=pushedAlerts.filter(alert=>Number.isFinite(alert.id));
+        newest.forEach(alert=>seenAlertIds.current.add(alert.id));
+      }
+    }
     if(typeof pagePushData.saved_enabled==="boolean"){
       setSavedEnabled(pagePushData.saved_enabled);
       if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
