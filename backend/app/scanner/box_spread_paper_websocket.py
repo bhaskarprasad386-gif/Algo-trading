@@ -11,6 +11,8 @@ import hashlib
 import inspect
 import json
 import secrets
+import time
+from collections import deque
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -21,6 +23,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy import Column, Float, MetaData, String, Table, delete, insert
 from app.core.database import engine
+from app.core.config import settings
 
 router = APIRouter(tags=["box-spread-paper-private-ws"])
 CHANNEL = "box-spread-paper-private"
@@ -28,6 +31,11 @@ TICKET_TTL_SECONDS = 30
 MAX_MESSAGE_BYTES = 2048
 QUEUE_SIZE = 16
 HEARTBEAT_SECONDS = 20.0
+MAX_CONNECTIONS_PER_PROCESS = 50
+RESYNC_MIN_INTERVAL_SECONDS = 1.0
+RESYNC_MAX_PER_MINUTE = 10
+_active_connections: set[int] = set()
+_connection_lock = threading.Lock()
 metadata = MetaData()
 tickets = Table(
     "box_spread_paper_ws_tickets", metadata,
@@ -103,21 +111,34 @@ def create_paper_ws_ticket(claims: dict[str, Any] = Depends(_paper_claims)):
     }
 
 
-def _origin_allowed(websocket: WebSocket) -> bool:
-    origin = str(websocket.headers.get("origin") or "").strip()
-    if not origin:
-        return False
+def _normalize_origin(origin: str) -> str | None:
     try:
-        parsed = urlparse(origin)
-    except ValueError:
-        return False
-    host = (parsed.hostname or "").lower()
-    return parsed.scheme in {"https", "http"} and (
-        host in {"localhost", "127.0.0.1"}
-        or host.endswith(".vercel.app")
-        or host == "bhaskarprasad386.workers.dev"
-        or host.endswith(".bhaskarprasad386.workers.dev")
-    )
+        parsed = urlparse(str(origin or "").strip())
+        if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+            return None
+        if parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            return None
+        host = parsed.hostname.lower().rstrip(".")
+        port = parsed.port
+        default_port = 443 if parsed.scheme == "https" else 80
+        return f"{parsed.scheme}://{host}" + (f":{port}" if port and port != default_port else "")
+    except (TypeError, ValueError):
+        return None
+
+
+def _allowed_origins() -> set[str]:
+    configured = {
+        normalized for item in str(settings.BOX_SPREAD_PAPER_WS_ALLOWED_ORIGINS or "").split(",")
+        if (normalized := _normalize_origin(item))
+    }
+    if str(settings.environment).strip().lower() == "development":
+        configured.update({"http://localhost:3000", "http://127.0.0.1:3000"})
+    return configured
+
+
+def _origin_allowed(websocket: WebSocket) -> bool:
+    origin = _normalize_origin(websocket.headers.get("origin", ""))
+    return bool(origin and origin in _allowed_origins())
 
 
 def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default") -> dict[str, Any]:
@@ -198,9 +219,17 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
     if not _origin_allowed(websocket):
         await websocket.close(code=1008)
         return
+    with _connection_lock:
+        if len(_active_connections) >= MAX_CONNECTIONS_PER_PROCESS:
+            await websocket.close(code=1013)
+            return
+        connection_id = id(websocket)
+        _active_connections.add(connection_id)
     await websocket.accept()
     _loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_SIZE)
+    resync_times: deque[float] = deque()
+    last_resync_at = 0.0
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
         if len(raw.encode("utf-8")) > MAX_MESSAGE_BYTES:
@@ -253,6 +282,14 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
                 if not isinstance(command, dict) or command.get("action") != "resync":
                     await websocket.send_json({"type": "error", "code": "INVALID_ACTION"})
                     continue
+                now = time.monotonic()
+                while resync_times and now - resync_times[0] > 60.0:
+                    resync_times.popleft()
+                if now - last_resync_at < RESYNC_MIN_INTERVAL_SECONDS or len(resync_times) >= RESYNC_MAX_PER_MINUTE:
+                    await websocket.close(code=1008)
+                    return
+                last_resync_at = now
+                resync_times.append(now)
                 await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key))
             if event_task in done:
                 marker = event_task.result()
@@ -262,6 +299,8 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
         pass
     finally:
         _subscribers.discard(queue)
+        with _connection_lock:
+            _active_connections.discard(connection_id)
         if not _subscribers:
             _loop = None
 
