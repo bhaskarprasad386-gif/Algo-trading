@@ -39,7 +39,7 @@ tickets = Table(
 )
 metadata.create_all(bind=engine)
 
-_snapshot_provider: Callable[[], dict[str, Any]] | None = None
+_snapshot_provider: Callable[[str, str], dict[str, Any]] | None = None
 _subscribers: set[asyncio.Queue] = set()
 _loop: asyncio.AbstractEventLoop | None = None
 _sequence = 0
@@ -136,7 +136,7 @@ def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default") 
         sequence = _sequence
     provider = _snapshot_provider
     try:
-        payload = provider(account_key) if callable(provider) else {}
+        payload = provider(account_key, event_type) if callable(provider) else {}
     except Exception:
         payload = {"snapshot_status": "UNAVAILABLE"}
     return {

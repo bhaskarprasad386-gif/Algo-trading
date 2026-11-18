@@ -1653,9 +1653,9 @@ def recovery(account_key: str = "default"):
 
 
 
-def build_paper_private_snapshot(account_key: str = "default"):
+def build_paper_private_snapshot(account_key: str = "default", event_type: str = "SNAPSHOT"):
     """Return the authenticated single-owner paper read model for WS bootstrap/resync."""
-    return {
+    payload = {
         "mode": "PAPER_ONLY",
         "broker_orders_enabled": False,
         "account": account(account_key=account_key),
@@ -1665,6 +1665,17 @@ def build_paper_private_snapshot(account_key: str = "default"):
                              include_ledger=True, position_state="ALL"),
         "recovery": recovery(account_key=account_key),
     }
+    if event_type in {"SNAPSHOT", "RULE_CONFIG_CHANGED", "RULE_EVALUATION_CHANGED"}:
+        from app.scanner.box_spread_paper_rule_routes import get_rules, rule_evaluations
+        rule_rows = get_rules(account_key=account_key).get("data", [])
+        payload["rules"] = rule_rows
+        payload["rule_evaluations"] = {
+            str(rule["rule_id"]): rule_evaluations(
+                int(rule["rule_id"]), account_key=account_key, limit=30
+            ).get("data", [])
+            for rule in rule_rows
+        }
+    return payload
 
 
 __all__ = ["router", "build_paper_private_snapshot"]
