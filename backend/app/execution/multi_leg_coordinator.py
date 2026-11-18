@@ -395,7 +395,6 @@ class MultiLegBasketCoordinator:
                 reason=f"submission not sent because durable journal failed: {type(exc).__name__}",
             )
             return BasketResult(BasketResultState.MANUAL_REVIEW, "submission journal unavailable; no broker call sent", client_ids)
-        acks: list[BrokerOrderAck | Exception] = []
         async def submit(leg: BasketLeg, client_id: str) -> BrokerOrderAck:
             return await asyncio.wait_for(
                 self._broker.place_limit(
@@ -405,13 +404,49 @@ class MultiLegBasketCoordinator:
                 ),
                 timeout=self._timeout,
             )
-        acks = list(await asyncio.gather(
-            *(submit(leg, client_id) for leg, client_id in zip(intent.legs, client_ids, strict=True)),
-            return_exceptions=True,
-        ))
-        all_accepted = True
-        for expected_id, ack in zip(client_ids, acks, strict=True):
-            if isinstance(ack, Exception):
+
+        tasks = [
+            asyncio.create_task(submit(leg, client_id))
+            for leg, client_id in zip(intent.legs, client_ids, strict=True)
+        ]
+        pending = set(tasks)
+        early_failure = False
+        coordinator_cancelled = False
+        try:
+            # If an early leg rejects or times out, cancel not-yet-completed
+            # submission coroutines. Any in-flight/unknown broker acceptance
+            # is still resolved by recovery using the persisted client IDs.
+            while pending and not early_failure:
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    try:
+                        ack = task.result()
+                    except BaseException:
+                        early_failure = True
+                        break
+                    if (
+                        not isinstance(ack, BrokerOrderAck)
+                        or ack.accepted is not True
+                        or ack.status.strip().upper() in {"REJECTED", "UNKNOWN", "ERROR"}
+                    ):
+                        early_failure = True
+                        break
+            if early_failure:
+                for task in pending:
+                    task.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            coordinator_cancelled = True
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_accepted = not early_failure and not coordinator_cancelled
+        for expected_id, ack in zip(client_ids, results, strict=True):
+            if isinstance(ack, BaseException) or not isinstance(ack, BrokerOrderAck):
                 all_accepted = False
                 continue
             try:
@@ -419,8 +454,8 @@ class MultiLegBasketCoordinator:
                     account_id=intent.account_id, intent_id=intent.intent_id, ack=ack,
                 )
             except Exception:
-                # The deterministic client ID lets recovery find an accepted
-                # broker order even if the acknowledgement write was lost.
+                # Deterministic client IDs let recovery find accepted orders
+                # even when acknowledgement persistence is lost.
                 all_accepted = False
                 continue
             if ack.client_order_id != expected_id or ack.accepted is not True or ack.status.strip().upper() in {
