@@ -344,3 +344,22 @@ def test_incomplete_position_attribution_blocks_recovery():
     assert result.state is RecoveryState.MANUAL_REVIEW
     assert not broker.closes
     assert not journal.released
+
+
+def test_cancel_error_does_not_prevent_cancelling_other_working_legs():
+    broker, journal = FakeBroker(50), FakeJournal()
+    broker.orders.append(RecoveryOrder("entry-2", "entry-client-2", "NFO:PE", "ENTRY", "WORKING", 50))
+    original_cancel = broker.cancel_order
+    def cancel_with_one_failure(*, account_id, broker_order_id):
+        broker.cancelled.append(broker_order_id)
+        if broker_order_id == "entry-1":
+            raise RuntimeError("simulated cancel timeout")
+        broker.orders[1] = RecoveryOrder(
+            "entry-2", "entry-client-2", "NFO:PE", "ENTRY", "CANCELLED", 0,
+        )
+    broker.cancel_order = cancel_with_one_failure
+    result = run(broker, journal)
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert broker.cancelled == ["entry-1", "entry-2"]
+    assert not broker.closes
+    assert any(event["event"] == "ENTRY_CANCEL_ERROR" for event in journal.events)
