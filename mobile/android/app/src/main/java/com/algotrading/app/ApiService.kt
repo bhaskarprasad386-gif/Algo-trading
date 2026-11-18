@@ -299,6 +299,7 @@ interface ApiInterface {
 
 object ApiService {
     @Volatile private var realOwnerAccessToken: String? = null
+    @Volatile private var realOwnerTokenExpiresAtMs: Long = 0L
     @Volatile private var ownerSessionStore: EncryptedOwnerSessionStore? = null
 
     @Synchronized
@@ -307,37 +308,59 @@ object ApiService {
         try {
             val store = createOwnerSessionStore(context.applicationContext)
             ownerSessionStore = store
-            realOwnerAccessToken = store.load()
+            val session = store.load()
+            realOwnerAccessToken = session?.accessToken
+            realOwnerTokenExpiresAtMs = session?.expiresAtEpochMs ?: 0L
         } catch (_: Exception) {
             // Keep the rest of the app read-only/usable; owner-authenticated
             // broker operations remain unavailable until secure storage works.
             ownerSessionStore = null
             realOwnerAccessToken = null
+            realOwnerTokenExpiresAtMs = 0L
         }
     }
 
     @Synchronized
-    fun setRealOwnerAccessToken(token: String?) {
+    fun setRealOwnerAccessToken(token: String?, expiresInSeconds: Long) {
         val normalized = token?.takeIf { it.isNotBlank() }
         if (normalized == null) {
             clearRealOwnerAccessToken()
             return
         }
+        if (expiresInSeconds <= 0L || expiresInSeconds > 86_400L) {
+            throw IllegalArgumentException("owner access token expiry is missing or exceeds one day")
+        }
         val store = ownerSessionStore
             ?: throw IllegalStateException("owner session storage has not been initialized")
+        val expiresAt = System.currentTimeMillis() + expiresInSeconds * 1_000L
         // Persist first; never expose an in-memory authenticated session if
         // encrypted durable storage failed.
-        store.save(normalized)
+        store.save(normalized, expiresAt)
         realOwnerAccessToken = normalized
+        realOwnerTokenExpiresAtMs = expiresAt
     }
 
     @Synchronized
     fun clearRealOwnerAccessToken() {
         realOwnerAccessToken = null
+        realOwnerTokenExpiresAtMs = 0L
         ownerSessionStore?.clear()
     }
 
-    fun hasRealOwnerAccessToken(): Boolean = !realOwnerAccessToken.isNullOrBlank()
+    @Synchronized
+    private fun currentOwnerAccessToken(): String? {
+        val token = realOwnerAccessToken ?: return null
+        if (realOwnerTokenExpiresAtMs <= System.currentTimeMillis() + 30_000L) {
+            try { clearRealOwnerAccessToken() } catch (_: Exception) {
+                realOwnerAccessToken = null
+                realOwnerTokenExpiresAtMs = 0L
+            }
+            return null
+        }
+        return token
+    }
+
+    fun hasRealOwnerAccessToken(): Boolean = currentOwnerAccessToken() != null
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -345,7 +368,7 @@ object ApiService {
                 val request = chain.request()
                 val isBrokerApi = request.url.encodedPath.startsWith("/api/v1/brokers/") &&
                     !request.url.encodedPath.endsWith("/owner-auth/login")
-                val token = realOwnerAccessToken
+                val token = currentOwnerAccessToken()
                 val authenticated = if (isBrokerApi && !token.isNullOrBlank()) {
                     request.newBuilder().header("Authorization", "Bearer $token").build()
                 } else request
