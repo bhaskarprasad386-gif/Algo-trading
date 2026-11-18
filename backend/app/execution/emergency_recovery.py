@@ -52,6 +52,7 @@ class RecoverySnapshot:
     broker: str
     authoritative: bool
     positions_reconciled: bool
+    position_attribution_complete: bool
     orders: tuple[RecoveryOrder, ...]
     positions: tuple[RecoveryPosition, ...]
 
@@ -112,6 +113,8 @@ class RecoveryBroker(Protocol):
 
 class RecoveryJournal(Protocol):
     def latch_entry_kill_switch(self, *, account_id: str, strategy: str, reason: str) -> None: ...
+    def freeze_intent(self, *, account_id: str, intent_id: str, reason: str) -> None: ...
+    def assert_exclusive_instrument_lease(self, *, account_id: str, intent_id: str, symbols: tuple[str, ...]) -> bool: ...
     def append_event(self, *, account_id: str, intent_id: str, event: str, details: dict) -> None: ...
     def set_state(self, *, account_id: str, intent_id: str, state: RecoveryState, reason: str) -> None: ...
     def release_risk_reservation(self, *, account_id: str, intent_id: str) -> None: ...
@@ -156,8 +159,11 @@ class EmergencyRecoveryCoordinator:
 
     def _snapshot(self, account_id: str, intent_id: str) -> RecoverySnapshot:
         snapshot = self._broker.recovery_snapshot(account_id=account_id, intent_id=intent_id)
-        if not snapshot.authoritative or not snapshot.positions_reconciled:
-            raise RuntimeError("broker order/trade/position snapshot is not authoritative and reconciled")
+        if (
+            not snapshot.authoritative or not snapshot.positions_reconciled
+            or not snapshot.position_attribution_complete
+        ):
+            raise RuntimeError("broker snapshot is not authoritative, reconciled and attributable to this intent")
         if snapshot.account_id != account_id or snapshot.broker.strip().lower() != self._broker.name.strip().lower():
             raise RuntimeError("broker/account identity drift during recovery")
         return snapshot
@@ -217,6 +223,17 @@ class EmergencyRecoveryCoordinator:
         self._journal.latch_entry_kill_switch(
             account_id=account_id, strategy=strategy, reason="multi-leg entry failed; recovery active",
         )
+        self._journal.freeze_intent(
+            account_id=account_id, intent_id=intent_id, reason="stop all unsent basket legs and retries",
+        )
+        if not self._journal.assert_exclusive_instrument_lease(
+            account_id=account_id, intent_id=intent_id, symbols=tuple(sorted(symbol_set)),
+        ):
+            return self._manual(
+                account_id=account_id, intent_id=intent_id,
+                reason="exclusive basket instrument lease is missing; residual attribution is unsafe",
+                residuals=(), attempts=0,
+            )
         self._journal.set_state(
             account_id=account_id, intent_id=intent_id,
             state=RecoveryState.RECOVERING, reason="cancel/reconcile/close workflow started",
