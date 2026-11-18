@@ -212,7 +212,7 @@ def test_one_rejected_leg_freezes_basket_and_invokes_recovery():
 
 def test_one_partial_fill_never_marks_basket_filled():
     intent = make_intent()
-    broker = FakeBroker(intent, fill_overrides={"high-ce": 25})
+    broker = FakeBroker(intent, fill_overrides={"high-ce": 10})
     result, _, journal, recovery_calls = execute(intent, broker=broker)
 
     assert result.state is BasketResultState.RECOVERED_FLAT
