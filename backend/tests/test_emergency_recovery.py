@@ -235,7 +235,10 @@ def test_duplicate_position_rows_are_aggregated_before_baseline_delta():
         account_id="acct-1", broker="angel_one", authoritative=True,
         positions_reconciled=True,
         orders=(RecoveryOrder("entry-1", "entry-client-1", "NFO:CE", "ENTRY", "CANCELLED", 0),),
-        positions=(RecoveryPosition("NFO:CE", 20), RecoveryPosition("NFO:CE", 30)),
+        positions=(
+            RecoveryPosition("NFO:CE", broker.position // 2),
+            RecoveryPosition("NFO:CE", broker.position - broker.position // 2),
+        ),
     )
     result = run(broker, journal)
     assert result.state is RecoveryState.FLAT
