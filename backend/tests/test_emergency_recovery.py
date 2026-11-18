@@ -349,7 +349,6 @@ def test_incomplete_position_attribution_blocks_recovery():
 def test_cancel_error_does_not_prevent_cancelling_other_working_legs():
     broker, journal = FakeBroker(50), FakeJournal()
     broker.orders.append(RecoveryOrder("entry-2", "entry-client-2", "NFO:PE", "ENTRY", "WORKING", 50))
-    original_cancel = broker.cancel_order
     def cancel_with_one_failure(*, account_id, broker_order_id):
         broker.cancelled.append(broker_order_id)
         if broker_order_id == "entry-1":
