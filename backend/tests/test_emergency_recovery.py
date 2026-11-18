@@ -23,6 +23,8 @@ class FakeJournal:
         self.approved_closes = []
         self.frozen = []
         self.leases = True
+        self.pending_authorizations = ()
+        self.reconciled_authorizations = []
 
     def latch_entry_kill_switch(self, **kwargs):
         self.kill_switches.append(kwargs)
@@ -50,10 +52,10 @@ class FakeJournal:
         return self.approve_close
 
     def pending_close_authorizations(self, **kwargs):
-        return ()
+        return self.pending_authorizations
 
     def mark_close_authorization_reconciled(self, **kwargs):
-        return None
+        self.reconciled_authorizations.append(kwargs["client_order_id"])
 
     def claim_recovery_attempt(self, *, account_id, intent_id, symbol):
         key = (account_id, intent_id, symbol)
@@ -384,3 +386,13 @@ def test_recovery_budget_must_approve_close_before_broker_submission():
     assert not broker.closes
     assert journal.approved_closes
     assert not journal.released
+
+
+def test_lost_close_ack_without_broker_order_visibility_blocks_resubmission():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.pending_authorizations = ("REC-previously-authorized",)
+    result = run(broker, journal)
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert not journal.released
+    assert "not yet reconciled" in result.reason
