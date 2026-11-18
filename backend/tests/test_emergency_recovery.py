@@ -26,6 +26,16 @@ class FakeJournal:
         self.leases = True
         self.pending_authorizations = ()
         self.reconciled_authorizations = []
+        self.coordinator_owner = None
+
+    def claim_recovery_coordinator_owner(self, *, account_id, intent_id, owner_token):
+        if self.coordinator_owner is not None:
+            return None
+        self.coordinator_owner = (account_id, intent_id, owner_token, 1)
+        return 1
+
+    def assert_recovery_coordinator_owner(self, *, account_id, intent_id, owner_token, owner_generation):
+        return self.coordinator_owner == (account_id, intent_id, owner_token, owner_generation)
 
     def latch_entry_kill_switch(self, **kwargs):
         self.kill_switches.append(kwargs)
@@ -427,3 +437,19 @@ def test_restart_manual_review_returns_controlled_result_without_broker_actions(
     assert not broker.cancelled
     assert not broker.closes
     assert journal.alerts
+
+
+
+def test_second_coordinator_for_same_intent_is_rejected_before_broker_io():
+    broker, journal = FakeBroker(50), FakeJournal()
+    first = run(broker, journal)
+    assert first.state is RecoveryState.FLAT
+    first_cancel_count = len(broker.cancelled)
+    first_close_count = len(broker.closes)
+
+    second = run(broker, journal)
+
+    assert second.state is RecoveryState.MANUAL_REVIEW
+    assert "already owns" in second.reason
+    assert len(broker.cancelled) == first_cancel_count
+    assert len(broker.closes) == first_close_count
