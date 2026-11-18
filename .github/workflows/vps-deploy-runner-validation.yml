@@ -1,0 +1,28 @@
+name: VPS Deployment Runner Shell Validation
+
+on:
+  push:
+    paths:
+      - "deploy/vps-deploy-job-runner.sh"
+      - "deploy/bootstrap-vps.sh"
+      - ".github/workflows/vps-durable-deploy-job.yml"
+      - ".github/workflows/vps-deploy-runner-validation.yml"
+  pull_request:
+    paths:
+      - "deploy/vps-deploy-job-runner.sh"
+      - "deploy/bootstrap-vps.sh"
+      - ".github/workflows/vps-durable-deploy-job.yml"
+      - ".github/workflows/vps-deploy-runner-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  shell-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Bash syntax
+        run: |
+          bash -n deploy/vps-deploy-job-runner.sh
+          bash -n deploy/bootstrap-vps.sh
