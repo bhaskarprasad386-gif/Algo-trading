@@ -120,11 +120,11 @@ def fyers_auth_url(
 
 @router.post("/fyers/verify")
 def fyers_verify(
-    with broker_sessions.transition(user_id):
-        payload: FyersVerifyRequest,
-        db: Session = Depends(get_db),
-        user_id: int = Depends(require_real_owner_access),
+    payload: FyersVerifyRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
     ) -> dict:
+    with broker_sessions.transition(user_id):
         """Consume OAuth state, exchange the auth code, verify fy_id and bind one owner account."""
         try:
             fyers_oauth_states.consume(
