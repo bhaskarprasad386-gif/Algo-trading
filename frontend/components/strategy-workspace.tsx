@@ -908,6 +908,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const saveIndexSelection = async () => {
     if (slug !== "box-spread" || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0)) return;
+    const saveRequestSequence = ++indexSelectionRequestSequence.current;
     const weeklyOnly = weeklyOnlyDraft;
     const effectiveSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnly]));
     setIndexSelectionSaving(true);
@@ -922,6 +923,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Index selection save failed");
+      // A newer cross-session push is authoritative; do not let this POST response rewind it.
+      if (saveRequestSequence !== indexSelectionRequestSequence.current) return;
       const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : effectiveSymbols;
       const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
       setSavedIndexSymbols(saved);
@@ -935,7 +938,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         ? "Selection saved. New feed is warming up; the previous live feed and its rows remain active until readiness is confirmed."
         : (body?.message || "Index selection saved."));
     } catch (e) {
-      setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
+      if (saveRequestSequence === indexSelectionRequestSequence.current) setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
     } finally {
       setIndexSelectionSaving(false);
     }
