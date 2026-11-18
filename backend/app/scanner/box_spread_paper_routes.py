@@ -35,7 +35,7 @@ from app.scanner.box_spread_paper_engine import (
     ADVERSE_SLIPPAGE_RATE, BoxSpreadPaperEngine, BoxSpreadPaperEngineError,
 )
 from app.scanner.box_spread_entry_edge import validate_entry_edge
-from app.scanner.box_spread_paper_ledger import (
+from app.scanner.box_spread_paper_websocket import publish_after_success\nfrom app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperLedger, BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry,
 )
 
@@ -481,6 +481,7 @@ def get_execution_control():
 
 
 @router.post("/execution-control", dependencies=[Depends(require_paper_access)])
+@publish_after_success("EXECUTION_CONTROL_CHANGED")
 def set_execution_control(payload: PaperExecutionControl):
     global _paper_execution_enabled
     with _paper_execution_state_lock:
@@ -804,6 +805,7 @@ def trades(
 
 
 @router.post("/trades", dependencies=[Depends(require_paper_access)])
+@publish_after_success("TRADE_CREATED")
 def create_trade(payload: CreatePaperTrade):
     try:
         contracts = _resolve(payload)
@@ -875,6 +877,7 @@ def _load_trade_request(trade_id: int, account_key: str) -> CreatePaperTrade:
 
 
 @router.post("/trades/{trade_id}/simulate-entry", dependencies=[Depends(require_paper_access)])
+@publish_after_success("ENTRY_COMMITTED")
 async def simulate_entry(trade_id: int, payload: SimulateEntry):
     # Serialize entry attempts for the same paper trade within this API process.
     # The durable-fill check below remains the restart/replay protection.
@@ -1184,6 +1187,7 @@ def get_trade_audit_events(
 
 
 @router.post("/trades/{trade_id}/manual-review-decision")
+@publish_after_success("RECOVERY_STATE_CHANGED")
 def record_manual_review_decision(
     trade_id: int, payload: ManualReviewDecision,
     account_key: str = "default",
@@ -1206,6 +1210,7 @@ def record_manual_review_decision(
 
 
 @router.post("/trades/{trade_id}/exit", dependencies=[Depends(require_paper_access)])
+@publish_after_success("EXIT_COMMITTED")
 def exit_leg(trade_id: int, payload: ExitLeg):
     """Reject legacy single-leg exits; Box Spread exits must be one four-leg basket."""
     raise HTTPException(
@@ -1564,6 +1569,7 @@ def _execute_exit_basket_from_row(
 
 
 @router.post("/trades/{trade_id}/exit-basket", dependencies=[Depends(require_paper_access)])
+@publish_after_success("EXIT_COMMITTED")
 def exit_basket(trade_id: int, payload: ExitBasket):
     """Manual paper exit delegates to the shared four-leg execution path."""
     try:
@@ -1581,6 +1587,7 @@ def exit_basket(trade_id: int, payload: ExitBasket):
 
 
 @router.post("/trades/{trade_id}/settle-expiry", dependencies=[Depends(require_paper_access)])
+@publish_after_success("EXIT_COMMITTED")
 def settle_expiry(trade_id: int, payload: ExpirySettlement):
     # Fail closed: caller-supplied leg prices are not authenticated official settlement data.
     # Re-enable only after a trusted server-side underlying settlement source is verified
@@ -1644,4 +1651,19 @@ def recovery(account_key: str = "default"):
         _error(exc)
 
 
-__all__ = ["router"]
+
+def build_paper_private_snapshot():
+    """Return the authenticated single-owner paper read model for WS bootstrap/resync."""
+    return {
+        "mode": "PAPER_ONLY",
+        "broker_orders_enabled": False,
+        "account": account(account_key="default"),
+        "portfolio_summary": portfolio_summary(account_key="default"),
+        "execution_control": get_execution_control(),
+        "positions": trades(account_key="default", limit=500, offset=0,
+                             include_ledger=True, position_state="ALL"),
+        "recovery": recovery(account_key="default"),
+    }
+
+
+__all__ = ["router", "build_paper_private_snapshot"]
