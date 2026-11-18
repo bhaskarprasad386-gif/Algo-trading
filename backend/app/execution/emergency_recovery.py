@@ -161,6 +161,9 @@ class RecoveryJournal(Protocol):
     def set_state(self, *, account_id: str, intent_id: str, state: RecoveryState, reason: str) -> None: ...
     def release_risk_reservation(self, *, account_id: str, intent_id: str) -> None: ...
     def claim_recovery_attempt(self, *, account_id: str, intent_id: str, symbol: str) -> int: ...
+    def approve_emergency_close(self, *, account_id: str, intent_id: str, symbol: str,
+                                side: str, quantity: int, limit_price: Decimal,
+                                notional: Decimal) -> bool: ...
     def alert_operator(self, *, account_id: str, intent_id: str, reason: str) -> None: ...
 
 
@@ -369,6 +372,13 @@ class EmergencyRecoveryCoordinator:
                         symbol=position.symbol, side=side, quantity=quantity,
                         limit_price=limit_price, time_in_force="IOC", client_order_id=f"REC-{token}",
                     )
+                    notional = close.limit_price * close.quantity
+                    if not self._journal.approve_emergency_close(
+                        account_id=account_id, intent_id=intent_id, symbol=close.symbol,
+                        side=close.side, quantity=close.quantity,
+                        limit_price=close.limit_price, notional=notional,
+                    ):
+                        raise RuntimeError("emergency close exceeds the approved account/intent recovery budget")
                     placed = self._broker.place_ioc_limit(account_id=account_id, order=close)
                     if placed.client_order_id != close.client_order_id:
                         raise RuntimeError("broker returned a mismatched recovery client order ID")
