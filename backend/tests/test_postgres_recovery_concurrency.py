@@ -11,6 +11,7 @@ from app.core.database import Base
 from app.execution.durable_recovery_journal import DurableRecoveryJournal
 from app.models.execution_recovery_journal import (
     RecoveryBudgetRecord, RecoveryInstrumentLeaseRecord,
+    RecoveryControlRecord, RecoveryJournalEventRecord,
 )
 
 
@@ -101,7 +102,6 @@ def test_postgres_conflicting_basket_lease_rolls_back_uncontested_symbols(postgr
         assert [(row.intent_id, row.symbol) for row in leases] == [("owner", "NFO:PE")]
 
 
-
 def test_postgres_concurrent_attempt_claims_across_rebuilt_journals_respect_budget(postgres_journal):
     journal, factory = postgres_journal
     journal.configure_recovery_budget(
@@ -171,3 +171,35 @@ def test_postgres_concurrent_notional_approvals_across_rebuilt_journals_respect_
         )).scalar_one()
         assert Decimal(budget.notional_used) == Decimal("200")
         assert Decimal(budget.notional_used) <= Decimal(budget.max_notional)
+
+
+def test_postgres_concurrent_recovery_events_keep_unique_contiguous_sequence(postgres_journal):
+    journal, factory = postgres_journal
+    account_id = "acct-event-race"
+    intent_id = "intent-event-race"
+    # Create and commit the control row before racing appenders.
+    journal.append_event(
+        account_id=account_id, intent_id=intent_id,
+        event="RECOVERY_TEST_STARTED", details={"source": "concurrency-test"},
+    )
+
+    def append(index):
+        DurableRecoveryJournal(factory).append_event(
+            account_id=account_id, intent_id=intent_id,
+            event="CONCURRENT_RECOVERY_TEST_EVENT", details={"worker": index},
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(append, range(12)))
+
+    with factory() as db:
+        control = db.execute(select(RecoveryControlRecord).where(
+            RecoveryControlRecord.account_id == account_id,
+            RecoveryControlRecord.intent_id == intent_id,
+        )).scalar_one()
+        events = db.execute(select(RecoveryJournalEventRecord).where(
+            RecoveryJournalEventRecord.control_id == control.id,
+        ).order_by(RecoveryJournalEventRecord.sequence)).scalars().all()
+        assert len(events) == 13
+        assert [event.sequence for event in events] == list(range(13))
+        assert sum(event.event == "CONCURRENT_RECOVERY_TEST_EVENT" for event in events) == 12
