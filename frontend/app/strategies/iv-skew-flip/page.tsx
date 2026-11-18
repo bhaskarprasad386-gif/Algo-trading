@@ -499,9 +499,12 @@ export default function IVSkewFlipPage() {
       }catch{/* keep last successful chart window */}
     };
     void poll();
-    const timer=window.setInterval(()=>{if(active)void poll();},5000);
+    // Initial/history load is REST; while the page socket is LIVE, sampler
+    // observations are appended from pushed runtime snapshots instead.
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    const timer=window.setInterval(()=>{if(active)void poll();},15000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,requestedExpiry,activeWeeklyExpiry]);
+  },[base,activeWeeklyExpiry,pagePushStatus]);
   const loadMoreAlerts=async()=>{
     if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
     const query=new URLSearchParams({
@@ -547,6 +550,43 @@ export default function IVSkewFlipPage() {
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
       const pushedRuntime=pagePushData.runtime as Runtime;
       setRuntime(pushedRuntime);
+      // Runtime snapshots carry the sampler's latest real broker observations.
+      // Append them locally so the chart advances over WebSocket without a
+      // five-second history query; source timestamps remain capture timestamps,
+      // not exchange event times, so chart data stays labelled LAST.
+      const weekly=pushedRuntime.option_chains?.NIFTY_WEEKLY;
+      const weeklyExpiry=String(weekly?.option_feed?.expiry??"").trim();
+      const sampler=weekly?.sampler;
+      const liveMetrics=Array.isArray(sampler?.live_metrics)?sampler!.live_metrics as Row[]:[];
+      if(weeklyExpiry&&liveMetrics.length){
+        const spotState=pushedRuntime.spot_feed as Row|undefined;
+        const pushedObservations:IvChartObservation[]=liveMetrics
+          .filter(item=>item.iv_live===true&&n(item.iv)!==null&&n(item.source_timestamp_ns)!==null&&n(item.source_timestamp_ns)!>0)
+          .map(item=>({
+            token:String(item.token??""),
+            strike:n(item.strike)??undefined,
+            option_type:String(item.option_type??""),
+            timestamp_ns:n(item.source_timestamp_ns)??undefined,
+            spot_timestamp_ns:n(item.spot_timestamp_ns)??undefined,
+            spot_price:n(spotState?.price),
+            iv:n(item.iv),
+          }))
+          .filter(item=>Boolean(item.token)&&item.strike!==undefined&&item.timestamp_ns!==undefined&&Boolean(item.option_type));
+        if(pushedObservations.length){
+          const cutoff=Date.now()*1_000_000-1_800_000_000_000;
+          setChartHistory(current=>{
+            const sameExpiry=current?.expiry===weeklyExpiry;
+            const prior=sameExpiry&&Array.isArray(current?.observations)?current!.observations as IvChartObservation[]:[];
+            const merged=new Map<string,IvChartObservation>();
+            [...prior,...pushedObservations].forEach(item=>merged.set(`${item.token}:${item.timestamp_ns}`,item));
+            const observations=[...merged.values()]
+              .filter(item=>n(item.timestamp_ns)!==null&&Number(item.timestamp_ns)>=cutoff)
+              .sort((a,b)=>Number(a.timestamp_ns)-Number(b.timestamp_ns))
+              .slice(-20000);
+            return {...(sameExpiry?current:{}),status:"ok",underlying:"NIFTY",expiry:weeklyExpiry,window_seconds:1800,count:observations.length,observations,data_status:"LAST",fallback:false,source:"iv_runtime_websocket"};
+          });
+        }
+      }
       const alertState=pushedRuntime.early_entry_alerts as Row|undefined;
       const pushedAlerts=Array.isArray(alertState?.alerts)?alertState.alerts as EarlyAlert[]:[];
       if(pushedAlerts.length){
