@@ -146,17 +146,20 @@ def publish_page_update(page: str, event: str, data: dict[str, Any] | None = Non
     try:
         with engine.begin() as connection:
             row = connection.execute(
-                select(sequences.c.sequence).where(sequences.c.page == page).with_for_update()
+                update(sequences)
+                .where(sequences.c.page == page)
+                .values(sequence=sequences.c.sequence + 1)
+                .returning(sequences.c.sequence)
             ).first()
             if row is None:
                 connection.execute(insert(sequences).values(page=page, sequence=0))
-                current = 0
-            else:
-                current = int(row[0])
-            next_sequence = current + 1
-            connection.execute(
-                update(sequences).where(sequences.c.page == page).values(sequence=next_sequence)
-            )
+                row = connection.execute(
+                    update(sequences)
+                    .where(sequences.c.page == page)
+                    .values(sequence=sequences.c.sequence + 1)
+                    .returning(sequences.c.sequence)
+                ).first()
+            next_sequence = int(row[0])
             connection.execute(insert(events).values(
                 page=page, page_sequence=next_sequence, event=event,
                 data=safe_data, created_at=datetime.now(timezone.utc).timestamp(),
@@ -203,11 +206,16 @@ async def _journal_dispatch_loop() -> None:
                                 queue.get_nowait()
                             except asyncio.QueueEmpty:
                                 break
-                        queue.put_nowait({
-                            "type": "page_update", "page": row["page"],
-                            "event": "SNAPSHOT_REQUIRED", "sequence": row["sequence"],
-                            "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
-                        })
+                        for subscribed_page in channels:
+                            latest_sequence = (
+                                row["sequence"] if subscribed_page == row["page"]
+                                else await asyncio.to_thread(_latest_page_sequence, subscribed_page)
+                            )
+                            queue.put_nowait({
+                                "type": "page_update", "page": subscribed_page,
+                                "event": "SNAPSHOT_REQUIRED", "sequence": latest_sequence,
+                                "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+                            })
                     else:
                         queue.put_nowait(frame)
         except asyncio.CancelledError:
