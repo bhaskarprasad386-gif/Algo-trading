@@ -78,3 +78,19 @@ class RecoveryJournalEventRecord(Base):
     event: Mapped[str] = mapped_column(String(64), nullable=False)
     details_json: Mapped[str] = mapped_column(Text, nullable=False)
     occurred_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+
+class RecoveryCoordinatorOwnerRecord(Base):
+    """Permanent first-owner claim; takeover requires a separate audited workflow."""
+    __tablename__ = "execution_recovery_coordinator_owners"
+    __table_args__ = (
+        UniqueConstraint("account_id", "intent_id", name="uq_recovery_coordinator_owner"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    intent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    owner_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    claimed_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
