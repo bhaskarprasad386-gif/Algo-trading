@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, RefreshCw, TriangleAlert } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type DiagnosticError = {
   id: string;
@@ -22,6 +23,7 @@ export default function ErrorsPage() {
   const [errors, setErrors] = useState<DiagnosticError[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const pagePush = usePagePush("errors");
 
   const loadErrors = async () => {
     try {
@@ -39,10 +41,22 @@ export default function ErrorsPage() {
   };
 
   useEffect(() => {
+    const pushed = pagePush.data;
+    if (pushed && Array.isArray(pushed.errors)) {
+      setErrors(pushed.errors as DiagnosticError[]);
+      setLastUpdated(new Date().toISOString());
+      setLoading(false);
+    }
+  }, [pagePush.data]);
+
+  useEffect(() => {
     void loadErrors();
-    const timer = window.setInterval(() => void loadErrors(), 2000);
+    // Keep a slow REST fallback only while push is unavailable. Once the
+    // WebSocket is live, diagnostics updates arrive from backend record events.
+    if (pagePush.status === "LIVE") return;
+    const timer = window.setInterval(() => void loadErrors(), 30000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [pagePush.status]);
 
   return (
     <div className="min-h-screen theme-bg theme-text p-1">
@@ -72,8 +86,8 @@ export default function ErrorsPage() {
             <div className="mt-1 text-sm font-bold">{errors.length ? "ATTENTION" : "HEALTHY"}</div>
           </div>
           <div>
-            <div className="text-[9px] uppercase tracking-wide theme-subtle">Refresh</div>
-            <div className="mt-1 text-sm font-bold">2s</div>
+            <div className="text-[9px] uppercase tracking-wide theme-subtle">Transport</div>
+            <div className="mt-1 text-sm font-bold">{pagePush.status}</div>
           </div>
           <div>
             <div className="text-[9px] uppercase tracking-wide theme-subtle">Last Updated</div>
