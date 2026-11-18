@@ -89,6 +89,7 @@ The post-merge GitHub VPS Deploy workflow attempted an SSH session and failed af
 A new manual-only workflow and remote runner have been added on a separate Batch 0 branch:
 
 - `.github/workflows/vps-durable-deploy-job.yml` submits a unique GitHub run ID and immutable 40-character target commit SHA.
+- `.github/workflows/vps-deploy-job-status.yml` queries an existing job ID without creating another deployment; optional log-tail output is explicitly opt-in because operational logs may contain sensitive details.
 - `deploy/vps-deploy-job-runner.sh` persists a per-job status record and log under `/var/lib/algo-trading-deploy/jobs/<run_id>/`, launches a detached systemd transient worker, and uses a host-level `flock` to prevent concurrent remote deploys.
 - Submission is idempotent: if the same job ID already has a durable status record, a second submission is blocked and the existing status is returned.
 - The workflow polls the same job ID after SSH disconnects. It never resubmits just because the initial SSH response was lost. A stale RUNNING state with an inactive systemd unit is reported as `UNKNOWN_REQUIRES_INSPECTION`.
