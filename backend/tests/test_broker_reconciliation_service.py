@@ -387,3 +387,35 @@ def test_multileg_spread_with_equal_partial_fills_has_no_leg_imbalance_issue(db)
         issue.status.value == "MULTI_LEG_FILL_QUANTITY_MISMATCH"
         for issue in result["report"].issues
     )
+
+
+def test_same_account_id_with_wrong_broker_cannot_reconcile_other_broker_orders(db):
+    _persist_order(db)
+    source = _snapshot()
+    wrong_broker_snapshot = BrokerSnapshot(
+        account_id=source.account_id,
+        broker="zerodha",
+        orders=source.orders,
+        trades=source.trades,
+        complete=True,
+    )
+
+    result = reconcile_persisted_account_snapshot(
+        db,
+        snapshot=wrong_broker_snapshot,
+        reconciliation_id="run-wrong-broker-scope",
+        intent_ids=("intent-reconcile",),
+    )
+
+    assert result["report"].is_consistent is False
+    assert any(
+        issue.status.value == "UNRECORDED_BROKER_ORDER"
+        for issue in result["report"].issues
+    )
+    stored = db.scalar(select(BrokerReconciliationRecord).where(
+        BrokerReconciliationRecord.reconciliation_id == "run-wrong-broker-scope"
+    ))
+    assert stored is not None
+    assert stored.account_id == "acct-1"
+    assert stored.broker == "zerodha"
+    assert stored.is_consistent is False
