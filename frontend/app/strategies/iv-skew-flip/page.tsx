@@ -45,6 +45,7 @@ type Runtime = {
   spot_future_basis?: Record<string, Row>;
   telegram_configured?: boolean;
   telegram_delivery?: Row;
+  early_entry_alerts?: { alerts?: EarlyAlert[]; [key: string]: unknown };
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
