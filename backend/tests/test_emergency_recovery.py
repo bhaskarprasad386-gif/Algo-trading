@@ -19,6 +19,8 @@ class FakeJournal:
         self.alerts = []
         self.released = []
         self.attempts = {}
+        self.approve_close = True
+        self.approved_closes = []
         self.frozen = []
         self.leases = True
 
@@ -42,6 +44,10 @@ class FakeJournal:
 
     def assert_exclusive_instrument_lease(self, **kwargs):
         return self.leases
+
+    def approve_emergency_close(self, **kwargs):
+        self.approved_closes.append(kwargs)
+        return self.approve_close
 
     def claim_recovery_attempt(self, *, account_id, intent_id, symbol):
         key = (account_id, intent_id, symbol)
@@ -362,3 +368,13 @@ def test_cancel_error_does_not_prevent_cancelling_other_working_legs():
     assert broker.cancelled == ["entry-1", "entry-2"]
     assert not broker.closes
     assert any(event["event"] == "ENTRY_CANCEL_ERROR" for event in journal.events)
+
+
+def test_recovery_budget_must_approve_close_before_broker_submission():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.approve_close = False
+    result = run(broker, journal)
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert journal.approved_closes
+    assert not journal.released
