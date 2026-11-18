@@ -413,19 +413,19 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
 @router.get("/{broker}/status")
 def status(broker: str, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     key = (user_id, broker.strip().lower())
-    adapter = broker_sessions.get(*key)
-    item = broker_connections.get(user_id, key[1])
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
-    ).first()
-    # The durable row is authoritative; missing ownership must remain fail-closed.
-    return {
-        "broker": key[1],
-        "connected": bool(adapter and adapter.connected and item and item.connected),
-        "display_name": item.display_name if item else None,
-        "real_trading": owner_state.real_trading_enabled if owner_state else False,
-        "kill_switch": owner_state.kill_switch if owner_state else True,
-    }
+    with broker_sessions.lease(*key) as adapter:
+        item = broker_connections.get(user_id, key[1])
+        owner_state = db.query(BoxSpreadRealOwnerState).filter(
+            BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+        ).first()
+        # The durable row is authoritative; missing ownership must remain fail-closed.
+        return {
+            "broker": key[1],
+            "connected": bool(adapter and adapter.connected and item and item.connected),
+            "display_name": item.display_name if item else None,
+            "real_trading": owner_state.real_trading_enabled if owner_state else False,
+            "kill_switch": owner_state.kill_switch if owner_state else True,
+        }
 
 
 @router.delete("/{broker}")
