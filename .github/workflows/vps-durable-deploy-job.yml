@@ -110,8 +110,6 @@ jobs:
             "rm -f '$REMOTE_RUNNER'" >/dev/null 2>&1
           set -e
           if [[ "$TERMINAL" == "true" && "$STATUS_OUTPUT" == *'"status":"SUCCEEDED"'* ]]; then
-            timeout 45s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
-              "bash /var/lib/algo-trading-deploy/jobs/$RUN_ID/runner.sh logs '$RUN_ID' '$TARGET_SHA' '$FORCE_RESTART'" || true
             rm -f /tmp/vps_key /tmp/vps_known_hosts
             exit 0
           fi
@@ -120,7 +118,5 @@ jobs:
             exit 0
           fi
           echo "VPS deployment is not confirmed successful. Inspect the same remote job ID $RUN_ID; never create a duplicate job to guess the outcome." >&2
-          timeout 45s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
-            "bash /var/lib/algo-trading-deploy/jobs/$RUN_ID/runner.sh logs '$RUN_ID' '$TARGET_SHA' '$FORCE_RESTART'" || true
           rm -f /tmp/vps_key /tmp/vps_known_hosts
           exit 1
