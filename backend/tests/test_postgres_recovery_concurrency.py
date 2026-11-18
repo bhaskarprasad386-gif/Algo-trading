@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.execution.durable_recovery_journal import DurableRecoveryJournal
+from app.execution.emergency_recovery import RecoveryState
 from app.models.execution_recovery_journal import (
     RecoveryBudgetRecord, RecoveryInstrumentLeaseRecord,
     RecoveryControlRecord, RecoveryJournalEventRecord,
@@ -203,3 +204,63 @@ def test_postgres_concurrent_recovery_events_keep_unique_contiguous_sequence(pos
         assert len(events) == 13
         assert [event.sequence for event in events] == list(range(13))
         assert sum(event.event == "CONCURRENT_RECOVERY_TEST_EVENT" for event in events) == 12
+
+
+
+def test_postgres_concurrent_state_writers_cannot_reopen_verified_flat(postgres_journal):
+    journal, factory = postgres_journal
+    account_id = "acct-flat-race"
+    intent_id = "intent-flat-race"
+    # Seed the row so the race exercises row-level serialization, not
+    # simultaneous first-time control creation.
+    journal.set_state(
+        account_id=account_id, intent_id=intent_id,
+        state=RecoveryState.RECOVERING, reason="recovery in progress",
+    )
+
+    def transition(index):
+        state = RecoveryState.FLAT if index == 0 else (
+            RecoveryState.MANUAL_REVIEW if index % 2 else RecoveryState.RECOVERING
+        )
+        try:
+            DurableRecoveryJournal(factory).set_state(
+                account_id=account_id, intent_id=intent_id,
+                state=state, reason=f"concurrent writer {index}",
+            )
+            return "accepted"
+        except ValueError as exc:
+            assert "terminal" in str(exc)
+            return "rejected_after_flat"
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        outcomes = list(pool.map(transition, range(12)))
+
+    assert outcomes.count("accepted") >= 1
+    with factory() as db:
+        control = db.execute(select(RecoveryControlRecord).where(
+            RecoveryControlRecord.account_id == account_id,
+            RecoveryControlRecord.intent_id == intent_id,
+        )).scalar_one()
+        assert control.state == RecoveryState.FLAT.value
+        assert control.risk_reserved is True
+        events = db.execute(select(RecoveryJournalEventRecord).where(
+            RecoveryJournalEventRecord.control_id == control.id,
+        ).order_by(RecoveryJournalEventRecord.sequence)).scalars().all()
+        sequences = [event.sequence for event in events]
+        assert sequences == list(range(len(sequences)))
+        assert sum(
+            event.event == "RECOVERY_STATE_CHANGED"
+            and '"state":"FLAT_AFTER_UNWIND"' in event.details_json
+            for event in events
+        ) == 1
+        # Once FLAT commits, every later non-FLAT transition must be rejected.
+        flat_index = next(
+            index for index, event in enumerate(events)
+            if event.event == "RECOVERY_STATE_CHANGED"
+            and '"state":"FLAT_AFTER_UNWIND"' in event.details_json
+        )
+        assert all(
+            '"state":"FLAT_AFTER_UNWIND"' in event.details_json
+            or event.event != "RECOVERY_STATE_CHANGED"
+            for event in events[flat_index + 1:]
+        )
