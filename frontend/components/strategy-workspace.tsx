@@ -604,6 +604,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
   const indexSelectionDraftInitialized = useRef(false);
+  const historyRequestSequence = useRef(0);
   const indexSelectionRequestSequence = useRef(0);
 
   useEffect(() => {
@@ -829,6 +830,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const loadHistory = async () => {
     if (isCustom || !c.historyEndpoint) return;
+    const requestSequence = ++historyRequestSequence.current;
     setHistoryLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -846,15 +848,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
+      if (requestSequence !== historyRequestSequence.current) return;
       setHistoryRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       setHistoryTotalCount(slug === "box-spread" && Number.isFinite(Number(body?.total_count)) ? Math.max(0, Number(body.total_count)) : data.length);
       setHistoryHealth(body?.persistence && typeof body.persistence === "object" ? body.persistence : null);
       setHistoryError(null);
     } catch (e) {
-      setHistoryError(e instanceof Error ? e.message : "History API unavailable");
+      if (requestSequence === historyRequestSequence.current) setHistoryError(e instanceof Error ? e.message : "History API unavailable");
       // Keep last good history snapshot during transient backend failures.
     } finally {
-      setHistoryLoading(false);
+      if (requestSequence === historyRequestSequence.current) setHistoryLoading(false);
     }
   };
 
