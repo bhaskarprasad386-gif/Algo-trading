@@ -275,3 +275,27 @@ def test_non_terminal_emergency_close_is_escalated_without_retry():
     assert result.state is RecoveryState.MANUAL_REVIEW
     assert len(broker.closes) == 1
     assert not journal.released
+
+
+def test_partial_fill_without_remaining_quantity_is_not_assumed_terminal():
+    order = RecoveryOrder(
+        broker_order_id="partial-unknown", client_order_id="partial-client",
+        symbol="NFO:CE", role="ENTRY", status="PARTIALLY_FILLED",
+    )
+    assert not order.terminal
+
+
+def test_duplicate_baseline_rows_are_rejected_before_recovery():
+    broker, journal = FakeBroker(50), FakeJournal()
+    coordinator = EmergencyRecoveryCoordinator(broker, journal)
+    try:
+        coordinator.recover(
+            account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+            symbols=("NFO:CE",),
+            baseline_positions=(RecoveryPosition("NFO:CE", 0), RecoveryPosition("NFO:CE", 0)),
+        )
+    except ValueError as exc:
+        assert "one row per instrument" in str(exc)
+    else:
+        raise AssertionError("duplicate baseline rows must fail closed")
+    assert not broker.closes
