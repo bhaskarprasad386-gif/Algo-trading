@@ -63,3 +63,56 @@ def test_connect_endpoint_rejects_non_angel_one_before_using_database():
 
     assert exc.value.status_code == 400
     assert "Unsupported broker" in exc.value.detail
+
+
+
+@pytest.mark.parametrize(
+    "endpoint_name",
+    ["disable_real_trading", "emergency_kill_switch"],
+)
+def test_disarm_endpoints_disable_local_state_before_durable_failure(monkeypatch, endpoint_name):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    store = TradingSafetyStore()
+    store.enable(91005)
+    monkeypatch.setattr(routes, "trading_safety", store)
+
+    db = Mock()
+    def fail_durable_write(_db):
+        assert store.get(91005).real_trading_enabled is False
+        assert store.get(91005).kill_switch is True
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(routes, "disable_owner_trading", fail_durable_write)
+    endpoint = getattr(routes, endpoint_name)
+
+    with pytest.raises(HTTPException) as exc:
+        endpoint(db=db, user_id=91005)
+
+    assert exc.value.status_code == 503
+    assert store.get(91005).real_trading_enabled is False
+    assert store.get(91005).kill_switch is True
+    assert store.get(91005).enabled_at is None
+    db.rollback.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "endpoint_name",
+    ["disable_real_trading", "emergency_kill_switch"],
+)
+def test_disarm_endpoints_confirm_durable_kill_switch_state(monkeypatch, endpoint_name):
+    from types import SimpleNamespace
+
+    store = TradingSafetyStore()
+    store.enable(91006)
+    monkeypatch.setattr(routes, "trading_safety", store)
+    persisted = SimpleNamespace(real_trading_enabled=False, kill_switch=True)
+    monkeypatch.setattr(routes, "disable_owner_trading", lambda _db: persisted)
+
+    response = getattr(routes, endpoint_name)(db=object(), user_id=91006)
+
+    assert response["real_trading_enabled"] is False
+    assert response["kill_switch"] is True
+    assert store.get(91006).real_trading_enabled is False
+    assert store.get(91006).kill_switch is True
