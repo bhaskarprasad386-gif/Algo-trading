@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -58,7 +60,7 @@ class RecoveryBudgetRecord(Base):
     approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     attempts_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    max_notional: Mapped[float] = mapped_column(Numeric(24, 8), nullable=False)
+    max_notional: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     notional_used: Mapped[float] = mapped_column(Numeric(24, 8), nullable=False, default=0)
     updated_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
