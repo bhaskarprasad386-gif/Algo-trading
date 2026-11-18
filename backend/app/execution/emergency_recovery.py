@@ -28,6 +28,12 @@ class RecoveryOrder:
     status: str
     remaining_quantity: int | None = None
 
+    def __post_init__(self) -> None:
+        if not self.broker_order_id.strip() or not self.client_order_id.strip() or not self.symbol.strip():
+            raise ValueError("recovery order identities and symbol are required")
+        if not self.status.strip() or (self.remaining_quantity is not None and self.remaining_quantity < 0):
+            raise ValueError("recovery order status and remaining quantity are invalid")
+
     @property
     def terminal(self) -> bool:
         status = self.status.strip().upper()
@@ -42,8 +48,8 @@ class RecoveryPosition:
     quantity: int  # positive = long, negative = short
 
     def __post_init__(self) -> None:
-        if not self.symbol.strip():
-            raise ValueError("position symbol cannot be empty")
+        if not self.symbol.strip() or not isinstance(self.quantity, int):
+            raise ValueError("position symbol and integer quantity are required")
 
 
 @dataclass(frozen=True)
@@ -56,6 +62,14 @@ class RecoverySnapshot:
     orders: tuple[RecoveryOrder, ...]
     positions: tuple[RecoveryPosition, ...]
 
+    def __post_init__(self) -> None:
+        if not self.account_id.strip() or not self.broker.strip():
+            raise ValueError("recovery snapshot account and broker are required")
+        if not all(isinstance(flag, bool) for flag in (
+            self.authoritative, self.positions_reconciled, self.position_attribution_complete,
+        )):
+            raise ValueError("recovery snapshot evidence flags must be boolean")
+
 
 @dataclass(frozen=True)
 class RecoveryQuote:
@@ -67,6 +81,15 @@ class RecoveryQuote:
     lot_size: int
     observed_at_ns: int
 
+    def __post_init__(self) -> None:
+        if (
+            not self.bid.is_finite() or not self.ask.is_finite()
+            or not self.tick_size.is_finite() or self.tick_size <= 0
+            or self.bid_depth < 0 or self.ask_depth < 0 or self.lot_size <= 0
+            or self.observed_at_ns <= 0
+        ):
+            raise ValueError("recovery quote values, depth, lot size and timestamp must be valid")
+
 
 @dataclass(frozen=True)
 class EmergencyClose:
@@ -76,6 +99,14 @@ class EmergencyClose:
     limit_price: Decimal
     time_in_force: str
     client_order_id: str
+
+    def __post_init__(self) -> None:
+        if self.side not in {"BUY", "SELL"} or self.quantity <= 0:
+            raise ValueError("emergency close side and quantity are invalid")
+        if not self.limit_price.is_finite() or self.limit_price <= 0:
+            raise ValueError("emergency close requires a finite positive limit price")
+        if self.time_in_force != "IOC" or not self.client_order_id.strip():
+            raise ValueError("emergency close must be IOC with a deterministic client order ID")
 
 
 @dataclass(frozen=True)
@@ -140,7 +171,10 @@ def _close_price(quote: RecoveryQuote, *, side: str, slippage_bps: Decimal) -> D
     factor = slippage_bps / Decimal("10000")
     raw = quote.bid * (Decimal("1") - factor) if side == "SELL" else quote.ask * (Decimal("1") + factor)
     rounding = ROUND_FLOOR if side == "SELL" else ROUND_CEILING
-    return (raw / quote.tick_size).to_integral_value(rounding=rounding) * quote.tick_size
+    price = (raw / quote.tick_size).to_integral_value(rounding=rounding) * quote.tick_size
+    if price <= 0:
+        raise ValueError("recovery price collar produced a non-positive limit")
+    return price
 
 
 class EmergencyRecoveryCoordinator:
