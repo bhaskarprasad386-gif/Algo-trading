@@ -374,7 +374,10 @@ object ApiService {
                 } else request
                 val response = chain.proceed(authenticated)
                 if (isBrokerApi && response.code == 401) {
-                    try { clearRealOwnerAccessToken() } catch (_: Exception) { realOwnerAccessToken = null }
+                    try { clearRealOwnerAccessToken() } catch (_: Exception) {
+                        realOwnerAccessToken = null
+                        realOwnerTokenExpiresAtMs = 0L
+                    }
                 }
                 response
             }
