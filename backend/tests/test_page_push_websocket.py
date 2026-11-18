@@ -150,14 +150,11 @@ def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
         task = asyncio.create_task(push._journal_dispatch_loop())
         try:
             await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
-            for _ in range(20):
-                if not queue.empty():
-                    item = queue.get_nowait()
-                    if item.get("event") == "SNAPSHOT_REQUIRED":
-                        assert item["sequence"] == 2
-                        return
-                await asyncio.sleep(0.01)
-            raise AssertionError("queue overflow did not request a fresh snapshot")
+            await asyncio.sleep(0.05)
+            assert queue.qsize() == 1
+            item = queue.get_nowait()
+            assert item["event"] == "SNAPSHOT_REQUIRED"
+            assert item["sequence"] == 2
         finally:
             monkeypatch.setattr(push, "_subscribers", set())
             task.cancel()
