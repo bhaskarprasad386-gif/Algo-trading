@@ -289,23 +289,27 @@ class EmergencyRecoveryCoordinator:
             raise ValueError("account, intent, strategy and basket symbols are required")
         if set(baseline) != symbol_set:
             raise ValueError("a durable pre-entry baseline is required for every basket instrument")
-        self._journal.latch_entry_kill_switch(
-            account_id=account_id, strategy=strategy, reason="multi-leg entry failed; recovery active",
-        )
-        self._journal.freeze_intent(
-            account_id=account_id, intent_id=intent_id, reason="stop all unsent basket legs and retries",
-        )
-        self._journal.set_state(
-            account_id=account_id, intent_id=intent_id,
-            state=RecoveryState.RECOVERING, reason="cancel/reconcile/close workflow started",
-        )
-        self._journal.append_event(
-            account_id=account_id, intent_id=intent_id, event="RECOVERY_STARTED",
-            details={"strategy": strategy, "symbols": sorted(symbol_set)},
-        )
         attempts = 0
         residuals: tuple[RecoveryPosition, ...] = ()
         try:
+            # Keep every durable state transition inside the fail-closed boundary.
+            # In particular, a restart/manual-review intent must return a
+            # controlled MANUAL_REVIEW result rather than leaking an exception
+            # before the coordinator's recovery guard is active.
+            self._journal.latch_entry_kill_switch(
+                account_id=account_id, strategy=strategy, reason="multi-leg entry failed; recovery active",
+            )
+            self._journal.freeze_intent(
+                account_id=account_id, intent_id=intent_id, reason="stop all unsent basket legs and retries",
+            )
+            self._journal.set_state(
+                account_id=account_id, intent_id=intent_id,
+                state=RecoveryState.RECOVERING, reason="cancel/reconcile/close workflow started",
+            )
+            self._journal.append_event(
+                account_id=account_id, intent_id=intent_id, event="RECOVERY_STARTED",
+                details={"strategy": strategy, "symbols": sorted(symbol_set)},
+            )
             snapshot = self._snapshot(account_id, intent_id)
             for order in snapshot.orders:
                 if order.role.strip().upper() == "ENTRY" and not order.terminal:
