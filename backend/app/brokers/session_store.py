@@ -79,7 +79,9 @@ class BrokerSessionStore:
     ) -> Exception | None:
         """Publish new session, drain old leases, then best-effort disconnect old."""
         previous = self.replace(owner_id, broker, adapter)
-        if previous is None:
+        if previous is None or previous is adapter:
+            # Re-publishing the exact same adapter must not disconnect the
+            # session that remains reachable under this key.
             return None
         self._wait_until_idle(previous)
         try:
