@@ -42,6 +42,12 @@ def test_postgres_concurrent_recovery_claims_never_exceed_approved_attempts(post
         account_id="acct-race", intent_id="intent-race", symbol="NFO:OPT",
         max_attempts=3, max_notional=Decimal("50000"), approved=True,
     )
+    assert journal.acquire_instrument_leases(
+        account_id="acct-race", intent_id="intent-race", symbols=("NFO:OPT",),
+    )
+    journal.freeze_intent(
+        account_id="acct-race", intent_id="intent-race", reason="partial fill",
+    )
 
     def claim(_):
         try:
@@ -99,3 +105,41 @@ def test_postgres_conflicting_basket_lease_rolls_back_uncontested_symbols(postgr
             RecoveryInstrumentLeaseRecord.account_id == "acct-race",
         ).order_by(RecoveryInstrumentLeaseRecord.symbol)).scalars().all()
         assert [(row.intent_id, row.symbol) for row in leases] == [("owner", "NFO:PE")]
+
+
+def test_postgres_concurrent_close_approvals_consume_each_attempt_once(postgres_journal):
+    journal, factory = postgres_journal
+    journal.configure_recovery_budget(
+        account_id="acct-approval", intent_id="intent-approval", symbol="NFO:OPT",
+        max_attempts=3, max_notional=Decimal("50000"), approved=True,
+    )
+    assert journal.acquire_instrument_leases(
+        account_id="acct-approval", intent_id="intent-approval", symbols=("NFO:OPT",),
+    )
+    journal.freeze_intent(
+        account_id="acct-approval", intent_id="intent-approval", reason="partial fill",
+    )
+    for _ in range(3):
+        journal.claim_recovery_attempt(
+            account_id="acct-approval", intent_id="intent-approval", symbol="NFO:OPT",
+        )
+
+    def approve(_):
+        return journal.approve_emergency_close(
+            account_id="acct-approval", intent_id="intent-approval", symbol="NFO:OPT",
+            side="SELL", quantity=1, limit_price=Decimal("100"),
+            notional=Decimal("100"),
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        outcomes = list(pool.map(approve, range(12)))
+
+    assert sum(outcomes) == 3
+    with factory() as db:
+        budget = db.execute(select(RecoveryBudgetRecord).where(
+            RecoveryBudgetRecord.account_id == "acct-approval",
+            RecoveryBudgetRecord.intent_id == "intent-approval",
+            RecoveryBudgetRecord.symbol == "NFO:OPT",
+        )).scalar_one()
+        assert budget.attempts_used == 3
+        assert budget.notional_used == Decimal("300")
