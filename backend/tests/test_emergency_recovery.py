@@ -49,6 +49,12 @@ class FakeJournal:
         self.approved_closes.append(kwargs)
         return self.approve_close
 
+    def pending_close_authorizations(self, **kwargs):
+        return ()
+
+    def mark_close_authorization_reconciled(self, **kwargs):
+        return None
+
     def claim_recovery_attempt(self, *, account_id, intent_id, symbol):
         key = (account_id, intent_id, symbol)
         self.attempts[key] = self.attempts.get(key, 0) + 1
