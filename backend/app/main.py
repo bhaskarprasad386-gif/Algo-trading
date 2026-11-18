@@ -67,8 +67,8 @@ from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_rout
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
-from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
-from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
+from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot, live as calendar_spread_live_page, pairs as calendar_spread_pairs_page, pair_diagnostics as calendar_spread_diagnostics_page, feed_diagnostics as calendar_spread_feed_page
+from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs, live as synthetic_live_page, pairs as synthetic_pairs_page, diagnostics as synthetic_diagnostics_page
 from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
@@ -379,6 +379,40 @@ def _box_page_push_snapshot():
 
 
 configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
+def _cash_future_page_push_snapshot():
+    stats = live_cash_future_scanner.health()
+    return {
+        "rows": live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500),
+        "pairs": live_cash_future_scanner.pair_snapshot(max_age_seconds=120.0, limit=500),
+        "stats": stats,
+        "scan_at": stats.get("last_observation_at"),
+        "runner": None if live_cash_future_runner is None else live_cash_future_runner.snapshot(),
+    }
+
+
+def _calendar_spread_page_push_snapshot():
+    return {
+        "live": calendar_spread_live_page(limit=200),
+        "pairs": calendar_spread_pairs_page(limit=500),
+        "pair_diagnostics": calendar_spread_diagnostics_page(limit=500),
+        "feed_diagnostics": calendar_spread_feed_page(),
+    }
+
+
+def _synthetic_page_push_snapshot():
+    runner = live_synthetic_runner
+    return {
+        "live": synthetic_live_page(limit=200, max_age_seconds=5.0),
+        "pairs": synthetic_pairs_page(limit=500),
+        "diagnostics": synthetic_diagnostics_page(),
+        "universe": dict(_live_synthetic_universe_status),
+        "runner": None if runner is None else runner.snapshot(),
+    }
+
+
+configure_page_push_snapshot("cash-future", _cash_future_page_push_snapshot)
+configure_page_push_snapshot("calendar-spread", _calendar_spread_page_push_snapshot)
+configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_snapshot)
 configure_paper_private_ws_snapshot(build_paper_private_snapshot)
 configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
@@ -932,6 +966,27 @@ async def _run_live_runner_in_daemon_thread(
             _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
 
 
+_last_cash_future_page_push_at = 0.0
+
+
+def _publish_cash_future_page_update(*, force: bool = False) -> None:
+    global _last_cash_future_page_push_at
+    now = time_module.monotonic()
+    if not force and now - _last_cash_future_page_push_at < 0.5:
+        return
+    _last_cash_future_page_push_at = now
+    try:
+        publish_page_update("cash-future", "SNAPSHOT", _cash_future_page_push_snapshot())
+    except Exception as exc:
+        app_logger.warning("Cash-Future page push skipped: {}", exc)
+
+
+def _observe_cash_future_payload(payload):
+    result = live_cash_future_scanner.observe(payload, session_factory=SessionLocal)
+    _publish_cash_future_page_update()
+    return result
+
+
 async def _live_cash_future_loop() -> None:
     """Supervise the live scanner feed with bounded exponential retry backoff."""
     global live_cash_future_runner
@@ -941,9 +996,7 @@ async def _live_cash_future_loop() -> None:
         runner = LiveCashFutureCommonRunner(
             settings.BACKTEST_DATA_DB,
             instrument_master=instrument_master,
-            on_payload=lambda payload: live_cash_future_scanner.observe(
-                payload, session_factory=SessionLocal
-            ),
+            on_payload=_observe_cash_future_payload,
         )
         live_cash_future_runner = runner
         try:
@@ -1197,6 +1250,22 @@ def _update_live_synthetic_results(results: tuple) -> None:
             ):
                 latest[key] = (timestamp_ns, edge, result)
         live_synthetic_latest_results = tuple(item[2] for item in latest.values())
+    _publish_synthetic_page_update()
+
+
+_last_synthetic_page_push_at = 0.0
+
+
+def _publish_synthetic_page_update(*, force: bool = False) -> None:
+    global _last_synthetic_page_push_at
+    now = time_module.monotonic()
+    if not force and now - _last_synthetic_page_push_at < 0.5:
+        return
+    _last_synthetic_page_push_at = now
+    try:
+        publish_page_update("synthetic-arbitrage", "SNAPSHOT", _synthetic_page_push_snapshot())
+    except Exception as exc:
+        app_logger.warning("Synthetic page push skipped: {}", exc)
 
 
 def _start_box_spread_runner_worker(runner):
@@ -1571,6 +1640,22 @@ def _update_live_box_spread_results(results: tuple) -> None:
         publish_live_box_spread_opportunities(selected_results)
 
 
+_last_calendar_spread_page_push_at = 0.0
+
+
+def _observe_calendar_spread_payload(payload):
+    global _last_calendar_spread_page_push_at
+    result = live_calendar_spread_scanner.observe(payload, session_factory=SessionLocal)
+    now = time_module.monotonic()
+    if now - _last_calendar_spread_page_push_at >= 0.5:
+        _last_calendar_spread_page_push_at = now
+        try:
+            publish_page_update("calendar-spread", "SNAPSHOT", _calendar_spread_page_push_snapshot())
+        except Exception as exc:
+            app_logger.warning("Calendar Spread page push skipped: {}", exc)
+    return result
+
+
 async def _live_calendar_spread_loop() -> None:
     """Supervise Calendar Spread collector exits with bounded exponential retry."""
     global live_calendar_spread_runner
@@ -1581,9 +1666,7 @@ async def _live_calendar_spread_loop() -> None:
             settings.BACKTEST_DATA_DB,
             auth=AngelOneAuth(),
             instrument_master=instrument_master,
-            on_observation=lambda payload: live_calendar_spread_scanner.observe(
-                payload, session_factory=SessionLocal
-            ),
+            on_observation=_observe_calendar_spread_payload,
         )
         live_calendar_spread_runner = collector
         try:
