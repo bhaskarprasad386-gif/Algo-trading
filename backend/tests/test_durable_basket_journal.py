@@ -190,3 +190,63 @@ def test_submission_start_is_one_way_and_cannot_replace_client_ids(journal):
                 expected_quantities={"replacement-1": 25, "replacement-2": 25},
             )
     asyncio.run(run())
+
+
+def test_terminal_filled_basket_cannot_be_reopened_by_freeze_or_manual_review(journal):
+    durable, factory = journal
+
+    async def complete():
+        assert await durable.claim_submission(
+            account_id="acct-a", intent_id="terminal-1",
+            strategy="BOX_SPREAD", snapshot_id="snap-terminal",
+        )
+        client_ids = ("leg-1", "leg-2", "leg-3", "leg-4")
+        await durable.record_submission_started(
+            account_id="acct-a", intent_id="terminal-1",
+            client_order_ids=client_ids,
+            expected_quantities={client_id: 25 for client_id in client_ids},
+        )
+        await durable.complete_filled_basket(
+            account_id="acct-a", intent_id="terminal-1",
+            reconciliation=BasketReconciliation(
+                authoritative=True, orders_complete=True,
+                trades_complete=True, positions_reconciled=True,
+                legs=tuple(
+                    ReconciledLeg(client_id, f"broker-{index}", 25, True)
+                    for index, client_id in enumerate(client_ids, start=1)
+                ),
+            ),
+        )
+
+    asyncio.run(complete())
+    with factory() as db:
+        row = db.execute(select(BasketExecutionJournalRecord).where(
+            BasketExecutionJournalRecord.intent_id == "terminal-1",
+        )).scalar_one()
+        before_events = db.execute(select(BasketExecutionJournalEventRecord).where(
+            BasketExecutionJournalEventRecord.journal_id == row.id,
+        )).scalars().all()
+        before_version = row.version
+        before_sequence = len(before_events)
+
+    async def reject_terminal_mutations():
+        with pytest.raises(ValueError, match="terminal basket state FILLED"):
+            await durable.freeze_intent(
+                account_id="acct-a", intent_id="terminal-1", reason="late restart",
+            )
+        with pytest.raises(ValueError, match="terminal basket state FILLED"):
+            await durable.require_manual_review(
+                account_id="acct-a", intent_id="terminal-1", reason="late uncertainty",
+            )
+
+    asyncio.run(reject_terminal_mutations())
+    with factory() as db:
+        row = db.execute(select(BasketExecutionJournalRecord).where(
+            BasketExecutionJournalRecord.intent_id == "terminal-1",
+        )).scalar_one()
+        after_events = db.execute(select(BasketExecutionJournalEventRecord).where(
+            BasketExecutionJournalEventRecord.journal_id == row.id,
+        )).scalars().all()
+        assert row.state == "FILLED"
+        assert row.version == before_version
+        assert len(after_events) == before_sequence
