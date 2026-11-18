@@ -89,7 +89,14 @@ jobs:
           except Exception as e: print(json.dumps({"parse_error":type(e).__name__}))
           ' || true
           echo "=== DASHBOARD_WEBSOCKET_5_MINUTES ==="
-          python3 - <<'PY'
+          PYTHON_BIN=python3
+          for candidate in /opt/Algo-Trading/.venv/bin/python /opt/Algo-Trading/venv/bin/python /opt/Algo-Trading/backend/.venv/bin/python; do
+            if [ -x "$candidate" ] && "$candidate" -c 'import websocket' >/dev/null 2>&1; then PYTHON_BIN="$candidate"; break; fi
+          done
+          if ! "$PYTHON_BIN" -c 'import websocket' >/dev/null 2>&1; then
+            echo '{"status":"UNAVAILABLE","reason":"websocket-client package not found in system or app virtualenv"}'
+          else
+          "$PYTHON_BIN" - <<'PY'
           import json, time, statistics
           try:
               import websocket
@@ -125,6 +132,7 @@ jobs:
           except Exception as exc:
               print(json.dumps({"status":"FAILED","error":type(exc).__name__}))
           PY
+          fi
           echo "=== RECENT_SERVICE_RESTARTS ==="
           journalctl -u algo-trading.service --since "30 minutes ago" --no-pager 2>/dev/null | grep -Ei "Started|Stopped|Main process|restart|signal" | tail -80 || true
           echo "=== READ_ONLY_DONE ==="
