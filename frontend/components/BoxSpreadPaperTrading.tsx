@@ -208,6 +208,7 @@ export default function BoxSpreadPaperTrading() {
   }, [openPage, closedPage]);
 
   const applyPrivateMarketUpdate = useCallback((payload: any) => {
+    recoveryRequestSequenceRef.current += 1; // Market-data pushes supersede stale recovery reads too.
     const summaryBody = payload?.portfolio_summary;
     const positionsBody = payload?.positions;
     if (!summaryBody || !Array.isArray(positionsBody?.data)) {
