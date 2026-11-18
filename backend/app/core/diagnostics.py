@@ -6,6 +6,8 @@ from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.scanner.page_push_websocket import publish_page_update
+
 IST = ZoneInfo("Asia/Kolkata")
 
 
@@ -44,7 +46,6 @@ class RuntimeDiagnostics:
         # Diagnostics are a read-only page feed; transport failures must never
         # interfere with recording the original runtime error.
         try:
-            from app.scanner.page_push_websocket import publish_page_update
             snapshot = self.snapshot(limit=100)
             publish_page_update("errors", "PATCH", {"errors": snapshot, "count": len(snapshot)})
         except Exception:
