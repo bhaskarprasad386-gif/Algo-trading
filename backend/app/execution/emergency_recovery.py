@@ -273,13 +273,21 @@ class EmergencyRecoveryCoordinator:
         residuals: tuple[RecoveryPosition, ...] = ()
         try:
             snapshot = self._snapshot(account_id, intent_id)
+            cancel_errors = []
             for order in snapshot.orders:
                 if order.role.strip().upper() == "ENTRY" and not order.terminal:
-                    self._broker.cancel_order(account_id=account_id, broker_order_id=order.broker_order_id)
-                    self._journal.append_event(
-                        account_id=account_id, intent_id=intent_id, event="ENTRY_CANCEL_REQUESTED",
-                        details={"broker_order_id": order.broker_order_id},
-                    )
+                    try:
+                        self._broker.cancel_order(account_id=account_id, broker_order_id=order.broker_order_id)
+                        self._journal.append_event(
+                            account_id=account_id, intent_id=intent_id, event="ENTRY_CANCEL_REQUESTED",
+                            details={"broker_order_id": order.broker_order_id},
+                        )
+                    except Exception as cancel_exc:
+                        cancel_errors.append((order.broker_order_id, type(cancel_exc).__name__))
+                        self._journal.append_event(
+                            account_id=account_id, intent_id=intent_id, event="ENTRY_CANCEL_ERROR",
+                            details={"broker_order_id": order.broker_order_id, "error": type(cancel_exc).__name__},
+                        )
 
             # A second authoritative read is mandatory after cancel requests.
             snapshot = self._snapshot(account_id, intent_id)
