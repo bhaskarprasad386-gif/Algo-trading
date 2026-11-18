@@ -120,7 +120,7 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     )
 
 
-def _snapshot_frame(event_type: str = "SNAPSHOT") -> dict[str, Any]:
+def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default") -> dict[str, Any]:
     global _sequence
     with _lock:
         if _sequence < 1:
@@ -128,7 +128,7 @@ def _snapshot_frame(event_type: str = "SNAPSHOT") -> dict[str, Any]:
         sequence = _sequence
     provider = _snapshot_provider
     try:
-        payload = provider() if callable(provider) else {}
+        payload = provider(account_key) if callable(provider) else {}
     except Exception:
         payload = {"snapshot_status": "UNAVAILABLE"}
     return {
@@ -213,12 +213,16 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
             return
         ticket = message.get("ticket") if isinstance(message, dict) else None
         owner = consume_ticket(ticket)
+        account_key = str(message.get("account_key") or "default") if isinstance(message, dict) else "default"
+        if not account_key or len(account_key) > 128 or any(ord(ch) < 32 for ch in account_key):
+            await websocket.close(code=1008)
+            return
         if owner != "box-spread-paper-owner":
             await websocket.close(code=1008)
             return
 
         _subscribers.add(queue)
-        await websocket.send_json(await asyncio.to_thread(_snapshot_frame))
+        await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key))
         while True:
             receive_task = asyncio.create_task(websocket.receive_text())
             event_task = asyncio.create_task(queue.get())
@@ -253,7 +257,7 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
             if event_task in done:
                 marker = event_task.result()
                 event_type = marker.get("event_type", "UPDATE") if isinstance(marker, dict) else "UPDATE"
-                await websocket.send_json(await asyncio.to_thread(_snapshot_frame, event_type))
+                await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT" if event_type == "SNAPSHOT_REQUIRED" else event_type, account_key))
     except (WebSocketDisconnect, asyncio.TimeoutError):
         pass
     finally:
