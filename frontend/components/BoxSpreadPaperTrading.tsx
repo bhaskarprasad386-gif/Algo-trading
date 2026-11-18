@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { appConfig } from "@/lib/config";
 import BoxSpreadPaperRuleControls from "@/components/BoxSpreadPaperRuleControls";
+import { usePagePush } from "@/components/page-push-provider";
 
 type LiveOpportunity = {
   symbol: string; instrument_class: string; expiry: string; expiry_type?: string; low_strike: number;
@@ -70,9 +71,15 @@ const roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"] as const;
 type Role = typeof roles[number];
 
 export default function BoxSpreadPaperTrading() {
+  const pagePush = usePagePush("box-spread");
   const api = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread-paper";
   const [account, setAccount] = useState("default");
   const [token, setToken] = useState<string | null>(null);
+  const [privateWsStatus, setPrivateWsStatus] = useState<"DISCONNECTED" | "CONNECTING" | "LIVE" | "STALE">("DISCONNECTED");
+  const [privateSnapshotComplete, setPrivateSnapshotComplete] = useState(false);
+  const privateWsRef = useRef<WebSocket | null>(null);
+  const privateSequenceRef = useRef(0);
+  const privateEventIdsRef = useRef(new Set<string>());
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
@@ -152,6 +159,7 @@ export default function BoxSpreadPaperTrading() {
         request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
+      setPrivateSnapshotComplete(false);
       setExecutionEnabled(controlBody.enabled === true);
       setTrades([...(Array.isArray(openBody.data) ? openBody.data : []), ...(Array.isArray(closedBody.data) ? closedBody.data : [])]);
       setPortfolioSummary(summaryBody as PortfolioSummary);
@@ -166,6 +174,27 @@ export default function BoxSpreadPaperTrading() {
       setError(e instanceof Error ? e.message : "Unable to load paper ledger");
     }
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
+
+  const applyPrivateSnapshot = useCallback((payload: any) => {
+    const accountBody = payload?.account;
+    const summaryBody = payload?.portfolio_summary;
+    const positionsBody = payload?.positions;
+    const recoveryBody = payload?.recovery;
+    if (!accountBody || !summaryBody || !Array.isArray(positionsBody?.data)) {
+      throw new Error("Private WebSocket snapshot is incomplete");
+    }
+    setBalance(String(accountBody.virtual_balance));
+    setPortfolioSummary(summaryBody as PortfolioSummary);
+    setExecutionEnabled(payload?.execution_control?.enabled === true);
+    setTrades(positionsBody.data as PaperTrade[]);
+    setPrivateSnapshotComplete(true);
+    const openCount = Number(summaryBody.open_position_count ?? 0);
+    const closedCount = Number(summaryBody.closed_position_count ?? 0);
+    setOpenPageInfo({ total_count: openCount, has_more: openCount > 10, limit: 10, offset: openPage * 10 });
+    setClosedPageInfo({ total_count: closedCount, has_more: closedCount > 10, limit: 10, offset: closedPage * 10 });
+    setRecoveryTrades(Array.isArray(recoveryBody?.data) ? recoveryBody.data : []);
+    setError(null);
+  }, [openPage, closedPage]);
 
   useEffect(() => {
     setOpenPage(0);
@@ -225,19 +254,125 @@ export default function BoxSpreadPaperTrading() {
 
   useEffect(() => { setToken(window.sessionStorage.getItem("box-spread-paper-token")); }, []);
 
+  // Public market opportunities arrive through the same Box Spread page-push
+  // channel as the scanner. Never put private paper ledger/account data on it.
+  useEffect(() => {
+    const pushed = pagePush.data?.opportunities;
+    if (!Array.isArray(pushed)) return;
+    const rows = pushed.filter((row): row is LiveOpportunity => {
+      if (!row || typeof row !== "object") return false;
+      const item = row as LiveOpportunity;
+      return [item.low_call_price, item.high_call_price, item.high_put_price, item.low_put_price]
+        .every(value => Number.isFinite(Number(value)) && Number(value) > 0);
+    });
+    setOpportunities(rows);
+    setOpportunityError(null);
+    setOpportunityStatus(rows.length > 0 ? "LIVE" : "EMPTY");
+    setLastOpportunityCheck(Date.now());
+  }, [pagePush.data]);
+
+  useEffect(() => {
+    if (!token) {
+      setPrivateWsStatus("DISCONNECTED");
+      setPrivateSnapshotComplete(false);
+      privateSequenceRef.current = 0;
+      return;
+    }
+    let stopped = false;
+    let socket: WebSocket | null = null;
+    let retryTimer: number | undefined;
+    let retryDelay = 1000;
+
+    const scheduleReconnect = () => {
+      if (stopped || retryTimer !== undefined) return;
+      setPrivateWsStatus("DISCONNECTED");
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void connect();
+      }, retryDelay);
+      retryDelay = Math.min(15000, retryDelay * 2);
+    };
+
+    const connect = async () => {
+      if (stopped) return;
+      setPrivateWsStatus("CONNECTING");
+      try {
+        const ticketBody = await request("/ws-ticket", { method: "POST" });
+        if (stopped || typeof ticketBody.ticket !== "string") return;
+        const wsUrl = api.replace(/^http/i, "ws") + "/ws/box-spread-paper";
+        socket = new WebSocket(wsUrl);
+        privateWsRef.current = socket;
+        socket.onopen = () => {
+          retryDelay = 1000;
+          socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
+        };
+        socket.onmessage = event => {
+          let frame: any;
+          try { frame = JSON.parse(String(event.data)); } catch { return; }
+          if (frame?.type !== "paper_update" || frame?.channel !== "box-spread-paper-private") return;
+          const sequence = Number(frame.sequence);
+          const eventId = String(frame.event_id ?? "");
+          if (!Number.isSafeInteger(sequence) || sequence < 1) return;
+          if (eventId && privateEventIdsRef.current.has(eventId)) return;
+          const isSnapshot = frame.event_type === "SNAPSHOT";
+          if (!isSnapshot && sequence <= privateSequenceRef.current) return;
+          if (!isSnapshot && privateSequenceRef.current > 0 && sequence !== privateSequenceRef.current + 1) {
+            setPrivateWsStatus("STALE");
+            socket?.send(JSON.stringify({ action: "resync" }));
+            return;
+          }
+          try {
+            applyPrivateSnapshot(frame.payload);
+            privateSequenceRef.current = sequence;
+            if (eventId) {
+              privateEventIdsRef.current.add(eventId);
+              if (privateEventIdsRef.current.size > 512) {
+                privateEventIdsRef.current = new Set(Array.from(privateEventIdsRef.current).slice(-256));
+              }
+            }
+            setPrivateWsStatus("LIVE");
+          } catch {
+            setPrivateWsStatus("STALE");
+            socket?.send(JSON.stringify({ action: "resync" }));
+          }
+        };
+        socket.onerror = () => socket?.close();
+        socket.onclose = () => {
+          if (privateWsRef.current === socket) privateWsRef.current = null;
+          scheduleReconnect();
+        };
+      } catch {
+        scheduleReconnect();
+      }
+    };
+
+    void connect();
+    return () => {
+      stopped = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (privateWsRef.current === socket) privateWsRef.current = null;
+      socket?.close();
+    };
+  }, [token, request, api, account, applyPrivateSnapshot]);
+
+  useEffect(() => {
+    if (!token || privateWsStatus === "LIVE") return;
+    // REST is a bounded safety fallback only while the private socket is not synchronized.
+    void refresh();
+    const fallbackTimer = window.setInterval(() => { void refresh(); }, 15000);
+    return () => window.clearInterval(fallbackTimer);
+  }, [token, privateWsStatus, refresh]);
+
   useEffect(() => {
     if (!token) return;
-    void refresh();
-    void loadOpportunities();
-    // Keep the control and ledger in sync with backend state (including restart-default OFF),
-    // independently of the faster live-opportunity refresh.
-    const statusTimer = window.setInterval(() => { void refresh(); }, 7000);
-    const opportunitiesTimer = window.setInterval(() => { void loadOpportunities(); }, 7000);
+    if (pagePush.status !== "LIVE") void loadOpportunities();
+    const opportunitiesTimer = pagePush.status === "LIVE"
+      ? undefined
+      : window.setInterval(() => { void loadOpportunities(); }, 30000);
     return () => {
-      window.clearInterval(statusTimer);
-      window.clearInterval(opportunitiesTimer);
+      if (opportunitiesTimer !== undefined) window.clearInterval(opportunitiesTimer);
     };
-  }, [token, refresh, loadOpportunities]);
+  }, [token, loadOpportunities, pagePush.status]);
 
   async function togglePaperExecution() {
     setControlBusy(true); setError(null); setMessage(null);
@@ -407,14 +542,16 @@ export default function BoxSpreadPaperTrading() {
     const timeB = Date.parse((closed ? b.closed_at : b.entry_at) || b.created_at) || 0;
     return timeB - timeA;
   });
-  const openTrades = sortPositions(filteredTrades.filter(trade =>
+  const openTradesAll = sortPositions(filteredTrades.filter(trade =>
     !["CLOSED", "CANCELLED"].includes(trade.status) &&
     (!trade.legs?.some(leg => leg.entry_quantity > 0) || trade.legs.some(leg => leg.open_quantity > 0))
   ), false);
-  const closedTrades = sortPositions(filteredTrades.filter(trade =>
+  const openTrades = privateSnapshotComplete ? openTradesAll.slice(openPage * 10, openPage * 10 + 10) : openTradesAll;
+  const closedTradesAll = sortPositions(filteredTrades.filter(trade =>
     trade.status === "CLOSED" ||
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
+  const closedTrades = privateSnapshotComplete ? closedTradesAll.slice(closedPage * 10, closedPage * 10 + 10) : closedTradesAll;
   const selectedTradeData = [...openTrades, ...closedTrades].find(trade => trade.trade_id === selectedTrade) ?? null;
   const selectedOpenLegQuantities = selectedTradeData?.legs?.map(leg => leg.open_quantity) ?? [];
   const selectedLegQuantitiesEqual = selectedOpenLegQuantities.length === 4 && selectedOpenLegQuantities.every(quantity => quantity > 0 && quantity === selectedOpenLegQuantities[0]);
@@ -521,7 +658,7 @@ export default function BoxSpreadPaperTrading() {
           <p className="mt-1 text-sm theme-muted">Virtual balance and persistent fills only. No broker orders, no live scanner changes.</p>
         </div>
         <div className="rounded-xl border theme-border px-3 py-2">
-          <div className="text-xs theme-muted">Virtual balance</div>
+          <div className="flex items-center gap-2 text-xs theme-muted"><span>Virtual balance</span><span className={"rounded-full px-2 py-0.5 text-[10px] font-bold " + (privateWsStatus === "LIVE" ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600")}>{privateWsStatus === "LIVE" ? "LIVE PUSH" : privateWsStatus}</span></div>
           <div className="text-lg font-semibold theme-text">{balance == null ? "—" : "₹" + Number(balance).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</div>
           <div className="text-xs text-emerald-500">PAPER ONLY · ORDERS OFF</div>
         </div>
@@ -533,7 +670,7 @@ export default function BoxSpreadPaperTrading() {
           <p className="mt-1 text-xs theme-muted">Manual control for new Box Spread paper entries. OFF is the default after API restart. Market-data scanner remains read-only; broker orders stay OFF.</p>
           <p className={"mt-2 text-sm font-bold " + (executionEnabled ? "text-emerald-500" : "text-amber-500")}>{executionEnabled ? "PAPER EXECUTION ON" : "PAPER EXECUTION OFF"}</p>
         </div>
-        <button type="button" onClick={() => void togglePaperExecution()} disabled={controlBusy || busy} className={"rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 " + (executionEnabled ? "border border-amber-500 text-amber-500" : "bg-emerald-500 text-slate-950")}>
+        <button type="button" onClick={() => void togglePaperExecution()} disabled={controlBusy || busy || privateWsStatus !== "LIVE"} className={"rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 " + (executionEnabled ? "border border-amber-500 text-amber-500" : "bg-emerald-500 text-slate-950")}>
           {controlBusy ? "Updating…" : executionEnabled ? "Turn OFF" : "Manually Turn ON"}
         </button>
       </div>
@@ -562,7 +699,7 @@ export default function BoxSpreadPaperTrading() {
             return <label key={role} className="rounded-lg border theme-border p-2 text-xs theme-muted"><span className="font-semibold theme-text">{role.replace("_"," ")} · {action}</span><span className="mt-1 block">Bid ₹{quote[0] ?? "—"} · Ask ₹{quote[1] ?? "—"}</span><span className="mt-2 block">Limit price (Qty {manualEntryOpportunity.lot_size*lots})</span><input required type="number" min="0.01" step="0.05" value={manualEntryLimits[role]} onChange={e=>setManualEntryLimits(current=>({...current,[role]:e.target.value}))} className="mt-1 w-full rounded-md border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>;
           })}
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs theme-muted">Paper simulation only · no real broker order</span><button type="submit" disabled={busy || !executionEnabled || roles.some(role=>!Number.isFinite(Number(manualEntryLimits[role])) || Number(manualEntryLimits[role])<=0)} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Validating all four legs…":"Confirm 4-leg LIMIT entry"}</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs theme-muted">Paper simulation only · no real broker order</span><button type="submit" disabled={busy || privateWsStatus !== "LIVE" || !executionEnabled || roles.some(role=>!Number.isFinite(Number(manualEntryLimits[role])) || Number(manualEntryLimits[role])<=0)} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Validating all four legs…":"Confirm 4-leg LIMIT entry"}</button></div>
       </form>}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm theme-muted">Paper account key
