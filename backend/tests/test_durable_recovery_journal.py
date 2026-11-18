@@ -231,6 +231,11 @@ def test_manual_review_state_never_authorizes_another_close(journal):
         account_id="acct-a", intent_id="intent-manual",
         state=RecoveryState.MANUAL_REVIEW, reason="broker snapshot became ambiguous",
     )
+    with pytest.raises(ValueError, match="manual review cannot resume"):
+        durable.set_state(
+            account_id="acct-a", intent_id="intent-manual",
+            state=RecoveryState.RECOVERING, reason="unsafe automatic retry",
+        )
     with pytest.raises(RuntimeError, match="EMERGENCY_UNWIND"):
         durable.claim_recovery_attempt(
             account_id="acct-a", intent_id="intent-manual", symbol="OPT:CE",
