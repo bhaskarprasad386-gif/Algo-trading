@@ -140,7 +140,7 @@ def shoonya_verify(
     payload: ShoonyaVerifyRequest,
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
-    ) -> dict:
+) -> dict:
     with broker_sessions.transition(user_id):
         try:
             pending = shoonya_oauth_flows.consume(
