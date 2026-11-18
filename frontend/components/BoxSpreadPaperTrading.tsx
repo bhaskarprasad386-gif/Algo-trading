@@ -196,6 +196,20 @@ export default function BoxSpreadPaperTrading() {
     setError(null);
   }, [openPage, closedPage]);
 
+  const applyPrivateMarketUpdate = useCallback((payload: any) => {
+    const summaryBody = payload?.portfolio_summary;
+    const positionsBody = payload?.positions;
+    if (!summaryBody || !Array.isArray(positionsBody?.data)) {
+      throw new Error("Private market update is incomplete");
+    }
+    // Market ticks refresh only quote-sensitive marks and portfolio P&L.
+    // Preserve account balance, execution toggle and recovery state.
+    setPortfolioSummary(summaryBody as PortfolioSummary);
+    setTrades(positionsBody.data as PaperTrade[]);
+    setPrivateSnapshotComplete(true);
+    setError(null);
+  }, []);
+
   useEffect(() => {
     setOpenPage(0);
     setClosedPage(0);
@@ -364,7 +378,11 @@ export default function BoxSpreadPaperTrading() {
             return;
           }
           try {
-            applyPrivateSnapshot(frame.payload);
+            if (frame.event_type === "MARKET_DATA_CHANGED") {
+              applyPrivateMarketUpdate(frame.payload);
+            } else {
+              applyPrivateSnapshot(frame.payload);
+            }
             privateSequenceRef.current = sequence;
             if (eventId) {
               privateEventIdsRef.current.add(eventId);
@@ -407,7 +425,7 @@ export default function BoxSpreadPaperTrading() {
       if (privateWsRef.current === socket) privateWsRef.current = null;
       socket?.close();
     };
-  }, [token, request, api, account, applyPrivateSnapshot]);
+  }, [token, request, api, account, applyPrivateSnapshot, applyPrivateMarketUpdate]);
 
   useEffect(() => {
     if (!token || privateWsStatus === "LIVE") return;
