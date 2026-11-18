@@ -163,7 +163,10 @@ class RecoveryJournal(Protocol):
     def claim_recovery_attempt(self, *, account_id: str, intent_id: str, symbol: str) -> int: ...
     def approve_emergency_close(self, *, account_id: str, intent_id: str, symbol: str,
                                 side: str, quantity: int, limit_price: Decimal,
-                                notional: Decimal) -> bool: ...
+                                notional: Decimal, client_order_id: str) -> bool: ...
+    def pending_close_authorizations(self, *, account_id: str, intent_id: str) -> tuple[str, ...]: ...
+    def mark_close_authorization_reconciled(self, *, account_id: str, intent_id: str,
+                                            client_order_id: str) -> None: ...
     def alert_operator(self, *, account_id: str, intent_id: str, reason: str) -> None: ...
 
 
@@ -231,6 +234,23 @@ class EmergencyRecoveryCoordinator:
     @staticmethod
     def _unresolved(snapshot: RecoverySnapshot) -> tuple[RecoveryOrder, ...]:
         return tuple(order for order in snapshot.orders if not order.terminal)
+
+    def _reconcile_pending_close_authorizations(self, *, account_id: str, intent_id: str,
+                                                snapshot: RecoverySnapshot) -> bool:
+        orders = {order.client_order_id: order for order in snapshot.orders}
+        for client_order_id in self._journal.pending_close_authorizations(
+            account_id=account_id, intent_id=intent_id,
+        ):
+            order = orders.get(client_order_id)
+            # Missing from an authoritative snapshot is still ambiguous: the
+            # broker may have accepted it before the process lost its ack.
+            if order is None or not order.terminal:
+                return False
+            self._journal.mark_close_authorization_reconciled(
+                account_id=account_id, intent_id=intent_id,
+                client_order_id=client_order_id,
+            )
+        return True
 
     def _manual(self, *, account_id: str, intent_id: str, reason: str,
                 residuals: tuple[RecoveryPosition, ...], attempts: int) -> RecoveryResult:
@@ -303,6 +323,14 @@ class EmergencyRecoveryCoordinator:
 
             # A second authoritative read is mandatory after cancel requests.
             snapshot = self._snapshot(account_id, intent_id)
+            if not self._reconcile_pending_close_authorizations(
+                account_id=account_id, intent_id=intent_id, snapshot=snapshot,
+            ):
+                return self._manual(
+                    account_id=account_id, intent_id=intent_id,
+                    reason="previous emergency close authorization is not yet reconciled; automatic resubmission is blocked",
+                    residuals=(), attempts=attempts,
+                )
             if self._positions_are_safe(snapshot):
                 residuals = self._residuals(snapshot, symbol_set, baseline)
             if self._unresolved(snapshot):
@@ -329,6 +357,14 @@ class EmergencyRecoveryCoordinator:
             for attempt in range(1, self._policy.max_attempts + 1):
                 attempts = attempt
                 snapshot = self._snapshot(account_id, intent_id)
+                if not self._reconcile_pending_close_authorizations(
+                    account_id=account_id, intent_id=intent_id, snapshot=snapshot,
+                ):
+                    return self._manual(
+                        account_id=account_id, intent_id=intent_id,
+                        reason="previous emergency close authorization is not yet reconciled; automatic resubmission is blocked",
+                        residuals=residuals, attempts=attempts,
+                    )
                 if self._positions_are_safe(snapshot):
                     residuals = self._residuals(snapshot, symbol_set, baseline)
                 if self._unresolved(snapshot):
@@ -377,6 +413,7 @@ class EmergencyRecoveryCoordinator:
                         account_id=account_id, intent_id=intent_id, symbol=close.symbol,
                         side=close.side, quantity=close.quantity,
                         limit_price=close.limit_price, notional=notional,
+                        client_order_id=close.client_order_id,
                     ):
                         raise RuntimeError("emergency close exceeds the approved account/intent recovery budget")
                     placed = self._broker.place_ioc_limit(account_id=account_id, order=close)
@@ -398,6 +435,14 @@ class EmergencyRecoveryCoordinator:
                         )
 
             final = self._snapshot(account_id, intent_id)
+            if not self._reconcile_pending_close_authorizations(
+                account_id=account_id, intent_id=intent_id, snapshot=final,
+            ):
+                return self._manual(
+                    account_id=account_id, intent_id=intent_id,
+                    reason="final snapshot cannot reconcile a prior emergency close authorization",
+                    residuals=residuals, attempts=attempts,
+                )
             if not self._positions_are_safe(final):
                 return self._manual(
                     account_id=account_id, intent_id=intent_id,
