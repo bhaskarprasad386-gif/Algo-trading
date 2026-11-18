@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { appConfig } from "@/lib/config";
 import BoxSpreadPaperRuleControls from "@/components/BoxSpreadPaperRuleControls";
+import { usePagePush } from "@/components/page-push-provider";
 
 type LiveOpportunity = {
   symbol: string; instrument_class: string; expiry: string; expiry_type?: string; low_strike: number;
@@ -70,9 +71,18 @@ const roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"] as const;
 type Role = typeof roles[number];
 
 export default function BoxSpreadPaperTrading() {
+  const pagePush = usePagePush("box-spread");
   const api = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread-paper";
   const [account, setAccount] = useState("default");
   const [token, setToken] = useState<string | null>(null);
+  const [privateWsStatus, setPrivateWsStatus] = useState<"DISCONNECTED" | "CONNECTING" | "LIVE" | "STALE">("DISCONNECTED");
+  const [privateSnapshotComplete, setPrivateSnapshotComplete] = useState(false);
+  const [privateRuleState, setPrivateRuleState] = useState<{ rules: any[]; evaluations: Record<string, any[]> }>({ rules: [], evaluations: {} });
+  const privateWsRef = useRef<WebSocket | null>(null);
+  const selectedTradeRef = useRef<number | null>(null);
+  const exitPreviewRef = useRef<any | null>(null);
+  const privateSequenceRef = useRef(0);
+  const privateEventIdsRef = useRef(new Set<string>());
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
@@ -152,6 +162,7 @@ export default function BoxSpreadPaperTrading() {
         request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
+      setPrivateSnapshotComplete(false);
       setExecutionEnabled(controlBody.enabled === true);
       setTrades([...(Array.isArray(openBody.data) ? openBody.data : []), ...(Array.isArray(closedBody.data) ? closedBody.data : [])]);
       setPortfolioSummary(summaryBody as PortfolioSummary);
@@ -166,6 +177,38 @@ export default function BoxSpreadPaperTrading() {
       setError(e instanceof Error ? e.message : "Unable to load paper ledger");
     }
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
+
+  useEffect(() => { exitPreviewRef.current = exitPreview; }, [exitPreview]);
+  useEffect(() => { selectedTradeRef.current = selectedTrade; }, [selectedTrade]);
+
+  const applyPrivateSnapshot = useCallback((payload: any, eventType: string) => {
+    const accountBody = payload?.account;
+    const summaryBody = payload?.portfolio_summary;
+    const positionsBody = payload?.positions;
+    const recoveryBody = payload?.recovery;
+    if (!accountBody || !summaryBody || !Array.isArray(positionsBody?.data)) {
+      throw new Error("Private WebSocket snapshot is incomplete");
+    }
+    setBalance(String(accountBody.virtual_balance));
+    setPortfolioSummary(summaryBody as PortfolioSummary);
+    setExecutionEnabled(payload?.execution_control?.enabled === true);
+    setTrades(positionsBody.data as PaperTrade[]);
+    setLedger(previous => {
+      const activeId = selectedTradeRef.current;
+      if (!previous || activeId == null) return previous;
+      const activeTrade = (positionsBody.data as PaperTrade[]).find(row => row.trade_id === activeId);
+      return activeTrade ? { ...previous, summary: activeTrade.summary, entries: activeTrade.entries } : previous;
+    });
+    setPrivateSnapshotComplete(true);
+    const openCount = Number(summaryBody.open_position_count ?? 0);
+    const closedCount = Number(summaryBody.closed_position_count ?? 0);
+    setOpenPageInfo({ total_count: openCount, has_more: openCount > 10, limit: 10, offset: 0 });
+    setClosedPageInfo({ total_count: closedCount, has_more: closedCount > 10, limit: 10, offset: 0 });
+    setRecoveryTrades(Array.isArray(recoveryBody?.data) ? recoveryBody.data : []);
+    if (eventType === "MARKET_DATA_CHANGED" && exitPreviewRef.current) setExitPreviewDirty(true);
+    if (Array.isArray(payload?.rules)) setPrivateRuleState({ rules: payload.rules, evaluations: payload.rule_evaluations && typeof payload.rule_evaluations === "object" ? payload.rule_evaluations : {} });
+    setError(null);
+  }, []);
 
   useEffect(() => {
     setOpenPage(0);
@@ -225,21 +268,135 @@ export default function BoxSpreadPaperTrading() {
 
   useEffect(() => { setToken(window.sessionStorage.getItem("box-spread-paper-token")); }, []);
 
+  // Public market opportunities arrive through the same Box Spread page-push
+  // channel as the scanner. Never put private paper ledger/account data on it.
+  useEffect(() => {
+    const pushed = pagePush.data?.opportunities;
+    const runtime = (pagePush.data as any)?.runtime_health;
+    const diagnostics = runtime?.runners?.box_spread?.scanner_diagnostics;
+    if (diagnostics && typeof diagnostics === "object") setScannerDiagnostics(diagnostics as ScannerDiagnostics);
+    if (!Array.isArray(pushed)) return;
+    const rows = pushed.filter((row): row is LiveOpportunity => {
+      if (!row || typeof row !== "object") return false;
+      const item = row as LiveOpportunity;
+      return [item.low_call_price, item.high_call_price, item.high_put_price, item.low_put_price]
+        .every(value => Number.isFinite(Number(value)) && Number(value) > 0);
+    });
+    setOpportunities(rows);
+    setOpportunityError(null);
+    setOpportunityStatus(rows.length > 0 ? "LIVE" : "EMPTY");
+    setLastOpportunityCheck(Date.now());
+    if (manualEntryOpportunity) {
+      const refreshed = rows.find(row => row.symbol === manualEntryOpportunity.symbol && row.expiry === manualEntryOpportunity.expiry && row.low_strike === manualEntryOpportunity.low_strike && row.high_strike === manualEntryOpportunity.high_strike && row.direction === manualEntryOpportunity.direction);
+      if (refreshed) setManualEntryOpportunity(refreshed);
+    }
+  }, [pagePush.data, manualEntryOpportunity]);
+
+  useEffect(() => {
+    if (!token) {
+      setPrivateWsStatus("DISCONNECTED");
+      setPrivateSnapshotComplete(false);
+      privateSequenceRef.current = 0;
+      return;
+    }
+    let stopped = false;
+    let socket: WebSocket | null = null;
+    let retryTimer: number | undefined;
+    let retryDelay = 1000;
+
+    const scheduleReconnect = () => {
+      if (stopped || retryTimer !== undefined) return;
+      setPrivateWsStatus("DISCONNECTED");
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void connect();
+      }, retryDelay);
+      retryDelay = Math.min(15000, retryDelay * 2);
+    };
+
+    const connect = async () => {
+      if (stopped) return;
+      setPrivateWsStatus("CONNECTING");
+      try {
+        const ticketBody = await request("/ws-ticket", { method: "POST" });
+        if (stopped || typeof ticketBody.ticket !== "string") return;
+        const wsUrl = new URL(api).origin.replace(/^http/i, "ws") + "/ws/box-spread-paper";
+        socket = new WebSocket(wsUrl);
+        privateWsRef.current = socket;
+        socket.onopen = () => {
+          retryDelay = 1000;
+          socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
+        };
+        socket.onmessage = event => {
+          let frame: any;
+          try { frame = JSON.parse(String(event.data)); } catch { return; }
+          if (frame?.type !== "paper_update" || frame?.channel !== "box-spread-paper-private") return;
+          const sequence = Number(frame.sequence);
+          const eventId = String(frame.event_id ?? "");
+          if (!Number.isSafeInteger(sequence) || sequence < 1) return;
+          if (eventId && privateEventIdsRef.current.has(eventId)) return;
+          const isSnapshot = frame.event_type === "SNAPSHOT" || frame.snapshot === true;
+          if (!isSnapshot && sequence <= privateSequenceRef.current) return;
+          if (!isSnapshot && privateSequenceRef.current > 0 && sequence !== privateSequenceRef.current + 1) {
+            setPrivateWsStatus("STALE");
+            socket?.send(JSON.stringify({ action: "resync" }));
+            return;
+          }
+          try {
+            applyPrivateSnapshot(frame.payload, String(frame.event_type ?? ""));
+            privateSequenceRef.current = sequence;
+            if (eventId) {
+              privateEventIdsRef.current.add(eventId);
+              if (privateEventIdsRef.current.size > 512) {
+                privateEventIdsRef.current = new Set(Array.from(privateEventIdsRef.current).slice(-256));
+              }
+            }
+            setPrivateWsStatus("LIVE");
+          } catch {
+            setPrivateWsStatus("STALE");
+            socket?.send(JSON.stringify({ action: "resync" }));
+          }
+        };
+        socket.onerror = () => socket?.close();
+        socket.onclose = () => {
+          if (privateWsRef.current === socket) privateWsRef.current = null;
+          scheduleReconnect();
+        };
+      } catch {
+        scheduleReconnect();
+      }
+    };
+
+    void connect();
+    return () => {
+      stopped = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (privateWsRef.current === socket) privateWsRef.current = null;
+      socket?.close();
+    };
+  }, [token, request, api, account, applyPrivateSnapshot]);
+
+  useEffect(() => {
+    if (!token || privateWsStatus === "LIVE") return;
+    // REST is a bounded safety fallback only while the private socket is not synchronized.
+    void refresh();
+    const fallbackTimer = window.setInterval(() => { void refresh(); }, 15000);
+    return () => window.clearInterval(fallbackTimer);
+  }, [token, privateWsStatus, refresh]);
+
   useEffect(() => {
     if (!token) return;
-    void refresh();
-    void loadOpportunities();
-    // Keep the control and ledger in sync with backend state (including restart-default OFF),
-    // independently of the faster live-opportunity refresh.
-    const statusTimer = window.setInterval(() => { void refresh(); }, 7000);
-    const opportunitiesTimer = window.setInterval(() => { void loadOpportunities(); }, 7000);
+    if (pagePush.status !== "LIVE") void loadOpportunities();
+    const opportunitiesTimer = pagePush.status === "LIVE"
+      ? undefined
+      : window.setInterval(() => { void loadOpportunities(); }, 30000);
     return () => {
-      window.clearInterval(statusTimer);
-      window.clearInterval(opportunitiesTimer);
+      if (opportunitiesTimer !== undefined) window.clearInterval(opportunitiesTimer);
     };
-  }, [token, refresh, loadOpportunities]);
+  }, [token, loadOpportunities, pagePush.status]);
 
   async function togglePaperExecution() {
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; execution control is paused."); return; }
     setControlBusy(true); setError(null); setMessage(null);
     try {
       const body = await request("/execution-control", {
@@ -280,6 +437,7 @@ export default function BoxSpreadPaperTrading() {
 
   async function confirmManualEntry(event: FormEvent) {
     event.preventDefault();
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; entry controls are paused."); return; }
     if (!manualEntryOpportunity) return;
     setBusy(true); setError(null); setMessage(null); setLedger(null);
     try {
@@ -313,6 +471,7 @@ export default function BoxSpreadPaperTrading() {
   }
 
   async function loadExitPreview() {
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; exit controls are paused."); return; }
     if (selectedTrade == null) return;
     setBusy(true); setError(null); setMessage(null);
     try {
@@ -357,6 +516,7 @@ export default function BoxSpreadPaperTrading() {
 
   async function confirmBasketExit(event: FormEvent) {
     event.preventDefault();
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; exit controls are paused."); return; }
     if (selectedTrade == null || !exitPreview) return;
     setBusy(true); setError(null); setMessage(null);
     try {
@@ -380,6 +540,7 @@ export default function BoxSpreadPaperTrading() {
   }
 
   async function loadLedger(tradeId: number) {
+    setSelectedTrade(tradeId);
     setError(null);
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
@@ -407,14 +568,16 @@ export default function BoxSpreadPaperTrading() {
     const timeB = Date.parse((closed ? b.closed_at : b.entry_at) || b.created_at) || 0;
     return timeB - timeA;
   });
-  const openTrades = sortPositions(filteredTrades.filter(trade =>
+  const openTradesAll = sortPositions(filteredTrades.filter(trade =>
     !["CLOSED", "CANCELLED"].includes(trade.status) &&
     (!trade.legs?.some(leg => leg.entry_quantity > 0) || trade.legs.some(leg => leg.open_quantity > 0))
   ), false);
-  const closedTrades = sortPositions(filteredTrades.filter(trade =>
+  const openTrades = privateSnapshotComplete ? openTradesAll.slice(openPage * 10, openPage * 10 + 10) : openTradesAll;
+  const closedTradesAll = sortPositions(filteredTrades.filter(trade =>
     trade.status === "CLOSED" ||
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
+  const closedTrades = privateSnapshotComplete ? closedTradesAll.slice(closedPage * 10, closedPage * 10 + 10) : closedTradesAll;
   const selectedTradeData = [...openTrades, ...closedTrades].find(trade => trade.trade_id === selectedTrade) ?? null;
   const selectedOpenLegQuantities = selectedTradeData?.legs?.map(leg => leg.open_quantity) ?? [];
   const selectedLegQuantitiesEqual = selectedOpenLegQuantities.length === 4 && selectedOpenLegQuantities.every(quantity => quantity > 0 && quantity === selectedOpenLegQuantities[0]);
@@ -494,7 +657,7 @@ export default function BoxSpreadPaperTrading() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] theme-muted">{closed ? "Realized result from persisted exit fills." : "Open quantity and marks are based on persisted fills and fresh backend quotes only."}</p>
         <div className="flex flex-wrap gap-2">
-          {!closed && <button type="button" onClick={() => { setSelectedTrade(trade.trade_id); setExitPreview(null); }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600">Manage position</button>}
+          {!closed && <button type="button" disabled={privateWsStatus !== "LIVE"} onClick={() => { setSelectedTrade(trade.trade_id); setExitPreview(null); }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600 disabled:opacity-40">Manage position</button>}
           <button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Full fill ledger</button>
         </div>
       </div>
@@ -521,7 +684,7 @@ export default function BoxSpreadPaperTrading() {
           <p className="mt-1 text-sm theme-muted">Virtual balance and persistent fills only. No broker orders, no live scanner changes.</p>
         </div>
         <div className="rounded-xl border theme-border px-3 py-2">
-          <div className="text-xs theme-muted">Virtual balance</div>
+          <div className="flex items-center gap-2 text-xs theme-muted"><span>Virtual balance</span><span className={"rounded-full px-2 py-0.5 text-[10px] font-bold " + (privateWsStatus === "LIVE" ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600")}>{privateWsStatus === "LIVE" ? "LIVE PUSH" : privateWsStatus}</span></div>
           <div className="text-lg font-semibold theme-text">{balance == null ? "—" : "₹" + Number(balance).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</div>
           <div className="text-xs text-emerald-500">PAPER ONLY · ORDERS OFF</div>
         </div>
@@ -533,7 +696,7 @@ export default function BoxSpreadPaperTrading() {
           <p className="mt-1 text-xs theme-muted">Manual control for new Box Spread paper entries. OFF is the default after API restart. Market-data scanner remains read-only; broker orders stay OFF.</p>
           <p className={"mt-2 text-sm font-bold " + (executionEnabled ? "text-emerald-500" : "text-amber-500")}>{executionEnabled ? "PAPER EXECUTION ON" : "PAPER EXECUTION OFF"}</p>
         </div>
-        <button type="button" onClick={() => void togglePaperExecution()} disabled={controlBusy || busy} className={"rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 " + (executionEnabled ? "border border-amber-500 text-amber-500" : "bg-emerald-500 text-slate-950")}>
+        <button type="button" onClick={() => void togglePaperExecution()} disabled={controlBusy || busy || privateWsStatus !== "LIVE"} className={"rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 " + (executionEnabled ? "border border-amber-500 text-amber-500" : "bg-emerald-500 text-slate-950")}>
           {controlBusy ? "Updating…" : executionEnabled ? "Turn OFF" : "Manually Turn ON"}
         </button>
       </div>
@@ -549,7 +712,7 @@ export default function BoxSpreadPaperTrading() {
           <label className="text-sm theme-muted">Same quantity per leg<select value={lots} onChange={e=>setLots(Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text">{[1,2,3,4,5,10,15,20].map(value=><option key={value} value={value}>{value} {value===1?"lot":"lots"} · all four legs</option>)}</select></label>
         </div>
         <div className="text-xs theme-muted"><div className="mb-2 font-semibold theme-text">Index selection</div><div className="flex flex-wrap gap-3">{allowedEntrySymbols.map(symbol=><label key={symbol} className="flex items-center gap-1.5"><input type="checkbox" checked={entrySymbols.includes(symbol)} onChange={e=>setEntrySymbols(current=>e.target.checked?[...current,symbol]:current.filter(x=>x!==symbol))}/>{symbol}</label>)}<label className="flex items-center gap-1.5 font-semibold"><input type="checkbox" checked={allowedEntrySymbols.every(x=>entrySymbols.includes(x))} onChange={e=>setEntrySymbols(e.target.checked?[...allowedEntrySymbols]:[])}/>ALL</label></div></div>
-        {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} selection={{expiryType:entryExpiryType,symbols:entrySymbols,lots}} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
+        {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} selection={{expiryType:entryExpiryType,symbols:entrySymbols,lots}} liveRules={privateRuleState.rules} liveEvaluations={privateRuleState.evaluations} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
       </section>
 
       {manualEntryOpportunity && <form onSubmit={confirmManualEntry} className="space-y-3 rounded-xl border-2 border-cyan-500/60 p-3">
@@ -562,7 +725,7 @@ export default function BoxSpreadPaperTrading() {
             return <label key={role} className="rounded-lg border theme-border p-2 text-xs theme-muted"><span className="font-semibold theme-text">{role.replace("_"," ")} · {action}</span><span className="mt-1 block">Bid ₹{quote[0] ?? "—"} · Ask ₹{quote[1] ?? "—"}</span><span className="mt-2 block">Limit price (Qty {manualEntryOpportunity.lot_size*lots})</span><input required type="number" min="0.01" step="0.05" value={manualEntryLimits[role]} onChange={e=>setManualEntryLimits(current=>({...current,[role]:e.target.value}))} className="mt-1 w-full rounded-md border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>;
           })}
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs theme-muted">Paper simulation only · no real broker order</span><button type="submit" disabled={busy || !executionEnabled || roles.some(role=>!Number.isFinite(Number(manualEntryLimits[role])) || Number(manualEntryLimits[role])<=0)} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Validating all four legs…":"Confirm 4-leg LIMIT entry"}</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs theme-muted">Paper simulation only · no real broker order</span><button type="submit" disabled={busy || privateWsStatus !== "LIVE" || !executionEnabled || roles.some(role=>!Number.isFinite(Number(manualEntryLimits[role])) || Number(manualEntryLimits[role])<=0)} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Validating all four legs…":"Confirm 4-leg LIMIT entry"}</button></div>
       </form>}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm theme-muted">Paper account key

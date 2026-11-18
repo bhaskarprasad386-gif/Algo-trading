@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.database import SessionLocal
 from app.scanner.box_spread_paper_routes import require_paper_access
+from app.scanner.box_spread_paper_websocket import publish_after_success, publish_paper_update
 from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry, BoxSpreadPaperEntryClaim,
 )
@@ -63,6 +64,7 @@ def get_rules(account_key: str = "default"):
 
 
 @router.post("/rules")
+@publish_after_success("RULE_CONFIG_CHANGED")
 def create_rule(payload: PaperRulePayload):
     try:
         config = validate_rule_config(payload.config)
@@ -83,6 +85,7 @@ def create_rule(payload: PaperRulePayload):
 
 
 @router.put("/rules/{rule_id}")
+@publish_after_success("RULE_CONFIG_CHANGED")
 def update_rule(rule_id: int, payload: PaperRulePayload):
     try:
         config = validate_rule_config(payload.config)
@@ -282,6 +285,7 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
                 BoxSpreadPaperRuleEvaluation.id.in_(stale_ids)
             ))
         session.commit()
+    publish_paper_update("RULE_EVALUATION_CHANGED")
 
 
 async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any], rule_enabled: bool):

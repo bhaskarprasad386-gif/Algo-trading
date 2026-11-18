@@ -13,6 +13,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.core.config import settings
 
 router = APIRouter(tags=["page-push"])
 PAGE_CHANNELS = frozenset({
@@ -145,6 +146,13 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     except ValueError:
         return False
     host = (parsed.hostname or "").lower()
+    configured = {
+        item.strip().rstrip("/")
+        for item in settings.BOX_SPREAD_PAPER_WS_ALLOWED_ORIGINS.split(",")
+        if item.strip()
+    }
+    if origin.rstrip("/") in configured:
+        return parsed.scheme in {"http", "https"}
     # Permit only this account's Cloudflare Workers subdomains. Do not
     # allow the shared workers.dev namespace or arbitrary tenant origins.
     return parsed.scheme in {"http", "https"} and (
