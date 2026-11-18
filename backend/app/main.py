@@ -422,6 +422,13 @@ def _box_page_push_snapshot():
         payload["index_selection_runtime"] = supervisor if isinstance(supervisor, dict) else {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
     except Exception:
         payload["index_selection_runtime"] = {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
+    try:
+        payload["index_selection"] = {
+            "symbols": list(_get_box_spread_index_selection()),
+            "weekly_only_symbols": list(_get_box_spread_weekly_only_symbols()),
+        }
+    except Exception:
+        payload["index_selection"] = {"symbols": [], "weekly_only_symbols": []}
     # Shadow panel is part of the same page snapshot, with a one-second
     # evaluation cache so 250 ms scanner bursts do not repeat the calculation.
     payload["shadow"] = _box_shadow_page_snapshot()
@@ -2036,13 +2043,24 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
         # Expiry routing is updated by on_active only after the candidate
         # is fully ready and publisher ownership has transferred.
 
-    return {
+    result = {
         "status": "success",
         "symbols": list(saved),
         "weekly_only_symbols": list(weekly_only),
         "switch": switch,
         "message": "Selection saved. Only selected Box Spread indices will be subscribed after the safe session handoff.",
     }
+    # Saved selection is public scanner configuration, not account/ledger data.
+    # Broadcast only after persistence and any staged handoff were accepted.
+    try:
+        page_snapshot = _box_page_push_snapshot()
+        publish_page_update("box-spread", "PATCH", {
+            "index_selection": {"symbols": list(saved), "weekly_only_symbols": list(weekly_only)},
+            "index_selection_runtime": page_snapshot.get("index_selection_runtime", {}),
+        })
+    except Exception as exc:
+        app_logger.warning("Unable to push saved Box Spread index selection: {}", exc)
+    return result
 
 
 @app.post("/api/v1/scanner/box-spread/index-selection")
