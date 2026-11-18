@@ -28,6 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     : pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
     : pathname.startsWith("/strategies/credit-butterfly-condor/weekly") ? "credit-butterfly-condor-weekly"
     : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
+    : pathname === "/errors" || pathname.startsWith("/errors/") ? "errors"
     : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, setTheme } = useTheme();
