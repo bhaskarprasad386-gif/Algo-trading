@@ -281,6 +281,8 @@ export default function BoxSpreadPaperTrading() {
     let stopped = false;
     let socket: WebSocket | null = null;
     let retryTimer: number | undefined;
+    let watchdogTimer: number | undefined;
+    let lastServerFrameAt = 0;
     let retryDelay = 1000;
 
     const scheduleReconnect = () => {
@@ -303,12 +305,15 @@ export default function BoxSpreadPaperTrading() {
         socket = new WebSocket(wsUrl);
         privateWsRef.current = socket;
         socket.onopen = () => {
+          lastServerFrameAt = Date.now();
           retryDelay = 1000;
           socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
         };
         socket.onmessage = event => {
+          lastServerFrameAt = Date.now();
           let frame: any;
           try { frame = JSON.parse(String(event.data)); } catch { return; }
+          if (frame?.type === "heartbeat" && frame?.channel === "box-spread-paper-private") return;
           if (frame?.type !== "paper_update" || frame?.channel !== "box-spread-paper-private") return;
           const sequence = Number(frame.sequence);
           const eventId = String(frame.event_id ?? "");
@@ -339,8 +344,16 @@ export default function BoxSpreadPaperTrading() {
             socket?.send(JSON.stringify({ action: "resync" }));
           }
         };
+        watchdogTimer = window.setInterval(() => {
+          if (lastServerFrameAt && Date.now() - lastServerFrameAt > 45000) {
+            setPrivateWsStatus("STALE");
+            socket?.close();
+          }
+        }, 10000);
         socket.onerror = () => socket?.close();
         socket.onclose = () => {
+          if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
+          watchdogTimer = undefined;
           if (privateWsRef.current === socket) privateWsRef.current = null;
           scheduleReconnect();
         };
@@ -353,6 +366,7 @@ export default function BoxSpreadPaperTrading() {
     return () => {
       stopped = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
       if (privateWsRef.current === socket) privateWsRef.current = null;
       socket?.close();
     };
