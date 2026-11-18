@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from enum import Enum
@@ -154,6 +155,8 @@ class RecoveryBroker(Protocol):
 
 
 class RecoveryJournal(Protocol):
+    def claim_recovery_coordinator_owner(self, *, account_id: str, intent_id: str, owner_token: str) -> int | None: ...
+    def assert_recovery_coordinator_owner(self, *, account_id: str, intent_id: str, owner_token: str, owner_generation: int) -> bool: ...
     def latch_entry_kill_switch(self, *, account_id: str, strategy: str, reason: str) -> None: ...
     def freeze_intent(self, *, account_id: str, intent_id: str, reason: str) -> None: ...
     def assert_exclusive_instrument_lease(self, *, account_id: str, intent_id: str, symbols: tuple[str, ...]) -> bool: ...
@@ -208,7 +211,20 @@ class EmergencyRecoveryCoordinator:
         self._journal = journal
         self._policy = policy or RecoveryPolicy()
 
-    def _snapshot(self, account_id: str, intent_id: str) -> RecoverySnapshot:
+    def _assert_owner(self, *, account_id: str, intent_id: str,
+                      owner_token: str, owner_generation: int) -> None:
+        if not self._journal.assert_recovery_coordinator_owner(
+            account_id=account_id, intent_id=intent_id,
+            owner_token=owner_token, owner_generation=owner_generation,
+        ):
+            raise RuntimeError("durable recovery coordinator ownership was lost or cannot be verified")
+
+    def _snapshot(self, account_id: str, intent_id: str, *,
+                  owner_token: str, owner_generation: int) -> RecoverySnapshot:
+        self._assert_owner(
+            account_id=account_id, intent_id=intent_id,
+            owner_token=owner_token, owner_generation=owner_generation,
+        )
         snapshot = self._broker.recovery_snapshot(account_id=account_id, intent_id=intent_id)
         if not snapshot.authoritative:
             raise RuntimeError("broker order snapshot is not authoritative")
@@ -291,7 +307,20 @@ class EmergencyRecoveryCoordinator:
             raise ValueError("a durable pre-entry baseline is required for every basket instrument")
         attempts = 0
         residuals: tuple[RecoveryPosition, ...] = ()
+        owner_token = uuid.uuid4().hex
+        owner_generation: int | None = None
+        owner_claimed = False
         try:
+            owner_generation = self._journal.claim_recovery_coordinator_owner(
+                account_id=account_id, intent_id=intent_id, owner_token=owner_token,
+            )
+            if owner_generation is None:
+                return RecoveryResult(
+                    RecoveryState.MANUAL_REVIEW,
+                    "another recovery coordinator already owns this intent; takeover requires explicit operator reconciliation",
+                    (), attempts,
+                )
+            owner_claimed = True
             # Keep every durable state transition inside the fail-closed boundary.
             # In particular, a restart/manual-review intent must return a
             # controlled MANUAL_REVIEW result rather than leaking an exception
@@ -310,10 +339,14 @@ class EmergencyRecoveryCoordinator:
                 account_id=account_id, intent_id=intent_id, event="RECOVERY_STARTED",
                 details={"strategy": strategy, "symbols": sorted(symbol_set)},
             )
-            snapshot = self._snapshot(account_id, intent_id)
+            snapshot = self._snapshot(account_id, intent_id, owner_token=owner_token, owner_generation=owner_generation)
             for order in snapshot.orders:
                 if order.role.strip().upper() == "ENTRY" and not order.terminal:
                     try:
+                        self._assert_owner(
+                            account_id=account_id, intent_id=intent_id,
+                            owner_token=owner_token, owner_generation=owner_generation,
+                        )
                         self._broker.cancel_order(account_id=account_id, broker_order_id=order.broker_order_id)
                         self._journal.append_event(
                             account_id=account_id, intent_id=intent_id, event="ENTRY_CANCEL_REQUESTED",
@@ -326,7 +359,7 @@ class EmergencyRecoveryCoordinator:
                         )
 
             # A second authoritative read is mandatory after cancel requests.
-            snapshot = self._snapshot(account_id, intent_id)
+            snapshot = self._snapshot(account_id, intent_id, owner_token=owner_token, owner_generation=owner_generation)
             if not self._reconcile_pending_close_authorizations(
                 account_id=account_id, intent_id=intent_id, snapshot=snapshot,
             ):
@@ -360,7 +393,7 @@ class EmergencyRecoveryCoordinator:
 
             for attempt in range(1, self._policy.max_attempts + 1):
                 attempts = attempt
-                snapshot = self._snapshot(account_id, intent_id)
+                snapshot = self._snapshot(account_id, intent_id, owner_token=owner_token, owner_generation=owner_generation)
                 if not self._reconcile_pending_close_authorizations(
                     account_id=account_id, intent_id=intent_id, snapshot=snapshot,
                 ):
@@ -388,6 +421,10 @@ class EmergencyRecoveryCoordinator:
                     return self._mark_flat(account_id=account_id, intent_id=intent_id, attempts=attempts)
 
                 for position in residuals:
+                    self._assert_owner(
+                        account_id=account_id, intent_id=intent_id,
+                        owner_token=owner_token, owner_generation=owner_generation,
+                    )
                     quote = self._broker.recovery_quote(account_id=account_id, symbol=position.symbol)
                     current_time = now_ns if now_ns is not None else time.time_ns()
                     age = current_time - quote.observed_at_ns
@@ -420,6 +457,10 @@ class EmergencyRecoveryCoordinator:
                         client_order_id=close.client_order_id,
                     ):
                         raise RuntimeError("emergency close exceeds the approved account/intent recovery budget")
+                    self._assert_owner(
+                        account_id=account_id, intent_id=intent_id,
+                        owner_token=owner_token, owner_generation=owner_generation,
+                    )
                     placed = self._broker.place_ioc_limit(account_id=account_id, order=close)
                     if placed.client_order_id != close.client_order_id:
                         raise RuntimeError("broker returned a mismatched recovery client order ID")
@@ -438,7 +479,7 @@ class EmergencyRecoveryCoordinator:
                             residuals=residuals, attempts=attempts,
                         )
 
-            final = self._snapshot(account_id, intent_id)
+            final = self._snapshot(account_id, intent_id, owner_token=owner_token, owner_generation=owner_generation)
             if not self._reconcile_pending_close_authorizations(
                 account_id=account_id, intent_id=intent_id, snapshot=final,
             ):
@@ -462,11 +503,30 @@ class EmergencyRecoveryCoordinator:
                 residuals=residuals, attempts=attempts,
             )
         except Exception as exc:
+            if not owner_claimed or owner_generation is None:
+                return RecoveryResult(
+                    RecoveryState.MANUAL_REVIEW,
+                    f"recovery stopped before ownership was established: {type(exc).__name__}: {exc}",
+                    (), attempts,
+                )
             try:
-                snapshot = self._snapshot(account_id, intent_id)
+                self._assert_owner(
+                    account_id=account_id, intent_id=intent_id,
+                    owner_token=owner_token, owner_generation=owner_generation,
+                )
+                snapshot = self._snapshot(account_id, intent_id, owner_token=owner_token, owner_generation=owner_generation)
                 if self._positions_are_safe(snapshot):
                     residuals = self._residuals(snapshot, symbol_set, baseline)
             except Exception:
+                if not self._journal.assert_recovery_coordinator_owner(
+                    account_id=account_id, intent_id=intent_id,
+                    owner_token=owner_token, owner_generation=owner_generation,
+                ):
+                    return RecoveryResult(
+                        RecoveryState.MANUAL_REVIEW,
+                        "recovery ownership could not be verified; operator takeover and broker reconciliation required",
+                        (), attempts,
+                    )
                 residuals = ()  # unknown is not flat; kill switch and reservation remain latched
             return self._manual(
                 account_id=account_id, intent_id=intent_id,
