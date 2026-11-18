@@ -152,6 +152,7 @@ export default function BoxSpreadPaperTrading() {
   }
 
   const privateLedgerRequestSequenceRef = useRef(0);
+  const recoveryRequestSequenceRef = useRef(0);
 
   const refresh = useCallback(async () => {
     const requestSequence = ++privateLedgerRequestSequenceRef.current;
@@ -175,8 +176,9 @@ export default function BoxSpreadPaperTrading() {
       setClosedPageInfo({ total_count: Number(closedBody.total_count ?? 0), has_more: closedBody.has_more === true, limit: pageSize, offset: closedPage * pageSize });
       setError(null);
       // Recovery is a separate read-only request so its failure never blocks the normal ledger.
+      const recoveryRequestSequence = ++recoveryRequestSequenceRef.current;
       void request("/recovery?account_key=" + encodeURIComponent(account))
-        .then(body => setRecoveryTrades(Array.isArray(body.data) ? body.data : []))
+        .then(body => { if (recoveryRequestSequence === recoveryRequestSequenceRef.current) setRecoveryTrades(Array.isArray(body.data) ? body.data : []); })
         .catch(() => { /* Preserve the last durable recovery snapshot on transient API errors. */ });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load paper ledger");
@@ -184,6 +186,7 @@ export default function BoxSpreadPaperTrading() {
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
 
   const applyPrivateSnapshot = useCallback((payload: any) => {
+    recoveryRequestSequenceRef.current += 1; // Invalidate recovery REST if a newer private snapshot arrived.
     const accountBody = payload?.account;
     const summaryBody = payload?.portfolio_summary;
     const positionsBody = payload?.positions;
