@@ -124,11 +124,26 @@ class DurableBasketJournal:
         if not client_order_ids or len(set(client_order_ids)) != len(client_order_ids):
             raise ValueError("unique client order IDs are required for every basket leg")
         await self._call(
-            self._mutate, account_id=account_id, intent_id=intent_id,
-            event_type="SUBMISSION_STARTED",
-            payload={"client_order_ids": list(client_order_ids)},
-            state="SUBMITTING", client_order_ids=client_order_ids,
+            self._record_submission_started, account_id=account_id,
+            intent_id=intent_id, client_order_ids=client_order_ids,
         )
+
+    def _record_submission_started(self, *, account_id: str, intent_id: str,
+                                   client_order_ids: tuple[str, ...]) -> None:
+        with self._session_factory() as db, db.begin():
+            row = db.execute(select(BasketExecutionJournalRecord).where(
+                BasketExecutionJournalRecord.account_id == account_id,
+                BasketExecutionJournalRecord.intent_id == intent_id,
+            ).with_for_update()).scalar_one_or_none()
+            if row is None:
+                raise LookupError("durable basket submission claim not found")
+            if row.state != "CLAIMED":
+                raise ValueError("submission can start only from a fresh durable claim")
+            row.state = "SUBMITTING"
+            row.client_order_ids_json = json.dumps(list(client_order_ids))
+            self._append(db, row, "SUBMISSION_STARTED", {
+                "client_order_ids": list(client_order_ids),
+            })
 
     async def record_order_ack(self, *, account_id: str, intent_id: str,
                                ack: BrokerOrderAck) -> None:
@@ -178,6 +193,8 @@ class DurableBasketJournal:
             ).with_for_update()).scalar_one_or_none()
             if row is None:
                 raise LookupError("durable basket submission claim not found")
+            if row.state != "SUBMITTING":
+                raise ValueError("only a submitting basket can complete as filled")
             expected = json.loads(row.client_order_ids_json)
             by_id = {leg.client_order_id: leg for leg in reconciliation.legs}
             if (
