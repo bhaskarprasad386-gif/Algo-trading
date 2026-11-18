@@ -213,7 +213,7 @@ class DurableRecoveryJournal:
     def approve_emergency_close(self, *, account_id: str, intent_id: str,
                                 symbol: str, side: str, quantity: int,
                                 limit_price: Decimal, notional: Decimal) -> bool:
-        if side not in {"BUY", "SELL"} or isinstance(quantity, bool) or quantity <= 0:
+        if side not in {"BUY", "SELL"} or isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             return False
         if not limit_price.is_finite() or limit_price <= 0 or not notional.is_finite() or notional <= 0:
             return False
@@ -226,7 +226,7 @@ class DurableRecoveryJournal:
                 RecoveryBudgetRecord.intent_id == intent_id,
                 RecoveryBudgetRecord.symbol == symbol,
             ).with_for_update()).scalar_one_or_none()
-            if budget is None or not budget.approved:
+            if budget is None or not budget.approved or budget.attempts_used < 1:
                 return False
             if Decimal(budget.notional_used) + notional > Decimal(budget.max_notional):
                 return False
