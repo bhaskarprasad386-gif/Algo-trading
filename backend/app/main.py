@@ -453,7 +453,9 @@ def _synthetic_page_push_recovery_snapshot():
     try:
         payload["trace_opportunities"] = get_synthetic_trace_opportunities(500).get("data", [])
     except Exception:
-        payload["trace_opportunities"] = []
+        # Preserve browser-local traces if the database cannot supply the
+        # authoritative reconnect list; an empty list would look like deletion.
+        payload.pop("trace_opportunities", None)
     return payload
 
 
