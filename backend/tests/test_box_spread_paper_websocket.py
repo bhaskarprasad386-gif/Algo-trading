@@ -110,3 +110,22 @@ def test_private_ws_origin_rejects_credentials_and_non_http_schemes():
     assert private_ws._normalize_origin("javascript://app.example.com") is None
     assert private_ws._normalize_origin("https://app.example.com/path") is None
     assert private_ws._normalize_origin("https://app.example.com:invalid") is None
+
+
+def test_private_ws_event_journal_is_durable_and_worker_independent():
+    before = private_ws._latest_event_id()
+    private_ws.publish_paper_update("TEST_DURABLE_EVENT")
+    rows = private_ws._events_after(before)
+    assert rows
+    assert rows[-1]["event_type"] == "TEST_DURABLE_EVENT"
+    assert rows[-1]["sequence"] > before
+
+
+def test_private_ws_event_journal_cursor_returns_ordered_events():
+    before = private_ws._latest_event_id()
+    private_ws.publish_paper_update("TEST_EVENT_A")
+    private_ws.publish_paper_update("TEST_EVENT_B")
+    rows = private_ws._events_after(before)
+    selected = [row["event_type"] for row in rows if row["event_type"].startswith("TEST_EVENT_")]
+    assert selected[-2:] == ["TEST_EVENT_A", "TEST_EVENT_B"]
+    assert rows[-1]["sequence"] > rows[-2]["sequence"]

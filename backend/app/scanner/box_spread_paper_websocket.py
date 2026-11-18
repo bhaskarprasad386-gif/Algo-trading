@@ -1,7 +1,7 @@
 """Authenticated owner-scoped Box Paper Trading WebSocket transport.
 
 Tickets are opaque, short-lived, single-use values stored hashed in the app DB.
-Fan-out is process-local; every connection/recovery begins from a fresh DB snapshot.
+Events are journaled in the shared application DB; each worker independently tails the journal.
 Private data never enters the public page-push channel.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
-from sqlalchemy import Column, Float, MetaData, String, Table, delete, insert
+from sqlalchemy import Column, Float, Integer, MetaData, String, Table, delete, insert, select
 from app.core.database import engine
 from app.core.config import settings
 
@@ -44,13 +44,16 @@ tickets = Table(
     Column("channel", String(64), nullable=False),
     Column("expires_at", Float, nullable=False, index=True),
 )
+events = Table(
+    "box_spread_paper_ws_events", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("channel", String(64), nullable=False, index=True),
+    Column("event_type", String(64), nullable=False),
+    Column("created_at", Float, nullable=False, index=True),
+)
 metadata.create_all(bind=engine)
 
-_snapshot_provider: Callable[[], dict[str, Any]] | None = None
-_subscribers: set[asyncio.Queue] = set()
-_loop: asyncio.AbstractEventLoop | None = None
-_sequence = 0
-_lock = threading.Lock()
+_snapshot_provider: Callable[[str], dict[str, Any]] | None = None
 
 
 def configure_snapshot_provider(provider: Callable[[], dict[str, Any]] | None) -> None:
@@ -141,12 +144,26 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     return bool(origin and origin in _allowed_origins())
 
 
-def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default") -> dict[str, Any]:
-    global _sequence
-    with _lock:
-        if _sequence < 1:
-            _sequence = 1
-        sequence = _sequence
+def _latest_event_id() -> int:
+    with engine.connect() as connection:
+        value = connection.execute(
+            select(events.c.id).where(events.c.channel == CHANNEL)
+            .order_by(events.c.id.desc()).limit(1)
+        ).scalar_one_or_none()
+    return int(value or 0)
+
+
+def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(events.c.id, events.c.event_type)
+            .where(events.c.channel == CHANNEL, events.c.id > cursor)
+            .order_by(events.c.id.asc()).limit(limit + 1)
+        ).all()
+    return [{"sequence": int(row[0]), "event_type": str(row[1])} for row in rows]
+
+
+def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default", sequence: int | None = None) -> dict[str, Any]:
     provider = _snapshot_provider
     try:
         payload = provider(account_key) if callable(provider) else {}
@@ -154,7 +171,8 @@ def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default") 
         payload = {"snapshot_status": "UNAVAILABLE"}
     return {
         "type": "paper_update", "channel": CHANNEL, "schema_version": 1,
-        "sequence": sequence, "event_id": str(uuid.uuid4()),
+        "sequence": int(sequence if sequence is not None else _latest_event_id()),
+        "event_id": str(uuid.uuid4()),
         "event_type": event_type,
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "payload": payload if isinstance(payload, dict) else {"snapshot_status": "INVALID"},
@@ -162,36 +180,17 @@ def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default") 
 
 
 def publish_paper_update(event_type: str, _payload: dict[str, Any] | None = None) -> None:
-    """Notify private subscribers after a successful route/DB operation."""
-    loop = _loop
-    if loop is None or not loop.is_running():
-        return
-
-    def deliver() -> None:
-        global _sequence
-        with _lock:
-            _sequence += 1
-            sequence = _sequence
-        # Queue only a bounded invalidation marker. The socket handler builds
-        # the current snapshot from committed DB state when it sends the event.
-        marker = {
-            "type": "paper_invalidation", "sequence": sequence,
-            "event_id": str(uuid.uuid4()), "event_type": event_type,
-        }
-        for queue in tuple(_subscribers):
-            if queue.full():
-                while not queue.empty():
-                    try:
-                        queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                marker = {**marker, "event_type": "SNAPSHOT_REQUIRED"}
-            try:
-                queue.put_nowait(marker)
-            except asyncio.QueueFull:
-                pass
-
-    loop.call_soon_threadsafe(deliver)
+    """Persist an invalidation after successful mutation; every worker tails the journal."""
+    normalized = str(event_type or "UPDATE").strip().upper()[:64] or "UPDATE"
+    now = _now()
+    with engine.begin() as connection:
+        connection.execute(insert(events).values(channel=CHANNEL, event_type=normalized, created_at=now))
+        cutoff = connection.execute(
+            select(events.c.id).where(events.c.channel == CHANNEL)
+            .order_by(events.c.id.desc()).offset(10000).limit(1)
+        ).scalar_one_or_none()
+        if cutoff is not None:
+            connection.execute(delete(events).where(events.c.channel == CHANNEL, events.c.id < int(cutoff)))
 
 
 def publish_after_success(event_type: str):
@@ -215,7 +214,6 @@ def publish_after_success(event_type: str):
 
 @router.websocket("/ws/box-spread-paper")
 async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
-    global _loop
     if not _origin_allowed(websocket):
         await websocket.close(code=1008)
         return
@@ -226,8 +224,6 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
         connection_id = id(websocket)
         _active_connections.add(connection_id)
     await websocket.accept()
-    _loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_SIZE)
     resync_times: deque[float] = deque()
     last_resync_at = 0.0
     try:
@@ -250,13 +246,13 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
             await websocket.close(code=1008)
             return
 
-        _subscribers.add(queue)
-        await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key))
+        cursor = await asyncio.to_thread(_latest_event_id)
+        await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key, cursor))
+        last_heartbeat = time.monotonic()
         while True:
             receive_task = asyncio.create_task(websocket.receive_text())
-            event_task = asyncio.create_task(queue.get())
             done, pending = await asyncio.wait(
-                {receive_task, event_task}, timeout=HEARTBEAT_SECONDS,
+                {receive_task}, timeout=0.5,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in pending:
@@ -264,10 +260,23 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
             if not done:
-                await websocket.send_json({
-                    "type": "heartbeat", "channel": CHANNEL,
-                    "server_time": datetime.now(timezone.utc).isoformat(),
-                })
+                journal_rows = await asyncio.to_thread(_events_after, cursor)
+                if journal_rows:
+                    latest = journal_rows[-1]
+                    event_type = str(latest["event_type"])
+                    if len(journal_rows) > 100:
+                        event_type = "SNAPSHOT_REQUIRED"
+                    cursor = int(latest["sequence"])
+                    await websocket.send_json(await asyncio.to_thread(
+                        _snapshot_frame, "SNAPSHOT" if event_type == "SNAPSHOT_REQUIRED" else event_type,
+                        account_key, cursor,
+                    ))
+                elif time.monotonic() - last_heartbeat >= HEARTBEAT_SECONDS:
+                    await websocket.send_json({
+                        "type": "heartbeat", "channel": CHANNEL,
+                        "server_time": datetime.now(timezone.utc).isoformat(),
+                    })
+                    last_heartbeat = time.monotonic()
                 continue
             if receive_task in done:
                 incoming = receive_task.result()
@@ -290,19 +299,14 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
                     return
                 last_resync_at = now
                 resync_times.append(now)
-                await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key))
-            if event_task in done:
-                marker = event_task.result()
-                event_type = marker.get("event_type", "UPDATE") if isinstance(marker, dict) else "UPDATE"
-                await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT" if event_type == "SNAPSHOT_REQUIRED" else event_type, account_key))
+                cursor = await asyncio.to_thread(_latest_event_id)
+                await websocket.send_json(await asyncio.to_thread(_snapshot_frame, "SNAPSHOT", account_key, cursor))
+                last_heartbeat = time.monotonic()
     except (WebSocketDisconnect, asyncio.TimeoutError):
         pass
     finally:
-        _subscribers.discard(queue)
         with _connection_lock:
             _active_connections.discard(connection_id)
-        if not _subscribers:
-            _loop = None
 
 
 __all__ = [
