@@ -182,3 +182,43 @@ def test_postgres_concurrent_fill_identity_payload_conflict_fails_closed(postgre
         assert db.query(ExecutionFillRecord).count() == 1
         fill = db.scalar(select(ExecutionFillRecord))
         assert Decimal(str(fill.fill_price)) == Decimal("101.25")
+
+
+def test_postgres_concurrent_out_of_order_callbacks_reconcile_after_gap_closes(postgres_factory):
+    _seed_working_order(postgres_factory)
+    earlier = _fill_event(
+        event_id="evt-concurrent-earlier", fill_id="trade-concurrent-earlier",
+        quantity=10, cumulative=10, price=101.10,
+    )
+    later = _fill_event(
+        event_id="evt-concurrent-later", fill_id="trade-concurrent-later",
+        quantity=10, cumulative=20, price=101.20,
+    )
+
+    def ingest(event):
+        with postgres_factory() as db:
+            return record_broker_order_event_with_fill(db, event)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(ingest, (later, earlier)))
+
+    # Either callback may win the initial row lock. If the later cumulative
+    # event arrived first it must remain durable/deferred, never be guessed.
+    assert db_count := None
+    with postgres_factory() as db:
+        assert db.query(BrokerOrderEventRecord).count() == 2
+        assert db.query(ExecutionFillRecord).count() in (1, 2)
+
+    # Once the missing predecessor is known, explicitly retry the immutable
+    # later event. Exact replay is idempotent if it was already applied.
+    with postgres_factory() as db:
+        replay = record_broker_order_event_with_fill(db, later)
+    assert replay["fill_deferred"] is False
+
+    with postgres_factory() as db:
+        assert db.query(BrokerOrderEventRecord).count() == 2
+        assert db.query(ExecutionFillRecord).count() == 2
+        leg = db.scalar(select(ExecutionLegRecord).where(
+            ExecutionLegRecord.leg_id == "leg-ce",
+        ))
+        assert leg.filled_quantity == 20
