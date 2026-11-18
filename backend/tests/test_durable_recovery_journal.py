@@ -245,3 +245,51 @@ def test_manual_review_state_never_authorizes_another_close(journal):
         side="SELL", quantity=1, limit_price=Decimal("10"),
         notional=Decimal("10"),
     )
+
+
+def test_close_approval_budget_survives_journal_reconstruction(journal):
+    durable, factory = journal
+    durable.configure_recovery_budget(
+        account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+        max_attempts=1, max_notional=Decimal("1000"), approved=True,
+    )
+    assert durable.acquire_instrument_leases(
+        account_id="acct-restart", intent_id="intent-restart", symbols=("OPT:CE",),
+    )
+    durable.freeze_intent(
+        account_id="acct-restart", intent_id="intent-restart", reason="partial fill",
+    )
+    durable.claim_recovery_attempt(
+        account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+    )
+    assert durable.approve_emergency_close(
+        account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+        side="SELL", quantity=2, limit_price=Decimal("25"),
+        notional=Decimal("50"),
+    )
+
+    # Reconstruct the persistence adapter as if the process had restarted.
+    restarted = DurableRecoveryJournal(factory)
+    assert not restarted.approve_emergency_close(
+        account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+        side="SELL", quantity=2, limit_price=Decimal("25"),
+        notional=Decimal("50"),
+    )
+    with factory() as db:
+        budget = db.execute(select(RecoveryBudgetRecord).where(
+            RecoveryBudgetRecord.account_id == "acct-restart",
+            RecoveryBudgetRecord.intent_id == "intent-restart",
+            RecoveryBudgetRecord.symbol == "OPT:CE",
+        )).scalar_one()
+        approvals = db.execute(select(RecoveryJournalEventRecord).where(
+            RecoveryJournalEventRecord.control_id == db.execute(
+                select(RecoveryControlRecord.id).where(
+                    RecoveryControlRecord.account_id == "acct-restart",
+                    RecoveryControlRecord.intent_id == "intent-restart",
+                )
+            ).scalar_one(),
+            RecoveryJournalEventRecord.event == "EMERGENCY_CLOSE_BUDGET_APPROVED",
+        )).scalars().all()
+        assert budget.attempts_used == 1
+        assert budget.notional_used == Decimal("50")
+        assert len(approvals) == 1
