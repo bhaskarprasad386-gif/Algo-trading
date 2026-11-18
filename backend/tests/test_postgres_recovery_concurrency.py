@@ -99,3 +99,38 @@ def test_postgres_conflicting_basket_lease_rolls_back_uncontested_symbols(postgr
             RecoveryInstrumentLeaseRecord.account_id == "acct-race",
         ).order_by(RecoveryInstrumentLeaseRecord.symbol)).scalars().all()
         assert [(row.intent_id, row.symbol) for row in leases] == [("owner", "NFO:PE")]
+
+
+
+def test_postgres_concurrent_attempt_claims_across_rebuilt_journals_respect_budget(postgres_journal):
+    journal, factory = postgres_journal
+    journal.configure_recovery_budget(
+        account_id="acct-restart-race", intent_id="intent-restart-race",
+        symbol="NFO:OPT", max_attempts=2,
+        max_notional=Decimal("25000"), approved=True,
+    )
+
+    def claim(_):
+        # Each worker gets a distinct adapter instance, mirroring separate
+        # coordinator processes reconstructed against the same database.
+        restarted_journal = DurableRecoveryJournal(factory)
+        try:
+            return restarted_journal.claim_recovery_attempt(
+                account_id="acct-restart-race",
+                intent_id="intent-restart-race",
+                symbol="NFO:OPT",
+            )
+        except RuntimeError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        outcomes = list(pool.map(claim, range(12)))
+
+    assert sorted(value for value in outcomes if value is not None) == [1, 2]
+    with factory() as db:
+        budget = db.execute(select(RecoveryBudgetRecord).where(
+            RecoveryBudgetRecord.account_id == "acct-restart-race",
+            RecoveryBudgetRecord.intent_id == "intent-restart-race",
+            RecoveryBudgetRecord.symbol == "NFO:OPT",
+        )).scalar_one()
+        assert budget.attempts_used == 2
