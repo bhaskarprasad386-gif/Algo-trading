@@ -365,6 +365,10 @@ class EmergencyRecoveryCoordinator:
                     recovery_attempt = self._journal.claim_recovery_attempt(
                         account_id=account_id, intent_id=intent_id, symbol=position.symbol,
                     )
+                    if recovery_attempt > self._policy.max_attempts:
+                        raise RuntimeError(
+                            "durable recovery attempt limit is exhausted for this instrument"
+                        )
                     token = hashlib.sha256(
                         f"{account_id}|{intent_id}|{position.symbol}|{recovery_attempt}".encode("utf-8")
                     ).hexdigest()[:24]
