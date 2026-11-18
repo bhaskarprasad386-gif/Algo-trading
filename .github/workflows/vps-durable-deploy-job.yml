@@ -1,0 +1,121 @@
+name: VPS Durable Deploy Job
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Immutable main-branch commit SHA to deploy (blank uses this workflow commit)"
+        required: false
+        default: ""
+        type: string
+      force_restart:
+        description: "Allow service restart during market hours"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-service-mutation
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout deployment runner
+        uses: actions/checkout@v4
+
+      - name: Submit and monitor durable remote deployment
+        env:
+          VPS_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          TARGET_SHA_INPUT: ${{ inputs.target_sha }}
+          FORCE_RESTART_INPUT: ${{ inputs.force_restart }}
+          RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ -n "${VPS_HOST:-}" && -n "${VPS_USER:-}" && -n "${VPS_KEY_B64:-}" ]] || {
+            echo "VPS SSH secrets are not configured" >&2
+            exit 1
+          }
+          TARGET_SHA="${TARGET_SHA_INPUT:-$GITHUB_SHA}"
+          FORCE_RESTART="${FORCE_RESTART_INPUT:-false}"
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "target_sha must be a full 40-character commit" >&2; exit 1; }
+          [[ "$RUN_ID" =~ ^[0-9]{1,24}$ ]] || { echo "invalid GitHub run ID" >&2; exit 1; }
+          printf '%s' "$VPS_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          SSH_KNOWN_HOSTS=/tmp/vps_known_hosts
+          : > "$SSH_KNOWN_HOSTS"
+          ssh-keyscan -T 10 -p 22 -H "$VPS_HOST" > "$SSH_KNOWN_HOSTS"
+          test -s "$SSH_KNOWN_HOSTS"
+          SSH_OPTS=(-i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o UserKnownHostsFile="$SSH_KNOWN_HOSTS" -o StrictHostKeyChecking=yes)
+          KEX_OPTS=(-o KexAlgorithms=curve25519-sha256)
+          REMOTE_RUNNER="/tmp/vps-deploy-job-runner-$RUN_ID.sh"
+          scp -q "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" deploy/vps-deploy-job-runner.sh "$VPS_USER@$VPS_HOST:$REMOTE_RUNNER"
+
+          # If this SSH call disconnects after the remote worker starts, do not
+          # submit again. Poll the same immutable job ID and reconcile status.
+          set +e
+          timeout 45s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
+            "bash '$REMOTE_RUNNER' submit '$RUN_ID' '$TARGET_SHA' '$FORCE_RESTART'"
+          SUBMIT_EXIT=$?
+          set -e
+          echo "REMOTE_SUBMIT_SSH_EXIT=$SUBMIT_EXIT"
+          STATUS_FILE="$RUNNER_TEMP/vps-deploy-status.txt"
+          : > "$STATUS_FILE"
+          TERMINAL=false
+          for attempt in $(seq 1 180); do
+            set +e
+            STATUS_OUTPUT="$(timeout 45s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
+              "bash /var/lib/algo-trading-deploy/jobs/$RUN_ID/runner.sh status '$RUN_ID' '$TARGET_SHA' '$FORCE_RESTART' 2>/dev/null")"
+            STATUS_EXIT=$?
+            set -e
+            if [[ "$STATUS_EXIT" -eq 0 && -n "$STATUS_OUTPUT" ]]; then
+              printf '%s\n' "$STATUS_OUTPUT" >> "$STATUS_FILE"
+              printf 'DEPLOY_POLL_ATTEMPT=%s\n' "$attempt"
+              printf '%s\n' "$STATUS_OUTPUT" | sed -n '1,3p'
+              if [[ "$STATUS_OUTPUT" == *'"status":"SUCCEEDED"'* ]]; then
+                TERMINAL=true
+                echo "VPS_DEPLOY_JOB_SUCCEEDED=true"
+                break
+              fi
+              if [[ "$STATUS_OUTPUT" == *'"status":"DEFERRED_MARKET_HOURS"'* ]]; then
+                TERMINAL=true
+                echo "::notice::Deployment was safely deferred during market hours. Re-run later or explicitly approve force_restart."
+                break
+              fi
+              if [[ "$STATUS_OUTPUT" == *'"status":"FAILED"'* || "$STATUS_OUTPUT" == *'UNKNOWN_REQUIRES_INSPECTION'* ]]; then
+                echo "Remote deployment failed or its state is ambiguous; do not resubmit blindly." >&2
+                break
+              fi
+            else
+              echo "STATUS_QUERY_UNAVAILABLE attempt=$attempt"
+            fi
+            sleep 15
+          done
+
+          set +e
+          timeout 30s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
+            "rm -f '$REMOTE_RUNNER'" >/dev/null 2>&1
+          set -e
+          if [[ "$TERMINAL" == "true" && "$STATUS_OUTPUT" == *'"status":"SUCCEEDED"'* ]]; then
+            timeout 45s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
+              "bash /var/lib/algo-trading-deploy/jobs/$RUN_ID/runner.sh logs '$RUN_ID' '$TARGET_SHA' '$FORCE_RESTART'" || true
+            rm -f /tmp/vps_key /tmp/vps_known_hosts
+            exit 0
+          fi
+          if [[ "$TERMINAL" == "true" && "$STATUS_OUTPUT" == *'"status":"DEFERRED_MARKET_HOURS"'* ]]; then
+            rm -f /tmp/vps_key /tmp/vps_known_hosts
+            exit 0
+          fi
+          echo "VPS deployment is not confirmed successful. Inspect the same remote job ID $RUN_ID; never create a duplicate job to guess the outcome." >&2
+          timeout 45s ssh -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
+            "bash /var/lib/algo-trading-deploy/jobs/$RUN_ID/runner.sh logs '$RUN_ID' '$TARGET_SHA' '$FORCE_RESTART'" || true
+          rm -f /tmp/vps_key /tmp/vps_known_hosts
+          exit 1
