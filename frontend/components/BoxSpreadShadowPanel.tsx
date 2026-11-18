@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Activity, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type ShadowResult = {
   strategy: string;
@@ -28,6 +29,7 @@ export default function BoxSpreadShadowPanel() {
   const [data, setData] = useState<ShadowResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("box-spread");
   const refresh = useCallback(async () => {
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -39,7 +41,19 @@ export default function BoxSpreadShadowPanel() {
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load shadow diagnostics"); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { void refresh(); const id = window.setInterval(() => void refresh(), 5000); return () => window.clearInterval(id); }, [refresh]);
+  useEffect(() => {
+    if (pagePushStatus === "LIVE") return;
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 15000);
+    return () => window.clearInterval(id);
+  }, [refresh, pagePushStatus]);
+  useEffect(() => {
+    const pushed = pagePushData?.shadow as ShadowResult | undefined;
+    if (!pushed || pushed.strategy !== "box-spread-shadow" || pushed.execution_mode !== "SHADOW_ONLY" || pushed.order_routing_enabled !== false) return;
+    setData(pushed);
+    setError(null);
+    setLoading(false);
+  }, [pagePushData]);
 
   const diagnostics = data?.diagnostics ?? {};
   const rejected = data?.rejected_counts ?? {};
@@ -61,6 +75,6 @@ export default function BoxSpreadShadowPanel() {
     <div><h3 className="mb-2 text-sm font-extrabold">Calculation diagnostics</h3><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{metricKeys.map(key => <div key={key} className="rounded-lg border p-2"><div className="text-xs text-slate-500">{title(key)}</div><div className="font-bold">{n(diagnostics[key] as number)}</div></div>)}</div></div>
     <div><h3 className="mb-2 text-sm font-extrabold">Rejected quote groups</h3><div className="flex flex-wrap gap-2">{Object.entries(rejected).map(([key, count]) => <span key={key} className="rounded-md border px-2 py-1 text-xs">{title(key)}: <b>{n(count)}</b></span>)}</div></div>\n    <div className="overflow-x-auto"><h3 className="mb-2 text-sm font-extrabold">Live coverage by expiry and option side</h3><table className="w-full min-w-[720px] text-left text-xs"><thead><tr className="border-b"><th className="p-2">Underlying</th><th className="p-2">Expiry</th><th className="p-2">Type</th><th className="p-2">Listed / Valid</th><th className="p-2">Candidates</th><th className="p-2">Results</th><th className="p-2">Depth Ready / Incomplete</th></tr></thead><tbody>{(data?.live_coverage ?? []).map((row, i) => <tr key={String(row.underlying)+String(row.expiry)+String(row.option_type)+i} className="border-b"><td className="p-2 font-bold">{String(row.underlying)}</td><td className="p-2">{String(row.expiry)}</td><td className="p-2">{String(row.option_type)}</td><td className="p-2">{n(row.listed_quote_rows)} / {n(row.valid_quote_count)}</td><td className="p-2">{n(row.candidate_structure_count)}</td><td className="p-2">{n(row.result_count)}</td><td className="p-2">{n(row.depth_ready_count)} / {n(row.depth_incomplete_count)}</td></tr>)}{(data?.live_coverage.length ?? 0) === 0 && <tr><td colSpan={7} className="p-3 text-center text-slate-500">No eligible live coverage groups in the shared snapshot.</td></tr>}</tbody></table></div>
     <div className="overflow-x-auto"><h3 className="mb-2 text-sm font-extrabold">Shadow opportunities</h3><table className="w-full min-w-[900px] text-left text-xs"><thead><tr className="border-b"><th className="p-2">Underlying / Expiry</th><th className="p-2">Structure</th><th className="p-2">Option</th><th className="p-2">Strikes</th><th className="p-2">Gross / Unit</th><th className="p-2">Gross / Lot</th><th className="p-2">L1 Lots</th><th className="p-2">Depth</th><th className="p-2">L1 − Depth VWAP</th></tr></thead><tbody>{(data?.results ?? []).slice(0, 100).map((row, i) => { const cmp = row.l1_vs_depth_vwap as Record<string, unknown> | undefined; const depth = row.depth as Record<string, unknown> | undefined; return <tr key={String(row.underlying)+String(row.expiry)+String(row.strategy)+String(row.option_type)+i} className="border-b"><td className="p-2 font-bold">{String(row.underlying)}<div className="font-normal text-slate-500">{String(row.expiry_type)} · {String(row.expiry)}</div></td><td className="p-2">{String(row.strategy)}</td><td className="p-2">{String(row.option_type)}</td><td className="p-2">{Array.isArray(row.strikes) ? row.strikes.join(" / ") : "—"}</td><td className="p-2">{n(row.gross_credit_per_unit)}</td><td className="p-2">{n(row.gross_credit_per_lot)}</td><td className="p-2">{n(row.l1_executable_lots)}</td><td className="p-2">{String(depth?.status ?? "—")}</td><td className="p-2">{n(cmp?.l1_minus_depth_vwap_credit_per_unit)}</td></tr>; })}{!loading && (data?.results.length ?? 0) === 0 && <tr><td colSpan={9} className="p-4 text-center text-slate-500">No eligible shadow structures from the current fresh shared snapshot. This is expected off-market or while quotes/depth are waiting.</td></tr>}</tbody></table></div>
-    <div className="text-xs text-slate-500">Refreshes every 5 seconds. Uses the Box Spread runner's existing shared snapshot; it does not place orders or create broker subscriptions.</div>
+    <div className="text-xs text-slate-500">WebSocket page push updates the panel from the Box runner's existing shared snapshot. REST refresh runs every 15 seconds only while WebSocket is unavailable; manual refresh remains available. No orders or additional broker subscriptions.</div>
   </Card>;
 }
