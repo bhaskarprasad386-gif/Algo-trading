@@ -217,7 +217,10 @@ export default function BoxSpreadPaperTrading() {
     setClosedPage(0);
   }, [account, positionSearch, positionDirection]);
 
+  const opportunityRequestSequenceRef = useRef(0);
+
   const loadOpportunities = useCallback(async () => {
+    const requestSequence = ++opportunityRequestSequenceRef.current;
     setOpportunityStatus("CHECKING");
     const base = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread";
     const [liveResult, diagnosticsResult] = await Promise.allSettled([
@@ -235,6 +238,8 @@ export default function BoxSpreadPaperTrading() {
       }),
     ]);
 
+    // A pushed snapshot/update always wins over an older REST fallback request.
+    if (requestSequence !== opportunityRequestSequenceRef.current) return;
     setLastOpportunityCheck(Date.now());
     if (diagnosticsResult.status === "fulfilled") {
       setScannerDiagnostics(diagnosticsResult.value as ScannerDiagnostics);
@@ -278,6 +283,8 @@ export default function BoxSpreadPaperTrading() {
   useEffect(() => {
     const data = pagePush.data;
     if (!data) return;
+    // Invalidate any in-flight REST fallback before applying pushed market data.
+    opportunityRequestSequenceRef.current += 1;
     const isSnapshot = data.__event === "SNAPSHOT";
     // The Box page publisher emits PATCH frames containing a complete page
     // snapshot (including the full opportunities array), not per-row deltas.
