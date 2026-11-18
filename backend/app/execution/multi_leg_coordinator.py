@@ -238,7 +238,8 @@ class BasketJournal(Protocol):
     async def claim_submission(self, *, account_id: str, intent_id: str,
                                strategy: str, snapshot_id: str) -> bool: ...
     async def record_submission_started(self, *, account_id: str, intent_id: str,
-                                        client_order_ids: tuple[str, ...]) -> None: ...
+                                        client_order_ids: tuple[str, ...],
+                                        expected_quantities: Mapping[str, int]) -> None: ...
     async def record_order_ack(self, *, account_id: str, intent_id: str,
                                ack: BrokerOrderAck) -> None: ...
     async def freeze_intent(self, *, account_id: str, intent_id: str, reason: str) -> None: ...
@@ -384,6 +385,10 @@ class MultiLegBasketCoordinator:
             await self._journal.record_submission_started(
                 account_id=intent.account_id, intent_id=intent.intent_id,
                 client_order_ids=client_ids,
+                expected_quantities={
+                    client_id: intent.quantity_for(leg)
+                    for client_id, leg in zip(client_ids, intent.legs, strict=True)
+                },
             )
         except Exception as exc:
             await self._journal.freeze_intent(
