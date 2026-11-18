@@ -431,37 +431,38 @@ def status(broker: str, db: Session = Depends(get_db), user_id: int = Depends(re
 
 @router.delete("/{broker}")
 def disconnect(broker: str, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
-    name = broker.strip().lower()
-    # Remove local reachability and disarm first. Provider logout is best-effort:
-    # even if it raises, metadata and durable state must still be reconciled.
-    adapter = broker_sessions.remove(user_id, name)
-    trading_safety.disable(user_id)
-    broker_connections.disconnect(user_id, name)
+    with broker_sessions.transition(user_id):
+        name = broker.strip().lower()
+        # Remove local reachability and disarm first. Provider logout is best-effort:
+        # even if it raises, metadata and durable state must still be reconciled.
+        adapter = broker_sessions.remove(user_id, name)
+        trading_safety.disable(user_id)
+        broker_connections.disconnect(user_id, name)
 
-    disconnect_error = None
-    if adapter is not None:
+        disconnect_error = None
+        if adapter is not None:
+            try:
+                adapter.disconnect()
+            except Exception as exc:
+                disconnect_error = exc
+                app_logger.exception("Broker provider disconnect failed for %s", name)
+
         try:
-            adapter.disconnect()
+            set_owner_connection_state(db, False)
         except Exception as exc:
-            disconnect_error = exc
-            app_logger.exception("Broker provider disconnect failed for %s", name)
+            db.rollback()
+            app_logger.error("Durable Box Spread disconnect state update failed: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Broker session was removed locally and trading remains disarmed, but durable connection state could not be confirmed",
+            ) from exc
 
-    try:
-        set_owner_connection_state(db, False)
-    except Exception as exc:
-        db.rollback()
-        app_logger.error("Durable Box Spread disconnect state update failed: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail="Broker session was removed locally and trading remains disarmed, but durable connection state could not be confirmed",
-        ) from exc
-
-    if disconnect_error is not None:
-        raise HTTPException(
-            status_code=503,
-            detail="Broker session was removed locally and trading remains disarmed, but provider logout failed; verify the session with the broker",
-        ) from disconnect_error
-    return {"connected": False, "broker": name, "real_trading": False, "kill_switch": True}
+        if disconnect_error is not None:
+            raise HTTPException(
+                status_code=503,
+                detail="Broker session was removed locally and trading remains disarmed, but provider logout failed; verify the session with the broker",
+            ) from disconnect_error
+        return {"connected": False, "broker": name, "real_trading": False, "kill_switch": True}
 
 
 @router.get("/web/settings", include_in_schema=False)
