@@ -82,6 +82,10 @@ def test_recovery_budget_requires_explicit_approval_and_bounds_attempts(journal)
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         max_attempts=2, max_notional=Decimal("10000"), approved=False,
     )
+    durable.acquire_instrument_leases(
+        account_id="acct-a", intent_id="intent-1", symbols=("OPT:CE",),
+    )
+    durable.freeze_intent(account_id="acct-a", intent_id="intent-1", reason="partial fill")
     with pytest.raises(RuntimeError, match="explicit approved"):
         durable.claim_recovery_attempt(
             account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
@@ -90,6 +94,10 @@ def test_recovery_budget_requires_explicit_approval_and_bounds_attempts(journal)
         account_id="acct-a", intent_id="intent-2", symbol="OPT:CE",
         max_attempts=2, max_notional=Decimal("10000"), approved=True,
     )
+    durable.acquire_instrument_leases(
+        account_id="acct-a", intent_id="intent-2", symbols=("OPT:CE",),
+    )
+    durable.freeze_intent(account_id="acct-a", intent_id="intent-2", reason="partial fill")
     assert durable.claim_recovery_attempt(
         account_id="acct-a", intent_id="intent-2", symbol="OPT:CE",
     ) == 1
@@ -138,6 +146,12 @@ def test_emergency_close_budget_checks_exact_notional_and_cumulative_cap(journal
         notional=Decimal("99"),
     )
     assert durable.approve_emergency_close(
+        account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
+        side="SELL", quantity=10, limit_price=Decimal("10"),
+        notional=Decimal("100"),
+    )
+    # The same claimed attempt cannot authorize a duplicate close request.
+    assert not durable.approve_emergency_close(
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
         notional=Decimal("100"),
