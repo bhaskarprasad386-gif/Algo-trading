@@ -168,8 +168,8 @@ export function SyntheticTracePanel() {
 
   useEffect(() => {
     const pushedStatus = pagePushData?.trace_status_update as Record<string, unknown> | undefined;
-    const traceId = typeof pushedStatus?.trace_id === "string" ? pushedStatus.trace_id : "";
-    if (!traceId) return;
+    if (!pushedStatus || typeof pushedStatus.trace_id !== "string") return;
+    const traceId = pushedStatus.trace_id;
     setStatusByTrace((current) => ({ ...current, [traceId]: pushedStatus }));
   }, [pagePushData]);
 
