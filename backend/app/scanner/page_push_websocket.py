@@ -17,6 +17,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 router = APIRouter(tags=["page-push"])
 PAGE_CHANNELS = frozenset({
     "box-spread",
+    "errors",
     "iv-skew-flip",
     "credit-butterfly-condor-weekly",
     "credit-butterfly-condor-monthly",
