@@ -230,7 +230,8 @@ def test_reconciled_flag_is_required_even_when_snapshot_is_authoritative():
     original = broker.recovery_snapshot
     broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
         account_id="acct-1", broker="angel_one", authoritative=True,
-        positions_reconciled=False, orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
+        positions_reconciled=False, position_attribution_complete=False,
+        orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
     )
     result = run(broker, journal)
 
