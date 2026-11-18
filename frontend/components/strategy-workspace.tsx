@@ -966,6 +966,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (slug !== "box-spread" || !pagePushData) return;
     const opportunities = pagePushData.opportunities;
     if (Array.isArray(opportunities)) {
+      // A page-push frame is authoritative. Invalidate any REST recovery request
+      // that started before this frame so a late HTTP response cannot roll the
+      // live scanner table back to an older snapshot.
+      loadRequestRef.current += 1;
       const nextRows = opportunities.filter((item: unknown): item is Row => !!item && typeof item === "object");
       rowsRef.current = nextRows;
       setRows(nextRows);
