@@ -52,6 +52,17 @@ def test_cloudflare_staging_origin_is_allowed_by_cors():
     assert response.headers["access-control-allow-origin"] == "https://algo-trading.bhaskarprasad386.workers.dev"
 
 
+def test_cloudflare_preview_origins_are_allowed_by_cors():
+    client = TestClient(app)
+    for origin in (
+        "https://fix-cloudflare-cors-algo-trading.bhaskarprasad386.workers.dev",
+        "https://fix-cloudflare-workers-cors-algo-trading.bhaskarprasad386.workers.dev",
+    ):
+        response = client.get("/health", headers={"Origin": origin})
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+
+
 def test_untrusted_workers_dev_origin_is_not_allowed_by_cors():
     client = TestClient(app)
     response = client.get("/health", headers={"Origin": "https://untrusted-project.workers.dev"})
