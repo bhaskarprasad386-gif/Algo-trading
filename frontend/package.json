@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "opennextjs-cloudflare build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "cf:build": "opennextjs-cloudflare build",
