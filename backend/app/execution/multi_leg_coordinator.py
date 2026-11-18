@@ -45,7 +45,9 @@ class BasketLeg:
             raise ValueError("leg identity, role, symbol and expiry are required")
         if self.side not in {"BUY", "SELL"} or self.option_type not in {"CE", "PE"}:
             raise ValueError("leg side or option type is invalid")
-        if self.ratio <= 0 or not self.limit_price.is_finite() or self.limit_price <= 0:
+        if isinstance(self.ratio, bool) or not isinstance(self.ratio, int) or self.ratio <= 0:
+            raise ValueError("leg ratio must be a positive integer")
+        if not self.limit_price.is_finite() or self.limit_price <= 0:
             raise ValueError("leg ratio and limit price must be positive")
 
 
@@ -95,8 +97,11 @@ class BasketIntent:
         }[self.strategy]
         if len(self.legs) != expected[0] or ratios != expected[1]:
             raise ValueError(f"{self.strategy.value} has invalid leg count or ratio shape")
-        if self.strategy is BasketStrategy.BOX_SPREAD and {x.option_type for x in self.legs} != {"CE", "PE"}:
-            raise ValueError("Box Spread must contain both CE and PE legs")
+        option_counts = {kind: sum(x.option_type == kind for x in self.legs) for kind in {"CE", "PE"}}
+        if self.strategy is BasketStrategy.BOX_SPREAD and option_counts != {"CE": 2, "PE": 2}:
+            raise ValueError("Box Spread must contain two CE and two PE legs")
+        if self.strategy is BasketStrategy.CONDOR and len({x.option_type for x in self.legs}) == 2 and option_counts != {"CE": 2, "PE": 2}:
+            raise ValueError("Iron Condor must contain two CE and two PE legs")
 
     def quantity_for(self, leg: BasketLeg) -> int:
         return self.lots * self.lot_size * leg.ratio
@@ -211,7 +216,8 @@ class MultiLegBasketCoordinator:
                  max_quote_age_ns: int = 1_000_000_000,
                  max_cross_leg_skew_ns: int = 250_000_000,
                  max_slippage_bps: Decimal = Decimal("50"),
-                 submit_timeout_seconds: float = 3.0):
+                 submit_timeout_seconds: float = 3.0,
+                 edge_evaluator: EdgeEvaluator | None = None):
         if max_quote_age_ns <= 0 or max_cross_leg_skew_ns < 0 or submit_timeout_seconds <= 0:
             raise ValueError("coordinator timing policy is invalid")
         if not max_slippage_bps.is_finite() or not Decimal("0") <= max_slippage_bps <= Decimal("500"):
@@ -223,14 +229,15 @@ class MultiLegBasketCoordinator:
         self._max_skew = max_cross_leg_skew_ns
         self._slippage = max_slippage_bps
         self._timeout = submit_timeout_seconds
+        self._edge_evaluator = edge_evaluator
 
     def _validate_preflight(self, intent: BasketIntent, evidence: PreflightEvidence,
                              *, now_ns: int) -> None:
         intent.validate_shape()
         if not evidence.risk_approved or not evidence.margin_approved:
             raise ValueError("risk or margin approval is missing")
-        if evidence.edge.net_edge < evidence.edge.minimum_net_edge:
-            raise ValueError("net edge after fees is below the required threshold")
+        if self._edge_evaluator is None:
+            raise ValueError("strategy-specific live-quote edge evaluator is not configured")
         timestamps = []
         for leg in intent.legs:
             quote = evidence.quotes.get(leg.symbol)
@@ -238,9 +245,12 @@ class MultiLegBasketCoordinator:
                 raise ValueError(f"missing executable quote for {leg.symbol}")
             if (
                 not quote.bid.is_finite() or not quote.ask.is_finite()
-                or quote.bid <= 0 or quote.ask <= 0 or quote.bid > quote.ask
-                or quote.tick_size <= 0 or quote.lot_size != intent.lot_size
-                or quote.bid_depth < 0 or quote.ask_depth < 0
+                or not quote.tick_size.is_finite() or quote.bid <= 0 or quote.ask <= 0
+                or quote.bid > quote.ask or quote.tick_size <= 0
+                or quote.lot_size != intent.lot_size
+                or isinstance(quote.bid_depth, bool) or not isinstance(quote.bid_depth, int) or quote.bid_depth < 0
+                or isinstance(quote.ask_depth, bool) or not isinstance(quote.ask_depth, int) or quote.ask_depth < 0
+                or quote.observed_at_ns <= 0
             ):
                 raise ValueError(f"invalid or crossed quote for {leg.symbol}")
             age = now_ns - quote.observed_at_ns
@@ -265,6 +275,13 @@ class MultiLegBasketCoordinator:
                 raise ValueError(f"limit price violates tick size for {leg.symbol}")
         if max(timestamps) - min(timestamps) > self._max_skew:
             raise ValueError("cross-leg quote timestamp skew exceeds policy")
+        # Recompute edge from this exact executable quote set. Scanner-alert
+        # edge is never sufficient authorization for a broker submission.
+        current_edge = self._edge_evaluator(intent, evidence.quotes)
+        if current_edge.snapshot_id != evidence.edge.snapshot_id:
+            raise ValueError("recomputed edge does not belong to the approved quote snapshot")
+        if current_edge.net_edge < current_edge.minimum_net_edge:
+            raise ValueError("recomputed net edge after fees is below the required threshold")
         snapshot_age = now_ns - evidence.snapshot_observed_at_ns
         if evidence.snapshot_observed_at_ns <= 0 or snapshot_age < 0 or snapshot_age > self._max_age:
             raise ValueError("basket snapshot is stale or timestamped in the future")
