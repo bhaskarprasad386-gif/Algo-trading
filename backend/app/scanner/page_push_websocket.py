@@ -271,16 +271,26 @@ def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
     _subscribers.add((queue, channels))
 
 
-def _unsubscribe_local(queue: asyncio.Queue) -> None:
+async def _unsubscribe_local(queue: asyncio.Queue) -> None:
     global _dispatch_task, _dispatch_loop, _dispatch_ready
     for entry in tuple(_subscribers):
         if entry[0] is queue:
             _subscribers.discard(entry)
-    if not _subscribers and _dispatch_task is not None:
-        _dispatch_task.cancel()
-        _dispatch_task = None
-        _dispatch_loop = None
-        _dispatch_ready = None
+    task = _dispatch_task
+    if not _subscribers and task is not None:
+        # Let the journal tailer observe the empty subscriber set and exit
+        # naturally. Cancelling a task while it awaits asyncio.to_thread()
+        # can cancel Starlette's TestClient portal during WebSocket teardown.
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        finally:
+            if _dispatch_task is task and not _subscribers:
+                _dispatch_task = None
+                _dispatch_loop = None
+                _dispatch_ready = None
 
 
 async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, page_to_reset: str) -> asyncio.Task:
@@ -409,4 +419,4 @@ async def page_updates(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        _unsubscribe_local(queue)
+        await _unsubscribe_local(queue)
