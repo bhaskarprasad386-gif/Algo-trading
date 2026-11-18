@@ -1527,6 +1527,7 @@ configure_page_push_snapshot(
 
 
 _last_box_page_push_at = 0.0
+BOX_SPREAD_PAGE_PUSH_INTERVAL_SECONDS = 0.25  # coalesce bursts, keep UI latency below 250 ms
 
 
 def _update_live_box_spread_results(results: tuple) -> None:
@@ -1556,7 +1557,7 @@ def _update_live_box_spread_results(results: tuple) -> None:
             latest[key] = (timestamp_ns, edge, result)
     live_box_spread_latest_results = tuple(item[2] for item in latest.values())
     now = time_module.monotonic()
-    if now - _last_box_page_push_at >= 1.0:
+    if now - _last_box_page_push_at >= BOX_SPREAD_PAGE_PUSH_INTERVAL_SECONDS:
         _last_box_page_push_at = now
         try:
             page_snapshot = _box_page_push_snapshot()

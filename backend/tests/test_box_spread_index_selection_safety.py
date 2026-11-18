@@ -306,3 +306,28 @@ def test_midcpnifty_is_excluded_from_box_spread_live_targets_only():
         "NIFTY", "BANKNIFTY", "FINNIFTY"
     }
     assert "MIDCPNIFTY" in main.OPTION_STRATEGY_INDEX_SYMBOLS
+
+
+
+def test_box_spread_page_push_is_coalesced_at_250ms_not_one_second(monkeypatch):
+    clock = {"now": 10.0}
+    published = []
+    monkeypatch.setattr(main.time_module, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(main, "_last_box_page_push_at", 0.0)
+    monkeypatch.setattr(main, "live_box_spread_latest_results", ())
+    monkeypatch.setattr(main, "_get_box_spread_active_index_symbols", lambda: ())
+    monkeypatch.setattr(main, "_fresh_live_box_spread_results", lambda rows: tuple(rows))
+    monkeypatch.setattr(main, "_box_page_push_snapshot", lambda: {"opportunities": []})
+    monkeypatch.setattr(main, "publish_page_update", lambda *args: published.append(("public", args)))
+    monkeypatch.setattr(main, "publish_paper_update", lambda *args: published.append(("private", args)))
+    monkeypatch.setattr(main, "_publish_credit_butterfly_condor_pages", lambda: None)
+    monkeypatch.setattr(main, "publish_live_box_spread_opportunities", lambda rows: None)
+
+    main._update_live_box_spread_results(())
+    assert len(published) == 2
+    clock["now"] += 0.10
+    main._update_live_box_spread_results(())
+    assert len(published) == 2
+    clock["now"] += 0.16
+    main._update_live_box_spread_results(())
+    assert len(published) == 4
