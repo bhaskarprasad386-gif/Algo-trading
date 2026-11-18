@@ -79,7 +79,7 @@ from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
-from app.scanner.box_spread_paper_routes import router as box_spread_paper_router, build_paper_private_snapshot
+from app.scanner.box_spread_paper_routes import router as box_spread_paper_router, build_paper_market_snapshot, build_paper_private_snapshot
 from app.scanner.box_spread_paper_websocket import router as box_spread_paper_private_ws_router, configure_snapshot_provider as configure_paper_private_ws_snapshot, publish_paper_update
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
@@ -380,6 +380,7 @@ def _box_page_push_snapshot():
 
 configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 configure_paper_private_ws_snapshot(build_paper_private_snapshot)
+configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
 async def _iv_scanner_recovery_loop() -> None:
     """Retry a persisted IV Scanner ON state after transient startup failures.

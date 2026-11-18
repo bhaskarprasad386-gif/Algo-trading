@@ -54,11 +54,18 @@ events = Table(
 metadata.create_all(bind=engine)
 
 _snapshot_provider: Callable[[str], dict[str, Any]] | None = None
+_market_snapshot_provider: Callable[[str], dict[str, Any]] | None = None
 
 
-def configure_snapshot_provider(provider: Callable[[], dict[str, Any]] | None) -> None:
+def configure_snapshot_provider(provider: Callable[[str], dict[str, Any]] | None) -> None:
     global _snapshot_provider
     _snapshot_provider = provider
+
+
+def configure_market_snapshot_provider(provider: Callable[[str], dict[str, Any]] | None) -> None:
+    """Register the small mark-only read model used for quote invalidations."""
+    global _market_snapshot_provider
+    _market_snapshot_provider = provider
 
 
 def _now() -> float:
@@ -164,7 +171,7 @@ def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
 
 
 def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default", sequence: int | None = None) -> dict[str, Any]:
-    provider = _snapshot_provider
+    provider = _market_snapshot_provider if event_type == "MARKET_DATA_CHANGED" else _snapshot_provider
     try:
         payload = provider(account_key) if callable(provider) else {}
     except Exception:
@@ -319,7 +326,7 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
 
 
 __all__ = [
-    "router", "configure_snapshot_provider", "publish_paper_update",
+    "router", "configure_snapshot_provider", "configure_market_snapshot_provider", "publish_paper_update",
     "publish_after_success", "issue_ticket", "consume_ticket", "CHANNEL",
 ]
 
