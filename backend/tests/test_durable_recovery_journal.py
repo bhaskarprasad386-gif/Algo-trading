@@ -366,3 +366,37 @@ def test_unknown_close_id_cannot_be_marked_reconciled_or_poison_future_authoriza
     assert durable.pending_close_authorizations(
         account_id="acct-unknown", intent_id="intent-unknown",
     ) == ("REC-future-id",)
+
+
+def test_recovery_close_client_order_id_cannot_be_reused_for_later_attempt(journal):
+    durable, _ = journal
+    durable.configure_recovery_budget(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse", symbol="OPT:CE",
+        max_attempts=2, max_notional=Decimal("1000"), approved=True,
+    )
+    durable.acquire_instrument_leases(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse", symbols=("OPT:CE",),
+    )
+    durable.freeze_intent(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse", reason="partial fill",
+    )
+    durable.claim_recovery_attempt(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse", symbol="OPT:CE",
+    )
+    assert durable.approve_emergency_close(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse", symbol="OPT:CE",
+        side="SELL", quantity=1, limit_price=Decimal("10"), notional=Decimal("10"),
+        client_order_id="REC-stable-id",
+    )
+    durable.mark_close_authorization_reconciled(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse",
+        client_order_id="REC-stable-id",
+    )
+    durable.claim_recovery_attempt(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse", symbol="OPT:CE",
+    )
+    assert not durable.approve_emergency_close(
+        account_id="acct-id-reuse", intent_id="intent-id-reuse", symbol="OPT:CE",
+        side="SELL", quantity=1, limit_price=Decimal("10"), notional=Decimal("10"),
+        client_order_id="REC-stable-id",
+    )
