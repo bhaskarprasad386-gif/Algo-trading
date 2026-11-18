@@ -121,8 +121,11 @@ def test_emergency_close_budget_checks_exact_notional_and_cumulative_cap(journal
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         max_attempts=2, max_notional=Decimal("1000"), approved=True,
     )
-    # A budget and attempt alone must never authorize a close.
-    durable.claim_recovery_attempt(account_id="acct-a", intent_id="intent-1", symbol="OPT:CE")
+    # A budget cannot even consume an attempt before recovery is frozen and leased.
+    with pytest.raises(RuntimeError, match="frozen risk-reserved"):
+        durable.claim_recovery_attempt(
+            account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
+        )
     assert not durable.approve_emergency_close(
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
@@ -139,6 +142,9 @@ def test_emergency_close_budget_checks_exact_notional_and_cumulative_cap(journal
     )
     durable.freeze_intent(
         account_id="acct-a", intent_id="intent-1", reason="confirmed partial basket",
+    )
+    durable.claim_recovery_attempt(
+        account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
     )
     assert not durable.approve_emergency_close(
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
