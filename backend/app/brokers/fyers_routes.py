@@ -120,74 +120,75 @@ def fyers_auth_url(
 
 @router.post("/fyers/verify")
 def fyers_verify(
-    payload: FyersVerifyRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(require_real_owner_access),
-) -> dict:
-    """Consume OAuth state, exchange the auth code, verify fy_id and bind one owner account."""
-    try:
-        fyers_oauth_states.consume(
-            state=payload.state,
-            app_id=payload.app_id,
-            redirect_uri=_configured_redirect_uri(),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="FYERS OAuth state is invalid, expired, or already used") from exc
+    with broker_sessions.transition(user_id):
+        payload: FyersVerifyRequest,
+        db: Session = Depends(get_db),
+        user_id: int = Depends(require_real_owner_access),
+    ) -> dict:
+        """Consume OAuth state, exchange the auth code, verify fy_id and bind one owner account."""
+        try:
+            fyers_oauth_states.consume(
+                state=payload.state,
+                app_id=payload.app_id,
+                redirect_uri=_configured_redirect_uri(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="FYERS OAuth state is invalid, expired, or already used") from exc
 
-    # Re-authentication must disarm any prior process-local safety state first.
-    trading_safety.disable(user_id)
-    authenticator = FyersTypeAAuthenticator()
-    client: FyersRESTClient | None = None
-    adapter: FyersAdapter | None = None
-    try:
-        authenticated = authenticator.exchange_auth_code(
-            app_id=payload.app_id,
-            app_secret=payload.app_secret,
-            auth_code=payload.auth_code,
-            expected_account_id=payload.expected_account_id,
-        )
-        client = FyersRESTClient(
-            app_id=payload.app_id,
-            access_token=authenticated.access_token,
-        )
-        adapter = FyersAdapter(client)
-        # Re-read the authenticated profile using the session client before binding.
-        adapter.connect(account_id=authenticated.account_id)
-        claim_authenticated_account(db, "fyers", authenticated.account_id)
-        set_owner_connection_state(db, True)
-
-        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "fyers", adapter)
-        if logout_error is not None:
-            app_logger.error("Previous fyers provider logout failed during reconnect: %s", type(logout_error).__name__)
-        item = broker_connections.connect(user_id, "fyers", payload.display_name)
+        # Re-authentication must disarm any prior process-local safety state first.
         trading_safety.disable(user_id)
-        return {
-            "connected": item.connected,
-            "broker": "fyers",
-            "account_id": authenticated.account_id,
-            "display_name": item.display_name,
-            "real_trading": False,
-            "kill_switch": True,
-        }
-    except HTTPException:
-        if adapter is not None:
-            adapter.disconnect()
-        elif client is not None:
-            client.disconnect()
-        db.rollback()
-        raise
-    except (FyersAuthenticationError, FyersHistoryUnavailable, ValueError) as exc:
-        if adapter is not None:
-            adapter.disconnect()
-        elif client is not None:
-            client.disconnect()
-        db.rollback()
-        raise HTTPException(status_code=401, detail="FYERS authentication or account verification failed") from exc
-    except Exception as exc:
-        if adapter is not None:
-            adapter.disconnect()
-        elif client is not None:
-            client.disconnect()
-        db.rollback()
-        app_logger.error("FYERS durable account binding failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="FYERS account could not be safely bound to the Box Spread owner") from exc
+        authenticator = FyersTypeAAuthenticator()
+        client: FyersRESTClient | None = None
+        adapter: FyersAdapter | None = None
+        try:
+            authenticated = authenticator.exchange_auth_code(
+                app_id=payload.app_id,
+                app_secret=payload.app_secret,
+                auth_code=payload.auth_code,
+                expected_account_id=payload.expected_account_id,
+            )
+            client = FyersRESTClient(
+                app_id=payload.app_id,
+                access_token=authenticated.access_token,
+            )
+            adapter = FyersAdapter(client)
+            # Re-read the authenticated profile using the session client before binding.
+            adapter.connect(account_id=authenticated.account_id)
+            claim_authenticated_account(db, "fyers", authenticated.account_id)
+            set_owner_connection_state(db, True)
+
+            logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "fyers", adapter)
+            if logout_error is not None:
+                app_logger.error("Previous fyers provider logout failed during reconnect: %s", type(logout_error).__name__)
+            item = broker_connections.connect(user_id, "fyers", payload.display_name)
+            trading_safety.disable(user_id)
+            return {
+                "connected": item.connected,
+                "broker": "fyers",
+                "account_id": authenticated.account_id,
+                "display_name": item.display_name,
+                "real_trading": False,
+                "kill_switch": True,
+            }
+        except HTTPException:
+            if adapter is not None:
+                adapter.disconnect()
+            elif client is not None:
+                client.disconnect()
+            db.rollback()
+            raise
+        except (FyersAuthenticationError, FyersHistoryUnavailable, ValueError) as exc:
+            if adapter is not None:
+                adapter.disconnect()
+            elif client is not None:
+                client.disconnect()
+            db.rollback()
+            raise HTTPException(status_code=401, detail="FYERS authentication or account verification failed") from exc
+        except Exception as exc:
+            if adapter is not None:
+                adapter.disconnect()
+            elif client is not None:
+                client.disconnect()
+            db.rollback()
+            app_logger.error("FYERS durable account binding failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="FYERS account could not be safely bound to the Box Spread owner") from exc
