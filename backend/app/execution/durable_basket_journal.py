@@ -152,7 +152,6 @@ class DurableBasketJournal:
             if set(expected_quantities) != set(client_order_ids):
                 raise ValueError("expected quantities must match the durable basket leg IDs")
             row.client_order_ids_json = json.dumps(list(client_order_ids))
-            row.expected_quantities_json = json.dumps(expected_quantities, sort_keys=True)
             self._append(db, row, "SUBMISSION_STARTED", {
                 "client_order_ids": list(client_order_ids),
                 "expected_quantities": expected_quantities,
@@ -209,7 +208,14 @@ class DurableBasketJournal:
             if row.state != "SUBMITTING":
                 raise ValueError("only a submitting basket can complete as filled")
             expected = json.loads(row.client_order_ids_json)
-            expected_quantities = json.loads(row.expected_quantities_json or "{}")
+            start_event = db.execute(select(BasketExecutionJournalEventRecord).where(
+                BasketExecutionJournalEventRecord.journal_id == row.id,
+                BasketExecutionJournalEventRecord.event_type == "SUBMISSION_STARTED",
+            ).order_by(BasketExecutionJournalEventRecord.sequence.desc()).limit(1)).scalar_one_or_none()
+            expected_quantities = (
+                json.loads(start_event.payload_json).get("expected_quantities", {})
+                if start_event is not None else {}
+            )
             by_id = {leg.client_order_id: leg for leg in reconciliation.legs}
             if (
                 not expected or set(expected_quantities) != set(expected)
