@@ -53,9 +53,10 @@ def _seed_working_order(factory):
             "intent-callback-race", "acct-callback-race", "key-callback-race",
             "corr-callback-race", ExecutionMode.PAPER, created_at_ns=100,
         )
-        legs = (ExecutionLeg(
-            "leg-ce", "NFO:CE", OrderSide.BUY, 50, limit_price=100,
-        ),)
+        legs = (
+            ExecutionLeg("leg-ce", "NFO:CE", OrderSide.BUY, 50, limit_price=100),
+            ExecutionLeg("leg-pe", "NFO:PE", OrderSide.BUY, 50, limit_price=90),
+        )
         saved, _ = create_intent(db, intent, legs)
         version = saved.version
         for target in (
