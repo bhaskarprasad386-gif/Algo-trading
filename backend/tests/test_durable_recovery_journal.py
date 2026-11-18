@@ -175,3 +175,34 @@ def test_verified_flat_is_terminal_and_does_not_clear_kill_switch(journal):
         account_id="acct-a", strategy="BOX_SPREAD", reason="recovery event",
     )
     assert durable.is_entry_kill_switch_latched(account_id="acct-a", strategy="BOX_SPREAD")
+
+
+
+def test_recovery_attempt_budget_survives_durable_journal_reconstruction(journal):
+    durable, factory = journal
+    durable.configure_recovery_budget(
+        account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+        max_attempts=2, max_notional=Decimal("5000"), approved=True,
+    )
+    assert durable.claim_recovery_attempt(
+        account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+    ) == 1
+
+    # Rebuild the persistence adapter as if the process restarted. The same
+    # database-backed budget, not in-memory coordinator state, owns the limit.
+    restarted = DurableRecoveryJournal(factory)
+    assert restarted.claim_recovery_attempt(
+        account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+    ) == 2
+    with pytest.raises(RuntimeError, match="exhausted"):
+        DurableRecoveryJournal(factory).claim_recovery_attempt(
+            account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
+        )
+
+    with factory() as db:
+        row = db.execute(select(RecoveryBudgetRecord).where(
+            RecoveryBudgetRecord.account_id == "acct-restart",
+            RecoveryBudgetRecord.intent_id == "intent-restart",
+            RecoveryBudgetRecord.symbol == "OPT:CE",
+        )).scalar_one()
+        assert row.attempts_used == 2
