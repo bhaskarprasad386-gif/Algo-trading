@@ -130,6 +130,7 @@ def test_emergency_close_budget_checks_exact_notional_and_cumulative_cap(journal
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
         notional=Decimal("100"),
+    client_order_id="test-close",
     )
     # A lease alone is also insufficient until the intent is frozen for recovery.
     assert durable.acquire_instrument_leases(
@@ -139,6 +140,7 @@ def test_emergency_close_budget_checks_exact_notional_and_cumulative_cap(journal
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
         notional=Decimal("100"),
+    client_order_id="test-close",
     )
     durable.freeze_intent(
         account_id="acct-a", intent_id="intent-1", reason="confirmed partial basket",
@@ -150,22 +152,26 @@ def test_emergency_close_budget_checks_exact_notional_and_cumulative_cap(journal
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
         notional=Decimal("99"),
+    client_order_id="test-close",
     )
     assert durable.approve_emergency_close(
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
         notional=Decimal("100"),
+    client_order_id="test-close",
     )
     # The same claimed attempt cannot authorize a duplicate close request.
     assert not durable.approve_emergency_close(
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=10, limit_price=Decimal("10"),
         notional=Decimal("100"),
+    client_order_id="test-close",
     )
     assert not durable.approve_emergency_close(
         account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         side="SELL", quantity=100, limit_price=Decimal("10"),
         notional=Decimal("1000"),
+    client_order_id="test-close",
     )
 
 
@@ -244,6 +250,7 @@ def test_manual_review_state_never_authorizes_another_close(journal):
         account_id="acct-a", intent_id="intent-manual", symbol="OPT:CE",
         side="SELL", quantity=1, limit_price=Decimal("10"),
         notional=Decimal("10"),
+    client_order_id="test-close",
     )
 
 
@@ -266,6 +273,7 @@ def test_close_approval_budget_survives_journal_reconstruction(journal):
         account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
         side="SELL", quantity=2, limit_price=Decimal("25"),
         notional=Decimal("50"),
+    client_order_id="test-close",
     )
 
     # Reconstruct the persistence adapter as if the process had restarted.
@@ -274,6 +282,7 @@ def test_close_approval_budget_survives_journal_reconstruction(journal):
         account_id="acct-restart", intent_id="intent-restart", symbol="OPT:CE",
         side="SELL", quantity=2, limit_price=Decimal("25"),
         notional=Decimal("50"),
+    client_order_id="test-close",
     )
     with factory() as db:
         budget = db.execute(select(RecoveryBudgetRecord).where(
