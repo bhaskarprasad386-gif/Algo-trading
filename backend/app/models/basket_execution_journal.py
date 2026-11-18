@@ -22,6 +22,7 @@ class BasketExecutionJournalRecord(Base):
     snapshot_id: Mapped[str] = mapped_column(String(192), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     client_order_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    expected_quantities_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     reconciliation_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
