@@ -35,7 +35,8 @@ from app.scanner.box_spread_paper_engine import (
     ADVERSE_SLIPPAGE_RATE, BoxSpreadPaperEngine, BoxSpreadPaperEngineError,
 )
 from app.scanner.box_spread_entry_edge import validate_entry_edge
-from app.scanner.box_spread_paper_websocket import publish_after_success\nfrom app.scanner.box_spread_paper_ledger import (
+from app.scanner.box_spread_paper_websocket import publish_after_success
+from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperLedger, BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry,
 )
 
