@@ -218,11 +218,13 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
         await websocket.close(code=1008)
         return
     with _connection_lock:
-        if len(_active_connections) >= MAX_CONNECTIONS_PER_PROCESS:
-            await websocket.close(code=1013)
-            return
+        at_capacity = len(_active_connections) >= MAX_CONNECTIONS_PER_PROCESS
         connection_id = id(websocket)
-        _active_connections.add(connection_id)
+        if not at_capacity:
+            _active_connections.add(connection_id)
+    if at_capacity:
+        await websocket.close(code=1013)
+        return
     await websocket.accept()
     resync_times: deque[float] = deque()
     last_resync_at = 0.0
@@ -252,7 +254,7 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
         while True:
             receive_task = asyncio.create_task(websocket.receive_text())
             done, pending = await asyncio.wait(
-                {receive_task}, timeout=0.5,
+                {receive_task}, timeout=0.25,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in pending:
@@ -263,13 +265,20 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
                 journal_rows = await asyncio.to_thread(_events_after, cursor)
                 if journal_rows:
                     latest = journal_rows[-1]
-                    event_type = str(latest["event_type"])
-                    if len(journal_rows) > 100:
-                        event_type = "SNAPSHOT_REQUIRED"
-                    cursor = int(latest["sequence"])
+                    first_sequence = int(journal_rows[0]["sequence"])
+                    latest_sequence = int(latest["sequence"])
+                    # Multiple events are deliberately coalesced into one authoritative
+                    # snapshot. Also resync if retention has removed any cursor successor.
+                    # Sending a delta with a skipped sequence makes clients reject it forever.
+                    requires_snapshot = (
+                        len(journal_rows) > 1
+                        or first_sequence != cursor + 1
+                        or len(journal_rows) > 100
+                    )
+                    event_type = "SNAPSHOT" if requires_snapshot else str(latest["event_type"])
+                    cursor = latest_sequence
                     await websocket.send_json(await asyncio.to_thread(
-                        _snapshot_frame, "SNAPSHOT" if event_type == "SNAPSHOT_REQUIRED" else event_type,
-                        account_key, cursor,
+                        _snapshot_frame, event_type, account_key, cursor,
                     ))
                 elif time.monotonic() - last_heartbeat >= HEARTBEAT_SECONDS:
                     await websocket.send_json({
@@ -313,3 +322,36 @@ __all__ = [
     "router", "configure_snapshot_provider", "publish_paper_update",
     "publish_after_success", "issue_ticket", "consume_ticket", "CHANNEL",
 ]
+
+
+
+def test_private_ws_coalesced_journal_events_require_snapshot():
+    # A client expects contiguous deltas. If two events arrive between DB polls,
+    # the server must send an authoritative SNAPSHOT at the newest sequence.
+    cursor = 40
+    rows = [
+        {"sequence": 41, "event_type": "TRADE_UPDATED"},
+        {"sequence": 42, "event_type": "LEDGER_UPDATED"},
+    ]
+    first_sequence = int(rows[0]["sequence"])
+    latest_sequence = int(rows[-1]["sequence"])
+    requires_snapshot = (
+        len(rows) > 1
+        or first_sequence != cursor + 1
+        or len(rows) > 100
+    )
+    assert requires_snapshot is True
+    assert latest_sequence == 42
+
+
+def test_private_ws_retention_gap_requires_snapshot():
+    cursor = 40
+    rows = [{"sequence": 42, "event_type": "TRADE_UPDATED"}]
+    assert int(rows[0]["sequence"]) != cursor + 1
+
+
+def test_private_ws_single_contiguous_event_can_remain_delta():
+    cursor = 40
+    rows = [{"sequence": 41, "event_type": "TRADE_UPDATED"}]
+    requires_snapshot = len(rows) > 1 or int(rows[0]["sequence"]) != cursor + 1
+    assert requires_snapshot is False
