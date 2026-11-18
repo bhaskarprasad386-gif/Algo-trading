@@ -50,6 +50,7 @@ class RecoverySnapshot:
     account_id: str
     broker: str
     authoritative: bool
+    positions_reconciled: bool
     orders: tuple[RecoveryOrder, ...]
     positions: tuple[RecoveryPosition, ...]
 
@@ -113,6 +114,7 @@ class RecoveryJournal(Protocol):
     def append_event(self, *, account_id: str, intent_id: str, event: str, details: dict) -> None: ...
     def set_state(self, *, account_id: str, intent_id: str, state: RecoveryState, reason: str) -> None: ...
     def release_risk_reservation(self, *, account_id: str, intent_id: str) -> None: ...
+    def claim_recovery_attempt(self, *, account_id: str, intent_id: str, symbol: str) -> int: ...
     def alert_operator(self, *, account_id: str, intent_id: str, reason: str) -> None: ...
 
 
@@ -153,18 +155,20 @@ class EmergencyRecoveryCoordinator:
 
     def _snapshot(self, account_id: str, intent_id: str) -> RecoverySnapshot:
         snapshot = self._broker.recovery_snapshot(account_id=account_id, intent_id=intent_id)
-        if not snapshot.authoritative:
-            raise RuntimeError("broker snapshot is not authoritative")
+        if not snapshot.authoritative or not snapshot.positions_reconciled:
+            raise RuntimeError("broker order/trade/position snapshot is not authoritative and reconciled")
         if snapshot.account_id != account_id or snapshot.broker.strip().lower() != self._broker.name.strip().lower():
             raise RuntimeError("broker/account identity drift during recovery")
         return snapshot
 
     @staticmethod
-    def _residuals(snapshot: RecoverySnapshot, symbols: set[str]) -> tuple[RecoveryPosition, ...]:
-        totals = {symbol: 0 for symbol in symbols}
+    def _residuals(snapshot: RecoverySnapshot, symbols: set[str], baseline: dict[str, int]) -> tuple[RecoveryPosition, ...]:
+        # Broker positions are account-wide. Subtract the durable pre-entry
+        # baseline so pre-existing holdings in the same option are never closed.
+        totals = {symbol: baseline[symbol] for symbol in symbols}
         for position in snapshot.positions:
             if position.symbol in totals:
-                totals[position.symbol] += position.quantity
+                totals[position.symbol] = position.quantity - baseline[position.symbol]
         return tuple(RecoveryPosition(s, q) for s, q in sorted(totals.items()) if q)
 
     @staticmethod
@@ -197,11 +201,15 @@ class EmergencyRecoveryCoordinator:
         return RecoveryResult(RecoveryState.FLAT, "broker positions confirm flat", (), attempts)
 
     def recover(self, *, account_id: str, intent_id: str, strategy: str,
-                symbols: tuple[str, ...], now_ns: int | None = None) -> RecoveryResult:
+                symbols: tuple[str, ...], baseline_positions: tuple[RecoveryPosition, ...],
+                now_ns: int | None = None) -> RecoveryResult:
         """Recover only named basket instruments; unrelated positions are untouched."""
         symbol_set = {s.strip() for s in symbols if s.strip()}
+        baseline = {p.symbol: p.quantity for p in baseline_positions}
         if not account_id.strip() or not intent_id.strip() or not strategy.strip() or not symbol_set:
             raise ValueError("account, intent, strategy and basket symbols are required")
+        if set(baseline) != symbol_set:
+            raise ValueError("a durable pre-entry baseline is required for every basket instrument")
         self._journal.latch_entry_kill_switch(
             account_id=account_id, strategy=strategy, reason="multi-leg entry failed; recovery active",
         )
@@ -223,7 +231,7 @@ class EmergencyRecoveryCoordinator:
 
             # A second authoritative read is mandatory after cancel requests.
             snapshot = self._snapshot(account_id, intent_id)
-            residuals = self._residuals(snapshot, symbol_set)
+            residuals = self._residuals(snapshot, symbol_set, baseline)
             if self._unresolved(snapshot):
                 return self._manual(
                     account_id=account_id, intent_id=intent_id,
@@ -234,7 +242,7 @@ class EmergencyRecoveryCoordinator:
             for attempt in range(1, self._policy.max_attempts + 1):
                 attempts = attempt
                 snapshot = self._snapshot(account_id, intent_id)
-                residuals = self._residuals(snapshot, symbol_set)
+                residuals = self._residuals(snapshot, symbol_set, baseline)
                 if self._unresolved(snapshot):
                     return self._manual(
                         account_id=account_id, intent_id=intent_id,
@@ -259,8 +267,11 @@ class EmergencyRecoveryCoordinator:
                     limit_price = _close_price(
                         quote, side=side, slippage_bps=self._policy.max_slippage_bps,
                     )
+                    recovery_attempt = self._journal.claim_recovery_attempt(
+                        account_id=account_id, intent_id=intent_id, symbol=position.symbol,
+                    )
                     token = hashlib.sha256(
-                        f"{account_id}|{intent_id}|{position.symbol}|{attempt}".encode("utf-8")
+                        f"{account_id}|{intent_id}|{position.symbol}|{recovery_attempt}".encode("utf-8")
                     ).hexdigest()[:24]
                     close = EmergencyClose(
                         symbol=position.symbol, side=side, quantity=quantity,
@@ -285,7 +296,7 @@ class EmergencyRecoveryCoordinator:
                         )
 
             final = self._snapshot(account_id, intent_id)
-            residuals = self._residuals(final, symbol_set)
+            residuals = self._residuals(final, symbol_set, baseline)
             if not residuals and not self._unresolved(final):
                 return self._mark_flat(account_id=account_id, intent_id=intent_id, attempts=attempts)
             return self._manual(
