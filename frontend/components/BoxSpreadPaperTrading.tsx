@@ -15,6 +15,7 @@ type LiveOpportunity = {
   high_call_bid?: number | null; high_call_ask?: number | null; high_put_bid?: number | null; high_put_ask?: number | null;
   low_call_bid_qty?: number | null; low_call_ask_qty?: number | null; low_put_bid_qty?: number | null; low_put_ask_qty?: number | null;
   high_call_bid_qty?: number | null; high_call_ask_qty?: number | null; high_put_bid_qty?: number | null; high_put_ask_qty?: number | null;
+  last_update_timestamp_ns?: number | string | null; timestamp_ns?: number | string | null;
 };
 type ScannerDiagnostics = {
   status?: string;
