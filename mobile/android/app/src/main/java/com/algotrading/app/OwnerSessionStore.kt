@@ -110,11 +110,12 @@ internal class AndroidKeystoreOwnerSessionCipher(
     private val alias: String = "algo_trading_owner_session_v1",
 ) : OwnerSessionCipher {
     override fun encrypt(plaintext: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
+        var cipher = Cipher.getInstance(TRANSFORMATION)
         try {
             cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         } catch (_: InvalidKeyException) {
             reset()
+            cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         }
         val iv = cipher.iv
@@ -137,8 +138,10 @@ internal class AndroidKeystoreOwnerSessionCipher(
         if (ivLength != GCM_IV_BYTES || buffer.remaining() <= ivLength + GCM_TAG_BYTES) {
             throw GeneralSecurityException("owner session IV or payload is invalid")
         }
-        val iv = ByteArray(ivLength).also(buffer::get)
-        val encrypted = ByteArray(buffer.remaining()).also(buffer::get)
+        val iv = ByteArray(ivLength)
+        buffer.get(iv)
+        val encrypted = ByteArray(buffer.remaining())
+        buffer.get(encrypted)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, getExistingKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
         return cipher.doFinal(encrypted)
