@@ -159,14 +159,15 @@ class EmergencyRecoveryCoordinator:
 
     def _snapshot(self, account_id: str, intent_id: str) -> RecoverySnapshot:
         snapshot = self._broker.recovery_snapshot(account_id=account_id, intent_id=intent_id)
-        if (
-            not snapshot.authoritative or not snapshot.positions_reconciled
-            or not snapshot.position_attribution_complete
-        ):
-            raise RuntimeError("broker snapshot is not authoritative, reconciled and attributable to this intent")
+        if not snapshot.authoritative:
+            raise RuntimeError("broker order snapshot is not authoritative")
         if snapshot.account_id != account_id or snapshot.broker.strip().lower() != self._broker.name.strip().lower():
             raise RuntimeError("broker/account identity drift during recovery")
         return snapshot
+
+    @staticmethod
+    def _positions_are_safe(snapshot: RecoverySnapshot) -> bool:
+        return snapshot.positions_reconciled and snapshot.position_attribution_complete
 
     @staticmethod
     def _residuals(snapshot: RecoverySnapshot, symbols: set[str], baseline: dict[str, int]) -> tuple[RecoveryPosition, ...]:
@@ -226,14 +227,6 @@ class EmergencyRecoveryCoordinator:
         self._journal.freeze_intent(
             account_id=account_id, intent_id=intent_id, reason="stop all unsent basket legs and retries",
         )
-        if not self._journal.assert_exclusive_instrument_lease(
-            account_id=account_id, intent_id=intent_id, symbols=tuple(sorted(symbol_set)),
-        ):
-            return self._manual(
-                account_id=account_id, intent_id=intent_id,
-                reason="exclusive basket instrument lease is missing; residual attribution is unsafe",
-                residuals=(), attempts=0,
-            )
         self._journal.set_state(
             account_id=account_id, intent_id=intent_id,
             state=RecoveryState.RECOVERING, reason="cancel/reconcile/close workflow started",
@@ -256,24 +249,44 @@ class EmergencyRecoveryCoordinator:
 
             # A second authoritative read is mandatory after cancel requests.
             snapshot = self._snapshot(account_id, intent_id)
-            residuals = self._residuals(snapshot, symbol_set, baseline)
             if self._unresolved(snapshot):
                 return self._manual(
                     account_id=account_id, intent_id=intent_id,
                     reason="broker still reports non-terminal orders; closing could race a late fill",
-                    residuals=residuals, attempts=attempts,
+                    residuals=(), attempts=attempts,
                 )
+            if not self._positions_are_safe(snapshot):
+                return self._manual(
+                    account_id=account_id, intent_id=intent_id,
+                    reason="broker position snapshot is not fully reconciled and attributable to this intent",
+                    residuals=(), attempts=attempts,
+                )
+            if not self._journal.assert_exclusive_instrument_lease(
+                account_id=account_id, intent_id=intent_id, symbols=tuple(sorted(symbol_set)),
+            ):
+                return self._manual(
+                    account_id=account_id, intent_id=intent_id,
+                    reason="exclusive basket instrument lease is missing; residual attribution is unsafe",
+                    residuals=(), attempts=attempts,
+                )
+            residuals = self._residuals(snapshot, symbol_set, baseline)
 
             for attempt in range(1, self._policy.max_attempts + 1):
                 attempts = attempt
                 snapshot = self._snapshot(account_id, intent_id)
-                residuals = self._residuals(snapshot, symbol_set, baseline)
                 if self._unresolved(snapshot):
                     return self._manual(
                         account_id=account_id, intent_id=intent_id,
                         reason="an order became non-terminal during recovery",
-                        residuals=residuals, attempts=attempts,
+                        residuals=(), attempts=attempts,
                     )
+                if not self._positions_are_safe(snapshot):
+                    return self._manual(
+                        account_id=account_id, intent_id=intent_id,
+                        reason="broker position snapshot lost reconciliation or attribution during recovery",
+                        residuals=(), attempts=attempts,
+                    )
+                residuals = self._residuals(snapshot, symbol_set, baseline)
                 if not residuals:
                     return self._mark_flat(account_id=account_id, intent_id=intent_id, attempts=attempts)
 
@@ -321,6 +334,12 @@ class EmergencyRecoveryCoordinator:
                         )
 
             final = self._snapshot(account_id, intent_id)
+            if not self._positions_are_safe(final):
+                return self._manual(
+                    account_id=account_id, intent_id=intent_id,
+                    reason="final broker positions are not reconciled and attributable",
+                    residuals=(), attempts=attempts,
+                )
             residuals = self._residuals(final, symbol_set, baseline)
             if not residuals and not self._unresolved(final):
                 return self._mark_flat(account_id=account_id, intent_id=intent_id, attempts=attempts)
@@ -332,7 +351,8 @@ class EmergencyRecoveryCoordinator:
         except Exception as exc:
             try:
                 snapshot = self._snapshot(account_id, intent_id)
-                residuals = self._residuals(snapshot, symbol_set, baseline)
+                if self._positions_are_safe(snapshot):
+                    residuals = self._residuals(snapshot, symbol_set, baseline)
             except Exception:
                 residuals = ()  # unknown is not flat; kill switch and reservation remain latched
             return self._manual(
