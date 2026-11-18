@@ -316,7 +316,7 @@ export default function BoxSpreadPaperTrading() {
           const eventId = String(frame.event_id ?? "");
           if (!Number.isSafeInteger(sequence) || sequence < 1) return;
           if (eventId && privateEventIdsRef.current.has(eventId)) return;
-          const isSnapshot = frame.event_type === "SNAPSHOT";
+          const isSnapshot = frame.event_type === "SNAPSHOT" || frame.snapshot === true;
           if (!isSnapshot && sequence <= privateSequenceRef.current) return;
           if (!isSnapshot && privateSequenceRef.current > 0 && sequence !== privateSequenceRef.current + 1) {
             setPrivateWsStatus("STALE");

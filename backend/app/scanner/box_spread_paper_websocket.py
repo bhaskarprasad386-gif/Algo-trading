@@ -143,6 +143,7 @@ def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default") 
         "type": "paper_update", "channel": CHANNEL, "schema_version": 1,
         "sequence": sequence, "event_id": str(uuid.uuid4()),
         "event_type": event_type,
+        "snapshot": True,
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "payload": payload if isinstance(payload, dict) else {"snapshot_status": "INVALID"},
     }
@@ -166,13 +167,13 @@ def publish_paper_update(event_type: str, _payload: dict[str, Any] | None = None
             "event_id": str(uuid.uuid4()), "event_type": event_type,
         }
         for queue in tuple(_subscribers):
-            if queue.full():
-                while not queue.empty():
-                    try:
-                        queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                marker = {**marker, "event_type": "SNAPSHOT_REQUIRED"}
+            # Every private frame is a complete snapshot, not a delta. Coalesce
+            # pending invalidations so slow clients always receive the newest state.
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
             try:
                 queue.put_nowait(marker)
             except asyncio.QueueFull:
