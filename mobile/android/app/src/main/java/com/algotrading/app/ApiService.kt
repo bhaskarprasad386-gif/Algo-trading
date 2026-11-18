@@ -304,9 +304,16 @@ object ApiService {
     @Synchronized
     fun initializeOwnerSession(context: Context) {
         if (ownerSessionStore != null) return
-        val store = createOwnerSessionStore(context.applicationContext)
-        ownerSessionStore = store
-        realOwnerAccessToken = store.load()
+        try {
+            val store = createOwnerSessionStore(context.applicationContext)
+            ownerSessionStore = store
+            realOwnerAccessToken = store.load()
+        } catch (_: Exception) {
+            // Keep the rest of the app read-only/usable; owner-authenticated
+            // broker operations remain unavailable until secure storage works.
+            ownerSessionStore = null
+            realOwnerAccessToken = null
+        }
     }
 
     @Synchronized
