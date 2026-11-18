@@ -419,3 +419,58 @@ def test_same_account_id_with_wrong_broker_cannot_reconcile_other_broker_orders(
     assert stored.account_id == "acct-1"
     assert stored.broker == "zerodha"
     assert stored.is_consistent is False
+
+
+def test_missing_intent_in_requested_scope_aborts_without_persisting_report(db):
+    _persist_order(db)
+
+    with pytest.raises(LookupError, match="do not belong"):
+        reconcile_persisted_account_snapshot(
+            db, snapshot=_snapshot(), reconciliation_id="run-mixed-intent-scope",
+            intent_ids=("intent-reconcile", "not-owned-here"),
+        )
+
+    assert db.query(BrokerReconciliationRecord).count() == 0
+
+
+def test_duplicate_intent_ids_are_normalized_before_reconciliation_identity_hash(db):
+    _persist_order(db)
+
+    first = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot(), reconciliation_id="run-deduplicated-intents",
+        intent_ids=(" intent-reconcile ", "intent-reconcile"),
+    )
+    replay = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot(), reconciliation_id="run-deduplicated-intents",
+        intent_ids=("intent-reconcile",),
+    )
+
+    assert first["created"] is True
+    assert replay["created"] is False
+    assert db.query(BrokerReconciliationRecord).count() == 1
+
+
+def test_same_reconciliation_id_is_isolated_between_account_owners(db):
+    _persist_order(db, account_id="acct-1")
+    _persist_order(db, account_id="acct-2")
+
+    first = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot(account_id="acct-1"),
+        reconciliation_id="same-reconciliation-id",
+        intent_ids=("intent-reconcile",),
+    )
+    second = reconcile_persisted_account_snapshot(
+        db, snapshot=_snapshot(account_id="acct-2"),
+        reconciliation_id="same-reconciliation-id",
+        intent_ids=("intent-reconcile",),
+    )
+
+    assert first["created"] is True
+    assert second["created"] is True
+    rows = db.scalars(select(BrokerReconciliationRecord).order_by(
+        BrokerReconciliationRecord.account_id
+    )).all()
+    assert [(row.account_id, row.reconciliation_id) for row in rows] == [
+        ("acct-1", "same-reconciliation-id"),
+        ("acct-2", "same-reconciliation-id"),
+    ]
