@@ -104,7 +104,7 @@ def zerodha_verify(
     payload: ZerodhaVerifyRequest,
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
-    ) -> dict:
+) -> dict:
     with broker_sessions.transition(user_id):
         """Exchange one-time Kite request token, verify identity, and bind one owner account."""
         # Re-authentication must disarm any prior process-local safety state first.
