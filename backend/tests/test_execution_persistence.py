@@ -9,9 +9,9 @@ from app.core.database import Base
 from app.execution.contracts import ExecutionIntent, ExecutionLeg, ExecutionMode, IntentStatus, OrderSide
 from app.execution.persistence import (
     ConcurrentTransitionError, IdempotencyConflict, create_intent, get_intent,
-    record_broker_order, transition_intent,
+    record_broker_order, record_fill, transition_intent,
 )
-from app.models.execution_intent import ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
+from app.models.execution_intent import ExecutionFillRecord, ExecutionIntentEventRecord, ExecutionIntentRecord, ExecutionLegRecord
 
 
 @pytest.fixture(params=["sqlite", "postgres"])
@@ -199,3 +199,138 @@ def test_broker_order_identity_does_not_advance_intent_state(db):
     after = get_intent(db, account_id="acct-1", intent_id="intent-1")
     assert after.intent.status == before.intent.status == IntentStatus.SUBMITTING
     assert after.version == before.version
+
+
+def _register_first_leg_order(db, *, account_id="acct-1", broker="angel_one", order_id="broker-order-1"):
+    record_broker_order(
+        db, account_id=account_id, intent_id="intent-1", leg_id="cb",
+        broker=broker, broker_order_id=order_id,
+        symbol="NFO:CE", side="BUY", quantity=50,
+        accepted_at_ns=500,
+    )
+
+
+def test_fill_from_wrong_broker_cannot_attach_to_registered_order(db):
+    _submitting_intent(db)
+    _register_first_leg_order(db, broker="angel_one", order_id="shared-order")
+
+    with pytest.raises(LookupError, match="not registered"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="zerodha", broker_fill_id="wrong-broker-fill",
+            broker_order_id="shared-order", quantity=10,
+            fill_price="100.25", occurred_at_ns=600,
+        )
+
+    assert db.scalar(select(ExecutionFillRecord)) is None
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+
+
+def test_fill_for_another_account_cannot_attach_to_existing_intent_or_order(db):
+    _submitting_intent(db)
+    _register_first_leg_order(db)
+
+    with pytest.raises(LookupError, match="intent not found for account"):
+        record_fill(
+            db, account_id="acct-2", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_fill_id="cross-account-fill",
+            broker_order_id="broker-order-1", quantity=10,
+            fill_price="100.25", occurred_at_ns=600,
+        )
+
+    assert db.scalar(select(ExecutionFillRecord)) is None
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+
+
+def test_fill_quantity_over_requested_leg_is_rejected_without_persistence(db):
+    _submitting_intent(db)
+    _register_first_leg_order(db)
+
+    with pytest.raises(ValueError, match="exceed requested leg quantity"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_fill_id="overfill",
+            broker_order_id="broker-order-1", quantity=51,
+            fill_price="100.25", occurred_at_ns=600,
+        )
+
+    assert db.scalar(select(ExecutionFillRecord)) is None
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert leg.filled_quantity == 0
+    assert leg.status == "PENDING"
+
+
+def test_late_fill_after_restart_reconciliation_gate_rolls_back_all_progress(db):
+    _submitting_intent(db)
+    state = transition_intent(
+        db, account_id="acct-1", intent_id="intent-1",
+        expected_version=5, target=IntentStatus.UNKNOWN,
+    )
+    state = transition_intent(
+        db, account_id="acct-1", intent_id="intent-1",
+        expected_version=state.version, target=IntentStatus.RECONCILIATION_REQUIRED,
+    )
+    _register_first_leg_order(db)
+
+    before_events = db.query(ExecutionIntentEventRecord).count()
+    with pytest.raises(ValueError, match="reconciliation must resolve"):
+        record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_fill_id="late-fill",
+            broker_order_id="broker-order-1", quantity=10,
+            fill_price="100.25", occurred_at_ns=700,
+        )
+
+    restored = get_intent(db, account_id="acct-1", intent_id="intent-1")
+    leg = db.scalar(select(ExecutionLegRecord).where(ExecutionLegRecord.leg_id == "cb"))
+    assert db.scalar(select(ExecutionFillRecord)) is None
+    assert leg.filled_quantity == 0
+    assert leg.status == "PENDING"
+    assert restored.intent.status is IntentStatus.RECONCILIATION_REQUIRED
+    assert restored.version == state.version
+    assert db.query(ExecutionIntentEventRecord).count() == before_events
+
+
+def test_broker_order_and_fill_ids_are_isolated_between_accounts(db):
+    _submitting_intent(db)
+    _register_first_leg_order(db, order_id="same-provider-order-id")
+
+    other_intent, other_legs = request(account="acct-2", intent_id="intent-1")
+    create_intent(db, other_intent, other_legs)
+    for version, target in enumerate((
+        IntentStatus.VALIDATING, IntentStatus.RISK_CHECK, IntentStatus.APPROVED,
+        IntentStatus.RESERVED, IntentStatus.SUBMITTING,
+    )):
+        transition_intent(
+            db, account_id="acct-2", intent_id="intent-1",
+            expected_version=version, target=target,
+        )
+    _register_first_leg_order(
+        db, account_id="acct-2", order_id="same-provider-order-id",
+    )
+
+    for account in ("acct-1", "acct-2"):
+        result = record_fill(
+            db, account_id=account, intent_id="intent-1", leg_id="cb",
+            broker="angel_one", broker_fill_id="same-provider-fill-id",
+            broker_order_id="same-provider-order-id", quantity=10,
+            fill_price="100.25", occurred_at_ns=800,
+        )
+        assert result["created"] is True
+
+    fills = db.scalars(select(ExecutionFillRecord).order_by(ExecutionFillRecord.account_id)).all()
+    assert [(row.account_id, row.broker_fill_id, row.quantity) for row in fills] == [
+        ("acct-1", "same-provider-fill-id", 10),
+        ("acct-2", "same-provider-fill-id", 10),
+    ]
+    for account in ("acct-1", "acct-2"):
+        leg = db.scalar(select(ExecutionLegRecord).join(
+            ExecutionIntentRecord,
+            ExecutionIntentRecord.id == ExecutionLegRecord.intent_record_id,
+        ).where(
+            ExecutionIntentRecord.account_id == account,
+            ExecutionLegRecord.leg_id == "cb",
+        ))
+        assert leg.filled_quantity == 10
