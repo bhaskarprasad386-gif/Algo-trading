@@ -5,6 +5,7 @@ from app.scanner import page_push_websocket as push
 
 def test_page_channels_are_explicit_and_strategy_scoped():
     assert "box-spread" in push.PAGE_CHANNELS
+    assert "errors" in push.PAGE_CHANNELS
     assert "iv-skew-flip" in push.PAGE_CHANNELS
     assert "credit-butterfly-condor-weekly" in push.PAGE_CHANNELS
     assert "credit-butterfly-condor-monthly" in push.PAGE_CHANNELS
@@ -158,3 +159,19 @@ def test_page_resync_preserves_other_subscribed_channel_events():
 
     asyncio.run(scenario())
 
+
+
+def test_runtime_diagnostics_publish_a_read_only_errors_snapshot(monkeypatch):
+    from app.core import diagnostics
+
+    published = []
+    monkeypatch.setattr(diagnostics, "publish_page_update", lambda page, event, data: published.append((page, event, data)))
+    store = diagnostics.RuntimeDiagnostics(maxlen=3)
+    store.record(component="websocket", severity="ERROR", message="socket disconnected")
+
+    assert len(published) == 1
+    page, event, data = published[0]
+    assert page == "errors"
+    assert event == "PATCH"
+    assert data["count"] == 1
+    assert data["errors"][0]["message"] == "socket disconnected"
