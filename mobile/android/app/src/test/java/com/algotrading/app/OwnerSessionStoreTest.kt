@@ -76,7 +76,7 @@ class OwnerSessionStoreTest {
         val file = tempFile()
         val cipher = TestCipher()
         val store = EncryptedOwnerSessionStore(file, cipher)
-        store.save("owner-token")
+        store.save("owner-token", expiry())
         val bytes = file.readBytes()
         bytes[bytes.lastIndex] = (bytes.last().toInt() xor 0x01).toByte()
         file.writeBytes(bytes)
@@ -91,7 +91,7 @@ class OwnerSessionStoreTest {
         val file = tempFile()
         val store = EncryptedOwnerSessionStore(file, TestCipher())
 
-        assertThrows(IllegalArgumentException::class.java) { store.save("  ") }
+        assertThrows(IllegalArgumentException::class.java) { store.save("  ", expiry()) }
         assertFalse(file.exists())
     }
 
@@ -105,9 +105,6 @@ class OwnerSessionStoreTest {
         assertTrue(file.isFile)
         assertTrue(store.load()?.accessToken == "new-token")
     }
-}
-
-
     @Test
     fun expiredOwnerSessionIsDiscardedBeforeAuthenticationCanResume() {
         val file = tempFile()
@@ -117,3 +114,5 @@ class OwnerSessionStoreTest {
         assertNull(store.load(nowEpochMs = System.currentTimeMillis() + 120_000L))
         assertFalse(file.exists())
     }
+
+}
