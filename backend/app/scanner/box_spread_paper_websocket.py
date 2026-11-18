@@ -355,7 +355,6 @@ async def box_spread_paper_private_updates(websocket: WebSocket) -> None:
                 await websocket.send_json(await asyncio.to_thread(
                     _snapshot_frame, event_type, account_key, cursor,
                 ))
-                continue
             if receive_task in done:
                 incoming = receive_task.result()
                 if len(incoming.encode("utf-8")) > MAX_MESSAGE_BYTES:
