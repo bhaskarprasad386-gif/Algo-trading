@@ -53,7 +53,7 @@ def mstock_verify_login(
     payload: MStockVerifyRequest,
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
-    ) -> dict:
+) -> dict:
     with broker_sessions.transition(user_id):
         """Exchange OTP/TOTP, verify broker-returned identity, then bind one owner account."""
         if payload.auth_method == "OTP" and (not payload.otp or payload.totp):
