@@ -91,22 +91,22 @@ def test_recovery_budget_requires_explicit_approval_and_bounds_attempts(journal)
             account_id="acct-a", intent_id="intent-1", symbol="OPT:CE",
         )
     durable.configure_recovery_budget(
-        account_id="acct-a", intent_id="intent-2", symbol="OPT:CE",
+        account_id="acct-a", intent_id="intent-2", symbol="OPT:PE",
         max_attempts=2, max_notional=Decimal("10000"), approved=True,
     )
     durable.acquire_instrument_leases(
-        account_id="acct-a", intent_id="intent-2", symbols=("OPT:CE",),
+        account_id="acct-a", intent_id="intent-2", symbols=("OPT:PE",),
     )
     durable.freeze_intent(account_id="acct-a", intent_id="intent-2", reason="partial fill")
     assert durable.claim_recovery_attempt(
-        account_id="acct-a", intent_id="intent-2", symbol="OPT:CE",
+        account_id="acct-a", intent_id="intent-2", symbol="OPT:PE",
     ) == 1
     assert durable.claim_recovery_attempt(
-        account_id="acct-a", intent_id="intent-2", symbol="OPT:CE",
+        account_id="acct-a", intent_id="intent-2", symbol="OPT:PE",
     ) == 2
     with pytest.raises(RuntimeError, match="exhausted"):
         durable.claim_recovery_attempt(
-            account_id="acct-a", intent_id="intent-2", symbol="OPT:CE",
+            account_id="acct-a", intent_id="intent-2", symbol="OPT:PE",
         )
     with factory() as db:
         row = db.execute(select(RecoveryBudgetRecord).where(
