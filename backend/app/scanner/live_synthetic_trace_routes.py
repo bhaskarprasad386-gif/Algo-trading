@@ -343,9 +343,26 @@ def _trace_snapshot_record(trace_id: str, trace_key: str, traced_at: str, snapsh
         db.close()
 
 
+def _publish_synthetic_trace_update(data: dict):
+    # Trace mutations are user-initiated REST commands; fan the committed result
+    # out to every open Synthetic Trace page without turning the socket into an
+    # order or broker-command transport.
+    try:
+        from app.scanner.page_push_websocket import publish_page_update
+        publish_page_update("synthetic-arbitrage", "PATCH", data)
+    except Exception:
+        pass
+
+
 @router.post("/opportunities")
 def save_trace_opportunity(request: TraceOpportunityRequest):
-    return _trace_snapshot_record(request.trace_id, request.trace_key, request.traced_at, request.snapshot)
+    result = _trace_snapshot_record(request.trace_id, request.trace_key, request.traced_at, request.snapshot)
+    try:
+        result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
+        _publish_synthetic_trace_update({"trace_opportunities": result["trace_opportunities"]})
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/opportunities")
@@ -381,9 +398,15 @@ def delete_trace_opportunity(trace_id: str):
         if row is not None:
             db.delete(row)
             db.commit()
-        return {"trace_id": trace_id, "deleted": True}
     finally:
         db.close()
+    result = {"trace_id": trace_id, "deleted": True}
+    try:
+        result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
+        _publish_synthetic_trace_update({"trace_opportunities": result["trace_opportunities"]})
+    except Exception:
+        pass
+    return result
 
 
 @router.post("/live-status")
@@ -441,6 +464,7 @@ def check_trace_live_status(request: TraceStatusRequest):
             payload["history_record_id"] = _save_check(request, payload)
             payload["history_persistence"] = "SAVED"
             payload["history"] = _history_rows(request.trace_id)
+            _publish_synthetic_trace_update({"trace_status_update": payload})
         except Exception:
             # A database outage must not erase a valid live quote response.
             payload["history_record_id"] = None
