@@ -13,6 +13,8 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from enum import Enum
 from typing import Callable, Mapping, Protocol
 
+from app.execution.emergency_recovery import RecoveryPosition
+
 
 class BasketStrategy(str, Enum):
     BOX_SPREAD = "BOX_SPREAD"
@@ -60,10 +62,13 @@ class BasketIntent:
     lot_size: int
     legs: tuple[BasketLeg, ...]
     baseline_positions: tuple[tuple[str, int], ...]
+    direction: str = "LONG"
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not self.intent_id.strip():
             raise ValueError("account and intent IDs are required")
+        if self.direction not in {"LONG", "SHORT", "CREDIT"}:
+            raise ValueError("basket direction must be LONG, SHORT or CREDIT")
         if (
             isinstance(self.lots, bool) or not isinstance(self.lots, int) or self.lots <= 0
             or isinstance(self.lot_size, bool) or not isinstance(self.lot_size, int) or self.lot_size <= 0
@@ -104,12 +109,32 @@ class BasketIntent:
             roles = {x.role: x.option_type for x in self.legs}
             if roles != {"LOW_CE": "CE", "HIGH_CE": "CE", "HIGH_PE": "PE", "LOW_PE": "PE"}:
                 raise ValueError("Box Spread leg roles must match the low/high CE/PE contract map")
+            expected_sides = (
+                {"LOW_CE": "BUY", "HIGH_CE": "SELL", "HIGH_PE": "BUY", "LOW_PE": "SELL"}
+                if self.direction == "LONG" else
+                {"LOW_CE": "SELL", "HIGH_CE": "BUY", "HIGH_PE": "SELL", "LOW_PE": "BUY"}
+            )
+            if {x.role: x.side for x in self.legs} != expected_sides:
+                raise ValueError("Box Spread sides do not match the selected LONG/SHORT direction")
         if self.strategy is BasketStrategy.CREDIT_BUTTERFLY:
+            if self.direction != "CREDIT":
+                raise ValueError("Credit Butterfly direction must be CREDIT")
             role_ratios = {x.role: x.ratio for x in self.legs}
             if role_ratios != {"LOWER_WING": 1, "BODY": 2, "UPPER_WING": 1}:
                 raise ValueError("Credit Butterfly must use 1:2:1 lower-wing/body/upper-wing ratios")
-        if self.strategy is BasketStrategy.CONDOR and len({x.option_type for x in self.legs}) == 2 and option_counts != {"CE": 2, "PE": 2}:
-            raise ValueError("Iron Condor must contain two CE and two PE legs")
+            if {x.role: x.side for x in self.legs} != {"LOWER_WING": "BUY", "BODY": "SELL", "UPPER_WING": "BUY"}:
+                raise ValueError("Credit Butterfly wings must be bought and body sold")
+        if self.strategy is BasketStrategy.CONDOR:
+            if self.direction != "CREDIT":
+                raise ValueError("Credit Condor direction must be CREDIT")
+            if sum(x.side == "BUY" for x in self.legs) != 2 or sum(x.side == "SELL" for x in self.legs) != 2:
+                raise ValueError("Credit Condor must contain two bought and two sold legs")
+            if len({x.option_type for x in self.legs}) == 2:
+                if option_counts != {"CE": 2, "PE": 2}:
+                    raise ValueError("Iron Condor must contain two CE and two PE legs")
+                role_sides = {x.role: x.side for x in self.legs}
+                if role_sides != {"PUT_SHORT": "SELL", "PUT_LONG": "BUY", "CALL_SHORT": "SELL", "CALL_LONG": "BUY"}:
+                    raise ValueError("Iron Condor short/long leg roles have invalid sides")
 
     def quantity_for(self, leg: BasketLeg) -> int:
         return self.lots * self.lot_size * leg.ratio
@@ -420,6 +445,7 @@ class MultiLegBasketCoordinator:
                     by_id = {x.client_order_id: x for x in reconciliation.legs}
                     if len(by_id) == len(intent.legs) and all(
                         by_id.get(client_id) is not None
+                        and by_id[client_id].broker_order_id is not None
                         and by_id[client_id].filled_quantity == intent.quantity_for(leg)
                         and by_id[client_id].order_terminal
                         for leg, client_id in zip(intent.legs, client_ids, strict=True)
@@ -448,7 +474,10 @@ class MultiLegBasketCoordinator:
                 account_id=intent.account_id, intent_id=intent.intent_id,
                 strategy=intent.strategy.value,
                 symbols=tuple(sorted({x.symbol for x in intent.legs})),
-                baseline_positions=intent.baseline_positions,
+                baseline_positions=tuple(
+                    RecoveryPosition(symbol, quantity)
+                    for symbol, quantity in intent.baseline_positions
+                ),
             )
             recovery_state = getattr(getattr(recovery_result, "state", None), "value",
                                       getattr(recovery_result, "state", None))
