@@ -205,7 +205,7 @@ def test_postgres_concurrent_out_of_order_callbacks_reconcile_after_gap_closes(p
 
     # Either callback may win the initial row lock. If the later cumulative
     # event arrived first it must remain durable/deferred, never be guessed.
-    assert db_count := None
+
     with postgres_factory() as db:
         assert db.query(BrokerOrderEventRecord).count() == 2
         assert db.query(ExecutionFillRecord).count() in (1, 2)
