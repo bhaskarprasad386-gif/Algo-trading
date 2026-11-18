@@ -32,3 +32,34 @@ def test_enable_real_trading_still_requires_exact_confirmation(monkeypatch):
     state = store.get(91002)
     assert state.real_trading_enabled is False
     assert state.kill_switch is True
+
+
+def test_capabilities_endpoint_never_advertises_execution_authorization():
+    response = routes.broker_capability_matrix(user_id=91003)
+
+    assert response["execution_authorized"] is False
+    assert {item["broker"] for item in response["brokers"]} == {
+        "angel_one", "zerodha", "fyers", "shoonya", "mstock",
+    }
+    for item in response["brokers"]:
+        assert item["history_provider"] is True
+        assert item["can_place_orders"] is False
+        assert item["can_cancel_orders"] is False
+        assert item["can_modify_orders"] is False
+        assert item["live_certified"] is False
+
+
+def test_connect_endpoint_rejects_non_angel_one_before_using_database():
+    payload = routes.ConnectRequest(
+        broker="zerodha",
+        api_key="not-used",
+        client_code="not-used",
+        password="not-used",
+        totp_secret="not-used",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        routes.connect(payload, db=None, user_id=91004)
+
+    assert exc.value.status_code == 400
+    assert "Unsupported broker" in exc.value.detail
