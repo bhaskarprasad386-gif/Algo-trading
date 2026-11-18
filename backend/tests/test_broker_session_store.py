@@ -311,3 +311,40 @@ def test_disconnect_all_waits_for_active_lease_before_provider_logout():
     assert finished.is_set()
     assert failures == []
     assert adapter.connected is False
+
+
+
+def test_owner_lifecycle_transitions_are_serialized_without_blocking_other_owners():
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    entered = Event()
+    release = Event()
+    second_entered = Event()
+
+    def first_transition():
+        with store.transition(7):
+            entered.set()
+            assert release.wait(2)
+
+    def second_transition():
+        with store.transition(7):
+            second_entered.set()
+
+    first = Thread(target=first_transition)
+    second = Thread(target=second_transition)
+    first.start()
+    assert entered.wait(2)
+    second.start()
+    assert not second_entered.wait(0.05)
+
+    # Another owner's lifecycle is independent.
+    with store.transition(8):
+        pass
+
+    release.set()
+    first.join(2)
+    second.join(2)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_entered.is_set()
