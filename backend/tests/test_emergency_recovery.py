@@ -227,3 +227,48 @@ def test_reconciled_flag_is_required_even_when_snapshot_is_authoritative():
     assert result.state is RecoveryState.MANUAL_REVIEW
     assert not broker.closes
     assert not journal.released
+
+
+def test_duplicate_position_rows_are_aggregated_before_baseline_delta():
+    broker, journal = FakeBroker(50), FakeJournal()
+    broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
+        account_id="acct-1", broker="angel_one", authoritative=True,
+        positions_reconciled=True,
+        orders=(RecoveryOrder("entry-1", "entry-client-1", "NFO:CE", "ENTRY", "CANCELLED", 0),),
+        positions=(RecoveryPosition("NFO:CE", 20), RecoveryPosition("NFO:CE", 30)),
+    )
+    result = run(broker, journal)
+    assert result.state is RecoveryState.FLAT
+    assert broker.closes[0].quantity == 50
+
+
+def test_recovery_requires_baseline_for_every_symbol_before_any_side_effect():
+    broker, journal = FakeBroker(50), FakeJournal()
+    coordinator = EmergencyRecoveryCoordinator(broker, journal)
+    try:
+        coordinator.recover(
+            account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+            symbols=("NFO:CE", "NFO:PE"), baseline_positions=(RecoveryPosition("NFO:CE", 0),),
+        )
+    except ValueError as exc:
+        assert "durable pre-entry baseline" in str(exc)
+    else:
+        raise AssertionError("missing baseline must fail closed")
+    assert not journal.kill_switches
+    assert not broker.closes
+
+
+def test_non_terminal_emergency_close_is_escalated_without_retry():
+    broker, journal = FakeBroker(50), FakeJournal()
+    original = broker.place_ioc_limit
+    def working_close(*, account_id, order):
+        broker.closes.append(order)
+        return RecoveryOrder(
+            broker_order_id="close-working", client_order_id=order.client_order_id,
+            symbol=order.symbol, role="RECOVERY", status="WORKING", remaining_quantity=order.quantity,
+        )
+    broker.place_ioc_limit = working_close
+    result = run(broker, journal)
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert len(broker.closes) == 1
+    assert not journal.released
