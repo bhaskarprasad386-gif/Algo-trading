@@ -213,3 +213,16 @@ def test_lease_returns_none_when_session_is_absent():
     store = BrokerSessionStore()
     with store.lease(7, "angel_one") as adapter:
         assert adapter is None
+
+
+
+def test_replacing_session_with_same_adapter_does_not_disconnect_live_session():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("fyers")
+    store.replace(7, "fyers", adapter)
+
+    error = store.replace_and_disconnect_previous(7, "fyers", adapter)
+
+    assert error is None
+    assert store.get(7, "fyers") is adapter
+    assert adapter.connected is True
