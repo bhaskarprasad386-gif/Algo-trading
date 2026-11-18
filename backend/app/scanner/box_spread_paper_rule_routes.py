@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.database import SessionLocal
+from app.scanner.box_spread_paper_websocket import publish_paper_update
 from app.scanner.box_spread_paper_routes import require_paper_access
 from app.scanner.box_spread_paper_ledger import (
     BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry, BoxSpreadPaperEntryClaim,
@@ -45,6 +46,15 @@ def _rule_or_404(session, rule_id: int, account_key: str):
     if rule is None or rule.account_key != account_key:
         raise HTTPException(status_code=404, detail="paper rule not found")
     return rule
+
+
+def _publish_rules_changed() -> None:
+    """Best-effort private invalidation; never expose account rules on public page push."""
+    try:
+        publish_paper_update("RULES_CHANGED")
+    except Exception:
+        # The durable rule write is authoritative; clients can still reload on reconnect.
+        pass
 
 
 @router.get("/rules")
@@ -78,8 +88,10 @@ def create_rule(payload: PaperRulePayload):
         session.add(row)
         session.commit()
         session.refresh(row)
-        return {"mode": "PAPER_ONLY", "broker_orders_enabled": False,
+        result = {"mode": "PAPER_ONLY", "broker_orders_enabled": False,
                 "rule_id": row.id, "name": row.name, "enabled": row.enabled, "config": config}
+        _publish_rules_changed()
+        return result
 
 
 @router.put("/rules/{rule_id}")
@@ -95,8 +107,10 @@ def update_rule(rule_id: int, payload: PaperRulePayload):
         row.config_json = json.dumps(config, separators=(",", ":"), sort_keys=True)
         row.updated_at = utc_now()
         session.commit()
-        return {"mode": "PAPER_ONLY", "broker_orders_enabled": False,
-                "rule_id": row.id, "name": row.name, "enabled": row.enabled, "config": config}
+        result = {"mode": "PAPER_ONLY", "broker_orders_enabled": False,
+                  "rule_id": row.id, "name": row.name, "enabled": row.enabled, "config": config}
+    _publish_rules_changed()
+    return result
 
 
 @router.get("/rules/{rule_id}/evaluations")
