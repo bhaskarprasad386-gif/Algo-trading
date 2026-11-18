@@ -342,11 +342,11 @@ class EmergencyRecoveryCoordinator:
             snapshot = self._snapshot(account_id, intent_id, owner_token=owner_token, owner_generation=owner_generation)
             for order in snapshot.orders:
                 if order.role.strip().upper() == "ENTRY" and not order.terminal:
+                    self._assert_owner(
+                        account_id=account_id, intent_id=intent_id,
+                        owner_token=owner_token, owner_generation=owner_generation,
+                    )
                     try:
-                        self._assert_owner(
-                            account_id=account_id, intent_id=intent_id,
-                            owner_token=owner_token, owner_generation=owner_generation,
-                        )
                         self._broker.cancel_order(account_id=account_id, broker_order_id=order.broker_order_id)
                         self._journal.append_event(
                             account_id=account_id, intent_id=intent_id, event="ENTRY_CANCEL_REQUESTED",
@@ -518,10 +518,14 @@ class EmergencyRecoveryCoordinator:
                 if self._positions_are_safe(snapshot):
                     residuals = self._residuals(snapshot, symbol_set, baseline)
             except Exception:
-                if not self._journal.assert_recovery_coordinator_owner(
-                    account_id=account_id, intent_id=intent_id,
-                    owner_token=owner_token, owner_generation=owner_generation,
-                ):
+                try:
+                    still_owner = self._journal.assert_recovery_coordinator_owner(
+                        account_id=account_id, intent_id=intent_id,
+                        owner_token=owner_token, owner_generation=owner_generation,
+                    )
+                except Exception:
+                    still_owner = False
+                if not still_owner:
                     return RecoveryResult(
                         RecoveryState.MANUAL_REVIEW,
                         "recovery ownership could not be verified; operator takeover and broker reconciliation required",
