@@ -226,3 +226,46 @@ def test_replacing_session_with_same_adapter_does_not_disconnect_live_session():
     assert error is None
     assert store.get(7, "fyers") is adapter
     assert adapter.connected is True
+
+
+
+@pytest.mark.parametrize("cleanup", ["clear", "clear_owner"])
+def test_bulk_cleanup_waits_for_active_request_lease(cleanup):
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("angel_one")
+    store.replace(7, "angel_one", adapter)
+    acquired = Event()
+    release = Event()
+    cleaned = Event()
+
+    def request():
+        with store.lease(7, "angel_one") as leased:
+            assert leased is adapter
+            acquired.set()
+            assert release.wait(2)
+
+    def revoke():
+        if cleanup == "clear":
+            assert store.clear() == [adapter]
+        else:
+            assert store.clear_owner(7) == [adapter]
+        cleaned.set()
+
+    worker = Thread(target=request)
+    worker.start()
+    assert acquired.wait(2)
+
+    revoker = Thread(target=revoke)
+    revoker.start()
+    assert not cleaned.wait(0.05)
+    assert adapter.connected is True
+    assert store.get(7, "angel_one") is None
+
+    release.set()
+    worker.join(2)
+    revoker.join(2)
+    assert not worker.is_alive()
+    assert not revoker.is_alive()
+    assert cleaned.is_set()
