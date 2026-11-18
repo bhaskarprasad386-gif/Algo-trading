@@ -279,7 +279,13 @@ export default function BoxSpreadPaperTrading() {
     const data = pagePush.data;
     if (!data) return;
     const isSnapshot = data.__event === "SNAPSHOT";
-    const incoming = isSnapshot ? data.opportunities : data.opportunity_updates;
+    // The Box page publisher emits PATCH frames containing a complete page
+    // snapshot (including the full opportunities array), not per-row deltas.
+    // Accept that authoritative list on every push; retain delta merging only
+    // for any future producer that explicitly sends opportunity_updates.
+    const hasFullOpportunityList = Array.isArray(data.opportunities);
+    const replaceList = isSnapshot || hasFullOpportunityList;
+    const incoming = replaceList ? data.opportunities : data.opportunity_updates;
     if (!Array.isArray(incoming)) return;
     const validRows = incoming.filter((row): row is LiveOpportunity => {
       if (!row || typeof row !== "object") return false;
@@ -288,7 +294,7 @@ export default function BoxSpreadPaperTrading() {
         .every(value => Number.isFinite(Number(value)) && Number(value) > 0);
     });
     setOpportunities(previous => {
-      if (isSnapshot) return validRows;
+      if (replaceList) return validRows;
       const merged = new Map<string, LiveOpportunity>();
       for (const row of previous) {
         merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
@@ -301,7 +307,7 @@ export default function BoxSpreadPaperTrading() {
     if (validRows.length || isSnapshot) {
       setOpportunityError(null);
       if (validRows.length > 0) setOpportunityStatus("LIVE");
-      else if (isSnapshot) setOpportunityStatus("EMPTY");
+      else if (replaceList) setOpportunityStatus("EMPTY");
       setLastOpportunityCheck(Date.now());
     }
   }, [pagePush.data]);
