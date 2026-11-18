@@ -468,3 +468,45 @@ def test_position_reconciliation_loss_after_ioc_fill_never_releases_risk():
     assert journal.kill_switches
     assert journal.alerts
     assert result.residual_positions == ()
+
+
+
+def test_restarted_recovery_coordinator_does_not_duplicate_unknown_ioc():
+    broker, journal = FakeBroker(50), FakeJournal()
+
+    def accept_then_lose_ack(*, account_id, order):
+        broker.closes.append(order)
+        broker.orders.append(RecoveryOrder(
+            broker_order_id="close-accepted-ack-lost",
+            client_order_id=order.client_order_id,
+            symbol=order.symbol, role="RECOVERY", status="WORKING",
+            remaining_quantity=order.quantity,
+        ))
+        raise TimeoutError("acknowledgement lost after broker acceptance")
+
+    broker.place_ioc_limit = accept_then_lose_ack
+    first = EmergencyRecoveryCoordinator(
+        broker, journal, policy=RecoveryPolicy(max_attempts=3),
+    ).recover(
+        account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+        symbols=("NFO:CE",), baseline_positions=(RecoveryPosition("NFO:CE", 0),),
+        now_ns=1_000_000_000,
+    )
+
+    # Simulate a process restart: construct a fresh coordinator while the
+    # durable journal and broker's authoritative WORKING order survive.
+    second = EmergencyRecoveryCoordinator(
+        broker, journal, policy=RecoveryPolicy(max_attempts=3),
+    ).recover(
+        account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+        symbols=("NFO:CE",), baseline_positions=(RecoveryPosition("NFO:CE", 0),),
+        now_ns=1_000_000_000,
+    )
+
+    assert first.state is RecoveryState.MANUAL_REVIEW
+    assert second.state is RecoveryState.MANUAL_REVIEW
+    assert len(broker.closes) == 1
+    assert journal.attempts[("acct-1", "intent-1", "NFO:CE")] == 1
+    assert second.residual_positions == (RecoveryPosition("NFO:CE", 50),)
+    assert not journal.released
+    assert journal.kill_switches
