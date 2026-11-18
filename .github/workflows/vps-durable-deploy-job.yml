@@ -44,7 +44,12 @@ jobs:
             echo "VPS SSH secrets are not configured" >&2
             exit 1
           }
-          TARGET_SHA="${TARGET_SHA_INPUT:-$GITHUB_SHA}"
+          if [[ -n "${TARGET_SHA_INPUT:-}" ]]; then
+            TARGET_SHA="$TARGET_SHA_INPUT"
+          else
+            git fetch --no-tags origin main
+            TARGET_SHA="$(git rev-parse FETCH_HEAD)"
+          fi
           FORCE_RESTART="${FORCE_RESTART_INPUT:-false}"
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "target_sha must be a full 40-character commit" >&2; exit 1; }
           [[ "$RUN_ID" =~ ^[0-9]{1,24}$ ]] || { echo "invalid GitHub run ID" >&2; exit 1; }
