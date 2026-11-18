@@ -75,3 +75,25 @@ Until these gates pass against PostgreSQL with independent sessions, the
 coordinator remains uncertified for multi-worker or live broker execution.
 No TTL lease, automatic stale-owner reclamation, or assumption that a
 PostgreSQL advisory lock alone fences an in-flight broker request is accepted.
+
+## First-owner fencing implementation status
+
+The current implementation adds a permanent unique owner row for each
+(account_id, intent_id). The raw per-run token is generated in memory; only its
+SHA-256 digest is persisted. The first claim receives generation 1. Competing
+claims, including claims after adapter/process reconstruction, are rejected.
+There is deliberately no heartbeat, TTL expiry, automatic reclaim, or
+implicit generation increment.
+
+The coordinator verifies the token and generation before each broker snapshot,
+entry cancellation, recovery quote, and IOC close submission. A failed or
+unavailable ownership check prevents that broker action. A worker that cannot
+prove ownership does not attempt another broker read or mutate the intent's
+recovery state.
+
+This is a first-owner lock/fence only. The explicit operator-authorized takeover
+workflow and its independent reconciliation evidence are NOT implemented yet.
+A crashed owner can therefore leave an intent permanently blocked pending that
+workflow. Generation remains 1 until a separately reviewed takeover feature is
+implemented. The new PostgreSQL race test must pass before this work is
+considered database-concurrency validated; SQLite tests alone are insufficient.
