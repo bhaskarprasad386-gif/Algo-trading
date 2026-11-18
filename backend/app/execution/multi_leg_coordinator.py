@@ -98,8 +98,16 @@ class BasketIntent:
         if len(self.legs) != expected[0] or ratios != expected[1]:
             raise ValueError(f"{self.strategy.value} has invalid leg count or ratio shape")
         option_counts = {kind: sum(x.option_type == kind for x in self.legs) for kind in {"CE", "PE"}}
-        if self.strategy is BasketStrategy.BOX_SPREAD and option_counts != {"CE": 2, "PE": 2}:
-            raise ValueError("Box Spread must contain two CE and two PE legs")
+        if self.strategy is BasketStrategy.BOX_SPREAD:
+            if option_counts != {"CE": 2, "PE": 2}:
+                raise ValueError("Box Spread must contain two CE and two PE legs")
+            roles = {x.role: x.option_type for x in self.legs}
+            if roles != {"LOW_CE": "CE", "HIGH_CE": "CE", "HIGH_PE": "PE", "LOW_PE": "PE"}:
+                raise ValueError("Box Spread leg roles must match the low/high CE/PE contract map")
+        if self.strategy is BasketStrategy.CREDIT_BUTTERFLY:
+            role_ratios = {x.role: x.ratio for x in self.legs}
+            if role_ratios != {"LOWER_WING": 1, "BODY": 2, "UPPER_WING": 1}:
+                raise ValueError("Credit Butterfly must use 1:2:1 lower-wing/body/upper-wing ratios")
         if self.strategy is BasketStrategy.CONDOR and len({x.option_type for x in self.legs}) == 2 and option_counts != {"CE": 2, "PE": 2}:
             raise ValueError("Iron Condor must contain two CE and two PE legs")
 
