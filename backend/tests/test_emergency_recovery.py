@@ -1,0 +1,194 @@
+from decimal import Decimal
+
+from app.execution.emergency_recovery import (
+    EmergencyRecoveryCoordinator,
+    RecoveryOrder,
+    RecoveryPolicy,
+    RecoveryPosition,
+    RecoveryQuote,
+    RecoverySnapshot,
+    RecoveryState,
+)
+
+
+class FakeJournal:
+    def __init__(self):
+        self.events = []
+        self.states = []
+        self.kill_switches = []
+        self.alerts = []
+        self.released = []
+
+    def latch_entry_kill_switch(self, **kwargs):
+        self.kill_switches.append(kwargs)
+
+    def append_event(self, **kwargs):
+        self.events.append(kwargs)
+
+    def set_state(self, **kwargs):
+        self.states.append(kwargs)
+
+    def release_risk_reservation(self, **kwargs):
+        self.released.append(kwargs)
+
+    def alert_operator(self, **kwargs):
+        self.alerts.append(kwargs)
+
+
+class FakeBroker:
+    name = "angel_one"
+
+    def __init__(self, quantity=50, *, unresolved_cancel=False, quote_age=0, partial_fills=()):
+        self.account_id = "acct-1"
+        self.position = quantity
+        self.unrelated = 777
+        self.entry_status = "WORKING"
+        self.unresolved_cancel = unresolved_cancel
+        self.quote_age = quote_age
+        self.partial_fills = list(partial_fills)
+        self.orders = [RecoveryOrder("entry-1", "entry-client-1", "NFO:CE", "ENTRY", "WORKING", 50)]
+        self.closes = []
+        self.cancelled = []
+
+    def recovery_snapshot(self, *, account_id, intent_id):
+        return RecoverySnapshot(
+            account_id=account_id,
+            broker=self.name,
+            authoritative=True,
+            orders=tuple(self.orders),
+            positions=(
+                RecoveryPosition("NFO:CE", self.position),
+                RecoveryPosition("UNRELATED", self.unrelated),
+            ),
+        )
+
+    def cancel_order(self, *, account_id, broker_order_id):
+        self.cancelled.append(broker_order_id)
+        if not self.unresolved_cancel:
+            self.entry_status = "CANCELLED"
+            self.orders[0] = RecoveryOrder(
+                "entry-1", "entry-client-1", "NFO:CE", "ENTRY", "CANCELLED", 0,
+            )
+
+    def recovery_quote(self, *, account_id, symbol):
+        return RecoveryQuote(
+            bid=Decimal("100.00"), ask=Decimal("100.10"),
+            bid_depth=100, ask_depth=100, tick_size=Decimal("0.05"),
+            lot_size=25, observed_at_ns=1_000_000_000 - self.quote_age,
+        )
+
+    def place_ioc_limit(self, *, account_id, order):
+        self.closes.append(order)
+        fill = self.partial_fills.pop(0) if self.partial_fills else order.quantity
+        fill = min(fill, order.quantity)
+        self.position += fill if order.side == "BUY" else -fill
+        result = RecoveryOrder(
+            broker_order_id=f"close-{len(self.closes)}",
+            client_order_id=order.client_order_id,
+            symbol=order.symbol, role="RECOVERY",
+            status="FILLED" if fill == order.quantity else "CANCELLED",
+            remaining_quantity=0,
+        )
+        self.orders.append(result)
+        return result
+
+
+def run(broker, journal, *, quantity_symbol=("NFO:CE",), policy=None):
+    coordinator = EmergencyRecoveryCoordinator(broker, journal, policy=policy)
+    return coordinator.recover(
+        account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+        symbols=quantity_symbol, now_ns=1_000_000_000,
+    )
+
+
+def test_recovery_cancels_reconciles_and_closes_long_position_with_bounded_ioc():
+    broker, journal = FakeBroker(50), FakeJournal()
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.FLAT
+    assert broker.cancelled == ["entry-1"]
+    assert len(broker.closes) == 1
+    close = broker.closes[0]
+    assert (close.side, close.quantity, close.time_in_force) == ("SELL", 50, "IOC")
+    assert close.limit_price == Decimal("99.50")
+    assert broker.unrelated == 777
+    assert journal.kill_switches
+    assert journal.released == [{"account_id": "acct-1", "intent_id": "intent-1"}]
+
+
+def test_recovery_closes_short_position_by_buying_at_ask_plus_collar():
+    broker, journal = FakeBroker(-50), FakeJournal()
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.FLAT
+    close = broker.closes[0]
+    assert close.side == "BUY"
+    assert close.limit_price == Decimal("100.65")
+
+
+def test_partial_ioc_close_is_reconciled_before_bounded_retry():
+    broker, journal = FakeBroker(50, partial_fills=(25, 25)), FakeJournal()
+    result = run(broker, journal, policy=RecoveryPolicy(max_attempts=2))
+
+    assert result.state is RecoveryState.FLAT
+    assert [order.quantity for order in broker.closes] == [50, 25]
+    assert len({order.client_order_id for order in broker.closes}) == 2
+
+
+def test_non_terminal_entry_after_cancel_blocks_close_to_avoid_late_fill_race():
+    broker, journal = FakeBroker(50, unresolved_cancel=True), FakeJournal()
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert result.residual_positions == (RecoveryPosition("NFO:CE", 50),)
+    assert journal.alerts
+    assert not journal.released
+
+
+def test_stale_recovery_quote_keeps_kill_switch_and_risk_reservation_latched():
+    broker, journal = FakeBroker(50, quote_age=2_000_000_000), FakeJournal()
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert result.residual_positions == (RecoveryPosition("NFO:CE", 50),)
+    assert not journal.released
+
+
+def test_wrong_broker_account_identity_fails_closed():
+    broker, journal = FakeBroker(50), FakeJournal()
+    broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
+        account_id="another-account", broker="zerodha", authoritative=True,
+        orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
+    )
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert not journal.released
+
+
+def test_non_authoritative_snapshot_is_never_treated_as_flat():
+    broker, journal = FakeBroker(0), FakeJournal()
+    broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
+        account_id="acct-1", broker="angel_one", authoritative=False,
+        orders=(), positions=(),
+    )
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not journal.released
+
+
+def test_insufficient_depth_for_one_lot_fails_closed_without_market_order():
+    broker, journal = FakeBroker(50), FakeJournal()
+    broker.recovery_quote = lambda **kwargs: RecoveryQuote(
+        bid=Decimal("100"), ask=Decimal("100.10"), bid_depth=10, ask_depth=10,
+        tick_size=Decimal("0.05"), lot_size=25, observed_at_ns=1_000_000_000,
+    )
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert not journal.released
