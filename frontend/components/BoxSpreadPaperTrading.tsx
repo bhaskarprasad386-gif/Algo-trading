@@ -79,6 +79,7 @@ export default function BoxSpreadPaperTrading() {
   const [privateSnapshotComplete, setPrivateSnapshotComplete] = useState(false);
   const [privateRuleState, setPrivateRuleState] = useState<{ rules: any[]; evaluations: Record<string, any[]> }>({ rules: [], evaluations: {} });
   const privateWsRef = useRef<WebSocket | null>(null);
+  const exitPreviewRef = useRef<any | null>(null);
   const privateSequenceRef = useRef(0);
   const privateEventIdsRef = useRef(new Set<string>());
   const [password, setPassword] = useState("");
@@ -176,7 +177,9 @@ export default function BoxSpreadPaperTrading() {
     }
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
 
-  const applyPrivateSnapshot = useCallback((payload: any) => {
+  useEffect(() => { exitPreviewRef.current = exitPreview; }, [exitPreview]);
+
+  const applyPrivateSnapshot = useCallback((payload: any, eventType: string) => {
     const accountBody = payload?.account;
     const summaryBody = payload?.portfolio_summary;
     const positionsBody = payload?.positions;
@@ -194,6 +197,7 @@ export default function BoxSpreadPaperTrading() {
     setOpenPageInfo({ total_count: openCount, has_more: openCount > 10, limit: 10, offset: 0 });
     setClosedPageInfo({ total_count: closedCount, has_more: closedCount > 10, limit: 10, offset: 0 });
     setRecoveryTrades(Array.isArray(recoveryBody?.data) ? recoveryBody.data : []);
+    if (eventType === "MARKET_DATA_CHANGED" && exitPreviewRef.current) setExitPreviewDirty(true);
     if (Array.isArray(payload?.rules)) setPrivateRuleState({ rules: payload.rules, evaluations: payload.rule_evaluations && typeof payload.rule_evaluations === "object" ? payload.rule_evaluations : {} });
     setError(null);
   }, []);
@@ -260,6 +264,9 @@ export default function BoxSpreadPaperTrading() {
   // channel as the scanner. Never put private paper ledger/account data on it.
   useEffect(() => {
     const pushed = pagePush.data?.opportunities;
+    const runtime = (pagePush.data as any)?.runtime_health;
+    const diagnostics = runtime?.runners?.box_spread?.scanner_diagnostics;
+    if (diagnostics && typeof diagnostics === "object") setScannerDiagnostics(diagnostics as ScannerDiagnostics);
     if (!Array.isArray(pushed)) return;
     const rows = pushed.filter((row): row is LiveOpportunity => {
       if (!row || typeof row !== "object") return false;
@@ -271,7 +278,11 @@ export default function BoxSpreadPaperTrading() {
     setOpportunityError(null);
     setOpportunityStatus(rows.length > 0 ? "LIVE" : "EMPTY");
     setLastOpportunityCheck(Date.now());
-  }, [pagePush.data]);
+    if (manualEntryOpportunity) {
+      const refreshed = rows.find(row => row.symbol === manualEntryOpportunity.symbol && row.expiry === manualEntryOpportunity.expiry && row.low_strike === manualEntryOpportunity.low_strike && row.high_strike === manualEntryOpportunity.high_strike && row.direction === manualEntryOpportunity.direction);
+      if (refreshed) setManualEntryOpportunity(refreshed);
+    }
+  }, [pagePush.data, manualEntryOpportunity]);
 
   useEffect(() => {
     if (!token) {
@@ -324,7 +335,7 @@ export default function BoxSpreadPaperTrading() {
             return;
           }
           try {
-            applyPrivateSnapshot(frame.payload);
+            applyPrivateSnapshot(frame.payload, String(frame.event_type ?? ""));
             privateSequenceRef.current = sequence;
             if (eventId) {
               privateEventIdsRef.current.add(eventId);
