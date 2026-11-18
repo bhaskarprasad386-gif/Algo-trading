@@ -50,9 +50,7 @@ jobs:
           BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url || 'https://algo-trading-backend-2.onrender.com/' }}
           BACKEND_WS_URL: ${{ github.event.inputs.backend_ws_url || 'wss://algo-trading-backend-2.onrender.com' }}
         run: |
-          gradle testDebugUnitTest --no-daemon \\
-            -PbackendBaseUrl="$BACKEND_BASE_URL" \\
-            -PbackendWsUrl="$BACKEND_WS_URL"
+          gradle testDebugUnitTest --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Compile Android debug build
         env:
