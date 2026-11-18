@@ -27,6 +27,7 @@ class FakeJournal:
         self.pending_authorizations = ()
         self.reconciled_authorizations = []
         self.coordinator_owner = None
+        self.owner_valid = True
 
     def claim_recovery_coordinator_owner(self, *, account_id, intent_id, owner_token):
         if self.coordinator_owner is not None:
@@ -35,7 +36,7 @@ class FakeJournal:
         return 1
 
     def assert_recovery_coordinator_owner(self, *, account_id, intent_id, owner_token, owner_generation):
-        return self.coordinator_owner == (account_id, intent_id, owner_token, owner_generation)
+        return self.owner_valid and self.coordinator_owner == (account_id, intent_id, owner_token, owner_generation)
 
     def latch_entry_kill_switch(self, **kwargs):
         self.kill_switches.append(kwargs)
@@ -453,3 +454,22 @@ def test_second_coordinator_for_same_intent_is_rejected_before_broker_io():
     assert "already owns" in second.reason
     assert len(broker.cancelled) == first_cancel_count
     assert len(broker.closes) == first_close_count
+
+
+
+def test_lost_owner_between_snapshot_and_cancel_prevents_broker_action():
+    broker, journal = FakeBroker(50), FakeJournal()
+    original_snapshot = broker.recovery_snapshot
+
+    def snapshot_then_lose_owner(**kwargs):
+        result = original_snapshot(**kwargs)
+        journal.owner_valid = False
+        return result
+
+    broker.recovery_snapshot = snapshot_then_lose_owner
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert "ownership could not be verified" in result.reason
+    assert not broker.cancelled
+    assert not broker.closes
