@@ -22,6 +22,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
   const socketRef = useRef<WebSocket | null>(null);
   const sequenceRef = useRef(0);
   const resyncPendingRef = useRef(false);
+  const hasSnapshotRef = useRef(false);
 
   const resync = useCallback(() => {
     const socket = socketRef.current;
@@ -50,6 +51,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       try {
         socket = new WebSocket(getDashboardWsUrl() + "/ws/page-updates");
       } catch {
+        hasSnapshotRef.current = false;
+        resyncPendingRef.current = false;
         setStatus("RECONNECTING");
         retryTimer = setTimeout(connect, retryMs);
         retryMs = Math.min(15000, retryMs * 2);
@@ -60,7 +63,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (disposed) return;
         lastTransportAt = Date.now();
         retryMs = 1000;
-        setStatus("LIVE");
+        // A connected transport is not synchronized until its authoritative
+        // page snapshot arrives. Keep REST recovery enabled in the meantime.
+        setStatus("CONNECTING");
         socket.send(JSON.stringify({ action: "subscribe", page }));
       };
       socket.onmessage = (event) => {
@@ -82,7 +87,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (!Number.isSafeInteger(sequence) || sequence < 0) return;
         if (eventType === "SNAPSHOT") {
           sequenceRef.current = sequence;
+          hasSnapshotRef.current = true;
           resyncPendingRef.current = false;
+          setStatus("LIVE");
           setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
           return;
         }
@@ -113,6 +120,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       }
     }, 10000);
     sequenceRef.current = 0;
+    hasSnapshotRef.current = false;
     resyncPendingRef.current = false;
     setData(null);
     connect();
