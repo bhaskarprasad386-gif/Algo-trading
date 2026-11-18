@@ -22,7 +22,7 @@ const defaults: Config = {
   monitor: { interval_seconds: 20, entry_window_minutes: 15 },
 };
 
-export default function BoxSpreadPaperRuleControls({ api, token, account, selection }: { api: string; token: string | null; account: string; selection: { expiryType: "WEEKLY"|"MONTHLY"; symbols: string[]; lots: number } }) {
+export default function BoxSpreadPaperRuleControls({ api, token, account, selection, refreshVersion = 0 }: { api: string; token: string | null; account: string; refreshVersion?: number; selection: { expiryType: "WEEKLY"|"MONTHLY"; symbols: string[]; lots: number } }) {
   const [rules,setRules]=useState<Rule[]>([]);
   const [config,setConfig]=useState<Config>(defaults);
   const [name,setName]=useState("NIFTY/SENSEX weekly edge rule");
@@ -45,7 +45,7 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
     try{const body=await request("/rules?account_key="+encodeURIComponent(account));setRules(Array.isArray(body.data)?body.data:[]);setError(null);}
     catch(e){setError(e instanceof Error?e.message:"Unable to load rules");}
   },[account,request,token]);
-  useEffect(()=>{void load();},[load]);
+  useEffect(()=>{void load();},[load,refreshVersion]);
   useEffect(()=>{setConfig(current=>({...current,entry:{...current.entry,expiry_type:selection.expiryType,symbols:selection.symbols,lots:selection.lots}}));},[selection.expiryType,selection.symbols.join(","),selection.lots]);
 
   async function save(event:FormEvent){
