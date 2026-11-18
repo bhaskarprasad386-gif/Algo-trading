@@ -302,3 +302,37 @@ def test_close_approval_budget_survives_journal_reconstruction(journal):
         assert budget.attempts_used == 1
         assert budget.notional_used == Decimal("50")
         assert len(approvals) == 1
+
+
+def test_close_authorization_remains_pending_until_explicit_broker_reconciliation(journal):
+    durable, factory = journal
+    durable.configure_recovery_budget(
+        account_id="acct-pending", intent_id="intent-pending", symbol="OPT:CE",
+        max_attempts=1, max_notional=Decimal("1000"), approved=True,
+    )
+    durable.acquire_instrument_leases(
+        account_id="acct-pending", intent_id="intent-pending", symbols=("OPT:CE",),
+    )
+    durable.freeze_intent(
+        account_id="acct-pending", intent_id="intent-pending", reason="partial fill",
+    )
+    durable.claim_recovery_attempt(
+        account_id="acct-pending", intent_id="intent-pending", symbol="OPT:CE",
+    )
+    assert durable.approve_emergency_close(
+        account_id="acct-pending", intent_id="intent-pending", symbol="OPT:CE",
+        side="SELL", quantity=1, limit_price=Decimal("10"), notional=Decimal("10"),
+        client_order_id="REC-crash-window",
+    )
+
+    restarted = DurableRecoveryJournal(factory)
+    assert restarted.pending_close_authorizations(
+        account_id="acct-pending", intent_id="intent-pending",
+    ) == ("REC-crash-window",)
+    restarted.mark_close_authorization_reconciled(
+        account_id="acct-pending", intent_id="intent-pending",
+        client_order_id="REC-crash-window",
+    )
+    assert restarted.pending_close_authorizations(
+        account_id="acct-pending", intent_id="intent-pending",
+    ) == ()
