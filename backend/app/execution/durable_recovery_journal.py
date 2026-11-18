@@ -184,6 +184,24 @@ class DurableRecoveryJournal:
             row = self._control(db, account_id, intent_id)
             if row.state != RecoveryState.FLAT.value:
                 raise ValueError("risk reservation and instrument leases remain until broker-confirmed FLAT")
+            events = db.execute(select(RecoveryJournalEventRecord).where(
+                RecoveryJournalEventRecord.control_id == row.id,
+                RecoveryJournalEventRecord.event.in_([
+                    "EMERGENCY_CLOSE_BUDGET_APPROVED", "EMERGENCY_CLOSE_RECONCILED",
+                ]),
+            ).order_by(RecoveryJournalEventRecord.sequence)).scalars().all()
+            approved_ids = set()
+            reconciled_ids = set()
+            for event in events:
+                client_id = json.loads(event.details_json).get("client_order_id")
+                if not client_id:
+                    continue
+                if event.event == "EMERGENCY_CLOSE_BUDGET_APPROVED":
+                    approved_ids.add(client_id)
+                elif event.event == "EMERGENCY_CLOSE_RECONCILED":
+                    reconciled_ids.add(client_id)
+            if approved_ids - reconciled_ids:
+                raise ValueError("pending emergency close authorizations must be broker-reconciled before releasing risk or leases")
             row.risk_reserved = False
             leases = db.execute(select(RecoveryInstrumentLeaseRecord).where(
                 RecoveryInstrumentLeaseRecord.account_id == account_id,
