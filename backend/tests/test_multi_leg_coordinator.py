@@ -420,3 +420,50 @@ def test_recovery_receives_typed_pre_entry_baseline_records():
     baseline = recovery_calls[0]["baseline_positions"]
     assert all(hasattr(row, "symbol") and hasattr(row, "quantity") for row in baseline)
     assert {row.symbol for row in baseline} == {leg.symbol for leg in intent.legs}
+
+
+def test_broker_overfill_is_not_accepted_as_a_filled_basket():
+    intent = make_intent()
+    broker = FakeBroker(intent, fill_overrides={"high-ce": 26})
+    result, _, journal, recovery_calls = execute(intent, broker=broker)
+    assert result.state is BasketResultState.RECOVERED_FLAT
+    assert journal.frozen
+    assert recovery_calls
+    assert not journal.completed
+
+
+def test_incomplete_tradebook_reconciliation_never_marks_filled():
+    intent = make_intent()
+    broker = FakeBroker(intent)
+    async def incomplete_reconcile(**kwargs):
+        return BasketReconciliation(
+            authoritative=True, orders_complete=True, trades_complete=False,
+            positions_reconciled=True,
+            legs=tuple(ReconciledLeg(
+                client_order_id=client_id, broker_order_id=f"broker-{i}",
+                filled_quantity=25, order_terminal=True,
+            ) for i, client_id in enumerate(kwargs["client_order_ids"])),
+        )
+    broker.reconcile_intent = incomplete_reconcile
+    result, _, journal, recovery_calls = execute(intent, broker=broker)
+    assert result.state is BasketResultState.RECOVERED_FLAT
+    assert journal.frozen
+    assert recovery_calls
+    assert not journal.completed
+
+
+def test_current_edge_snapshot_must_match_preflight_quote_snapshot():
+    intent = make_intent()
+    broker, journal = FakeBroker(intent), FakeJournal()
+    coordinator = MultiLegBasketCoordinator(
+        broker, journal, lambda **kwargs: None,
+        edge_evaluator=lambda basket, quotes: EdgeCheck(
+            Decimal("2"), Decimal("1"), "different-snapshot",
+        ),
+    )
+    result = asyncio.run(coordinator.execute(
+        intent, make_evidence(intent), now_ns=1_000_000_000,
+    ))
+    assert result.state is BasketResultState.PREFLIGHT_REJECTED
+    assert not broker.calls
+    assert journal.rejected
