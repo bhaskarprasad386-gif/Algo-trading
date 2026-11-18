@@ -181,6 +181,7 @@ def test_submission_start_is_one_way_and_cannot_replace_client_ids(journal):
         await durable.record_submission_started(
             account_id="acct-a", intent_id="intent-5",
             client_order_ids=("c1", "c2"),
+            expected_quantities={"c1": 25, "c2": 25},
         )
         with pytest.raises(ValueError, match="fresh durable claim"):
             await durable.record_submission_started(
