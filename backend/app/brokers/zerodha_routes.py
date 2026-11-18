@@ -105,62 +105,63 @@ def zerodha_verify(
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
-    """Exchange one-time Kite request token, verify identity, and bind one owner account."""
-    # Re-authentication must disarm any prior process-local safety state first.
-    trading_safety.disable(user_id)
-    client: ZerodhaRESTClient | None = None
-    adapter: ZerodhaAdapter | None = None
-    try:
-        authenticated = ZerodhaTypeAAuthenticator().exchange_request_token(
-            api_key=payload.api_key,
-            api_secret=payload.api_secret,
-            request_token=payload.request_token,
-            expected_account_id=payload.expected_account_id,
-        )
-        client = ZerodhaRESTClient(
-            api_key=payload.api_key,
-            access_token=authenticated.access_token,
-        )
-        adapter = ZerodhaAdapter(client)
-        adapter.connect(
-            access_token=authenticated.access_token,
-            account_id=authenticated.account_id,
-        )
-        claim_authenticated_account(db, "zerodha", authenticated.account_id)
-        set_owner_connection_state(db, True)
-
-        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "zerodha", adapter)
-        if logout_error is not None:
-            app_logger.error("Previous zerodha provider logout failed during reconnect: %s", type(logout_error).__name__)
-        item = broker_connections.connect(user_id, "zerodha", payload.display_name)
+    with broker_sessions.transition(user_id):
+        """Exchange one-time Kite request token, verify identity, and bind one owner account."""
+        # Re-authentication must disarm any prior process-local safety state first.
         trading_safety.disable(user_id)
-        return {
-            "connected": item.connected,
-            "broker": "zerodha",
-            "account_id": authenticated.account_id,
-            "display_name": item.display_name,
-            "real_trading": False,
-            "kill_switch": True,
-        }
-    except HTTPException:
-        if adapter is not None:
-            adapter.disconnect()
-        elif client is not None:
-            client.logout()
-        db.rollback()
-        raise
-    except (ZerodhaAuthenticationError, ZerodhaHistoryUnavailable, ValueError) as exc:
-        if adapter is not None:
-            adapter.disconnect()
-        elif client is not None:
-            client.logout()
-        db.rollback()
-        raise HTTPException(status_code=401, detail="Zerodha authentication or account verification failed") from exc
-    except Exception as exc:
-        if adapter is not None:
-            adapter.disconnect()
-        elif client is not None:
-            client.logout()
-        db.rollback()
-        app_logger.error("Zerodha durable account binding failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Zerodha account could not be safely bound to the Box Spread owner") from exc
+        client: ZerodhaRESTClient | None = None
+        adapter: ZerodhaAdapter | None = None
+        try:
+            authenticated = ZerodhaTypeAAuthenticator().exchange_request_token(
+                api_key=payload.api_key,
+                api_secret=payload.api_secret,
+                request_token=payload.request_token,
+                expected_account_id=payload.expected_account_id,
+            )
+            client = ZerodhaRESTClient(
+                api_key=payload.api_key,
+                access_token=authenticated.access_token,
+            )
+            adapter = ZerodhaAdapter(client)
+            adapter.connect(
+                access_token=authenticated.access_token,
+                account_id=authenticated.account_id,
+            )
+            claim_authenticated_account(db, "zerodha", authenticated.account_id)
+            set_owner_connection_state(db, True)
+
+            logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "zerodha", adapter)
+            if logout_error is not None:
+                app_logger.error("Previous zerodha provider logout failed during reconnect: %s", type(logout_error).__name__)
+            item = broker_connections.connect(user_id, "zerodha", payload.display_name)
+            trading_safety.disable(user_id)
+            return {
+                "connected": item.connected,
+                "broker": "zerodha",
+                "account_id": authenticated.account_id,
+                "display_name": item.display_name,
+                "real_trading": False,
+                "kill_switch": True,
+            }
+        except HTTPException:
+            if adapter is not None:
+                adapter.disconnect()
+            elif client is not None:
+                client.logout()
+            db.rollback()
+            raise
+        except (ZerodhaAuthenticationError, ZerodhaHistoryUnavailable, ValueError) as exc:
+            if adapter is not None:
+                adapter.disconnect()
+            elif client is not None:
+                client.logout()
+            db.rollback()
+            raise HTTPException(status_code=401, detail="Zerodha authentication or account verification failed") from exc
+        except Exception as exc:
+            if adapter is not None:
+                adapter.disconnect()
+            elif client is not None:
+                client.logout()
+            db.rollback()
+            app_logger.error("Zerodha durable account binding failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Zerodha account could not be safely bound to the Box Spread owner") from exc

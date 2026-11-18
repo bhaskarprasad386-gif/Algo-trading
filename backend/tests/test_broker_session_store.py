@@ -124,3 +124,227 @@ def test_replace_and_disconnect_previous_keeps_new_session_when_old_logout_fails
     assert isinstance(error, RuntimeError)
     assert store.get(7, "fyers") is current
     assert current.connected is True
+
+
+def test_session_lease_keeps_adapter_connected_until_request_finishes():
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("angel_one")
+    store.replace(7, "angel_one", adapter)
+    acquired = Event()
+    release = Event()
+
+    def request():
+        with store.lease(7, "angel_one") as leased:
+            assert leased is adapter
+            acquired.set()
+            assert release.wait(2)
+
+    worker = Thread(target=request)
+    worker.start()
+    assert acquired.wait(2)
+
+    # Revocation makes the session unavailable to new requests immediately.
+    removed = []
+
+    def revoke():
+        removed.append(store.remove(7, "angel_one"))
+
+    revoker = Thread(target=revoke)
+    revoker.start()
+    assert store.get(7, "angel_one") is None
+    assert revoker.is_alive()
+    assert adapter.connected is True
+
+    release.set()
+    worker.join(2)
+    revoker.join(2)
+    assert not worker.is_alive()
+    assert not revoker.is_alive()
+    assert removed == [adapter]
+
+
+def test_new_request_cannot_lease_a_session_after_replacement():
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    previous = FakeAdapter("fyers")
+    current = FakeAdapter("fyers")
+    store.replace(9, "fyers", previous)
+    acquired = Event()
+    release = Event()
+
+    def request():
+        with store.lease(9, "fyers") as leased:
+            assert leased is previous
+            acquired.set()
+            assert release.wait(2)
+
+    worker = Thread(target=request)
+    worker.start()
+    assert acquired.wait(2)
+
+    disconnected = []
+    def reconnect():
+        disconnected.append(
+            store.replace_and_disconnect_previous(9, "fyers", current)
+        )
+
+    reconnecter = Thread(target=reconnect)
+    reconnecter.start()
+    # New leases resolve only to the replacement, while old lease drains.
+    with store.lease(9, "fyers") as leased:
+        assert leased is current
+    assert previous.connected is True
+    assert reconnecter.is_alive()
+
+    release.set()
+    worker.join(2)
+    reconnecter.join(2)
+    assert not worker.is_alive()
+    assert not reconnecter.is_alive()
+    assert disconnected == [None]
+    assert previous.connected is False
+    assert current.connected is True
+
+
+def test_lease_returns_none_when_session_is_absent():
+    store = BrokerSessionStore()
+    with store.lease(7, "angel_one") as adapter:
+        assert adapter is None
+
+
+
+def test_replacing_session_with_same_adapter_does_not_disconnect_live_session():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("fyers")
+    store.replace(7, "fyers", adapter)
+
+    error = store.replace_and_disconnect_previous(7, "fyers", adapter)
+
+    assert error is None
+    assert store.get(7, "fyers") is adapter
+    assert adapter.connected is True
+
+
+
+@pytest.mark.parametrize("cleanup", ["clear", "clear_owner"])
+def test_bulk_cleanup_waits_for_active_request_lease(cleanup):
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("angel_one")
+    store.replace(7, "angel_one", adapter)
+    acquired = Event()
+    release = Event()
+    cleaned = Event()
+
+    def request():
+        with store.lease(7, "angel_one") as leased:
+            assert leased is adapter
+            acquired.set()
+            assert release.wait(2)
+
+    def revoke():
+        if cleanup == "clear":
+            assert store.clear() == [adapter]
+        else:
+            assert store.clear_owner(7) == [adapter]
+        cleaned.set()
+
+    worker = Thread(target=request)
+    worker.start()
+    assert acquired.wait(2)
+
+    revoker = Thread(target=revoke)
+    revoker.start()
+    assert not cleaned.wait(0.05)
+    assert adapter.connected is True
+    assert store.get(7, "angel_one") is None
+
+    release.set()
+    worker.join(2)
+    revoker.join(2)
+    assert not worker.is_alive()
+    assert not revoker.is_alive()
+    assert cleaned.is_set()
+
+
+
+def test_disconnect_all_waits_for_active_lease_before_provider_logout():
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("angel_one")
+    store.replace(7, "angel_one", adapter)
+    acquired = Event()
+    release = Event()
+    finished = Event()
+    failures = []
+
+    def request():
+        with store.lease(7, "angel_one") as leased:
+            assert leased is adapter
+            acquired.set()
+            assert release.wait(2)
+
+    def shutdown():
+        failures.extend(store.disconnect_all())
+        finished.set()
+
+    worker = Thread(target=request)
+    worker.start()
+    assert acquired.wait(2)
+
+    shutdown_worker = Thread(target=shutdown)
+    shutdown_worker.start()
+    assert not finished.wait(0.05)
+    assert adapter.connected is True
+    assert store.get(7, "angel_one") is None
+
+    release.set()
+    worker.join(2)
+    shutdown_worker.join(2)
+    assert not worker.is_alive()
+    assert not shutdown_worker.is_alive()
+    assert finished.is_set()
+    assert failures == []
+    assert adapter.connected is False
+
+
+
+def test_owner_lifecycle_transitions_are_serialized_without_blocking_other_owners():
+    from threading import Event, Thread
+
+    store = BrokerSessionStore()
+    entered = Event()
+    release = Event()
+    second_entered = Event()
+
+    def first_transition():
+        with store.transition(7):
+            entered.set()
+            assert release.wait(2)
+
+    def second_transition():
+        with store.transition(7):
+            second_entered.set()
+
+    first = Thread(target=first_transition)
+    second = Thread(target=second_transition)
+    first.start()
+    assert entered.wait(2)
+    second.start()
+    assert not second_entered.wait(0.05)
+
+    # Another owner's lifecycle is independent.
+    with store.transition(8):
+        pass
+
+    release.set()
+    first.join(2)
+    second.join(2)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_entered.is_set()

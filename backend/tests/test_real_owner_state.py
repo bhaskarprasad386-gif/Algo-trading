@@ -398,7 +398,15 @@ def test_tradebook_fill_route_rejects_session_account_outside_durable_binding(db
         connected=True,
         account_id="OTHER-ACCOUNT",
     )
-    monkeypatch.setattr(routes.broker_sessions, "get", lambda user_id, broker: adapter)
+    from contextlib import contextmanager
+
+    @contextmanager
+    def lease(user_id, broker):
+        assert user_id == 1
+        assert broker == "angel_one"
+        yield adapter
+
+    monkeypatch.setattr(routes.broker_sessions, "lease", lease)
 
     def must_not_sync(*args, **kwargs):
         raise AssertionError("fill sync must not run for an unbound account")
