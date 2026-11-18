@@ -137,23 +137,31 @@ run_job() {
 
 show_status() {
   valid_job_id "$JOB_ID" || die "job ID must be numeric"
-  local dir unit
+  local dir unit unit_state job_status
   dir="$(job_dir "$JOB_ID")"
   unit="$(unit_name "$JOB_ID")"
   [[ -f "$dir/status.json" ]] || die "job record not found"
   cat "$dir/status.json"
-  printf 'SYSTEMD_UNIT_STATE='
-  systemctl is-active "$unit" 2>/dev/null || true
-  if [[ -f "$dir/job.log" ]]; then
-    printf 'JOB_LOG_TAIL_BEGIN\n'
-    tail -n 100 "$dir/job.log"
-    printf 'JOB_LOG_TAIL_END\n'
+  unit_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+  printf 'SYSTEMD_UNIT_STATE=%s\\n' "$unit_state"
+  job_status="$(grep -oE '"status":"[A-Z_]+"' "$dir/status.json" | cut -d '"' -f 4)"
+  if [[ "$job_status" == "RUNNING" && "$unit_state" != "active" && "$unit_state" != "activating" ]]; then
+    printf 'REMOTE_JOB_STATE=UNKNOWN_REQUIRES_INSPECTION\\n'
   fi
+}
+
+show_logs() {
+  valid_job_id "$JOB_ID" || die "job ID must be numeric"
+  local dir
+  dir="$(job_dir "$JOB_ID")"
+  [[ -f "$dir/job.log" ]] || die "job log not found"
+  tail -n 120 "$dir/job.log"
 }
 
 case "${1:-}" in
   submit) submit_job ;;
   run) run_job ;;
   status) show_status ;;
-  *) die "usage: $0 {submit|run|status} JOB_ID TARGET_SHA [force_restart]" ;;
+  logs) show_logs ;;
+  *) die "usage: $0 {submit|run|status|logs} JOB_ID TARGET_SHA [force_restart]" ;;
 esac
