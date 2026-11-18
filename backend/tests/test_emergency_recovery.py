@@ -405,3 +405,28 @@ def test_recovery_ioc_acceptance_with_lost_ack_is_not_retried(recovery_store=Non
     assert journal.kill_switches
     assert journal.alerts
     assert any(event["event"] == "OPERATOR_ALERT" for event in journal.events) is False
+
+
+
+def test_cancel_ack_followed_by_authoritative_late_partial_fill_blocks_close():
+    broker, journal = FakeBroker(25), FakeJournal()
+
+    def cancel_ack_but_late_fill(*, account_id, broker_order_id):
+        broker.cancelled.append(broker_order_id)
+        # Cancel acknowledgement is not proof that the order is terminal:
+        # a fill can race with cancellation and appear in the next snapshot.
+        broker.orders[0] = RecoveryOrder(
+            "entry-1", "entry-client-1", "NFO:CE", "ENTRY",
+            "PARTIALLY_FILLED", 25,
+        )
+
+    broker.cancel_order = cancel_ack_but_late_fill
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert broker.cancelled == ["entry-1"]
+    assert not broker.closes
+    assert result.residual_positions == (RecoveryPosition("NFO:CE", 25),)
+    assert journal.kill_switches
+    assert journal.alerts
+    assert not journal.released
