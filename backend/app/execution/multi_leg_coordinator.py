@@ -73,8 +73,8 @@ class BasketIntent:
             raise ValueError("pre-entry baseline must cover every basket instrument exactly once")
         if len({x.expiry for x in self.legs}) != 1:
             raise ValueError("all basket legs must share one expiry")
-        if len({x.option_type for x in self.legs}) != 1 and self.strategy is not BasketStrategy.BOX_SPREAD:
-            raise ValueError("Butterfly and Condor legs must share one option type")
+        if self.strategy is BasketStrategy.CREDIT_BUTTERFLY and len({x.option_type for x in self.legs}) != 1:
+            raise ValueError("Butterfly legs must share one option type")
         if len({symbol for symbol, _ in self.baseline_positions}) != len(self.baseline_positions):
             raise ValueError("baseline must contain one row per symbol")
 
