@@ -165,10 +165,11 @@ class EmergencyRecoveryCoordinator:
     def _residuals(snapshot: RecoverySnapshot, symbols: set[str], baseline: dict[str, int]) -> tuple[RecoveryPosition, ...]:
         # Broker positions are account-wide. Subtract the durable pre-entry
         # baseline so pre-existing holdings in the same option are never closed.
-        totals = {symbol: baseline[symbol] for symbol in symbols}
+        current = {symbol: 0 for symbol in symbols}
         for position in snapshot.positions:
-            if position.symbol in totals:
-                totals[position.symbol] = position.quantity - baseline[position.symbol]
+            if position.symbol in current:
+                current[position.symbol] += position.quantity
+        totals = {symbol: current[symbol] - baseline[symbol] for symbol in symbols}
         return tuple(RecoveryPosition(s, q) for s, q in sorted(totals.items()) if q)
 
     @staticmethod
