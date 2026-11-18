@@ -21,6 +21,8 @@ class BrokerSessionStore:
         self._lock = RLock()
         self._condition = Condition(self._lock)
         self._active_leases: dict[int, int] = {}
+        # Serialize connect/reconnect/disconnect state transitions per owner.
+        self._transition_locks: dict[int, RLock] = {}
 
     @staticmethod
     def _key(owner_id: int, broker: str) -> tuple[int, str]:
@@ -34,6 +36,20 @@ class BrokerSessionStore:
         with self._condition:
             while self._active_leases.get(adapter_id, 0):
                 self._condition.wait()
+
+    @contextmanager
+    def transition(self, owner_id: int) -> Iterator[None]:
+        """Serialize broker lifecycle transitions for the single owner account.
+
+        The lock spans authentication binding, durable connection-state writes,
+        session publication/removal, and connection metadata updates when the
+        caller wraps the complete route operation.
+        """
+        owner = int(owner_id)
+        with self._lock:
+            lock = self._transition_locks.setdefault(owner, RLock())
+        with lock:
+            yield
 
     @contextmanager
     def lease(self, owner_id: int, broker: str) -> Iterator[BrokerAdapter | None]:
