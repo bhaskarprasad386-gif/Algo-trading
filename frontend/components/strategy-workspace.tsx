@@ -895,11 +895,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           setIndexSelectionError(null);
         }
       } catch (e) {
-        if (!cancelled) setIndexSelectionError(e instanceof Error ? e.message : "Index selection unavailable");
+        if (!cancelled && requestSequence === indexSelectionRequestSequence.current) setIndexSelectionError(e instanceof Error ? e.message : "Index selection unavailable");
       } finally {
         inFlight = false;
         hasLoaded = true;
-        if (!cancelled) setIndexSelectionLoading(false);
+        if (!cancelled && requestSequence === indexSelectionRequestSequence.current) setIndexSelectionLoading(false);
       }
     };
     void loadSelection();
@@ -953,6 +953,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     const nextWeeklyOnly = selection.weekly_only_symbols.filter((item): item is string => typeof item === "string");
     // Push becomes authoritative immediately; discard an initial/refresh REST result still in flight.
     indexSelectionRequestSequence.current += 1;
+    // A pushed saved selection supersedes any initial REST load and its spinner.
+    setIndexSelectionLoading(false);
     const previousSymbols = savedIndexSymbols.slice().sort();
     const previousWeeklyOnly = savedWeeklyOnlySymbols.slice().sort();
     const draftSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnlyDraft])).sort();
