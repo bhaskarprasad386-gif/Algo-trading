@@ -129,6 +129,7 @@ def make_intent(strategy=BasketStrategy.BOX_SPREAD):
         account_id="acct-1", intent_id=f"intent-{strategy.value}",
         strategy=strategy, lots=1, lot_size=25, legs=legs,
         baseline_positions=tuple((leg.symbol, 0) for leg in legs),
+        direction="LONG" if strategy is BasketStrategy.BOX_SPREAD else "CREDIT",
     )
 
 
@@ -392,3 +393,26 @@ def test_box_spread_role_to_option_type_mapping_is_enforced():
     assert result.state is BasketResultState.PREFLIGHT_REJECTED
     assert not broker.calls
     assert journal.rejected
+
+
+def test_short_box_spread_requires_all_four_sides_to_be_reversed():
+    intent = make_intent()
+    short_legs = tuple(
+        replace(leg, side="SELL" if leg.side == "BUY" else "BUY")
+        for leg in intent.legs
+    )
+    intent = replace(intent, legs=short_legs, direction="SHORT")
+    result, broker, journal, _ = execute(intent)
+    assert result.state is BasketResultState.FILLED
+    assert len(broker.calls) == 4
+    assert not journal.rejected
+
+
+def test_recovery_receives_typed_pre_entry_baseline_records():
+    intent = make_intent()
+    broker = FakeBroker(intent, reject_index=0)
+    result, _, _, recovery_calls = execute(intent, broker=broker)
+    assert result.state is BasketResultState.RECOVERED_FLAT
+    baseline = recovery_calls[0]["baseline_positions"]
+    assert all(hasattr(row, "symbol") and hasattr(row, "quantity") for row in baseline)
+    assert {row.symbol for row in baseline} == {leg.symbol for leg in intent.legs}
