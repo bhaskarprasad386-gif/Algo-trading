@@ -14,6 +14,13 @@ def test_page_channels_cover_all_scanner_pages():
     assert expected.issubset(push.PAGE_CHANNELS)
 
 
+def test_page_sequence_gap_is_detected_from_zero_baseline():
+    assert not push._sequence_gap(0, 1)
+    assert push._sequence_gap(0, 2)
+    assert not push._sequence_gap(8, 9)
+    assert push._sequence_gap(8, 10)
+
+
 def test_page_snapshot_frame_uses_explicit_durable_sequence():
     frame = push._snapshot_frame("box-spread", {"rows": []}, sequence=17)
     assert frame["type"] == "page_update"
