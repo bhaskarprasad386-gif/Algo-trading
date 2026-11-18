@@ -1310,7 +1310,7 @@ def _publish_synthetic_page_update(*, force: bool = False) -> None:
         return
     _last_synthetic_page_push_at = now
     try:
-        publish_page_update("synthetic-arbitrage", "SNAPSHOT", _synthetic_page_push_snapshot())
+        publish_page_update("synthetic-arbitrage", "PATCH", _synthetic_page_push_snapshot())
     except Exception as exc:
         app_logger.warning("Synthetic page push skipped: {}", exc)
 
