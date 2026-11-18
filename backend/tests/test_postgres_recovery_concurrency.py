@@ -305,3 +305,88 @@ def test_postgres_concurrent_verified_flat_release_is_idempotent(postgres_journa
         assert leases == []
         assert [event.sequence for event in events] == list(range(len(events)))
         assert sum(event.event == "RISK_RESERVATION_RELEASED" for event in events) == 1
+
+
+def test_postgres_verified_flat_intent_cannot_reacquire_instrument_leases(postgres_journal):
+    journal, factory = postgres_journal
+    account_id = "acct-no-reacquire"
+    intent_id = "intent-no-reacquire"
+    assert journal.acquire_instrument_leases(
+        account_id=account_id, intent_id=intent_id,
+        symbols=("NFO:CE", "NFO:PE"),
+    )
+    journal.set_state(
+        account_id=account_id, intent_id=intent_id,
+        state=RecoveryState.FLAT, reason="broker positions reconciled flat",
+    )
+
+    # Even before reservation cleanup, verified FLAT is terminal.
+    assert not DurableRecoveryJournal(factory).acquire_instrument_leases(
+        account_id=account_id, intent_id=intent_id, symbols=("NFO:CE",),
+    )
+    journal.release_risk_reservation(account_id=account_id, intent_id=intent_id)
+    # A released reservation must remain released across retries/restarts.
+    assert not DurableRecoveryJournal(factory).acquire_instrument_leases(
+        account_id=account_id, intent_id=intent_id, symbols=("NFO:CE",),
+    )
+
+    with factory() as db:
+        control = db.execute(select(RecoveryControlRecord).where(
+            RecoveryControlRecord.account_id == account_id,
+            RecoveryControlRecord.intent_id == intent_id,
+        )).scalar_one()
+        leases = db.execute(select(RecoveryInstrumentLeaseRecord).where(
+            RecoveryInstrumentLeaseRecord.account_id == account_id,
+            RecoveryInstrumentLeaseRecord.intent_id == intent_id,
+        )).scalars().all()
+        assert control.state == RecoveryState.FLAT.value
+        assert control.risk_reserved is False
+        assert leases == []
+
+
+def test_postgres_concurrent_lease_acquisition_cannot_race_verified_flat_release(postgres_journal):
+    journal, factory = postgres_journal
+    account_id = "acct-flat-acquire-race"
+    intent_id = "intent-flat-acquire-race"
+    assert journal.acquire_instrument_leases(
+        account_id=account_id, intent_id=intent_id, symbols=("NFO:CE",),
+    )
+    journal.set_state(
+        account_id=account_id, intent_id=intent_id,
+        state=RecoveryState.FLAT, reason="broker positions reconciled flat",
+    )
+
+    def operation(index):
+        adapter = DurableRecoveryJournal(factory)
+        if index == 0:
+            adapter.release_risk_reservation(account_id=account_id, intent_id=intent_id)
+            return "released"
+        acquired = adapter.acquire_instrument_leases(
+            account_id=account_id, intent_id=intent_id,
+            symbols=(f"NFO:RETRY:{index}",),
+        )
+        return "acquired" if acquired else "blocked"
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        outcomes = list(pool.map(operation, range(12)))
+
+    assert outcomes.count("released") == 1
+    assert outcomes.count("acquired") == 0
+    assert outcomes.count("blocked") == 11
+    with factory() as db:
+        control = db.execute(select(RecoveryControlRecord).where(
+            RecoveryControlRecord.account_id == account_id,
+            RecoveryControlRecord.intent_id == intent_id,
+        )).scalar_one()
+        leases = db.execute(select(RecoveryInstrumentLeaseRecord).where(
+            RecoveryInstrumentLeaseRecord.account_id == account_id,
+            RecoveryInstrumentLeaseRecord.intent_id == intent_id,
+        )).scalars().all()
+        events = db.execute(select(RecoveryJournalEventRecord).where(
+            RecoveryJournalEventRecord.control_id == control.id,
+        ).order_by(RecoveryJournalEventRecord.sequence)).scalars().all()
+        assert control.state == RecoveryState.FLAT.value
+        assert control.risk_reserved is False
+        assert leases == []
+        assert [event.sequence for event in events] == list(range(len(events)))
+        assert sum(event.event == "RISK_RESERVATION_RELEASED" for event in events) == 1
