@@ -533,7 +533,10 @@ function runnerLabel(slug: string) {
 export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const c = configs[slug];
   const isCustom = slug === "custom-strategy";
-  const { data: pagePushData } = usePagePush("box-spread");
+  const pageChannel = slug === "box-spread" ? "box-spread"
+    : slug === "calendar-spread" ? "calendar-spread"
+    : slug === "synthetic-arbitrage" ? "synthetic-arbitrage" : "none";
+  const { data: pagePushData, status: pagePushStatus } = usePagePush(pageChannel);
   const endpoint =
     slug === "calendar-spread" ? "/api/v1/scanner/calendar-spread/live?limit=50" :
     slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
@@ -940,6 +943,26 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug, pagePushData]);
 
   useEffect(() => {
+    if (!pagePushData) return;
+    if (slug === "calendar-spread" || slug === "synthetic-arbitrage") {
+      const live = pagePushData.live as Record<string, any> | undefined;
+      const pairs = pagePushData.pairs as Record<string, any> | undefined;
+      if (Array.isArray(live?.data)) {
+        const nextRows = live.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
+        rowsRef.current = nextRows; setRows(nextRows); setRowsStale(false);
+        setLoading(false); setLiveApiLastOkAt(Date.now()); setLiveApiStatus("RESPONDING"); setError(null);
+      }
+      if (Array.isArray(pairs?.data)) setPairRows(pairs.data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      if (slug === "synthetic-arbitrage" && pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") {
+        setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+      }
+      if (slug === "synthetic-arbitrage" && pagePushData.universe && typeof pagePushData.universe === "object") {
+        setUniverseAvailability(pagePushData.universe as Record<string, any>);
+      }
+    }
+  }, [slug, pagePushData]);
+
+  useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) return;
     const opportunities = pagePushData.opportunities;
     if (Array.isArray(opportunities)) {
@@ -989,9 +1012,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (isCustom || !c.pairEndpoint) return;
     void loadPairs();
-    const timer = window.setInterval(() => void loadPairs(), 1500);
+    if (pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
+    const timer = window.setInterval(() => void loadPairs(), 15000);
     return () => window.clearInterval(timer);
-  }, [isCustom, c.pairEndpoint, pairRows.length]);
+  }, [isCustom, c.pairEndpoint, pagePushStatus, slug]);
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") {
@@ -1011,9 +1035,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
     };
     void loadScannerDiagnostics();
-    const timer = window.setInterval(loadScannerDiagnostics, 1500);
+    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    const timer = window.setInterval(loadScannerDiagnostics, 15000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [slug]);
+  }, [slug, pagePushStatus]);
 
   useEffect(() => {
     if (isCustom || slug === "box-spread") return;
@@ -1063,9 +1088,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
     };
     void loadRuntime();
-    const timer = window.setInterval(loadRuntime, 1500);
+    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    const timer = window.setInterval(loadRuntime, 15000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [isCustom, slug]);
+  }, [isCustom, slug, pagePushStatus]);
 
   useEffect(() => {
     if (isCustom) {
@@ -1073,16 +1099,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setLoading(false);
       return;
     }
-    if (slug === "box-spread") {
-      // Box live rows arrive through the shared page WebSocket; REST remains
-      // available for explicit diagnostics, not a short-interval polling loop.
-      setLoading(true);
-      return;
-    }
+    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
     void load(true);
-    const timer = window.setInterval(() => void load(), 1500);
+    const timer = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(timer);
-  }, [endpoint, isCustom, slug]);
+  }, [endpoint, isCustom, slug, pagePushStatus]);
 
   const filteredRows = useMemo(() => {
     const indexOrder = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];

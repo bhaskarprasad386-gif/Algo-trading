@@ -138,11 +138,31 @@ def _snapshot(page: str) -> dict[str, Any]:
         return {"snapshot_status": "UNAVAILABLE"}
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        import math
+        return value if math.isfinite(value) else None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value)
+
+
 def publish_page_update(page: str, event: str, data: dict[str, Any] | None = None) -> None:
     """Durably publish a public scanner update for every backend worker."""
     if page not in PAGE_CHANNELS or event not in {"PATCH", "REMOVE", "SNAPSHOT"}:
         return
-    safe_data = data if isinstance(data, dict) else {}
+    safe_data = _json_safe(data if isinstance(data, dict) else {})
     try:
         with engine.begin() as connection:
             row = connection.execute(
