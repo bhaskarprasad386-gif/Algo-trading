@@ -39,6 +39,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     }
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let watchdogTimer: ReturnType<typeof setInterval> | undefined;
+    let lastTransportAt = 0;
     let retryMs = 1000;
 
     const connect = () => {
@@ -56,6 +58,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       socketRef.current = socket;
       socket.onopen = () => {
         if (disposed) return;
+        lastTransportAt = Date.now();
         retryMs = 1000;
         setStatus("LIVE");
         socket.send(JSON.stringify({ action: "subscribe", page }));
@@ -67,6 +70,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         catch { return; }
         // Heartbeats prove transport liveness, not market-data freshness.
         // Only timestamp actual page updates for the UI's "Last refresh" label.
+        lastTransportAt = Date.now();
+        if (message.type === "heartbeat") return;
         if (message.type !== "page_update" || message.page !== page) return;
         setLastMessageAt(Date.now());
         const sequence = Number(message.sequence);
@@ -98,6 +103,12 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       };
     };
 
+    watchdogTimer = setInterval(() => {
+      if (lastTransportAt && Date.now() - lastTransportAt > 45000) {
+        setStatus("RECONNECTING");
+        socketRef.current?.close();
+      }
+    }, 10000);
     sequenceRef.current = 0;
     resyncPendingRef.current = false;
     setData(null);
@@ -105,6 +116,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     return () => {
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
+      if (watchdogTimer) clearInterval(watchdogTimer);
       socketRef.current?.close();
       socketRef.current = null;
     };
