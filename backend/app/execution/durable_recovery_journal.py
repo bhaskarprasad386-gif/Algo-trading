@@ -329,11 +329,24 @@ class DurableRecoveryJournal:
             ).with_for_update()).scalar_one_or_none()
             if control is None:
                 raise LookupError("recovery control does not exist")
-            pending = db.execute(select(RecoveryJournalEventRecord).where(
+            events = db.execute(select(RecoveryJournalEventRecord).where(
                 RecoveryJournalEventRecord.control_id == control.id,
-                RecoveryJournalEventRecord.event == "EMERGENCY_CLOSE_RECONCILED",
-            )).scalars().all()
-            if any(json.loads(event.details_json).get("client_order_id") == client_order_id for event in pending):
+                RecoveryJournalEventRecord.event.in_([
+                    "EMERGENCY_CLOSE_BUDGET_APPROVED", "EMERGENCY_CLOSE_RECONCILED",
+                ]),
+            ).order_by(RecoveryJournalEventRecord.sequence)).scalars().all()
+            approved = any(
+                event.event == "EMERGENCY_CLOSE_BUDGET_APPROVED"
+                and json.loads(event.details_json).get("client_order_id") == client_order_id
+                for event in events
+            )
+            if not approved:
+                raise ValueError("only a previously approved close authorization can be reconciled")
+            if any(
+                event.event == "EMERGENCY_CLOSE_RECONCILED"
+                and json.loads(event.details_json).get("client_order_id") == client_order_id
+                for event in events
+            ):
                 return
             self._event(db, control, "EMERGENCY_CLOSE_RECONCILED", {
                 "client_order_id": client_order_id,
