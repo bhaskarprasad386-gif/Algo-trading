@@ -42,6 +42,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogTimer: ReturnType<typeof setInterval> | undefined;
     let lastTransportAt = 0;
+    let lastPageUpdateAt = 0;
     let retryMs = 1000;
 
     const connect = () => {
@@ -78,7 +79,6 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         lastTransportAt = Date.now();
         if (message.type === "heartbeat") return;
         if (message.type !== "page_update" || message.page !== page) return;
-        setLastMessageAt(Date.now());
         const sequence = Number(message.sequence);
         const eventType = String(message.event || "");
         // A newly created page channel legitimately starts at sequence 0.
@@ -91,6 +91,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           if (hasSnapshotRef.current && sequence < sequenceRef.current) return;
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
+          lastPageUpdateAt = Date.now();
+          setLastMessageAt(lastPageUpdateAt);
           resyncPendingRef.current = false;
           setStatus("LIVE");
           setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
@@ -106,6 +108,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           return;
         }
         sequenceRef.current = sequence;
+        lastPageUpdateAt = Date.now();
+        setLastMessageAt(lastPageUpdateAt);
         if (eventType === "PATCH" && message.data && typeof message.data === "object") {
           setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>), __event: "PATCH" }));
         } else if (eventType === "REMOVE" && message.data && typeof message.data === "object") {
@@ -124,9 +128,17 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     };
 
     watchdogTimer = setInterval(() => {
-      if (lastTransportAt && Date.now() - lastTransportAt > 45000) {
+      const now = Date.now();
+      if (lastTransportAt && now - lastTransportAt > 45000) {
         setStatus("RECONNECTING");
         socketRef.current?.close();
+        return;
+      }
+      // Heartbeats can keep transport alive while page data itself has stalled.
+      if (hasSnapshotRef.current && lastPageUpdateAt && now - lastPageUpdateAt > 15000) {
+        setStatus("RECONNECTING");
+        if (now - lastPageUpdateAt > 30000) socketRef.current?.close();
+        else resync();
       }
     }, 10000);
     sequenceRef.current = 0;
