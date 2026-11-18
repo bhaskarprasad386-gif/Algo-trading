@@ -109,6 +109,8 @@ class ExecutionLeg:
     quantity: int
     order_type: str = "LIMIT"
     limit_price: float | None = None
+    filled_quantity: int = 0
+    status: str = "PENDING"
 
     def __post_init__(self) -> None:
         if not self.leg_id.strip() or not self.instrument.strip():
@@ -121,6 +123,17 @@ class ExecutionLeg:
             raise ValueError("LIMIT legs require a positive limit_price")
         if self.order_type == "MARKET" and self.limit_price is not None:
             raise ValueError("MARKET legs cannot carry a limit_price")
+        if not 0 <= self.filled_quantity <= self.quantity:
+            raise ValueError("filled_quantity must be between zero and quantity")
+        if self.status not in {
+            "PENDING", "WORKING", "PARTIALLY_FILLED", "FILLED",
+            "CANCEL_PENDING", "CANCELLED", "REJECTED", "UNKNOWN",
+        }:
+            raise ValueError("unsupported leg status")
+        if self.status == "FILLED" and self.filled_quantity != self.quantity:
+            raise ValueError("FILLED requires the full requested quantity")
+        if self.status == "PARTIALLY_FILLED" and not 0 < self.filled_quantity < self.quantity:
+            raise ValueError("PARTIALLY_FILLED requires a non-zero incomplete quantity")
 
 
 @dataclass(frozen=True)
