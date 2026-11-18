@@ -177,7 +177,6 @@ def test_verified_flat_is_terminal_and_does_not_clear_kill_switch(journal):
     assert durable.is_entry_kill_switch_latched(account_id="acct-a", strategy="BOX_SPREAD")
 
 
-
 def test_recovery_attempt_budget_survives_durable_journal_reconstruction(journal):
     durable, factory = journal
     durable.configure_recovery_budget(
@@ -206,3 +205,33 @@ def test_recovery_attempt_budget_survives_durable_journal_reconstruction(journal
             RecoveryBudgetRecord.symbol == "OPT:CE",
         )).scalar_one()
         assert row.attempts_used == 2
+
+
+def test_recovery_notional_budget_survives_journal_reconstruction(journal):
+    durable, factory = journal
+    account_id = "acct-notional-restart"
+    intent_id = "intent-notional-restart"
+    symbol = "OPT:CE"
+    durable.configure_recovery_budget(
+        account_id=account_id, intent_id=intent_id, symbol=symbol,
+        max_attempts=2, max_notional=Decimal("150"), approved=True,
+    )
+    durable.claim_recovery_attempt(account_id=account_id, intent_id=intent_id, symbol=symbol)
+    assert durable.approve_emergency_close(
+        account_id=account_id, intent_id=intent_id, symbol=symbol,
+        side="SELL", quantity=1, limit_price=Decimal("100"), notional=Decimal("100"),
+    )
+
+    restarted = DurableRecoveryJournal(factory)
+    assert not restarted.approve_emergency_close(
+        account_id=account_id, intent_id=intent_id, symbol=symbol,
+        side="SELL", quantity=1, limit_price=Decimal("100"), notional=Decimal("100"),
+    )
+    with factory() as db:
+        row = db.execute(select(RecoveryBudgetRecord).where(
+            RecoveryBudgetRecord.account_id == account_id,
+            RecoveryBudgetRecord.intent_id == intent_id,
+            RecoveryBudgetRecord.symbol == symbol,
+        )).scalar_one()
+        assert Decimal(row.notional_used) == Decimal("100")
+        assert Decimal(row.max_notional) == Decimal("150")
