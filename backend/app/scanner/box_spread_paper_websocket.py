@@ -36,6 +36,7 @@ DISPATCH_POLL_SECONDS = 0.25
 _subscribers: dict[int, asyncio.Queue[dict[str, Any]]] = {}
 _dispatch_task: asyncio.Task | None = None
 _dispatch_loop: asyncio.AbstractEventLoop | None = None
+_dispatch_ready: asyncio.Event | None = None
 RESYNC_MIN_INTERVAL_SECONDS = 1.0
 RESYNC_MAX_PER_MINUTE = 10
 _active_connections: set[int] = set()
@@ -176,7 +177,13 @@ def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
 
 async def _journal_dispatch_loop() -> None:
     """One shared DB journal tailer per worker; fan out to local sockets."""
-    cursor = await asyncio.to_thread(_latest_event_id)
+    global _dispatch_ready
+    try:
+        cursor = await asyncio.to_thread(_latest_event_id)
+    except Exception:
+        cursor = 0
+    if _dispatch_ready is not None:
+        _dispatch_ready.set()
     while _subscribers:
         try:
             rows = await asyncio.to_thread(_events_after, cursor)
@@ -212,7 +219,7 @@ async def _journal_dispatch_loop() -> None:
 
 
 async def _subscribe_local() -> asyncio.Queue[dict[str, Any]]:
-    global _dispatch_task, _dispatch_loop
+    global _dispatch_task, _dispatch_loop, _dispatch_ready
     loop = asyncio.get_running_loop()
     if _dispatch_task is not None and _dispatch_loop is not loop:
         _dispatch_task.cancel()
@@ -222,17 +229,22 @@ async def _subscribe_local() -> asyncio.Queue[dict[str, Any]]:
     _subscribers[id(queue)] = queue
     _dispatch_loop = loop
     if _dispatch_task is None or _dispatch_task.done():
+        _dispatch_ready = asyncio.Event()
         _dispatch_task = loop.create_task(_journal_dispatch_loop())
+    ready = _dispatch_ready
+    if ready is not None:
+        await ready.wait()
     return queue
 
 
 def _unsubscribe_local(queue: asyncio.Queue[dict[str, Any]]) -> None:
-    global _dispatch_task, _dispatch_loop
+    global _dispatch_task, _dispatch_loop, _dispatch_ready
     _subscribers.pop(id(queue), None)
     if not _subscribers and _dispatch_task is not None:
         _dispatch_task.cancel()
         _dispatch_task = None
         _dispatch_loop = None
+        _dispatch_ready = None
 
 
 def _snapshot_frame(event_type: str = "SNAPSHOT", account_key: str = "default", sequence: int | None = None) -> dict[str, Any]:

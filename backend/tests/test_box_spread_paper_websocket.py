@@ -162,3 +162,35 @@ def test_private_ws_dispatch_fanout_overflow_requests_snapshot():
         assert await queue.get() == {"sequence": 9, "event_type": "SNAPSHOT"}
 
     asyncio.run(scenario())
+
+
+def test_private_ws_shared_dispatcher_fans_out_journal_event(monkeypatch):
+    async def scenario():
+        rows = [{"sequence": 101, "event_type": "TRADE_UPDATED"}]
+        calls = {"events": 0}
+
+        def fake_latest():
+            return 100
+
+        def fake_events_after(cursor):
+            calls["events"] += 1
+            if rows and cursor < 101:
+                return list(rows)
+            return []
+
+        monkeypatch.setattr(private_ws, "_latest_event_id", fake_latest)
+        monkeypatch.setattr(private_ws, "_events_after", fake_events_after)
+        first = await private_ws._subscribe_local()
+        second = await private_ws._subscribe_local()
+        try:
+            one = await asyncio.wait_for(first.get(), timeout=1.0)
+            two = await asyncio.wait_for(second.get(), timeout=1.0)
+            assert one == two == {"sequence": 101, "event_type": "TRADE_UPDATED"}
+            assert private_ws._dispatch_task is not None
+            assert calls["events"] >= 1
+        finally:
+            private_ws._unsubscribe_local(first)
+            private_ws._unsubscribe_local(second)
+            await asyncio.sleep(0)
+
+    asyncio.run(scenario())
