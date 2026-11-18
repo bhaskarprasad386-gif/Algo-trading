@@ -29,6 +29,7 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
   const [enabled,setEnabled]=useState(false);
   const [editingId,setEditingId]=useState<number|null>(null);
   const [evaluations,setEvaluations]=useState<Evaluation[]>([]);
+  const [historyRuleId,setHistoryRuleId]=useState<number|null>(null);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState<string|null>(null);
   const [notice,setNotice]=useState<string|null>(null);
@@ -46,6 +47,11 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
     catch(e){setError(e instanceof Error?e.message:"Unable to load rules");}
   },[account,request,token]);
   useEffect(()=>{void load();},[load,refreshVersion]);
+  const loadHistory=useCallback(async(id:number)=>{
+    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");setEvaluations(Array.isArray(body.data)?body.data:[]);}
+    catch(e){setError(e instanceof Error?e.message:"Unable to load evaluation history");}
+  },[account,request]);
+  useEffect(()=>{if(historyRuleId!==null)void loadHistory(historyRuleId);},[historyRuleId,loadHistory,refreshVersion]);
   useEffect(()=>{setConfig(current=>({...current,entry:{...current.entry,expiry_type:selection.expiryType,symbols:selection.symbols,lots:selection.lots}}));},[selection.expiryType,selection.symbols.join(","),selection.lots]);
 
   async function save(event:FormEvent){
@@ -58,10 +64,11 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
     finally{setBusy(false);}
   }
   function edit(rule:Rule){setEditingId(rule.rule_id);setName(rule.name);setEnabled(rule.enabled);setConfig(rule.config);setNotice("Editing rule #"+rule.rule_id);}
-  function newRule(){setEditingId(null);setName("Custom Box Spread rule");setEnabled(false);setConfig(defaults);setEvaluations([]);setNotice("New disabled rule draft.");}
+  function newRule(){setEditingId(null);setName("Custom Box Spread rule");setEnabled(false);setConfig(defaults);setEvaluations([]);setHistoryRuleId(null);setNotice("New disabled rule draft.");}
   async function history(id:number){
-    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");setEvaluations(Array.isArray(body.data)?body.data:[]);setNotice("Recent evaluations for rule #"+id);}
-    catch(e){setError(e instanceof Error?e.message:"Unable to load evaluation history");}
+    setHistoryRuleId(id);
+    await loadHistory(id);
+    setNotice("Live evaluation history for rule #"+id);
   }
   const entry=(key:keyof Config["entry"],value:unknown)=>setConfig(c=>({...c,entry:{...c.entry,[key]:value} as Config["entry"]}));
   const exit=(key:keyof Config["exit"],value:unknown)=>setConfig(c=>({...c,exit:{...c.exit,[key]:value} as Config["exit"]}));
