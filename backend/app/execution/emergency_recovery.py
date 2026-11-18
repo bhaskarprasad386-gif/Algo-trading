@@ -26,7 +26,7 @@ class RecoveryOrder:
     symbol: str
     role: str
     status: str
-    remaining_quantity: int = 0
+    remaining_quantity: int | None = None
 
     @property
     def terminal(self) -> bool:
@@ -208,6 +208,8 @@ class EmergencyRecoveryCoordinator:
         """Recover only named basket instruments; unrelated positions are untouched."""
         symbol_set = {s.strip() for s in symbols if s.strip()}
         baseline = {p.symbol: p.quantity for p in baseline_positions}
+        if len(baseline) != len(baseline_positions):
+            raise ValueError("pre-entry baseline must contain one row per instrument")
         if not account_id.strip() or not intent_id.strip() or not strategy.strip() or not symbol_set:
             raise ValueError("account, intent, strategy and basket symbols are required")
         if set(baseline) != symbol_set:
