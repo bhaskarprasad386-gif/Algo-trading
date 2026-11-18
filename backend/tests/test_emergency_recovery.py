@@ -327,8 +327,9 @@ def test_missing_exclusive_instrument_lease_blocks_all_recovery_orders():
     journal.leases = False
     result = run(broker, journal)
     assert result.state is RecoveryState.MANUAL_REVIEW
-    assert not broker.cancelled
+    assert broker.cancelled == ["entry-1"]
     assert not broker.closes
+    assert result.residual_positions == (RecoveryPosition("NFO:CE", 50),)
     assert not journal.released
 
 
