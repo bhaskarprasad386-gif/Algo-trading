@@ -15,6 +15,7 @@ class FakeJournal:
     def __init__(self):
         self.events = []
         self.states = []
+        self.current_state = RecoveryState.RECOVERING
         self.kill_switches = []
         self.alerts = []
         self.released = []
@@ -23,6 +24,19 @@ class FakeJournal:
         self.approved_closes = []
         self.frozen = []
         self.leases = True
+        self.pending_authorizations = ()
+        self.reconciled_authorizations = []
+        self.coordinator_owner = None
+        self.owner_valid = True
+
+    def claim_recovery_coordinator_owner(self, *, account_id, intent_id, owner_token):
+        if self.coordinator_owner is not None:
+            return None
+        self.coordinator_owner = (account_id, intent_id, owner_token, 1)
+        return 1
+
+    def assert_recovery_coordinator_owner(self, *, account_id, intent_id, owner_token, owner_generation):
+        return self.owner_valid and self.coordinator_owner == (account_id, intent_id, owner_token, owner_generation)
 
     def latch_entry_kill_switch(self, **kwargs):
         self.kill_switches.append(kwargs)
@@ -31,6 +45,9 @@ class FakeJournal:
         self.events.append(kwargs)
 
     def set_state(self, **kwargs):
+        if self.current_state is RecoveryState.MANUAL_REVIEW and kwargs["state"] is RecoveryState.RECOVERING:
+            raise ValueError("manual review cannot resume automated unwind without a new approved intent")
+        self.current_state = kwargs["state"]
         self.states.append(kwargs)
 
     def release_risk_reservation(self, **kwargs):
@@ -48,6 +65,13 @@ class FakeJournal:
     def approve_emergency_close(self, **kwargs):
         self.approved_closes.append(kwargs)
         return self.approve_close
+
+    def pending_close_authorizations(self, **kwargs):
+        reconciled = set(self.reconciled_authorizations)
+        return tuple(value for value in self.pending_authorizations if value not in reconciled)
+
+    def mark_close_authorization_reconciled(self, **kwargs):
+        self.reconciled_authorizations.append(kwargs["client_order_id"])
 
     def claim_recovery_attempt(self, *, account_id, intent_id, symbol):
         key = (account_id, intent_id, symbol)
@@ -378,3 +402,74 @@ def test_recovery_budget_must_approve_close_before_broker_submission():
     assert not broker.closes
     assert journal.approved_closes
     assert not journal.released
+
+
+def test_lost_close_ack_without_broker_order_visibility_blocks_resubmission():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.pending_authorizations = ("REC-previously-authorized",)
+    result = run(broker, journal)
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert not journal.released
+    assert "not yet reconciled" in result.reason
+
+
+def test_terminal_prior_close_is_reconciled_before_new_bounded_attempt():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.pending_authorizations = ("REC-previously-authorized",)
+    broker.orders.append(RecoveryOrder(
+        broker_order_id="close-previous", client_order_id="REC-previously-authorized",
+        symbol="NFO:CE", role="RECOVERY", status="CANCELLED", remaining_quantity=0,
+    ))
+    result = run(broker, journal, policy=RecoveryPolicy(max_attempts=2))
+    assert result.state is RecoveryState.FLAT
+    assert journal.reconciled_authorizations == ["REC-previously-authorized"]
+    assert len(broker.closes) == 1
+
+
+def test_restart_manual_review_returns_controlled_result_without_broker_actions():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.current_state = RecoveryState.MANUAL_REVIEW
+
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert "manual review cannot resume" in result.reason
+    assert not broker.cancelled
+    assert not broker.closes
+    assert journal.alerts
+
+
+
+def test_second_coordinator_for_same_intent_is_rejected_before_broker_io():
+    broker, journal = FakeBroker(50), FakeJournal()
+    first = run(broker, journal)
+    assert first.state is RecoveryState.FLAT
+    first_cancel_count = len(broker.cancelled)
+    first_close_count = len(broker.closes)
+
+    second = run(broker, journal)
+
+    assert second.state is RecoveryState.MANUAL_REVIEW
+    assert "already owns" in second.reason
+    assert len(broker.cancelled) == first_cancel_count
+    assert len(broker.closes) == first_close_count
+
+
+
+def test_lost_owner_between_snapshot_and_cancel_prevents_broker_action():
+    broker, journal = FakeBroker(50), FakeJournal()
+    original_snapshot = broker.recovery_snapshot
+
+    def snapshot_then_lose_owner(**kwargs):
+        result = original_snapshot(**kwargs)
+        journal.owner_valid = False
+        return result
+
+    broker.recovery_snapshot = snapshot_then_lose_owner
+    result = run(broker, journal)
+
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert "ownership could not be verified" in result.reason
+    assert not broker.cancelled
+    assert not broker.closes

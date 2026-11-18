@@ -412,3 +412,19 @@ def _run_schema_migrations(connection) -> None:
             outbox_columns = {column["name"] for column in inspect(connection).get_columns("iv_early_entry_notification_outbox")}
             if "lease_token" not in outbox_columns:
                 connection.execute(text("ALTER TABLE iv_early_entry_notification_outbox ADD COLUMN lease_token VARCHAR(64)"))
+
+
+        # Durable coordinator ownership is intentionally non-expiring. Existing
+        # intents receive no inferred owner; their first recovery attempt must
+        # atomically claim one before broker I/O.
+        connection.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS execution_recovery_coordinator_owners (
+                id {generated_id_type} PRIMARY KEY,
+                account_id VARCHAR(128) NOT NULL,
+                intent_id VARCHAR(128) NOT NULL,
+                owner_token_hash VARCHAR(64) NOT NULL,
+                owner_generation INTEGER NOT NULL,
+                claimed_at_ns BIGINT NOT NULL,
+                CONSTRAINT uq_recovery_coordinator_owner UNIQUE (account_id, intent_id)
+            )
+        """))
