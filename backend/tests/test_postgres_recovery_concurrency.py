@@ -97,7 +97,7 @@ def test_postgres_conflicting_basket_lease_rolls_back_uncontested_symbols(postgr
     with factory() as db:
         leases = db.execute(select(RecoveryInstrumentLeaseRecord).where(
             RecoveryInstrumentLeaseRecord.account_id == "acct-race",
-        ).order_by(RecoveryInstrumentLeaseRecord.symbol)).scalars().all()
+        )).scalars().all()
         assert [(row.intent_id, row.symbol) for row in leases] == [("owner", "NFO:PE")]
 
 
@@ -134,3 +134,40 @@ def test_postgres_concurrent_attempt_claims_across_rebuilt_journals_respect_budg
             RecoveryBudgetRecord.symbol == "NFO:OPT",
         )).scalar_one()
         assert budget.attempts_used == 2
+
+
+def test_postgres_concurrent_notional_approvals_across_rebuilt_journals_respect_cap(postgres_journal):
+    journal, factory = postgres_journal
+    account_id = "acct-notional-race"
+    intent_id = "intent-notional-race"
+    symbol = "NFO:OPT"
+    journal.configure_recovery_budget(
+        account_id=account_id, intent_id=intent_id, symbol=symbol,
+        max_attempts=12, max_notional=Decimal("250"), approved=True,
+    )
+    for _ in range(12):
+        assert journal.claim_recovery_attempt(
+            account_id=account_id, intent_id=intent_id, symbol=symbol,
+        ) >= 1
+
+    def approve(_):
+        # Rebuild the adapter per worker to exercise independent coordinators.
+        restarted_journal = DurableRecoveryJournal(factory)
+        return restarted_journal.approve_emergency_close(
+            account_id=account_id, intent_id=intent_id, symbol=symbol,
+            side="SELL", quantity=1, limit_price=Decimal("100"),
+            notional=Decimal("100"),
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        outcomes = list(pool.map(approve, range(12)))
+
+    assert sum(outcomes) == 2
+    with factory() as db:
+        budget = db.execute(select(RecoveryBudgetRecord).where(
+            RecoveryBudgetRecord.account_id == account_id,
+            RecoveryBudgetRecord.intent_id == intent_id,
+            RecoveryBudgetRecord.symbol == symbol,
+        )).scalar_one()
+        assert Decimal(budget.notional_used) == Decimal("200")
+        assert Decimal(budget.notional_used) <= Decimal(budget.max_notional)
