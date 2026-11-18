@@ -201,9 +201,9 @@ def test_broker_order_identity_does_not_advance_intent_state(db):
     assert after.version == before.version
 
 
-def _register_first_leg_order(db, *, account_id="acct-1", broker="angel_one", order_id="broker-order-1"):
+def _register_first_leg_order(db, *, account_id="acct-1", intent_id="intent-1", broker="angel_one", order_id="broker-order-1"):
     record_broker_order(
-        db, account_id=account_id, intent_id="intent-1", leg_id="cb",
+        db, account_id=account_id, intent_id=intent_id, leg_id="cb",
         broker=broker, broker_order_id=order_id,
         symbol="NFO:CE", side="BUY", quantity=50,
         accepted_at_ns=500,
@@ -297,23 +297,23 @@ def test_broker_order_and_fill_ids_are_isolated_between_accounts(db):
     _submitting_intent(db)
     _register_first_leg_order(db, order_id="same-provider-order-id")
 
-    other_intent, other_legs = request(account="acct-2", intent_id="intent-1")
+    other_intent, other_legs = request(account="acct-2", intent_id="intent-2")
     create_intent(db, other_intent, other_legs)
     for version, target in enumerate((
         IntentStatus.VALIDATING, IntentStatus.RISK_CHECK, IntentStatus.APPROVED,
         IntentStatus.RESERVED, IntentStatus.SUBMITTING,
     )):
         transition_intent(
-            db, account_id="acct-2", intent_id="intent-1",
+            db, account_id="acct-2", intent_id="intent-2",
             expected_version=version, target=target,
         )
     _register_first_leg_order(
-        db, account_id="acct-2", order_id="same-provider-order-id",
+        db, account_id="acct-2", intent_id="intent-2", order_id="same-provider-order-id",
     )
 
     for account in ("acct-1", "acct-2"):
         result = record_fill(
-            db, account_id=account, intent_id="intent-1", leg_id="cb",
+            db, account_id=account, intent_id=("intent-1" if account == "acct-1" else "intent-2"), leg_id="cb",
             broker="angel_one", broker_fill_id="same-provider-fill-id",
             broker_order_id="same-provider-order-id", quantity=10,
             fill_price="100.25", occurred_at_ns=800,
