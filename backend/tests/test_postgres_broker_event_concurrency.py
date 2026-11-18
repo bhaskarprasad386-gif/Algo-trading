@@ -156,3 +156,29 @@ def test_postgres_concurrent_event_identity_payload_conflict_fails_closed(postgr
         assert len(rows) == 1
         assert rows[0].event_id == "evt-conflicting-identity"
         assert db.query(ExecutionFillRecord).count() == 0
+
+
+def test_postgres_concurrent_fill_identity_payload_conflict_fails_closed(postgres_factory):
+    _seed_working_order(postgres_factory)
+
+    def ingest(index):
+        event = _fill_event(
+            event_id=f"evt-fill-conflict-{index}",
+            price=101.25 if index % 2 == 0 else 101.50,
+        )
+        with postgres_factory() as db:
+            try:
+                return record_broker_order_event_with_fill(db, event)
+            except BrokerEventConflict:
+                return "conflict"
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        outcomes = list(pool.map(ingest, range(12)))
+
+    assert sum(isinstance(item, dict) and item["fill_created"] for item in outcomes) == 1
+    assert outcomes.count("conflict") == 11
+    with postgres_factory() as db:
+        assert db.query(BrokerOrderEventRecord).count() == 1
+        assert db.query(ExecutionFillRecord).count() == 1
+        fill = db.scalar(select(ExecutionFillRecord))
+        assert Decimal(str(fill.fill_price)) == Decimal("101.25")
