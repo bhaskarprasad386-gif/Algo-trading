@@ -15,6 +15,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
@@ -35,7 +36,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build Next.js and Cloudflare Worker (postbuild)
+      - name: Build Next.js and Cloudflare Worker (explicit build chain)
         run: npm run build
 
       - name: Validate Wrangler Worker bundle (dry run)
