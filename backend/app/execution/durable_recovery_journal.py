@@ -6,6 +6,7 @@ explicitly provisioned before recovery can close any residual position.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from decimal import Decimal
@@ -22,6 +23,7 @@ from app.models.execution_recovery_journal import (
     RecoveryInstrumentLeaseRecord,
     RecoveryJournalEventRecord,
     RecoveryKillSwitchRecord,
+    RecoveryCoordinatorOwnerRecord,
 )
 
 
@@ -374,6 +376,42 @@ class DurableRecoveryJournal:
             self._event(db, control, "EMERGENCY_CLOSE_RECONCILED", {
                 "client_order_id": client_order_id,
             })
+
+    def claim_recovery_coordinator_owner(self, *, account_id: str, intent_id: str,
+                                         owner_token: str) -> int | None:
+        """Atomically claim the permanent first-owner slot; never auto-expire it."""
+        self._identity(account_id, intent_id)
+        if not owner_token.strip():
+            raise ValueError("recovery coordinator owner token is required")
+        token_hash = hashlib.sha256(owner_token.encode("utf-8")).hexdigest()
+        try:
+            with self._session_factory() as db, db.begin():
+                db.add(RecoveryCoordinatorOwnerRecord(
+                    account_id=account_id, intent_id=intent_id,
+                    owner_token_hash=token_hash, owner_generation=1,
+                    claimed_at_ns=time.time_ns(),
+                ))
+                db.flush()
+            return 1
+        except IntegrityError:
+            # A prior owner (including a crashed process) remains authoritative.
+            return None
+
+    def assert_recovery_coordinator_owner(self, *, account_id: str, intent_id: str,
+                                          owner_token: str, owner_generation: int) -> bool:
+        self._identity(account_id, intent_id)
+        if not owner_token.strip() or isinstance(owner_generation, bool) or owner_generation < 1:
+            return False
+        token_hash = hashlib.sha256(owner_token.encode("utf-8")).hexdigest()
+        with self._session_factory() as db:
+            row = db.execute(select(RecoveryCoordinatorOwnerRecord).where(
+                RecoveryCoordinatorOwnerRecord.account_id == account_id,
+                RecoveryCoordinatorOwnerRecord.intent_id == intent_id,
+            )).scalar_one_or_none()
+            return bool(
+                row and row.owner_token_hash == token_hash
+                and row.owner_generation == owner_generation
+            )
 
     def alert_operator(self, *, account_id: str, intent_id: str, reason: str) -> None:
         self.append_event(account_id=account_id, intent_id=intent_id,
