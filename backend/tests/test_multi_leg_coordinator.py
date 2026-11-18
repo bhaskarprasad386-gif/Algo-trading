@@ -156,12 +156,14 @@ def execute(intent, broker=None, journal=None, recovery=None, evidence=None):
         def recovery(**kwargs):
             recovery_calls.append(kwargs)
             return SimpleNamespace(state="FLAT_AFTER_UNWIND")
+    active_evidence = evidence or make_evidence(intent)
     coordinator = MultiLegBasketCoordinator(
         broker, journal, recovery, max_quote_age_ns=1_000_000_000,
         max_cross_leg_skew_ns=250_000_000,
+        edge_evaluator=lambda basket, quotes: active_evidence.edge,
     )
     result = asyncio.run(coordinator.execute(
-        intent, evidence or make_evidence(intent), now_ns=1_000_000_000,
+        intent, active_evidence, now_ns=1_000_000_000,
     ))
     return result, broker, journal, recovery_calls
 
@@ -335,6 +337,35 @@ def test_quote_cross_leg_skew_rejects_entire_basket():
     evidence = replace(make_evidence(intent), quotes=quotes)
     result, broker, journal, _ = execute(intent, evidence=evidence)
 
+    assert result.state is BasketResultState.PREFLIGHT_REJECTED
+    assert not broker.calls
+    assert journal.rejected
+
+
+def test_missing_strategy_edge_evaluator_fails_closed_before_submission():
+    intent = make_intent()
+    broker, journal = FakeBroker(intent), FakeJournal()
+    coordinator = MultiLegBasketCoordinator(broker, journal, lambda **kwargs: None)
+    result = asyncio.run(coordinator.execute(
+        intent, make_evidence(intent), now_ns=1_000_000_000,
+    ))
+    assert result.state is BasketResultState.PREFLIGHT_REJECTED
+    assert not broker.calls
+    assert journal.rejected
+
+
+def test_current_quote_edge_recomputation_can_reject_alert_that_was_profitable():
+    intent = make_intent()
+    broker, journal = FakeBroker(intent), FakeJournal()
+    coordinator = MultiLegBasketCoordinator(
+        broker, journal, lambda **kwargs: None,
+        edge_evaluator=lambda basket, quotes: EdgeCheck(
+            Decimal("0.25"), Decimal("1"), "snapshot-1",
+        ),
+    )
+    result = asyncio.run(coordinator.execute(
+        intent, make_evidence(intent, edge=Decimal("5")), now_ns=1_000_000_000,
+    ))
     assert result.state is BasketResultState.PREFLIGHT_REJECTED
     assert not broker.calls
     assert journal.rejected
