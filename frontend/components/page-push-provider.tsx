@@ -93,7 +93,12 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
           return;
         }
-        if (sequence !== sequenceRef.current + 1) {
+        // Ignore unknown frame types without advancing the sequence cursor.
+        if (eventType !== "PATCH" && eventType !== "REMOVE") return;
+        // Do not accept deltas until a full snapshot has established the
+        // baseline, and require every subsequent sequence to be contiguous.
+        if (!hasSnapshotRef.current || sequence !== sequenceRef.current + 1) {
+          setStatus("RECONNECTING");
           resync();
           return;
         }
@@ -107,6 +112,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       socket.onerror = () => socket.close();
       socket.onclose = () => {
         if (disposed) return;
+        hasSnapshotRef.current = false;
+        resyncPendingRef.current = false;
         setStatus("RECONNECTING");
         retryTimer = setTimeout(connect, retryMs);
         retryMs = Math.min(15000, retryMs * 2);
