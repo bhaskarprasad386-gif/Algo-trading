@@ -19,6 +19,8 @@ class FakeJournal:
         self.alerts = []
         self.released = []
         self.attempts = {}
+        self.frozen = []
+        self.leases = True
 
     def latch_entry_kill_switch(self, **kwargs):
         self.kill_switches.append(kwargs)
@@ -34,6 +36,12 @@ class FakeJournal:
 
     def alert_operator(self, **kwargs):
         self.alerts.append(kwargs)
+
+    def freeze_intent(self, **kwargs):
+        self.frozen.append(kwargs)
+
+    def assert_exclusive_instrument_lease(self, **kwargs):
+        return self.leases
 
     def claim_recovery_attempt(self, *, account_id, intent_id, symbol):
         key = (account_id, intent_id, symbol)
@@ -62,6 +70,7 @@ class FakeBroker:
             broker=self.name,
             authoritative=True,
             positions_reconciled=True,
+            position_attribution_complete=True,
             orders=tuple(self.orders),
             positions=(
                 RecoveryPosition("NFO:CE", self.position),
@@ -169,7 +178,8 @@ def test_wrong_broker_account_identity_fails_closed():
     broker, journal = FakeBroker(50), FakeJournal()
     broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
         account_id="another-account", broker="zerodha", authoritative=True,
-        positions_reconciled=True, orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
+        positions_reconciled=True, position_attribution_complete=True,
+        orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
     )
     result = run(broker, journal)
 
@@ -182,7 +192,7 @@ def test_non_authoritative_snapshot_is_never_treated_as_flat():
     broker, journal = FakeBroker(0), FakeJournal()
     broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
         account_id="acct-1", broker="angel_one", authoritative=False,
-        positions_reconciled=False, orders=(), positions=(),
+        positions_reconciled=False, position_attribution_complete=False, orders=(), positions=(),
     )
     result = run(broker, journal)
 
@@ -233,7 +243,7 @@ def test_duplicate_position_rows_are_aggregated_before_baseline_delta():
     broker, journal = FakeBroker(50), FakeJournal()
     broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
         account_id="acct-1", broker="angel_one", authoritative=True,
-        positions_reconciled=True,
+        positions_reconciled=True, position_attribution_complete=True,
         orders=(RecoveryOrder("entry-1", "entry-client-1", "NFO:CE", "ENTRY", "CANCELLED", 0),),
         positions=(
             RecoveryPosition("NFO:CE", broker.position // 2),
@@ -299,3 +309,36 @@ def test_duplicate_baseline_rows_are_rejected_before_recovery():
     else:
         raise AssertionError("duplicate baseline rows must fail closed")
     assert not broker.closes
+
+
+def test_recovery_freezes_intent_before_cancellation_or_close():
+    broker, journal = FakeBroker(50), FakeJournal()
+    result = run(broker, journal)
+    assert result.state is RecoveryState.FLAT
+    assert journal.frozen == [{
+        "account_id": "acct-1", "intent_id": "intent-1",
+        "reason": "stop all unsent basket legs and retries",
+    }]
+
+
+def test_missing_exclusive_instrument_lease_blocks_all_recovery_orders():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.leases = False
+    result = run(broker, journal)
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.cancelled
+    assert not broker.closes
+    assert not journal.released
+
+
+def test_incomplete_position_attribution_blocks_recovery():
+    broker, journal = FakeBroker(50), FakeJournal()
+    broker.recovery_snapshot = lambda **kwargs: RecoverySnapshot(
+        account_id="acct-1", broker="angel_one", authoritative=True,
+        positions_reconciled=True, position_attribution_complete=False,
+        orders=(), positions=(RecoveryPosition("NFO:CE", 50),),
+    )
+    result = run(broker, journal)
+    assert result.state is RecoveryState.MANUAL_REVIEW
+    assert not broker.closes
+    assert not journal.released
