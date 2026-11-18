@@ -151,7 +151,10 @@ export default function BoxSpreadPaperTrading() {
     finally { setLoginBusy(false); }
   }
 
+  const privateLedgerRequestSequenceRef = useRef(0);
+
   const refresh = useCallback(async () => {
+    const requestSequence = ++privateLedgerRequestSequenceRef.current;
     try {
       const query = "&search=" + encodeURIComponent(positionSearch.trim()) + "&direction=" + encodeURIComponent(positionDirection);
       const pageSize = 10;
@@ -162,6 +165,8 @@ export default function BoxSpreadPaperTrading() {
         request("/portfolio-summary?account_key=" + encodeURIComponent(account)),
         request("/execution-control"),
       ]);
+      // Private push updates supersede any ledger REST request already in flight.
+      if (requestSequence !== privateLedgerRequestSequenceRef.current) return;
       setBalance(String(accountBody.virtual_balance));
       setExecutionEnabled(controlBody.enabled === true);
       setTrades([...(Array.isArray(openBody.data) ? openBody.data : []), ...(Array.isArray(closedBody.data) ? closedBody.data : [])]);
@@ -405,6 +410,7 @@ export default function BoxSpreadPaperTrading() {
               applyPrivateSnapshot(frame.payload);
             }
             privateSequenceRef.current = sequence;
+            privateLedgerRequestSequenceRef.current += 1;
             if (isSnapshot) privateResyncPendingRef.current = false;
             if (eventId) {
               privateEventIdsRef.current.add(eventId);
