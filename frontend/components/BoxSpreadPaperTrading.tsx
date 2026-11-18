@@ -15,6 +15,7 @@ type LiveOpportunity = {
   high_call_bid?: number | null; high_call_ask?: number | null; high_put_bid?: number | null; high_put_ask?: number | null;
   low_call_bid_qty?: number | null; low_call_ask_qty?: number | null; low_put_bid_qty?: number | null; low_put_ask_qty?: number | null;
   high_call_bid_qty?: number | null; high_call_ask_qty?: number | null; high_put_bid_qty?: number | null; high_put_ask_qty?: number | null;
+  last_update_timestamp_ns?: number | string | null; timestamp_ns?: number | string | null;
 };
 type ScannerDiagnostics = {
   status?: string;
@@ -256,20 +257,56 @@ export default function BoxSpreadPaperTrading() {
 
   // Public market opportunities arrive through the same Box Spread page-push
   // channel as the scanner. Never put private paper ledger/account data on it.
+  // The page gateway sends a full list only on SNAPSHOT/resync. Normal quote
+  // callbacks carry opportunity_updates; merge those rows instead of replacing
+  // the whole list (the callback is scoped to one quote bucket/symbol).
   useEffect(() => {
-    const pushed = pagePush.data?.opportunities;
-    if (!Array.isArray(pushed)) return;
-    const rows = pushed.filter((row): row is LiveOpportunity => {
+    const data = pagePush.data;
+    if (!data) return;
+    const isSnapshot = data.__event === "SNAPSHOT";
+    const incoming = isSnapshot ? data.opportunities : data.opportunity_updates;
+    if (!Array.isArray(incoming)) return;
+    const validRows = incoming.filter((row): row is LiveOpportunity => {
       if (!row || typeof row !== "object") return false;
       const item = row as LiveOpportunity;
       return [item.low_call_price, item.high_call_price, item.high_put_price, item.low_put_price]
         .every(value => Number.isFinite(Number(value)) && Number(value) > 0);
     });
-    setOpportunities(rows);
-    setOpportunityError(null);
-    setOpportunityStatus(rows.length > 0 ? "LIVE" : "EMPTY");
-    setLastOpportunityCheck(Date.now());
+    setOpportunities(previous => {
+      if (isSnapshot) return validRows;
+      const merged = new Map<string, LiveOpportunity>();
+      for (const row of previous) {
+        merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
+      }
+      for (const row of validRows) {
+        merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
+      }
+      return Array.from(merged.values()).sort((a, b) => Number(b.executable_edge) - Number(a.executable_edge));
+    });
+    if (validRows.length || isSnapshot) {
+      setOpportunityError(null);
+      setOpportunityStatus(validRows.length > 0 || (!isSnapshot && opportunities.length > 0) ? "LIVE" : "EMPTY");
+      setLastOpportunityCheck(Date.now());
+    }
   }, [pagePush.data]);
+
+  // Quotes are only eligible for the live scanner while all four leg quotes
+  // remain inside the five-second freshness contract. Expire stale rows locally
+  // even if a quiet symbol stops producing callbacks.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const nowNs = Date.now() * 1_000_000;
+      setOpportunities(previous => {
+        const fresh = previous.filter(row => {
+          const stamp = Number(row.last_update_timestamp_ns ?? row.timestamp_ns ?? 0);
+          return Number.isFinite(stamp) && stamp > 0 && nowNs >= stamp && nowNs - stamp <= 5_000_000_000;
+        });
+        if (fresh.length !== previous.length && fresh.length === 0) setOpportunityStatus("EMPTY");
+        return fresh.length === previous.length ? previous : fresh;
+      });
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!token) {
