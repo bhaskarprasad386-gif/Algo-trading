@@ -35,6 +35,7 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
   const [notice,setNotice]=useState<string|null>(null);
   const rulesRequestSequence=useRef(0);
   const historyRequestSequence=useRef(0);
+  const historyRuleIdRef=useRef<number|null>(historyRuleId);
 
   const request=useCallback(async(path:string,init?:RequestInit)=>{
     const response=await fetch(api+path,{...init,cache:"no-store",headers:{"Content-Type":"application/json",...(token ? { Authorization:"Bearer "+token } : {}),...(init?.headers??{})},signal:AbortSignal.timeout(12000)});
@@ -52,8 +53,8 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
   useEffect(()=>{void load();},[load,refreshVersion]);
   const loadHistory=useCallback(async(id:number)=>{
     const requestSequence=++historyRequestSequence.current;
-    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");if(requestSequence!==historyRequestSequence.current||historyRuleId!==id)return;setEvaluations(Array.isArray(body.data)?body.data:[]);}
-    catch(e){if(requestSequence===historyRequestSequence.current&&historyRuleId===id)setError(e instanceof Error?e.message:"Unable to load evaluation history");}
+    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");if(requestSequence!==historyRequestSequence.current||historyRuleIdRef.current!==id)return;setEvaluations(Array.isArray(body.data)?body.data:[]);}
+    catch(e){if(requestSequence===historyRequestSequence.current&&historyRuleIdRef.current===id)setError(e instanceof Error?e.message:"Unable to load evaluation history");}
   },[account,request,historyRuleId]);
   useEffect(()=>{if(historyRuleId!==null)void loadHistory(historyRuleId);},[historyRuleId,loadHistory,refreshVersion]);
   useEffect(()=>{setConfig(current=>({...current,entry:{...current.entry,expiry_type:selection.expiryType,symbols:selection.symbols,lots:selection.lots}}));},[selection.expiryType,selection.symbols.join(","),selection.lots]);
@@ -68,8 +69,9 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
     finally{setBusy(false);}
   }
   function edit(rule:Rule){setEditingId(rule.rule_id);setName(rule.name);setEnabled(rule.enabled);setConfig(rule.config);setNotice("Editing rule #"+rule.rule_id);}
-  function newRule(){setEditingId(null);setName("Custom Box Spread rule");setEnabled(false);setConfig(defaults);setEvaluations([]);setHistoryRuleId(null);setNotice("New disabled rule draft.");}
+  function newRule(){historyRuleIdRef.current=null;historyRequestSequence.current+=1;setEditingId(null);setName("Custom Box Spread rule");setEnabled(false);setConfig(defaults);setEvaluations([]);setHistoryRuleId(null);setNotice("New disabled rule draft.");}
   async function history(id:number){
+    historyRuleIdRef.current=id;
     setHistoryRuleId(id);
     await loadHistory(id);
     setNotice("Live evaluation history for rule #"+id);
