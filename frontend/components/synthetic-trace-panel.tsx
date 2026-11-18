@@ -155,6 +155,25 @@ export function SyntheticTracePanel() {
   }, []);
 
   useEffect(() => {
+    const pushedTraces = pagePushData?.trace_opportunities;
+    if (!Array.isArray(pushedTraces)) return;
+    const deleted = new Set(readDeleted());
+    const restored = pushedTraces.filter((item): item is TraceRow =>
+      !!item && typeof item === "object" && typeof (item as Record<string, unknown>).trace_id === "string"
+      && !deleted.has((item as Record<string, unknown>).trace_id as string)
+    );
+    setTraces(restored);
+    writeStored(restored);
+  }, [pagePushData]);
+
+  useEffect(() => {
+    const pushedStatus = pagePushData?.trace_status_update as Record<string, unknown> | undefined;
+    const traceId = typeof pushedStatus?.trace_id === "string" ? pushedStatus.trace_id : "";
+    if (!traceId) return;
+    setStatusByTrace((current) => ({ ...current, [traceId]: pushedStatus }));
+  }, [pagePushData]);
+
+  useEffect(() => {
     const livePayload = pagePushData?.live as { data?: unknown[] } | undefined;
     if (!Array.isArray(livePayload?.data)) return;
     const rows = livePayload.data.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
