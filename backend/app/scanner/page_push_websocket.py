@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -54,6 +55,41 @@ sequences = Table(
 metadata.create_all(bind=engine)
 
 _snapshot_providers: dict[str, Callable[[], dict[str, Any]]] = {}
+_page_command_handlers: dict[str, dict[str, Callable[[dict[str, Any]], Any]]] = {}
+
+
+def configure_page_command_handler(page: str, command: str, handler: Callable[[dict[str, Any]], Any] | None) -> None:
+    if page not in PAGE_CHANNELS:
+        raise ValueError("unknown page channel")
+    name = str(command or "").strip()
+    if not name or len(name) > 64 or not name.replace("_", "").isalnum():
+        raise ValueError("invalid page command name")
+    handlers = _page_command_handlers.setdefault(page, {})
+    if handler is None:
+        handlers.pop(name, None)
+    elif callable(handler):
+        handlers[name] = handler
+    else:
+        raise ValueError("page command handler must be callable")
+
+
+def _command_origin_allowed(websocket: WebSocket) -> bool:
+    origin = str(websocket.headers.get("origin") or "").strip()
+    try:
+        parsed = urlparse(origin)
+        if not origin or parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.path not in {"", "/"}:
+            return False
+        normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    except ValueError:
+        return False
+    allowed = {
+        value.strip().rstrip("/").lower()
+        for value in os.getenv("ALGO_SCANNER_WS_ALLOWED_ORIGINS", "").split(",")
+        if value.strip()
+    }
+    return normalized in allowed
+
+
 _subscribers: set[tuple[asyncio.Queue, frozenset[str]]] = set()
 _dispatch_task: asyncio.Task | None = None
 _dispatch_loop: asyncio.AbstractEventLoop | None = None
@@ -387,12 +423,48 @@ async def page_updates(websocket: WebSocket) -> None:
                     except (TypeError, ValueError):
                         await websocket.send_json({"type": "error", "code": "INVALID_JSON"})
                         continue
-                    if not isinstance(message, dict) or message.get("action") not in {"subscribe", "unsubscribe", "resync"}:
+                    if not isinstance(message, dict) or message.get("action") not in {"subscribe", "unsubscribe", "resync", "command"}:
                         await websocket.send_json({"type": "error", "code": "INVALID_ACTION"})
                         continue
                     page = str(message.get("page") or "")
                     if page not in PAGE_CHANNELS:
                         await websocket.send_json({"type": "error", "code": "UNKNOWN_PAGE"})
+                        continue
+                    if message["action"] == "command":
+                        request_id = message.get("request_id")
+                        command_name = str(message.get("command") or "").strip()
+                        payload = message.get("payload", {})
+                        if not isinstance(request_id, str) or not request_id or len(request_id) > 96:
+                            await websocket.send_json({"type": "error", "code": "INVALID_REQUEST_ID"})
+                            continue
+                        if page not in channels:
+                            await websocket.send_json({"type": "command_ack", "page": page, "request_id": request_id, "ok": False, "error": "SUBSCRIBE_TO_PAGE_FIRST"})
+                            continue
+                        if not _command_origin_allowed(websocket):
+                            await websocket.send_json({"type": "command_ack", "page": page, "request_id": request_id, "ok": False, "error": "COMMAND_ORIGIN_NOT_ALLOWED"})
+                            continue
+                        if not isinstance(payload, dict) or len(json.dumps(payload, default=str)) > 16384:
+                            await websocket.send_json({"type": "command_ack", "page": page, "request_id": request_id, "ok": False, "error": "INVALID_COMMAND_PAYLOAD"})
+                            continue
+                        handler = _page_command_handlers.get(page, {}).get(command_name)
+                        if handler is None:
+                            await websocket.send_json({"type": "command_ack", "page": page, "request_id": request_id, "ok": False, "error": "UNKNOWN_COMMAND"})
+                            continue
+                        try:
+                            result = await asyncio.to_thread(handler, payload)
+                            await websocket.send_json({
+                                "type": "command_ack", "page": page, "request_id": request_id,
+                                "ok": True, "data": result if isinstance(result, dict) else {"result": result},
+                            })
+                            snapshot = await asyncio.to_thread(_snapshot, page)
+                            await asyncio.to_thread(publish_page_update, page, "SNAPSHOT", snapshot)
+                        except Exception as exc:
+                            _log.exception("Scanner page command %s failed for %s", command_name, page)
+                            detail = getattr(exc, "detail", None)
+                            await websocket.send_json({
+                                "type": "command_ack", "page": page, "request_id": request_id,
+                                "ok": False, "error": str(detail if detail is not None else exc)[:500],
+                            })
                         continue
                     if message["action"] == "subscribe":
                         channels = frozenset((*channels, page))
