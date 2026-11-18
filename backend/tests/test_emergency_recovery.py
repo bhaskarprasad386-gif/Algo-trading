@@ -510,3 +510,35 @@ def test_restarted_recovery_coordinator_does_not_duplicate_unknown_ioc():
     assert second.residual_positions == (RecoveryPosition("NFO:CE", 50),)
     assert not journal.released
     assert journal.kill_switches
+
+
+
+def test_durable_recovery_attempt_limit_is_enforced_after_coordinator_restart():
+    broker, journal = FakeBroker(50, partial_fills=(25, 25)), FakeJournal()
+    policy = RecoveryPolicy(max_attempts=1)
+
+    first = EmergencyRecoveryCoordinator(broker, journal, policy=policy).recover(
+        account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+        symbols=("NFO:CE",), baseline_positions=(RecoveryPosition("NFO:CE", 0),),
+        now_ns=1_000_000_000,
+    )
+    assert first.state is RecoveryState.MANUAL_REVIEW
+    assert len(broker.closes) == 1
+    assert broker.position == 25
+    assert journal.attempts[("acct-1", "intent-1", "NFO:CE")] == 1
+
+    # A fresh coordinator represents a process restart. The shared journal's
+    # durable per-symbol attempt count must still cap total IOC submissions.
+    second = EmergencyRecoveryCoordinator(broker, journal, policy=policy).recover(
+        account_id="acct-1", intent_id="intent-1", strategy="BOX_SPREAD",
+        symbols=("NFO:CE",), baseline_positions=(RecoveryPosition("NFO:CE", 0),),
+        now_ns=1_000_000_000,
+    )
+
+    assert second.state is RecoveryState.MANUAL_REVIEW
+    assert len(broker.closes) == 1
+    assert journal.attempts[("acct-1", "intent-1", "NFO:CE")] == 2
+    assert second.residual_positions == (RecoveryPosition("NFO:CE", 25),)
+    assert not journal.released
+    assert journal.kill_switches
+    assert journal.alerts
