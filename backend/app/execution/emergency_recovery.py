@@ -14,6 +14,7 @@ from typing import Protocol
 
 
 class RecoveryState(str, Enum):
+    RECOVERING = "EMERGENCY_UNWIND"
     FLAT = "FLAT_AFTER_UNWIND"
     MANUAL_REVIEW = "MANUAL_REVIEW_RESIDUAL_EXPOSURE"
 
@@ -213,6 +214,10 @@ class EmergencyRecoveryCoordinator:
             raise ValueError("a durable pre-entry baseline is required for every basket instrument")
         self._journal.latch_entry_kill_switch(
             account_id=account_id, strategy=strategy, reason="multi-leg entry failed; recovery active",
+        )
+        self._journal.set_state(
+            account_id=account_id, intent_id=intent_id,
+            state=RecoveryState.RECOVERING, reason="cancel/reconcile/close workflow started",
         )
         self._journal.append_event(
             account_id=account_id, intent_id=intent_id, event="RECOVERY_STARTED",
