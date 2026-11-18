@@ -1,5 +1,3 @@
-from app.scanner.page_push_websocket import publish_page_update
-
 from __future__ import annotations
 
 from collections import deque
@@ -46,6 +44,7 @@ class RuntimeDiagnostics:
         # Diagnostics are a read-only page feed; transport failures must never
         # interfere with recording the original runtime error.
         try:
+            from app.scanner.page_push_websocket import publish_page_update
             snapshot = self.snapshot(limit=100)
             publish_page_update("errors", "PATCH", {"errors": snapshot, "count": len(snapshot)})
         except Exception:
