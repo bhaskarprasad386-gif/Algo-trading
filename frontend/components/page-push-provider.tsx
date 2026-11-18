@@ -86,7 +86,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
           return;
         }
-        if (sequenceRef.current && sequence !== sequenceRef.current + 1) {
+        if (sequence !== sequenceRef.current + 1) {
           resync();
           return;
         }
