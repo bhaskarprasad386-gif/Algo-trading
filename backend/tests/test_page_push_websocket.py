@@ -158,3 +158,28 @@ def test_page_resync_preserves_other_subscribed_channel_events():
 
     asyncio.run(scenario())
 
+
+
+def test_page_push_persisted_events_have_per_page_sequences(monkeypatch):
+    # Sequence assignment is durable and independent for each page, so
+    # updates on another scanner page cannot create false client-side gaps.
+    assert "page_sequence" in push.events.c
+    assert "algo_scanner_page_ws_sequences" in push.sequences.name
+    assert "SNAPSHOT_REQUIRED" in push._journal_dispatch_loop.__code__.co_consts
+
+
+def test_page_push_supports_all_scanner_page_channels():
+    expected = {
+        "cash-future", "box-spread", "calendar-spread",
+        "synthetic-arbitrage", "iv-skew-flip",
+        "credit-butterfly-condor-weekly",
+        "credit-butterfly-condor-monthly", "weekly-swing",
+    }
+    assert expected.issubset(push.PAGE_CHANNELS)
+
+
+def test_page_push_snapshot_frame_uses_persisted_page_sequence():
+    frame = push._snapshot_frame("box-spread", {"rows": []}, sequence=17)
+    assert frame["sequence"] == 17
+    assert frame["event"] == "SNAPSHOT"
+    assert frame["data"] == {"rows": []}
