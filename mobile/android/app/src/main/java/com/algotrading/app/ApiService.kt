@@ -1,5 +1,6 @@
 package com.algotrading.app
 
+import android.content.Context
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import com.google.gson.annotations.SerializedName
@@ -298,8 +299,37 @@ interface ApiInterface {
 
 object ApiService {
     @Volatile private var realOwnerAccessToken: String? = null
+    @Volatile private var ownerSessionStore: EncryptedOwnerSessionStore? = null
 
-    fun setRealOwnerAccessToken(token: String?) { realOwnerAccessToken = token?.takeIf { it.isNotBlank() } }
+    @Synchronized
+    fun initializeOwnerSession(context: Context) {
+        if (ownerSessionStore != null) return
+        val store = createOwnerSessionStore(context.applicationContext)
+        ownerSessionStore = store
+        realOwnerAccessToken = store.load()
+    }
+
+    @Synchronized
+    fun setRealOwnerAccessToken(token: String?) {
+        val normalized = token?.takeIf { it.isNotBlank() }
+        if (normalized == null) {
+            clearRealOwnerAccessToken()
+            return
+        }
+        val store = ownerSessionStore
+            ?: throw IllegalStateException("owner session storage has not been initialized")
+        // Persist first; never expose an in-memory authenticated session if
+        // encrypted durable storage failed.
+        store.save(normalized)
+        realOwnerAccessToken = normalized
+    }
+
+    @Synchronized
+    fun clearRealOwnerAccessToken() {
+        realOwnerAccessToken = null
+        ownerSessionStore?.clear()
+    }
+
     fun hasRealOwnerAccessToken(): Boolean = !realOwnerAccessToken.isNullOrBlank()
 
     private val httpClient: OkHttpClient by lazy {
@@ -313,7 +343,9 @@ object ApiService {
                     request.newBuilder().header("Authorization", "Bearer $token").build()
                 } else request
                 val response = chain.proceed(authenticated)
-                if (isBrokerApi && response.code == 401) realOwnerAccessToken = null
+                if (isBrokerApi && response.code == 401) {
+                    try { clearRealOwnerAccessToken() } catch (_: Exception) { realOwnerAccessToken = null }
+                }
                 response
             }
             .connectTimeout(10, TimeUnit.SECONDS)
