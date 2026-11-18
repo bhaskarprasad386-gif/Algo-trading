@@ -400,3 +400,59 @@ def test_recovery_close_client_order_id_cannot_be_reused_for_later_attempt(journ
         side="SELL", quantity=1, limit_price=Decimal("10"), notional=Decimal("10"),
         client_order_id="REC-stable-id",
     )
+
+
+def test_pending_close_authorization_blocks_risk_and_lease_release_even_if_flat_state_is_set(journal):
+    durable, factory = journal
+    durable.configure_recovery_budget(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        symbol="OPT:CE", max_attempts=1, max_notional=Decimal("1000"), approved=True,
+    )
+    assert durable.acquire_instrument_leases(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        symbols=("OPT:CE",),
+    )
+    durable.freeze_intent(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        reason="partial fill",
+    )
+    durable.claim_recovery_attempt(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        symbol="OPT:CE",
+    )
+    assert durable.approve_emergency_close(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        symbol="OPT:CE", side="SELL", quantity=1, limit_price=Decimal("10"),
+        notional=Decimal("10"), client_order_id="REC-pending-release",
+    )
+    # Even an erroneous FLAT state transition must not release ownership while
+    # a broker close authorization remains unresolved.
+    durable.set_state(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        state=RecoveryState.FLAT, reason="simulated incorrect flat assertion",
+    )
+    with pytest.raises(ValueError, match="pending emergency close authorizations"):
+        durable.release_risk_reservation(
+            account_id="acct-release-pending", intent_id="intent-release-pending",
+        )
+    assert durable.assert_exclusive_instrument_lease(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        symbols=("OPT:CE",),
+    )
+    with factory() as db:
+        control = db.execute(select(RecoveryControlRecord).where(
+            RecoveryControlRecord.account_id == "acct-release-pending",
+            RecoveryControlRecord.intent_id == "intent-release-pending",
+        )).scalar_one()
+        assert control.risk_reserved is True
+    durable.mark_close_authorization_reconciled(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        client_order_id="REC-pending-release",
+    )
+    durable.release_risk_reservation(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+    )
+    assert not durable.assert_exclusive_instrument_lease(
+        account_id="acct-release-pending", intent_id="intent-release-pending",
+        symbols=("OPT:CE",),
+    )
