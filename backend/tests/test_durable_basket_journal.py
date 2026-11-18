@@ -147,7 +147,7 @@ def test_incomplete_or_zero_fill_reconciliation_cannot_mark_filled(journal):
 
 
 def test_acknowledgement_must_belong_to_claimed_basket(journal):
-    durable = journal
+    durable, _ = journal
     async def run():
         await durable.claim_submission(
             account_id="acct-a", intent_id="intent-4",
