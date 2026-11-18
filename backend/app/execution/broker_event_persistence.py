@@ -157,6 +157,34 @@ def record_broker_order_event_with_fill(db: Session, event: BrokerOrderEvent) ->
         ).with_for_update()).scalar_one_or_none()
         if order is None:
             raise LookupError("broker order is not registered for this account")
+
+        # A concurrent callback with a different event_id may carry the same
+        # broker trade/fill identity. The initial lookup can race before the
+        # order-row lock is acquired, so check again after serialization.
+        existing_fill = db.execute(select(ExecutionFillRecord).where(
+            ExecutionFillRecord.account_id == account_id,
+            ExecutionFillRecord.broker == broker,
+            ExecutionFillRecord.broker_fill_id == fill_id,
+        )).scalar_one_or_none()
+        if existing_fill is not None:
+            same_fill = (
+                existing_fill.broker_order_id == order_id
+                and existing_fill.quantity == event.fill_quantity
+                and Decimal(str(existing_fill.fill_price)) == Decimal(str(event.average_fill_price))
+                and existing_fill.occurred_at_ns == event.occurred_at_ns
+            )
+            if not same_fill:
+                raise BrokerEventConflict(
+                    "broker fill identity was replayed with different execution evidence"
+                )
+            return {
+                "event_created": event_result["created"],
+                "fill_created": False,
+                "fill_deferred": False,
+                "event_record_id": event_result["event_record_id"],
+                "fill_result": None,
+            }
+
         if (
             event.fill_quantity > order.quantity
             or event.cumulative_filled_quantity > order.quantity
