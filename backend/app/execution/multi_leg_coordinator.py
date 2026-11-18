@@ -24,6 +24,7 @@ class BasketResultState(str, Enum):
     PREFLIGHT_REJECTED = "PREFLIGHT_REJECTED"
     DUPLICATE_BLOCKED = "DUPLICATE_BLOCKED"
     FILLED = "FILLED"
+    RECOVERED_FLAT = "RECOVERED_FLAT"
     RECOVERY_STARTED = "RECOVERY_STARTED"
     MANUAL_REVIEW = "MANUAL_REVIEW"
 
@@ -61,8 +62,12 @@ class BasketIntent:
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not self.intent_id.strip():
             raise ValueError("account and intent IDs are required")
-        if self.lots <= 0 or self.lot_size <= 0 or not self.legs:
-            raise ValueError("lots, lot size and legs are required")
+        if (
+            isinstance(self.lots, bool) or not isinstance(self.lots, int) or self.lots <= 0
+            or isinstance(self.lot_size, bool) or not isinstance(self.lot_size, int) or self.lot_size <= 0
+            or not self.legs
+        ):
+            raise ValueError("lots, lot size and legs are required as positive integers")
         if len({x.leg_id for x in self.legs}) != len(self.legs):
             raise ValueError("leg IDs must be unique")
         if len({x.role for x in self.legs}) != len(self.legs):
@@ -77,6 +82,9 @@ class BasketIntent:
             raise ValueError("Butterfly legs must share one option type")
         if len({symbol for symbol, _ in self.baseline_positions}) != len(self.baseline_positions):
             raise ValueError("baseline must contain one row per symbol")
+        if any(not symbol.strip() or isinstance(quantity, bool) or not isinstance(quantity, int)
+               for symbol, quantity in self.baseline_positions):
+            raise ValueError("baseline symbols and integer quantities are required")
 
     def validate_shape(self) -> None:
         ratios = sorted(x.ratio for x in self.legs)
@@ -257,8 +265,9 @@ class MultiLegBasketCoordinator:
                 raise ValueError(f"limit price violates tick size for {leg.symbol}")
         if max(timestamps) - min(timestamps) > self._max_skew:
             raise ValueError("cross-leg quote timestamp skew exceeds policy")
-        if evidence.snapshot_observed_at_ns <= 0 or now_ns - evidence.snapshot_observed_at_ns > self._max_age:
-            raise ValueError("basket snapshot is stale")
+        snapshot_age = now_ns - evidence.snapshot_observed_at_ns
+        if evidence.snapshot_observed_at_ns <= 0 or snapshot_age < 0 or snapshot_age > self._max_age:
+            raise ValueError("basket snapshot is stale or timestamped in the future")
 
     @staticmethod
     def _client_order_id(intent: BasketIntent, leg: BasketLeg) -> str:
@@ -380,11 +389,17 @@ class MultiLegBasketCoordinator:
                 pass
 
         reason = "one or more legs rejected, timed out, partially filled, unknown, or failed reconciliation"
-        await self._journal.freeze_intent(
-            account_id=intent.account_id, intent_id=intent.intent_id, reason=reason,
-        )
+        freeze_error = None
         try:
-            recovery_result = self._recovery(
+            await self._journal.freeze_intent(
+                account_id=intent.account_id, intent_id=intent.intent_id, reason=reason,
+            )
+        except Exception as exc:
+            # Still invoke the independent recovery journal/kill-switch path.
+            freeze_error = type(exc).__name__
+        try:
+            recovery_result = await asyncio.to_thread(
+                self._recovery,
                 account_id=intent.account_id, intent_id=intent.intent_id,
                 strategy=intent.strategy.value,
                 symbols=tuple(sorted({x.symbol for x in intent.legs})),
@@ -392,11 +407,11 @@ class MultiLegBasketCoordinator:
             )
             recovery_state = getattr(getattr(recovery_result, "state", None), "value",
                                       getattr(recovery_result, "state", None))
-            if recovery_state == "FLAT_AFTER_UNWIND":
-                return BasketResult(BasketResultState.RECOVERY_STARTED, reason, client_ids, str(recovery_state))
+            if recovery_state == "FLAT_AFTER_UNWIND" and freeze_error is None:
+                return BasketResult(BasketResultState.RECOVERED_FLAT, reason, client_ids, str(recovery_state))
             await self._journal.require_manual_review(
                 account_id=intent.account_id, intent_id=intent.intent_id,
-                reason=f"{reason}; recovery outcome={recovery_state}",
+                reason=f"{reason}; recovery outcome={recovery_state}; freeze_error={freeze_error}",
             )
             return BasketResult(BasketResultState.MANUAL_REVIEW, reason, client_ids, str(recovery_state))
         except Exception as exc:
