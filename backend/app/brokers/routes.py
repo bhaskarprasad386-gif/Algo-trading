@@ -373,41 +373,42 @@ def emergency_kill_switch(db: Session = Depends(get_db), user_id: int = Depends(
 
 @router.post("/connect")
 def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
-    broker = payload.broker.strip().lower()
-    if broker != "angel_one":
-        raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
+    with broker_sessions.transition(user_id):
+        broker = payload.broker.strip().lower()
+        if broker != "angel_one":
+            raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
 
-    # A reconnect attempt must never inherit an armed process-local safety state.
-    trading_safety.disable(user_id)
-    adapter = AngelOneAdapter()
-    try:
-        result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret, account_id=payload.client_code)
-    except Exception as exc:
-        app_logger.error("Angel One connection failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
-    try:
-        claim_authenticated_account(db, broker, result.get("client_code") or "")
-    except HTTPException:
-        adapter.disconnect()
-        raise
-    except Exception as exc:
-        adapter.disconnect()
-        db.rollback()
-        app_logger.error("Durable Box Spread account binding failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable") from exc
-    try:
-        set_owner_connection_state(db, True)
-    except Exception as exc:
-        adapter.disconnect()
-        db.rollback()
-        app_logger.error("Durable Box Spread connection state update failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
-    logout_error = broker_sessions.replace_and_disconnect_previous(user_id, broker, adapter)
-    if logout_error is not None:
-        app_logger.error("Previous %s provider logout failed during reconnect: %s", broker, type(logout_error).__name__)
-    item = broker_connections.connect(user_id, broker, payload.display_name)
-    trading_safety.disable(user_id)
-    return {"connected": item.connected, "broker": item.broker, "display_name": item.display_name, "client_code": result.get("client_code"), "real_trading": False}
+        # A reconnect attempt must never inherit an armed process-local safety state.
+        trading_safety.disable(user_id)
+        adapter = AngelOneAdapter()
+        try:
+            result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret, account_id=payload.client_code)
+        except Exception as exc:
+            app_logger.error("Angel One connection failed: %s", exc)
+            raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
+        try:
+            claim_authenticated_account(db, broker, result.get("client_code") or "")
+        except HTTPException:
+            adapter.disconnect()
+            raise
+        except Exception as exc:
+            adapter.disconnect()
+            db.rollback()
+            app_logger.error("Durable Box Spread account binding failed: %s", exc)
+            raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable") from exc
+        try:
+            set_owner_connection_state(db, True)
+        except Exception as exc:
+            adapter.disconnect()
+            db.rollback()
+            app_logger.error("Durable Box Spread connection state update failed: %s", exc)
+            raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
+        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, broker, adapter)
+        if logout_error is not None:
+            app_logger.error("Previous %s provider logout failed during reconnect: %s", broker, type(logout_error).__name__)
+        item = broker_connections.connect(user_id, broker, payload.display_name)
+        trading_safety.disable(user_id)
+        return {"connected": item.connected, "broker": item.broker, "display_name": item.display_name, "client_code": result.get("client_code"), "real_trading": False}
 
 
 @router.get("/{broker}/status")
