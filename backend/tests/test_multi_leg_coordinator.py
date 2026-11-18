@@ -369,3 +369,26 @@ def test_current_quote_edge_recomputation_can_reject_alert_that_was_profitable()
     assert result.state is BasketResultState.PREFLIGHT_REJECTED
     assert not broker.calls
     assert journal.rejected
+
+
+def test_butterfly_body_ratio_cannot_be_moved_to_a_wing():
+    intent = make_intent(BasketStrategy.CREDIT_BUTTERFLY)
+    wrong = tuple(replace(leg, ratio=2 if leg.role == "LOWER_WING" else 1) for leg in intent.legs)
+    intent = replace(intent, legs=wrong)
+    result, broker, journal, _ = execute(intent)
+    assert result.state is BasketResultState.PREFLIGHT_REJECTED
+    assert not broker.calls
+    assert journal.rejected
+
+
+def test_box_spread_role_to_option_type_mapping_is_enforced():
+    intent = make_intent()
+    wrong = tuple(
+        replace(leg, option_type="PE") if leg.role == "LOW_CE" else leg
+        for leg in intent.legs
+    )
+    intent = replace(intent, legs=wrong)
+    result, broker, journal, _ = execute(intent)
+    assert result.state is BasketResultState.PREFLIGHT_REJECTED
+    assert not broker.calls
+    assert journal.rejected
